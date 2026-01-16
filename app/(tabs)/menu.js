@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,24 +8,27 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  ScrollView,
+  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
-import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { getDisplayImage } from '../../utils/placeholderImages';
 import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
+import WaiterCartModal from '../../components/WaiterCartModal';
 
 export default function MenuScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [menuItems, setMenuItems] = useState([]);
-  const [filteredItems, setFilteredItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all-items');
   const [searchTerm, setSearchTerm] = useState('');
+  const [shortCodeSearch, setShortCodeSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
@@ -34,28 +37,68 @@ export default function MenuScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [user, setUser] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
+  const [sendingOrder, setSendingOrder] = useState(false);
+  const [isWaiter, setIsWaiter] = useState(false);
+  const [showImages, setShowImages] = useState(true);
+  const [existingOrderId, setExistingOrderId] = useState(null);
 
   useEffect(() => {
     loadInitialData();
+    loadImagePreference();
   }, []);
+
+  const loadImagePreference = async () => {
+    try {
+      const saved = await AsyncStorage.getItem('menu_show_images');
+      if (saved !== null) {
+        setShowImages(saved === 'true');
+      }
+    } catch (error) {
+      console.error('Error loading image preference:', error);
+    }
+  };
+
+  const toggleImages = async () => {
+    const newValue = !showImages;
+    setShowImages(newValue);
+    try {
+      await AsyncStorage.setItem('menu_show_images', newValue.toString());
+    } catch (error) {
+      console.error('Error saving image preference:', error);
+    }
+  };
 
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
       setSelectedTable({ id: params.tableId, name: params.tableNumber });
     }
-  }, [params.tableId, params.tableNumber]);
+    
+    // Handle existing order items from params
+    if (params.existingOrder === 'true' && params.cartItems) {
+      try {
+        const existingItems = JSON.parse(params.cartItems);
+        setCart(existingItems);
+        if (params.orderId) {
+          setExistingOrderId(params.orderId);
+        }
+      } catch (error) {
+        console.error('Error parsing cart items:', error);
+      }
+    }
+  }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId]);
 
-  const filterItems = useCallback(() => {
+  // Use useMemo instead of useEffect to prevent infinite loops
+  const filteredItems = useMemo(() => {
     let filtered = [...menuItems];
 
     // Filter by category
-    if (selectedCategory !== 'all') {
+    if (selectedCategory !== 'all-items') {
       filtered = filtered.filter(item =>
-        item.category?.toLowerCase() === selectedCategory.toLowerCase()
+        item.category?.toLowerCase() === selectedCategory
       );
     }
 
-    // Filter by search term
+    // Filter by search term (name or description)
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(item =>
@@ -64,15 +107,20 @@ export default function MenuScreen() {
       );
     }
 
+    // Filter by short code
+    if (shortCodeSearch.trim()) {
+      const code = shortCodeSearch.toLowerCase();
+      filtered = filtered.filter(item =>
+        item.shortCode?.toLowerCase().includes(code) ||
+        item.name?.toLowerCase().startsWith(code)
+      );
+    }
+
     // Filter only active items
     filtered = filtered.filter(item => item.status === 'active');
 
-    setFilteredItems(filtered);
-  }, [menuItems, selectedCategory, searchTerm]);
-
-  useEffect(() => {
-    filterItems();
-  }, [filterItems]);
+    return filtered;
+  }, [selectedCategory, searchTerm, shortCodeSearch, menuItems]);
 
   const loadInitialData = async () => {
     try {
@@ -84,6 +132,10 @@ export default function MenuScreen() {
       }
 
       setUser(userData);
+      // Check if user is waiter (not owner/manager)
+      const userRole = userData.role?.toLowerCase();
+      setIsWaiter(userRole === 'waiter' || userRole === 'employee');
+
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {
         Alert.alert('Error', 'No restaurant assigned.');
@@ -108,28 +160,24 @@ export default function MenuScreen() {
       setMenuItems(items);
 
       // Generate categories
-      const categorySet = new Set(['all']);
+      const categorySet = new Set(['all-items']);
       items.forEach(item => {
         if (item.category) {
-          categorySet.add(item.category);
+          categorySet.add(item.category.toLowerCase());
         }
       });
 
-      setCategories(Array.from(categorySet));
+      const cats = Array.from(categorySet).map(cat => ({
+        id: cat,
+        name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1),
+      }));
+      setCategories(cats);
     } catch (error) {
       console.error('Error loading menu:', error);
       throw error;
     }
   };
 
-  const getCategoryBadge = (category) => {
-    if (!category) return 'GEN';
-    const words = category.split(' ');
-    if (words.length > 1) {
-      return words.map(w => w[0]).join('').toUpperCase().slice(0, 3);
-    }
-    return category.slice(0, 3).toUpperCase();
-  };
 
   const addToCart = (item) => {
     const existingItem = cart.find(cartItem => cartItem.id === item.id);
@@ -169,11 +217,109 @@ export default function MenuScreen() {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
   };
 
-  const getCartItemCount = () => {
-    return cart.reduce((total, item) => total + item.quantity, 0);
+  const handleSendToKitchen = async () => {
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to cart before sending to kitchen.');
+      return;
+    }
+
+    if (!selectedTable && !params.tableNumber) {
+      Alert.alert('Select Table', 'Please select a table first.');
+      return;
+    }
+
+    setSendingOrder(true);
+
+    try {
+      const tableId = selectedTable?.id || params.tableId;
+      const tableNumber = selectedTable?.name || params.tableNumber;
+      let response;
+      let orderId;
+
+      if (existingOrderId) {
+        // Update existing order
+        const orderData = {
+          items: cart.map(item => ({
+            menuItemId: item.menuItemId || item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+          status: 'confirmed', // Send directly to kitchen
+        };
+
+        response = await apiClient.updateOrder(existingOrderId, orderData);
+        orderId = existingOrderId;
+      } else {
+        // Create new order
+        const orderData = {
+          restaurantId,
+          tableNumber: tableNumber,
+          items: cart.map(item => ({
+            menuItemId: item.menuItemId || item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+          orderType: 'dine-in',
+          paymentMethod: 'cash',
+          status: 'confirmed', // Send directly to kitchen
+          staffInfo: {
+            waiterId: user?.id,
+            waiterName: user?.name || 'Waiter',
+          },
+        };
+
+        response = await apiClient.createOrder(orderData);
+        orderId = response.order?.id;
+      }
+
+      // Update table status to occupied in background (don't wait)
+      if (tableId && restaurantId) {
+        apiClient.updateTableStatus(tableId, 'occupied', orderId, restaurantId).catch(err => {
+          console.error('Error updating table status:', err);
+          // Don't block user, just log error
+        });
+      }
+
+      // Show success and redirect immediately
+      const orderNumber = response.order?.dailyOrderId || orderId?.slice(-6);
+      Alert.alert(
+        existingOrderId ? 'Order Updated! 👨‍🍳' : 'Order Sent to Kitchen! 👨‍🍳',
+        existingOrderId 
+          ? `Order #${orderNumber} has been updated and sent to kitchen.`
+          : `Order #${orderNumber} has been sent to kitchen.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setCart([]);
+              setShowCart(false);
+              setExistingOrderId(null);
+              // Redirect to tables screen with table update info for optimistic update
+              router.replace({
+                pathname: '/(tabs)/tables',
+                params: { 
+                  tableId: tableId,
+                  orderId: orderId,
+                  tableStatus: 'occupied',
+                  tableNumber: tableNumber,
+                },
+              });
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error sending order:', error);
+      Alert.alert('Error', error.message || 'Failed to send order to kitchen. Please try again.');
+    } finally {
+      setSendingOrder(false);
+    }
   };
 
   const handlePlaceOrder = async () => {
+    // For admin/manager - full billing flow
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -203,7 +349,7 @@ export default function MenuScreen() {
         },
       };
 
-      await apiClient.createOrder(orderData);
+      const response = await apiClient.createOrder(orderData);
 
       Alert.alert('Success', 'Order placed successfully!', [
         {
@@ -221,50 +367,209 @@ export default function MenuScreen() {
     }
   };
 
-  const renderMenuItem = ({ item, index }) => {
+  const handleBack = () => {
+    router.back();
+  };
+
+  const getItemImage = (item) => {
+    if (!showImages) return null;
+    // Use the placeholder images utility which handles all cases
+    return getDisplayImage(item, 'https://dineopen.com');
+  };
+
+  const getCategoryName = (categoryId) => {
+    const category = categories.find(c => c.id === categoryId);
+    return category?.name || 'Main Course';
+  };
+
+  const renderMenuItem = ({ item }) => {
     const cartItem = cart.find(c => c.id === item.id);
     const quantity = cartItem?.quantity || 0;
-    const categoryBadge = getCategoryBadge(item.category);
-    const isInStock = item.status === 'active';
+    const imageUrl = showImages ? getItemImage(item) : null;
+    const isVeg = item.isVeg !== false;
+    const hasImage = imageUrl !== null;
 
-    return (
-      <View style={styles.menuCard}>
-        {/* Top Status Bar */}
-        <View style={[styles.statusBar, { backgroundColor: isInStock ? '#10b981' : '#ef4444' }]} />
-
-        {/* Category Badge */}
-        <View style={styles.categoryBadgeContainer}>
-          <Text style={styles.categoryBadgeText}>{categoryBadge}</Text>
-        </View>
-
-        {/* Veg Indicator */}
-        {item.isVeg !== false && (
-          <View style={styles.vegIndicatorSmall}>
-            <View style={styles.vegDotSmall} />
+    // Modern Design with Full Image Background (when image exists)
+    if (hasImage) {
+      return (
+        <TouchableOpacity
+          style={styles.menuItemCardImage}
+          onPress={() => addToCart(item)}
+          activeOpacity={0.9}
+        >
+          {/* Full Background Image */}
+          <View style={styles.fullImageContainer}>
+            <Image
+              source={{ uri: imageUrl }}
+              style={styles.fullImage}
+              resizeMode="cover"
+            />
+            {/* Dark Gradient Overlay - Simulated with multiple layers */}
+            <View style={styles.darkGradientOverlay} />
+            <View style={styles.darkGradientOverlayBottom} />
           </View>
-        )}
 
-        {/* Item Name */}
-        <View style={styles.menuCardBody}>
-          <Text style={styles.menuItemName} numberOfLines={2}>{item.name}</Text>
-        </View>
+          {/* Veg/Non-Veg Badge - Top Left */}
+          <View style={[styles.vegBadgeImage, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
+            <Ionicons 
+              name={isVeg ? "leaf" : "nutrition"} 
+              size={8} 
+              color="#fff" 
+            />
+          </View>
 
-        {/* Price and Add Button */}
-        <View style={styles.menuCardFooter}>
-          <Text style={styles.menuItemPrice}>₹{item.price}</Text>
-          {quantity > 0 ? (
-            <View style={styles.quantityBadge}>
-              <Text style={styles.quantityBadgeText}>{quantity}</Text>
+          {/* Top Right Badges */}
+          <View style={styles.topRightBadges}>
+            {item.shortCode && (
+              <View style={styles.shortCodeBadgeImage}>
+                <Text style={styles.shortCodeTextImage}>{item.shortCode}</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Bottom Content - Overlaid on image */}
+          <View style={styles.bottomContentOverlay}>
+            <Text style={styles.menuItemNameImage} numberOfLines={2}>
+              {item.name}
+            </Text>
+            
+            <View style={styles.priceAddRow}>
+              <Text style={styles.menuItemPriceImage}>₹{item.price}</Text>
+              {quantity > 0 ? (
+                <View style={styles.quantityControlsImage}>
+                  <TouchableOpacity
+                    style={styles.quantityButtonImage}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      updateCartQuantity(item.id, quantity - 1);
+                    }}
+                  >
+                    <Ionicons name="remove" size={9} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={styles.quantityTextImage}>{quantity}</Text>
+                  <TouchableOpacity
+                    style={styles.quantityButtonImage}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      updateCartQuantity(item.id, quantity + 1);
+                    }}
+                  >
+                    <Ionicons name="add" size={9} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.addButtonImage}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    addToCart(item);
+                  }}
+                >
+                  <Ionicons name="add" size={8} color="#1f2937" />
+                  <Text style={styles.addButtonText}>ADD</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          ) : null}
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => addToCart(item)}
-          >
-            <Text style={styles.addButtonText}>+ Add</Text>
-          </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // Fallback Design (no image)
+    return (
+      <TouchableOpacity
+        style={[styles.menuItemCardNoImage, { borderTopColor: isVeg ? '#22c55e' : '#ef4444' }]}
+        onPress={() => addToCart(item)}
+        activeOpacity={0.9}
+      >
+        {/* Veg/Non-Veg Badge - Top Left */}
+        <View style={[styles.vegBadgeNoImage, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
+          <Ionicons 
+            name={isVeg ? "leaf" : "nutrition"} 
+            size={9} 
+            color="#fff" 
+          />
         </View>
-      </View>
+
+        {/* Top Right Badges */}
+        <View style={styles.topRightBadgesNoImage}>
+          {item.shortCode && (
+            <View style={styles.shortCodeBadgeNoImage}>
+              <Text style={styles.shortCodeTextNoImage}>{item.shortCode}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Main Content */}
+        <View style={styles.contentNoImage}>
+          <Text style={styles.menuItemNameNoImage} numberOfLines={2}>
+            {item.name}
+          </Text>
+          {item.description && (
+            <Text style={styles.menuItemDescriptionNoImage} numberOfLines={1}>
+              {item.description}
+            </Text>
+          )}
+        </View>
+
+        {/* Bottom Section */}
+        <View style={styles.bottomSectionNoImage}>
+          <Text style={styles.menuItemPriceNoImage}>₹{item.price}</Text>
+          {quantity > 0 ? (
+            <View style={styles.quantityControlsNoImage}>
+              <TouchableOpacity
+                style={styles.quantityButtonNoImage}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  updateCartQuantity(item.id, quantity - 1);
+                }}
+              >
+                <Ionicons name="remove" size={10} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.quantityTextNoImage}>{quantity}</Text>
+              <TouchableOpacity
+                style={styles.quantityButtonNoImage}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  updateCartQuantity(item.id, quantity + 1);
+                }}
+              >
+                <Ionicons name="add" size={10} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.addButtonNoImage}
+              onPress={(e) => {
+                e.stopPropagation();
+                addToCart(item);
+              }}
+            >
+              <Ionicons name="add" size={8} color="#6b7280" />
+              <Text style={styles.addButtonTextNoImage}>ADD</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderCategory = ({ item }) => {
+    const isSelected = selectedCategory === item.id;
+    return (
+      <TouchableOpacity
+        style={[styles.categoryButton, isSelected && styles.categoryButtonSelected]}
+        onPress={() => setSelectedCategory(item.id)}
+      >
+        <Text
+          style={[
+            styles.categoryText,
+            isSelected && styles.categoryTextSelected,
+          ]}
+        >
+          {item.name}
+        </Text>
+      </TouchableOpacity>
     );
   };
 
@@ -281,92 +586,159 @@ export default function MenuScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
+      <View style={styles.contentWrapper}>
+      {/* Clean Header */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.brandIcon}>
-            <Ionicons name="restaurant" size={24} color="#fff" />
-          </View>
-        </View>
-        <View style={styles.headerRight}>
-          <Text style={styles.languageText}>English ▼</Text>
-          <TouchableOpacity style={styles.menuButton}>
-            <Ionicons name="menu" size={28} color={Colors.textDark} />
-          </TouchableOpacity>
-        </View>
+        {selectedTable ? (
+          <>
+            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+              <Ionicons name="arrow-back" size={22} color={Colors.textDark} />
+            </TouchableOpacity>
+            <View style={styles.headerCenter}>
+              <View style={styles.tableBadge}>
+                <Ionicons name="restaurant" size={14} color={Colors.primary} />
+                <Text style={styles.tableNumber}>Table {selectedTable.name}</Text>
+              </View>
+            </View>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.toggleButton}
+                onPress={toggleImages}
+              >
+                <Ionicons 
+                  name={showImages ? "image" : "image-outline"} 
+                  size={20} 
+                  color={showImages ? Colors.primary : Colors.textMedium} 
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.voiceButton}
+                onPress={() => setShowVoiceModal(true)}
+              >
+                <Ionicons name="mic" size={22} color={Colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <View>
+              <Text style={styles.headerTitle}>Menu</Text>
+              <Text style={styles.headerSubtitle}>{restaurantName}</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.toggleButton}
+                onPress={toggleImages}
+              >
+                <Ionicons 
+                  name={showImages ? "image" : "image-outline"} 
+                  size={20} 
+                  color={showImages ? Colors.primary : Colors.textMedium} 
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.voiceButton}
+                onPress={() => setShowVoiceModal(true)}
+              >
+                <Ionicons name="mic" size={22} color={Colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
       </View>
 
-      {/* Restaurant Info */}
-      <View style={styles.restaurantInfo}>
-        <Text style={styles.restaurantName}>{restaurantName}</Text>
-        <Text style={styles.itemCount}>
-          {filteredItems.length} items • All Categories
-        </Text>
-      </View>
-
-      {/* Action Buttons */}
-      <View style={styles.actionButtons}>
-        <TouchableOpacity style={styles.actionButtonSecondary}>
-          <Text style={styles.actionButtonSecondaryText}>Order</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButtonSecondary}>
-          <Text style={styles.actionButtonSecondaryText}>SC</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButtonPrimary}>
-          <Text style={styles.actionButtonPrimaryText}>FRESH ORDER</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionButtonVoice}
-          onPress={() => setShowVoiceModal(true)}
-        >
-          <Ionicons name="mic" size={20} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionButtonTable}
-          onPress={() => router.push('/(tabs)/tables')}
-        >
-          <Text style={styles.actionButtonTableText}>TABLES</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Search */}
+      {/* Clean Search Bar */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color={Colors.textLight} style={styles.searchIcon} />
+        <Ionicons name="search" size={18} color={Colors.textLight} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search..."
+          placeholder="Search items or code..."
           placeholderTextColor={Colors.textLight}
-          value={searchTerm}
-          onChangeText={setSearchTerm}
+          value={searchTerm || shortCodeSearch}
+          onChangeText={(text) => {
+            if (text.length <= 5 && text === text.toUpperCase()) {
+              setShortCodeSearch(text);
+              setSearchTerm('');
+            } else {
+              setSearchTerm(text);
+              setShortCodeSearch('');
+            }
+          }}
         />
+        {(searchTerm || shortCodeSearch) && (
+          <TouchableOpacity onPress={() => {
+            setSearchTerm('');
+            setShortCodeSearch('');
+          }}>
+            <Ionicons name="close-circle" size={18} color={Colors.textLight} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Menu Grid */}
+      {/* Clean Category Chips */}
+      <FlatList
+        horizontal
+        data={categories}
+        renderItem={renderCategory}
+        keyExtractor={(item) => item.id}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.categoriesContainer}
+      />
+
+      {/* Menu Items - 2 Column Grid */}
       <FlatList
         data={filteredItems}
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
         numColumns={2}
-        contentContainerStyle={styles.menuGrid}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.menuList}
+        columnWrapperStyle={styles.menuRow}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyText}>No items found</Text>
+            <Text style={styles.emptySubtext}>
+              {searchTerm || shortCodeSearch ? 'Try a different search term' : 'No menu items available'}
+            </Text>
           </View>
         }
       />
 
-      {/* Cart Button */}
-      {cart.length > 0 && (
+      {/* Bottom Order Button - For Waiters */}
+      {isWaiter && cart.length > 0 && (
+        <View style={styles.bottomOrderBar}>
+          <View style={styles.orderSummary}>
+            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
+            <Text style={styles.orderTotal}>₹{getCartTotal().toFixed(2)}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.orderButton, sendingOrder && styles.orderButtonDisabled]}
+            onPress={handleSendToKitchen}
+            disabled={sendingOrder}
+          >
+            {sendingOrder ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="send" size={18} color="#fff" />
+                <Text style={styles.orderButtonText}>Send to Kitchen</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Cart FAB - For Admin/Manager */}
+      {!isWaiter && cart.length > 0 && (
         <TouchableOpacity
-          style={styles.cartButton}
+          style={styles.cartFAB}
           onPress={() => setShowCart(true)}
         >
-          <View style={styles.cartButtonContent}>
-            <Ionicons name="cart" size={24} color="#fff" />
-            <Text style={styles.cartButtonText}>Cart</Text>
+          <Ionicons name="cart" size={24} color="#fff" />
+          <View style={styles.cartFABBadge}>
+            <Text style={styles.cartFABBadgeText}>{cart.length}</Text>
           </View>
+          <Text style={styles.cartFABText}>₹{getCartTotal().toFixed(2)}</Text>
         </TouchableOpacity>
       )}
 
@@ -381,17 +753,32 @@ export default function MenuScreen() {
         restaurantId={restaurantId}
       />
 
-      {/* Cart Modal */}
-      <CartModal
-        visible={showCart}
-        onClose={() => setShowCart(false)}
-        cart={cart}
-        onUpdateQuantity={updateCartQuantity}
-        onRemoveItem={removeFromCart}
-        onPlaceOrder={handlePlaceOrder}
-        total={getCartTotal()}
-        tableNumber={selectedTable?.name || params.tableNumber}
-      />
+      {/* Cart Modal - Permission Based */}
+      {isWaiter ? (
+        <WaiterCartModal
+          visible={showCart}
+          onClose={() => setShowCart(false)}
+          cart={cart}
+          onUpdateQuantity={updateCartQuantity}
+          onRemoveItem={removeFromCart}
+          onSendToKitchen={handleSendToKitchen}
+          total={getCartTotal()}
+          tableNumber={selectedTable?.name || params.tableNumber}
+          sending={sendingOrder}
+        />
+      ) : (
+        <CartModal
+          visible={showCart}
+          onClose={() => setShowCart(false)}
+          cart={cart}
+          onUpdateQuantity={updateCartQuantity}
+          onRemoveItem={removeFromCart}
+          onPlaceOrder={handlePlaceOrder}
+          total={getCartTotal()}
+          tableNumber={selectedTable?.name || params.tableNumber}
+        />
+      )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -399,259 +786,509 @@ export default function MenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
+  contentWrapper: {
+    flex: 1,
+  },
+  // Clean Header
   header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    backgroundColor: '#fff',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  brandIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: Colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  languageText: {
-    fontSize: 14,
-    color: Colors.textDark,
-    fontWeight: '500',
-  },
-  menuButton: {
-    padding: 4,
-  },
-  restaurantInfo: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
-  },
-  restaurantName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: 4,
-  },
-  itemCount: {
-    fontSize: 14,
-    color: Colors.textMedium,
-  },
-  actionButtons: {
-    flexDirection: 'row',
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
-    gap: Spacing.sm,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.backgroundWhite,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+    ...Shadows.small,
   },
-  actionButtonSecondary: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: 6,
-    backgroundColor: '#fef3c7',
+  backButton: {
+    padding: Spacing.sm,
+    marginRight: Spacing.xs,
+    borderRadius: BorderRadius.full,
   },
-  actionButtonSecondaryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textDark,
-  },
-  actionButtonPrimary: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: 6,
-    backgroundColor: Colors.primary,
-  },
-  actionButtonPrimaryText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  actionButtonVoice: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#10b981',
-    justifyContent: 'center',
+  headerCenter: {
+    flex: 1,
     alignItems: 'center',
   },
-  actionButtonTable: {
+  tableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fef2f2',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: Colors.primary,
-    backgroundColor: '#fff',
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
   },
-  actionButtonTableText: {
-    fontSize: 12,
+  tableNumber: {
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.primary,
   },
+  headerTitle: {
+    fontSize: Typography.h2.fontSize,
+    fontWeight: Typography.h2.fontWeight,
+    color: Colors.textDark,
+  },
+  headerSubtitle: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textMedium,
+    marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'center',
+  },
+  toggleButton: {
+    padding: Spacing.sm,
+  },
+  voiceButton: {
+    padding: Spacing.sm,
+  },
+  cartButton: {
+    padding: Spacing.sm,
+    position: 'relative',
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  // Cool Search Bar - No Thick Border
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#f8f9fa',
     marginHorizontal: Spacing.md,
-    marginVertical: Spacing.md,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderRadius: 12,
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
+    paddingVertical: 12,
+    ...Shadows.small,
   },
   searchIcon: {
     marginRight: Spacing.sm,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 15,
     color: Colors.textDark,
+    padding: 0,
+    fontWeight: '500',
   },
-  menuGrid: {
-    paddingHorizontal: Spacing.xs,
-    paddingBottom: 100,
+  clearButton: {
+    padding: 4,
+    marginLeft: Spacing.xs,
   },
-  menuCard: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    margin: Spacing.xs,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-    minHeight: 140,
-  },
-  statusBar: {
-    height: 4,
-    width: '100%',
-  },
-  categoryBadgeContainer: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    backgroundColor: '#f5f5f5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    zIndex: 1,
-  },
-  categoryBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  vegIndicatorSmall: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 16,
-    height: 16,
-    borderRadius: 3,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#10b981',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  vegDotSmall: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10b981',
-  },
-  menuCardBody: {
+  // Visible Category Chips
+  categoriesContainer: {
     paddingHorizontal: Spacing.md,
-    paddingTop: 36,
-    paddingBottom: Spacing.sm,
-    minHeight: 70,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  categoryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    marginRight: Spacing.sm,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    minHeight: 40,
+    justifyContent: 'center',
+    ...Shadows.small,
+  },
+  categoryButtonSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    ...Shadows.medium,
+  },
+  categoryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  categoryTextSelected: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  // Grid Menu List
+  menuList: {
+    padding: Spacing.md,
+    paddingBottom: 120, // Space for bottom button
+  },
+  menuRow: {
+    justifyContent: 'space-between',
+    gap: Spacing.lg,
+  },
+  // Modern Design with Full Image Background
+  menuItemCardImage: {
+    backgroundColor: '#1f2937',
+    borderRadius: 8,
+    marginBottom: Spacing.sm,
+    width: '48%',
+    height: 140,
+    overflow: 'hidden',
+    ...Shadows.medium,
+    position: 'relative',
+  },
+  fullImageContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 0,
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  darkGradientOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  darkGradientOverlayBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '60%',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+  },
+  vegBadgeImage: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 10,
+    borderWidth: 2,
+    borderColor: '#fff',
+    ...Shadows.small,
   },
-  menuItemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
-    textAlign: 'center',
+  topRightBadges: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 10,
+    gap: 4,
   },
-  menuCardFooter: {
+  shortCodeBadgeImage: {
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  shortCodeTextImage: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#ffffff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  bottomContentOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+    padding: 10,
+    gap: 6,
+  },
+  menuItemNameImage: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+    lineHeight: 16,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  priceAddRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.md,
     justifyContent: 'space-between',
+    marginTop: 2,
   },
-  menuItemPrice: {
-    fontSize: 16,
+  menuItemPriceImage: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  quantityControlsImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  quantityButtonImage: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quantityTextImage: {
+    width: 32,
+    height: 28,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#fff',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  addButtonImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 4,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    ...Shadows.small,
+  },
+  addButtonText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1f2937',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  // Fallback Design (No Image)
+  menuItemCardNoImage: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderTopWidth: 3,
+    borderRadius: 4,
+    marginBottom: Spacing.sm,
+    width: '48%',
+    height: 120,
+    padding: 12,
+    ...Shadows.small,
+    position: 'relative',
+  },
+  vegBadgeNoImage: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    borderWidth: 2,
+    borderColor: '#fff',
+    ...Shadows.small,
+  },
+  topRightBadgesNoImage: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 10,
+    gap: 4,
+  },
+  shortCodeBadgeNoImage: {
+    backgroundColor: '#6b7280',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  shortCodeTextNoImage: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#ffffff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  contentNoImage: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  menuItemNameNoImage: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    lineHeight: 17,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  menuItemDescriptionNoImage: {
+    fontSize: 10,
+    color: '#6b7280',
+    lineHeight: 12,
+    textAlign: 'center',
+  },
+  bottomSectionNoImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    marginTop: 8,
+  },
+  menuItemPriceNoImage: {
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.primary,
   },
-  quantityBadge: {
+  quantityControlsNoImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: Colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    marginLeft: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
-  quantityBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  addButton: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    backgroundColor: '#fff',
-  },
-  addButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textDark,
-  },
-  cartButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#6b7280',
+  quantityButtonNoImage: {
+    width: 28,
+    height: 28,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  quantityTextNoImage: {
+    width: 36,
+    height: 28,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  addButtonNoImage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  addButtonTextNoImage: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  // Bottom Order Bar (for waiters)
+  bottomOrderBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.backgroundWhite,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg + 8, // Extra padding for tab bar
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+    ...Shadows.medium,
+  },
+  orderSummary: {
+    flex: 1,
+  },
+  orderItemsCount: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textMedium,
+    marginBottom: 2,
+  },
+  orderTotal: {
+    fontSize: Typography.h3.fontSize,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  orderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    gap: Spacing.sm,
+  },
+  orderButtonDisabled: {
+    opacity: 0.6,
+  },
+  orderButtonText: {
+    color: '#fff',
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: '600',
+  },
+  cartFAB: {
+    position: 'absolute',
+    bottom: 80,
+    right: Spacing.md,
+    backgroundColor: Colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.full,
+    gap: Spacing.sm,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
   },
-  cartButtonContent: {
+  cartFABBadge: {
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.full,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 4,
   },
-  cartButtonText: {
-    color: '#fff',
+  cartFABBadgeText: {
+    color: Colors.primary,
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  cartFABText: {
+    color: '#fff',
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
   },
   loadingContainer: {
     flex: 1,
@@ -660,7 +1297,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   loadingText: {
-    fontSize: 14,
+    fontSize: Typography.body.fontSize,
     color: Colors.textMedium,
   },
   emptyContainer: {
@@ -669,12 +1306,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.xl,
     gap: Spacing.md,
-    marginTop: Spacing.xxl,
   },
   emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: Typography.h3.fontSize,
+    fontWeight: Typography.h3.fontWeight,
     color: Colors.textDark,
     marginTop: Spacing.md,
+  },
+  emptySubtext: {
+    fontSize: Typography.body.fontSize,
+    color: Colors.textMedium,
+    textAlign: 'center',
   },
 });

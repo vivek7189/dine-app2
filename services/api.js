@@ -129,10 +129,14 @@ class ApiClient {
   }
 
   // Update table status
-  async updateTableStatus(tableId, status) {
+  async updateTableStatus(tableId, status, orderId = null, restaurantId = null) {
+    const body = { status };
+    if (orderId) body.orderId = orderId;
+    if (restaurantId) body.restaurantId = restaurantId;
+    
     return this.request(`/api/tables/${tableId}/status`, {
       method: 'PATCH',
-      data: { status },
+      data: body,
     });
   }
 
@@ -156,6 +160,14 @@ class ApiClient {
     return this.request(`/api/orders/${orderId}`, {
       method: 'PATCH',
       data: orderData,
+    });
+  }
+
+  // Update order status
+  async updateOrderStatus(orderId, status, restaurantId) {
+    return this.request(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      data: { status, restaurantId },
     });
   }
 

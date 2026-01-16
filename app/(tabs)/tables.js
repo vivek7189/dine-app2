@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,14 +9,16 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import OrderDetailsModal from '../../components/OrderDetailsModal';
 
 export default function TablesScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [floors, setFloors] = useState([]);
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,10 +26,161 @@ export default function TablesScreen() {
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
   const [user, setUser] = useState(null);
   const [selectedFloor, setSelectedFloor] = useState(null);
+  const [selectedStatus, setSelectedStatus] = useState(null); // 'available', 'occupied', 'reserved', or null
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [selectedTableForOrder, setSelectedTableForOrder] = useState(null);
+  const [orderModalMode, setOrderModalMode] = useState('view'); // 'view' or 'add'
+  const isInitialLoadRef = useRef(true);
+  const isRefreshingRef = useRef(false);
+  const restaurantIdRef = useRef(null);
 
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Memoize loadFloorsAndTables to prevent recreation
+  const loadFloorsAndTables = useCallback(async (restaurantId) => {
+    // Prevent multiple simultaneous calls
+    if (isRefreshingRef.current) {
+      return;
+    }
+    
+    try {
+      isRefreshingRef.current = true;
+      const response = await apiClient.getFloors(restaurantId);
+
+      let floorsData = [];
+      if (response.floors) {
+        floorsData = response.floors;
+      } else if (Array.isArray(response)) {
+        floorsData = response;
+      }
+
+      setFloors(floorsData);
+      setSelectedFloor(prev => {
+        if (!prev && floorsData.length > 0) {
+          return floorsData[0];
+        }
+        return prev;
+      });
+
+      const allTables = floorsData.flatMap(floor => floor.tables || []);
+      setTables(allTables);
+    } catch (error) {
+      console.error('Error loading floors:', error);
+      throw error;
+    } finally {
+      isRefreshingRef.current = false;
+    }
+  }, []);
+
+  // Optimistically update table status
+  const updateTableStatusOptimistically = useCallback((tableId, status, orderId) => {
+    // Convert tableId to string for comparison (params come as strings)
+    const tableIdStr = String(tableId);
+    
+    setFloors(prevFloors => {
+      return prevFloors.map(floor => ({
+        ...floor,
+        tables: floor.tables?.map(table => {
+          // Compare as strings to handle both string and number IDs
+          if (String(table.id) === tableIdStr) {
+            return {
+              ...table,
+              status: status,
+              currentOrderId: orderId || table.currentOrderId,
+            };
+          }
+          return table;
+        }) || [],
+      }));
+    });
+
+    setTables(prevTables => {
+      return prevTables.map(table => {
+        // Compare as strings to handle both string and number IDs
+        if (String(table.id) === tableIdStr) {
+          return {
+            ...table,
+            status: status,
+            currentOrderId: orderId || table.currentOrderId,
+          };
+        }
+        return table;
+      });
+    });
+  }, []);
+
+  // Background refresh without blocking
+  const refreshInBackground = useCallback(async (restaurantId) => {
+    if (isRefreshingRef.current) return;
+    
+    try {
+      isRefreshingRef.current = true;
+      const response = await apiClient.getFloors(restaurantId);
+
+      let floorsData = [];
+      if (response.floors) {
+        floorsData = response.floors;
+      } else if (Array.isArray(response)) {
+        floorsData = response;
+      }
+
+      setFloors(floorsData);
+      setSelectedFloor(prev => {
+        if (!prev && floorsData.length > 0) {
+          return floorsData[0];
+        }
+        // Update selected floor with fresh data
+        if (prev) {
+          const updatedFloor = floorsData.find(f => f.id === prev.id);
+          return updatedFloor || prev;
+        }
+        return prev;
+      });
+
+      const allTables = floorsData.flatMap(floor => floor.tables || []);
+      setTables(allTables);
+    } catch (error) {
+      console.error('Error refreshing in background:', error);
+      // Don't show error to user, just log it
+    } finally {
+      isRefreshingRef.current = false;
+    }
+  }, []);
+
+  // Refresh tables when screen comes into focus (only after initial load)
+  useFocusEffect(
+    useCallback(() => {
+      // Skip refresh on initial mount
+      if (isInitialLoadRef.current) {
+        isInitialLoadRef.current = false;
+        return;
+      }
+
+      // Check if we have table update params (from menu screen)
+      if (params.tableId && params.tableStatus) {
+        // Optimistically update table status immediately (don't wait)
+        // Note: params come as strings, so we need to match by string or convert
+        const tableIdToUpdate = params.tableId;
+        updateTableStatusOptimistically(
+          tableIdToUpdate,
+          params.tableStatus,
+          params.orderId
+        );
+      }
+
+      // Refresh in background without blocking (small delay to let optimistic update show first)
+      const restaurantId = restaurantIdRef.current;
+      if (restaurantId && !isRefreshingRef.current) {
+        // Delay background refresh slightly to let optimistic update show first
+        setTimeout(() => {
+          refreshInBackground(restaurantId);
+        }, 500);
+      }
+    }, [params.tableId, params.tableStatus, params.orderId, updateTableStatusOptimistically, refreshInBackground, router])
+  );
 
   const loadInitialData = async () => {
     try {
@@ -46,7 +199,9 @@ export default function TablesScreen() {
         return;
       }
 
-      setSelectedRestaurant({ id: restaurantId, ...userData.restaurant });
+      const restaurant = { id: restaurantId, ...userData.restaurant };
+      setSelectedRestaurant(restaurant);
+      restaurantIdRef.current = restaurantId;
       await loadFloorsAndTables(restaurantId);
     } catch (error) {
       console.error('Error loading initial data:', error);
@@ -56,29 +211,6 @@ export default function TablesScreen() {
     }
   };
 
-  const loadFloorsAndTables = async (restaurantId) => {
-    try {
-      const response = await apiClient.getFloors(restaurantId);
-
-      let floorsData = [];
-      if (response.floors) {
-        floorsData = response.floors;
-      } else if (Array.isArray(response)) {
-        floorsData = response;
-      }
-
-      setFloors(floorsData);
-      if (floorsData.length > 0 && !selectedFloor) {
-        setSelectedFloor(floorsData[0]);
-      }
-
-      const allTables = floorsData.flatMap(floor => floor.tables || []);
-      setTables(allTables);
-    } catch (error) {
-      console.error('Error loading floors:', error);
-      throw error;
-    }
-  };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -116,6 +248,38 @@ export default function TablesScreen() {
     }
   };
 
+  const handleAddToOrder = (table) => {
+    if (table.status === 'occupied' && table.currentOrderId) {
+      setSelectedOrderId(table.currentOrderId);
+      setSelectedTableForOrder(table);
+      setOrderModalMode('add');
+      setShowOrderModal(true);
+    }
+  };
+
+  const handleViewOrder = (table) => {
+    if (table.status === 'occupied' && table.currentOrderId) {
+      setSelectedOrderId(table.currentOrderId);
+      setSelectedTableForOrder(table);
+      setOrderModalMode('view');
+      setShowOrderModal(true);
+    }
+  };
+
+  const handleAddItemsToOrder = (order, cartItems) => {
+    // Navigate to menu with existing order items
+    router.push({
+      pathname: '/(tabs)/menu',
+      params: {
+        tableId: selectedTableForOrder?.id,
+        tableNumber: selectedTableForOrder?.name,
+        orderId: order.id,
+        existingOrder: 'true',
+        cartItems: JSON.stringify(cartItems),
+      },
+    });
+  };
+
   const renderTable = ({ item: table }) => {
     const isOccupied = table.status === 'occupied';
     const isAvailable = table.status === 'available';
@@ -145,8 +309,8 @@ export default function TablesScreen() {
           <View style={styles.watermarkIcon}>
             <Ionicons
               name="restaurant"
-              size={80}
-              color={isAvailable ? "rgba(16, 185, 129, 0.08)" : isOccupied ? "rgba(245, 158, 11, 0.08)" : "rgba(139, 92, 246, 0.08)"}
+              size={60}
+              color={isAvailable ? "rgba(16, 185, 129, 0.06)" : isOccupied ? "rgba(245, 158, 11, 0.06)" : "rgba(139, 92, 246, 0.06)"}
             />
           </View>
 
@@ -170,7 +334,7 @@ export default function TablesScreen() {
             {/* Seats */}
             {table.capacity && (
               <View style={styles.seatsRow}>
-                <Ionicons name="people" size={14} color={Colors.textMedium} />
+                <Ionicons name="people" size={12} color={Colors.textMedium} />
                 <Text style={styles.seatsText}>{table.capacity} Seats</Text>
               </View>
             )}
@@ -179,19 +343,31 @@ export default function TablesScreen() {
             <View style={styles.tableActions}>
               {isAvailable ? (
                 <View style={styles.takeOrderButtonContainer}>
-                  <Ionicons name="restaurant" size={16} color="#fff" />
+                  <Ionicons name="restaurant" size={12} color="#fff" />
                   <Text style={styles.takeOrderButtonText}>Take Order</Text>
                 </View>
               ) : (
                 <View style={styles.occupiedActions}>
-                  <View style={styles.viewButton}>
-                    <Ionicons name="eye-outline" size={14} color={Colors.textDark} />
+                  <TouchableOpacity
+                    style={styles.viewButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleViewOrder(table);
+                    }}
+                  >
+                    <Ionicons name="eye-outline" size={11} color={Colors.textDark} />
                     <Text style={styles.viewButtonText}>View</Text>
-                  </View>
-                  <View style={styles.addButton}>
-                    <Ionicons name="add-circle" size={14} color="#5b7ff5" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAddToOrder(table);
+                    }}
+                  >
+                    <Ionicons name="add-circle" size={11} color="#5b7ff5" />
                     <Text style={styles.addButtonText}>Add</Text>
-                  </View>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -210,7 +386,7 @@ export default function TablesScreen() {
       >
         <Ionicons
           name="layers-outline"
-          size={16}
+          size={14}
           color={isSelected ? '#fff' : Colors.textMedium}
         />
         <Text style={[styles.floorChipText, isSelected && styles.floorChipTextSelected]}>
@@ -237,7 +413,14 @@ export default function TablesScreen() {
   }
 
   const stats = getTableStats();
-  const currentFloorTables = selectedFloor?.tables || [];
+  let currentFloorTables = selectedFloor?.tables || [];
+  
+  // Filter and sort tables by selected status
+  if (selectedStatus) {
+    const filtered = currentFloorTables.filter(t => t.status === selectedStatus);
+    const rest = currentFloorTables.filter(t => t.status !== selectedStatus);
+    currentFloorTables = [...filtered, ...rest];
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -257,35 +440,35 @@ export default function TablesScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Quick Stats */}
+      {/* Quick Stats - Icon + Count Only */}
       <View style={styles.quickStats}>
-        <View style={styles.statCard}>
-          <View style={[styles.statIconContainer, { backgroundColor: '#dcfce7' }]}>
-            <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
-          </View>
-          <View style={styles.statInfo}>
-            <Text style={styles.statNumber}>{stats.available}</Text>
-            <Text style={styles.statLabel}>Available</Text>
-          </View>
-        </View>
-        <View style={styles.statCard}>
-          <View style={[styles.statIconContainer, { backgroundColor: '#fed7aa' }]}>
-            <Ionicons name="time" size={20} color="#ea580c" />
-          </View>
-          <View style={styles.statInfo}>
-            <Text style={styles.statNumber}>{stats.occupied}</Text>
-            <Text style={styles.statLabel}>Occupied</Text>
-          </View>
-        </View>
-        <View style={styles.statCard}>
-          <View style={[styles.statIconContainer, { backgroundColor: '#e9d5ff' }]}>
-            <Ionicons name="calendar" size={20} color="#9333ea" />
-          </View>
-          <View style={styles.statInfo}>
-            <Text style={styles.statNumber}>{stats.reserved}</Text>
-            <Text style={styles.statLabel}>Reserved</Text>
-          </View>
-        </View>
+        <TouchableOpacity
+          style={[styles.statCard, selectedStatus === 'available' && styles.statCardSelected]}
+          onPress={() => setSelectedStatus(selectedStatus === 'available' ? null : 'available')}
+        >
+          <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+          <Text style={[styles.statCount, selectedStatus === 'available' && styles.statCountSelected]}>
+            {stats.available}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.statCard, selectedStatus === 'occupied' && styles.statCardSelected]}
+          onPress={() => setSelectedStatus(selectedStatus === 'occupied' ? null : 'occupied')}
+        >
+          <Ionicons name="time" size={18} color="#ea580c" />
+          <Text style={[styles.statCount, selectedStatus === 'occupied' && styles.statCountSelected]}>
+            {stats.occupied}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.statCard, selectedStatus === 'reserved' && styles.statCardSelected]}
+          onPress={() => setSelectedStatus(selectedStatus === 'reserved' ? null : 'reserved')}
+        >
+          <Ionicons name="calendar" size={18} color="#9333ea" />
+          <Text style={[styles.statCount, selectedStatus === 'reserved' && styles.statCountSelected]}>
+            {stats.reserved}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Floor Selector */}
@@ -323,17 +506,32 @@ export default function TablesScreen() {
         }
       />
 
+      {/* Order Details Modal */}
+      <OrderDetailsModal
+        visible={showOrderModal}
+        onClose={() => {
+          setShowOrderModal(false);
+          setSelectedOrderId(null);
+          setSelectedTableForOrder(null);
+          setOrderModalMode('view');
+        }}
+        orderId={selectedOrderId}
+        tableNumber={selectedTableForOrder?.name}
+        restaurantId={selectedRestaurant?.id}
+        onAddItems={orderModalMode === 'add' ? handleAddItemsToOrder : undefined}
+      />
+
       {/* Bottom Action Bar */}
       <View style={styles.bottomActionBar}>
         <TouchableOpacity style={styles.actionButtonSecondary}>
-          <Ionicons name="mic" size={20} color="#fff" />
+          <Ionicons name="mic" size={16} color="#fff" />
           <Text style={styles.actionButtonSecondaryText}>Voice Order</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionButtonPrimary}
           onPress={() => router.push('/(tabs)/orders')}
         >
-          <Ionicons name="receipt" size={20} color="#fff" />
+          <Ionicons name="receipt" size={16} color="#fff" />
           <Text style={styles.actionButtonPrimaryText}>View Orders</Text>
         </TouchableOpacity>
       </View>
@@ -350,8 +548,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
@@ -359,12 +557,12 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   brandIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
@@ -375,72 +573,67 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   restaurantName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.textDark,
   },
   userName: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textMedium,
-    marginTop: 2,
+    marginTop: 1,
   },
   refreshButton: {
     padding: 4,
   },
   quickStats: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
     backgroundColor: '#fff',
   },
   statCard: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#fafafa',
-    borderRadius: 12,
-    gap: 10,
-  },
-  statIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
     justifyContent: 'center',
-    alignItems: 'center',
+    padding: 8,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
-  statInfo: {
-    flex: 1,
+  statCardSelected: {
+    backgroundColor: '#fef2f2',
+    borderColor: Colors.primary,
   },
-  statNumber: {
-    fontSize: 18,
-    fontWeight: '800',
+  statCount: {
+    fontSize: 16,
+    fontWeight: '700',
     color: Colors.textDark,
   },
-  statLabel: {
-    fontSize: 10,
-    color: Colors.textMedium,
-    marginTop: 2,
+  statCountSelected: {
+    color: Colors.primary,
   },
   floorSelector: {
     backgroundColor: '#fff',
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
   },
   floorChipsContainer: {
-    paddingHorizontal: 16,
-    gap: 8,
+    paddingHorizontal: 14,
+    gap: 6,
   },
   floorChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     backgroundColor: '#f5f5f5',
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#e5e5e5',
   },
@@ -449,7 +642,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary,
   },
   floorChipText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textDark,
   },
@@ -458,17 +651,17 @@ const styles = StyleSheet.create({
   },
   floorBadge: {
     backgroundColor: '#e5e5e5',
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
-    borderRadius: 10,
-    minWidth: 20,
+    borderRadius: 8,
+    minWidth: 18,
     alignItems: 'center',
   },
   floorBadgeSelected: {
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
   },
   floorBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: Colors.textDark,
   },
@@ -476,22 +669,23 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   tablesGrid: {
-    padding: 12,
-    paddingBottom: 100,
+    padding: 10,
+    paddingBottom: 90,
   },
   tableRow: {
     justifyContent: 'space-between',
+    gap: 8,
   },
   tableCard: {
     flex: 1,
-    margin: 6,
-    borderRadius: 16,
+    margin: 4,
+    borderRadius: 12,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
   },
   tableCardAvailable: {
     backgroundColor: '#fff',
@@ -503,8 +697,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#faf5ff',
   },
   cardGradient: {
-    padding: 16,
-    minHeight: 180,
+    padding: 10,
+    minHeight: 130,
     position: 'relative',
   },
   statusIndicator: {
@@ -514,98 +708,98 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   statusDotGreen: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#16a34a',
     shadowColor: '#16a34a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 2,
   },
   statusDotOrange: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#ea580c',
     shadowColor: '#ea580c',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 2,
   },
   statusDotPurple: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#9333ea',
     shadowColor: '#9333ea',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 2,
   },
   watermarkIcon: {
     position: 'absolute',
-    bottom: -10,
-    right: -10,
-    opacity: 1,
+    bottom: -8,
+    right: -8,
+    opacity: 0.6,
   },
   tableContent: {
     flex: 1,
     justifyContent: 'space-between',
   },
   tableNumber: {
-    fontSize: 42,
-    fontWeight: '900',
+    fontSize: 24,
+    fontWeight: '700',
     color: Colors.textDark,
-    letterSpacing: -1,
+    letterSpacing: 0,
   },
   statusBadgeOccupied: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     backgroundColor: '#fed7aa',
     borderRadius: 6,
     marginTop: 4,
   },
   statusBadgeReserved: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     backgroundColor: '#e9d5ff',
     borderRadius: 6,
     marginTop: 4,
   },
   statusBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
+    fontSize: 8,
+    fontWeight: '700',
     color: Colors.textDark,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   seatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
+    gap: 4,
+    marginTop: 6,
   },
   seatsText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMedium,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   tableActions: {
-    marginTop: 12,
+    marginTop: 8,
   },
   takeOrderButtonContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
+    gap: 5,
+    paddingVertical: 8,
     backgroundColor: '#16a34a',
-    borderRadius: 10,
+    borderRadius: 8,
     shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
@@ -613,8 +807,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   takeOrderButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '600',
     color: '#fff',
   },
   occupiedActions: {
@@ -627,14 +821,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 10,
+    paddingVertical: 8,
     backgroundColor: '#fff',
     borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#e5e5e5',
   },
   viewButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: Colors.textDark,
   },
@@ -644,14 +838,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 10,
+    paddingVertical: 8,
     backgroundColor: '#dbeafe',
     borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#5b7ff5',
   },
   addButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#5b7ff5',
   },
@@ -661,8 +855,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: 'row',
-    padding: 16,
-    gap: 12,
+    padding: 12,
+    gap: 10,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e5e5e5',
@@ -677,10 +871,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
+    gap: 6,
+    paddingVertical: 11,
     backgroundColor: '#10b981',
-    borderRadius: 12,
+    borderRadius: 10,
     shadowColor: '#10b981',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
@@ -688,8 +882,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   actionButtonSecondaryText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     color: '#fff',
   },
   actionButtonPrimary: {
@@ -697,10 +891,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
+    gap: 6,
+    paddingVertical: 11,
     backgroundColor: Colors.primary,
-    borderRadius: 12,
+    borderRadius: 10,
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
@@ -708,8 +902,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   actionButtonPrimaryText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     color: '#fff',
   },
   loadingContainer: {
