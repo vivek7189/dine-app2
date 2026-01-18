@@ -72,7 +72,7 @@ export default function LoginScreen() {
             <Text style={styles.logoText}>DO</Text>
           </View>
           <Text style={styles.appName}>DineOpen</Text>
-          <Text style={styles.subtitle}>Waiter App</Text>
+          <Text style={styles.subtitle}>Staff App</Text>
         </View>
 
         {/* Login Form */}

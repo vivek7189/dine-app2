@@ -32,18 +32,27 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.textLight,
+        tabBarInactiveTintColor: '#999',
         tabBarStyle: {
-          backgroundColor: Colors.backgroundWhite,
-          borderTopColor: Colors.borderLight,
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#E5E5E5',
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: 75,
+          paddingBottom: 20,
+          paddingTop: 10,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 10,
         },
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
+          fontSize: 11,
+          fontWeight: '700',
+          marginTop: 4,
+        },
+        tabBarIconStyle: {
+          marginTop: 5,
         },
       }}
     >
@@ -51,8 +60,12 @@ export default function TabsLayout() {
         name="tables"
         options={{
           title: 'Tables',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="restaurant-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "restaurant" : "restaurant-outline"}
+              size={26}
+              color={color}
+            />
           ),
         }}
       />
@@ -60,8 +73,12 @@ export default function TabsLayout() {
         name="menu"
         options={{
           title: 'Menu',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="menu-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "fast-food" : "fast-food-outline"}
+              size={26}
+              color={color}
+            />
           ),
         }}
       />
@@ -69,8 +86,12 @@ export default function TabsLayout() {
         name="orders"
         options={{
           title: 'Orders',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="receipt-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "receipt" : "receipt-outline"}
+              size={26}
+              color={color}
+            />
           ),
         }}
       />
@@ -78,8 +99,12 @@ export default function TabsLayout() {
         name="menu-management"
         options={{
           title: 'Manage',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "settings" : "settings-outline"}
+              size={26}
+              color={color}
+            />
           ),
           // Hide menu management tab for waiters
           href: userRole && !['owner', 'manager'].includes(userRole.toLowerCase()) ? null : undefined,
@@ -89,8 +114,12 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "person" : "person-outline"}
+              size={26}
+              color={color}
+            />
           ),
         }}
       />

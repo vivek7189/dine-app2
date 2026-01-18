@@ -26,6 +26,12 @@
     "plugins": [
       "expo-router"
     ],
-    "scheme": "dineopen"
+    "scheme": "dineopen",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "dcfa8510-7c36-4f3c-badd-1888ca992d6c"
+      }
+    }
   }
 }

@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
+import AppDrawer from '../../components/AppDrawer';
 
 export default function TablesScreen() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function TablesScreen() {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedTableForOrder, setSelectedTableForOrder] = useState(null);
   const [orderModalMode, setOrderModalMode] = useState('view'); // 'view' or 'add'
+  const [drawerVisible, setDrawerVisible] = useState(false);
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
@@ -426,7 +428,14 @@ export default function TablesScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
+        <TouchableOpacity
+          onPress={() => setDrawerVisible(true)}
+          style={styles.menuButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="menu" size={28} color={Colors.textDark} />
+        </TouchableOpacity>
+        <View style={styles.headerCenter}>
           <View style={styles.brandIcon}>
             <Ionicons name="restaurant" size={22} color="#fff" />
           </View>
@@ -521,20 +530,16 @@ export default function TablesScreen() {
         onAddItems={orderModalMode === 'add' ? handleAddItemsToOrder : undefined}
       />
 
-      {/* Bottom Action Bar */}
-      <View style={styles.bottomActionBar}>
-        <TouchableOpacity style={styles.actionButtonSecondary}>
-          <Ionicons name="mic" size={16} color="#fff" />
-          <Text style={styles.actionButtonSecondaryText}>Voice Order</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionButtonPrimary}
-          onPress={() => router.push('/(tabs)/orders')}
-        >
-          <Ionicons name="receipt" size={16} color="#fff" />
-          <Text style={styles.actionButtonPrimaryText}>View Orders</Text>
-        </TouchableOpacity>
-      </View>
+      {/* App Drawer */}
+      <AppDrawer
+        visible={drawerVisible}
+        onClose={() => setDrawerVisible(false)}
+        user={user}
+        onLogout={async () => {
+          await apiClient.logout();
+          router.replace('/(auth)/login');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -554,7 +559,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
   },
-  headerLeft: {
+  menuButton: {
+    padding: 6,
+    marginRight: 4,
+  },
+  headerCenter: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -848,63 +858,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#5b7ff5',
-  },
-  bottomActionBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    padding: 12,
-    gap: 10,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e5e5',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  actionButtonSecondary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
-    backgroundColor: '#10b981',
-    borderRadius: 10,
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  actionButtonSecondaryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  actionButtonPrimary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
-    backgroundColor: Colors.primary,
-    borderRadius: 10,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  actionButtonPrimaryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
   },
   loadingContainer: {
     flex: 1,

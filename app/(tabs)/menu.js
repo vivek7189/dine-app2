@@ -558,14 +558,16 @@ export default function MenuScreen() {
     const isSelected = selectedCategory === item.id;
     return (
       <TouchableOpacity
-        style={[styles.categoryButton, isSelected && styles.categoryButtonSelected]}
+        style={[styles.categoryPill, isSelected && styles.categoryPillSelected]}
         onPress={() => setSelectedCategory(item.id)}
+        activeOpacity={0.7}
       >
         <Text
           style={[
-            styles.categoryText,
-            isSelected && styles.categoryTextSelected,
+            styles.categoryPillText,
+            isSelected && styles.categoryPillTextSelected,
           ]}
+          numberOfLines={1}
         >
           {item.name}
         </Text>
@@ -586,104 +588,97 @@ export default function MenuScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.contentWrapper}>
       {/* Clean Header */}
-      <View style={styles.header}>
+      <View style={styles.headerSection}>
         {selectedTable ? (
           <>
-            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={22} color={Colors.textDark} />
-            </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <View style={styles.tableBadge}>
-                <Ionicons name="restaurant" size={14} color={Colors.primary} />
-                <Text style={styles.tableNumber}>Table {selectedTable.name}</Text>
+            {/* Table Selection Mode */}
+            <View style={styles.headerTop}>
+              <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+                <Ionicons name="arrow-back" size={24} color="#1f2937" />
+              </TouchableOpacity>
+              <View style={styles.tableInfoCard}>
+                <Ionicons name="restaurant" size={18} color={Colors.primary} />
+                <Text style={styles.tableInfoText}>Table {selectedTable.name}</Text>
               </View>
-            </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.toggleButton}
-                onPress={toggleImages}
-              >
-                <Ionicons 
-                  name={showImages ? "image" : "image-outline"} 
-                  size={20} 
-                  color={showImages ? Colors.primary : Colors.textMedium} 
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.voiceButton}
-                onPress={() => setShowVoiceModal(true)}
-              >
-                <Ionicons name="mic" size={22} color={Colors.primary} />
-              </TouchableOpacity>
+              <View style={styles.headerIcons}>
+                <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
+                  <Ionicons
+                    name={showImages ? "image" : "image-outline"}
+                    size={22}
+                    color="#6b7280"
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
+                  <Ionicons name="mic" size={22} color={Colors.primary} />
+                </TouchableOpacity>
+              </View>
             </View>
           </>
         ) : (
           <>
-            <View>
-              <Text style={styles.headerTitle}>Menu</Text>
-              <Text style={styles.headerSubtitle}>{restaurantName}</Text>
-            </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.toggleButton}
-                onPress={toggleImages}
-              >
-                <Ionicons 
-                  name={showImages ? "image" : "image-outline"} 
-                  size={20} 
-                  color={showImages ? Colors.primary : Colors.textMedium} 
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.voiceButton}
-                onPress={() => setShowVoiceModal(true)}
-              >
-                <Ionicons name="mic" size={22} color={Colors.primary} />
-              </TouchableOpacity>
+            {/* Default Menu Mode */}
+            <View style={styles.headerTop}>
+              <View style={styles.headerTitleSection}>
+                <Text style={styles.headerTitle}>Menu</Text>
+                <Text style={styles.headerSubtitle}>{restaurantName}</Text>
+              </View>
+              <View style={styles.headerIcons}>
+                <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
+                  <Ionicons
+                    name={showImages ? "image" : "image-outline"}
+                    size={22}
+                    color="#6b7280"
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
+                  <Ionicons name="mic" size={22} color={Colors.primary} />
+                </TouchableOpacity>
+              </View>
             </View>
           </>
         )}
-      </View>
 
-      {/* Clean Search Bar */}
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={18} color={Colors.textLight} style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search items or code..."
-          placeholderTextColor={Colors.textLight}
-          value={searchTerm || shortCodeSearch}
-          onChangeText={(text) => {
-            if (text.length <= 5 && text === text.toUpperCase()) {
-              setShortCodeSearch(text);
+        {/* Separate Search Bar */}
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#9ca3af" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search menu items..."
+            placeholderTextColor="#9ca3af"
+            value={searchTerm || shortCodeSearch}
+            onChangeText={(text) => {
+              if (text.length <= 5 && text === text.toUpperCase()) {
+                setShortCodeSearch(text);
+                setSearchTerm('');
+              } else {
+                setSearchTerm(text);
+                setShortCodeSearch('');
+              }
+            }}
+          />
+          {(searchTerm || shortCodeSearch) && (
+            <TouchableOpacity onPress={() => {
               setSearchTerm('');
-            } else {
-              setSearchTerm(text);
               setShortCodeSearch('');
-            }
-          }}
-        />
-        {(searchTerm || shortCodeSearch) && (
-          <TouchableOpacity onPress={() => {
-            setSearchTerm('');
-            setShortCodeSearch('');
-          }}>
-            <Ionicons name="close-circle" size={18} color={Colors.textLight} />
-          </TouchableOpacity>
-        )}
+            }}>
+              <Ionicons name="close-circle" size={20} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      {/* Clean Category Chips */}
-      <FlatList
-        horizontal
-        data={categories}
-        renderItem={renderCategory}
-        keyExtractor={(item) => item.id}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoriesContainer}
-      />
+      {/* Compact Category Pills */}
+      <View style={styles.categoriesSection}>
+        <FlatList
+          horizontal
+          data={categories}
+          renderItem={renderCategory}
+          keyExtractor={(item) => item.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoriesContainer}
+        />
+      </View>
 
       {/* Menu Items - 2 Column Grid */}
       <FlatList
@@ -778,7 +773,6 @@ export default function MenuScreen() {
           tableNumber={selectedTable?.name || params.tableNumber}
         />
       )}
-      </View>
     </SafeAreaView>
   );
 }
@@ -786,150 +780,142 @@ export default function MenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#f5f5f5',
   },
-  contentWrapper: {
-    flex: 1,
+  // Clean Header Section
+  headerSection: {
+    backgroundColor: '#fff',
+    paddingBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  // Clean Header
-  header: {
+  headerTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    backgroundColor: Colors.backgroundWhite,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-    ...Shadows.small,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
   },
   backButton: {
-    padding: Spacing.sm,
-    marginRight: Spacing.xs,
-    borderRadius: BorderRadius.full,
-  },
-  headerCenter: {
-    flex: 1,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  tableBadge: {
+  tableInfoCard: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
     backgroundColor: '#fef2f2',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.full,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
   },
-  tableNumber: {
-    fontSize: 14,
+  tableInfoText: {
+    fontSize: 18,
     fontWeight: '700',
     color: Colors.primary,
+    letterSpacing: 0.3,
+  },
+  headerTitleSection: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: Typography.h2.fontSize,
-    fontWeight: Typography.h2.fontWeight,
-    color: Colors.textDark,
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#1f2937',
+    letterSpacing: -0.5,
   },
   headerSubtitle: {
-    fontSize: Typography.caption.fontSize,
-    color: Colors.textMedium,
+    fontSize: 14,
+    color: '#6b7280',
     marginTop: 2,
+    fontWeight: '500',
   },
-  headerActions: {
+  headerIcons: {
     flexDirection: 'row',
-    gap: Spacing.sm,
-    alignItems: 'center',
+    gap: 8,
   },
-  toggleButton: {
-    padding: Spacing.sm,
-  },
-  voiceButton: {
-    padding: Spacing.sm,
-  },
-  cartButton: {
-    padding: Spacing.sm,
-    position: 'relative',
-  },
-  cartBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.full,
-    width: 18,
-    height: 18,
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f9fafb',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  cartBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  // Cool Search Bar - No Thick Border
+  // Separate Clean Search Bar
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    marginHorizontal: Spacing.md,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.sm,
+    backgroundColor: '#f9fafb',
+    marginHorizontal: 16,
+    marginTop: 8,
     borderRadius: 12,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
-    ...Shadows.small,
-  },
-  searchIcon: {
-    marginRight: Spacing.sm,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: Colors.textDark,
+    fontSize: 16,
+    color: '#1f2937',
     padding: 0,
     fontWeight: '500',
   },
-  clearButton: {
-    padding: 4,
-    marginLeft: Spacing.xs,
+  // Clean Category Pills
+  categoriesSection: {
+    backgroundColor: '#fff',
+    paddingVertical: 12,
+    marginBottom: 8,
   },
-  // Visible Category Chips
   categoriesContainer: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    gap: Spacing.sm,
+    paddingHorizontal: 16,
+    gap: 8,
   },
-  categoryButton: {
+  categoryPill: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    marginRight: Spacing.sm,
-    borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    marginRight: 10,
     minHeight: 40,
     justifyContent: 'center',
-    ...Shadows.small,
+    alignItems: 'center',
   },
-  categoryButtonSelected: {
+  categoryPillSelected: {
     backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-    ...Shadows.medium,
   },
-  categoryText: {
-    fontSize: 14,
+  categoryPillText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4b5563',
+  },
+  categoryPillTextSelected: {
+    color: '#fff',
     fontWeight: '700',
-    color: '#374151',
-  },
-  categoryTextSelected: {
-    color: '#ffffff',
-    fontWeight: '800',
   },
   // Grid Menu List
   menuList: {
-    padding: Spacing.md,
-    paddingBottom: 120, // Space for bottom button
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 100,
   },
   menuRow: {
     justifyContent: 'space-between',
@@ -937,13 +923,17 @@ const styles = StyleSheet.create({
   },
   // Modern Design with Full Image Background
   menuItemCardImage: {
-    backgroundColor: '#1f2937',
-    borderRadius: 8,
-    marginBottom: Spacing.sm,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    marginBottom: 12,
     width: '48%',
     height: 140,
     overflow: 'hidden',
-    ...Shadows.medium,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
     position: 'relative',
   },
   fullImageContainer: {
@@ -1090,12 +1080,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderTopWidth: 3,
-    borderRadius: 4,
-    marginBottom: Spacing.sm,
+    borderRadius: 16,
+    marginBottom: 12,
     width: '48%',
     height: 120,
     padding: 12,
-    ...Shadows.small,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
     position: 'relative',
   },
   vegBadgeNoImage: {
