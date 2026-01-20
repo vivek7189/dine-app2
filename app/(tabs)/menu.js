@@ -20,6 +20,7 @@ import { getDisplayImage } from '../../utils/placeholderImages';
 import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
 import WaiterCartModal from '../../components/WaiterCartModal';
+import KOTModal from '../../components/KOTModal';
 
 export default function MenuScreen() {
   const router = useRouter();
@@ -34,6 +35,8 @@ export default function MenuScreen() {
   const [selectedTable, setSelectedTable] = useState(null);
   const [showCart, setShowCart] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [showKOTModal, setShowKOTModal] = useState(false);
+  const [kotOrderData, setKotOrderData] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
   const [user, setUser] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
@@ -282,34 +285,30 @@ export default function MenuScreen() {
         });
       }
 
-      // Show success and redirect immediately
-      const orderNumber = response.order?.dailyOrderId || orderId?.slice(-6);
-      Alert.alert(
-        existingOrderId ? 'Order Updated! 👨‍🍳' : 'Order Sent to Kitchen! 👨‍🍳',
-        existingOrderId 
-          ? `Order #${orderNumber} has been updated and sent to kitchen.`
-          : `Order #${orderNumber} has been sent to kitchen.`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              setCart([]);
-              setShowCart(false);
-              setExistingOrderId(null);
-              // Redirect to tables screen with table update info for optimistic update
-              router.replace({
-                pathname: '/(tabs)/tables',
-                params: { 
-                  tableId: tableId,
-                  orderId: orderId,
-                  tableStatus: 'occupied',
-                  tableNumber: tableNumber,
-                },
-              });
-            },
-          },
-        ]
-      );
+      // Prepare KOT data
+      const orderNumber = response.order?.dailyOrderId || response.order?.orderNumber || orderId?.slice(-6);
+      const kotData = {
+        orderNumber,
+        orderId,
+        tableNumber: tableNumber,
+        roomNumber: response.order?.roomNumber || null,
+        items: cart.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          notes: item.notes || '',
+        })),
+        waiterName: user?.name || 'Waiter',
+        waiterId: user?.id,
+        timestamp: new Date(),
+        restaurantName: restaurantName,
+      };
+
+      // Show KOT Modal instead of Alert
+      setKotOrderData(kotData);
+      setShowKOTModal(true);
+      setCart([]);
+      setShowCart(false);
+      setExistingOrderId(null);
     } catch (error) {
       console.error('Error sending order:', error);
       Alert.alert('Error', error.message || 'Failed to send order to kitchen. Please try again.');
@@ -773,6 +772,28 @@ export default function MenuScreen() {
           tableNumber={selectedTable?.name || params.tableNumber}
         />
       )}
+
+      {/* KOT Modal - Shows after order is sent to kitchen */}
+      <KOTModal
+        visible={showKOTModal}
+        onClose={() => {
+          setShowKOTModal(false);
+          setKotOrderData(null);
+          // Redirect to tables screen after closing KOT
+          if (selectedTable || params.tableId) {
+            router.replace({
+              pathname: '/(tabs)/tables',
+              params: { 
+                tableId: selectedTable?.id || params.tableId,
+                orderId: kotOrderData?.orderId,
+                tableStatus: 'occupied',
+                tableNumber: selectedTable?.name || params.tableNumber,
+              },
+            });
+          }
+        }}
+        orderData={kotOrderData}
+      />
     </SafeAreaView>
   );
 }

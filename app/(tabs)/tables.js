@@ -235,6 +235,12 @@ export default function TablesScreen() {
   };
 
   const handleTablePress = (table) => {
+    // Don't allow any actions if table is out of service
+    if (table.status === 'out-of-service') {
+      Alert.alert('Table Out of Service', `Table ${table.name} is currently out of service and cannot be used.`);
+      return;
+    }
+
     if (table.status === 'available') {
       router.push({
         pathname: '/(tabs)/menu',
@@ -245,13 +251,33 @@ export default function TablesScreen() {
         pathname: '/(tabs)/orders',
         params: { orderId: table.currentOrderId },
       });
+    } else if (table.status === 'cleaning') {
+      // Allow operations on cleaning tables
+      if (table.currentOrderId) {
+        router.push({
+          pathname: '/(tabs)/orders',
+          params: { orderId: table.currentOrderId },
+        });
+      } else {
+        router.push({
+          pathname: '/(tabs)/menu',
+          params: { tableId: table.id, tableNumber: table.name },
+        });
+      }
     } else {
       Alert.alert('Table Unavailable', `Table ${table.name} is ${table.status}.`);
     }
   };
 
   const handleAddToOrder = (table) => {
-    if (table.status === 'occupied' && table.currentOrderId) {
+    // Don't allow adding to order if table is out of service
+    if (table.status === 'out-of-service') {
+      Alert.alert('Table Out of Service', `Table ${table.name} is currently out of service and cannot be used.`);
+      return;
+    }
+
+    // Allow adding to order for occupied or cleaning tables
+    if ((table.status === 'occupied' || table.status === 'cleaning') && table.currentOrderId) {
       setSelectedOrderId(table.currentOrderId);
       setSelectedTableForOrder(table);
       setOrderModalMode('add');
@@ -260,7 +286,14 @@ export default function TablesScreen() {
   };
 
   const handleViewOrder = (table) => {
-    if (table.status === 'occupied' && table.currentOrderId) {
+    // Don't allow viewing order if table is out of service
+    if (table.status === 'out-of-service') {
+      Alert.alert('Table Out of Service', `Table ${table.name} is currently out of service and cannot be used.`);
+      return;
+    }
+
+    // Allow viewing order for occupied or cleaning tables
+    if ((table.status === 'occupied' || table.status === 'cleaning') && table.currentOrderId) {
       setSelectedOrderId(table.currentOrderId);
       setSelectedTableForOrder(table);
       setOrderModalMode('view');
@@ -283,9 +316,13 @@ export default function TablesScreen() {
   };
 
   const renderTable = ({ item: table }) => {
-    const isOccupied = table.status === 'occupied';
-    const isAvailable = table.status === 'available';
-    const isReserved = table.status === 'reserved';
+    // Normalize status to avoid undefined showing as blank/grey cards
+    const normalizedStatus = table.status || 'available';
+    const isOccupied = normalizedStatus === 'occupied';
+    const isAvailable = normalizedStatus === 'available';
+    const isReserved = normalizedStatus === 'reserved';
+    const isCleaning = normalizedStatus === 'cleaning';
+    const isOutOfService = normalizedStatus === 'out-of-service';
 
     return (
       <TouchableOpacity
@@ -294,9 +331,17 @@ export default function TablesScreen() {
           isAvailable && styles.tableCardAvailable,
           isOccupied && styles.tableCardOccupied,
           isReserved && styles.tableCardReserved,
+          isCleaning && styles.tableCardCleaning,
+          isOutOfService && styles.tableCardOutOfService,
         ]}
-        onPress={() => handleTablePress(table)}
-        activeOpacity={0.8}
+        onPress={() => {
+          // Don't allow actions if out of service
+          if (!isOutOfService) {
+            handleTablePress(table);
+          }
+        }}
+        activeOpacity={isOutOfService ? 1 : 0.8}
+        disabled={isOutOfService}
       >
         {/* Gradient Overlay */}
         <View style={styles.cardGradient}>
@@ -305,6 +350,8 @@ export default function TablesScreen() {
             {isAvailable && <View style={styles.statusDotGreen} />}
             {isOccupied && <View style={styles.statusDotOrange} />}
             {isReserved && <View style={styles.statusDotPurple} />}
+            {isCleaning && <View style={styles.statusDotBlue} />}
+            {isOutOfService && <View style={styles.statusDotRed} />}
           </View>
 
           {/* Restaurant Icon Watermark */}
@@ -312,14 +359,20 @@ export default function TablesScreen() {
             <Ionicons
               name="restaurant"
               size={60}
-              color={isAvailable ? "rgba(16, 185, 129, 0.06)" : isOccupied ? "rgba(245, 158, 11, 0.06)" : "rgba(139, 92, 246, 0.06)"}
+              color={
+                isAvailable ? "rgba(16, 185, 129, 0.06)" : 
+                isOccupied ? "rgba(245, 158, 11, 0.06)" : 
+                isReserved ? "rgba(139, 92, 246, 0.06)" :
+                isCleaning ? "rgba(59, 130, 246, 0.06)" :
+                "rgba(239, 68, 68, 0.06)"
+              }
             />
           </View>
 
           {/* Table Content */}
           <View style={styles.tableContent}>
             {/* Table Number */}
-            <Text style={styles.tableNumber}>{table.name}</Text>
+            <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]}>{table.name}</Text>
 
             {/* Status Badge */}
             {isOccupied && (
@@ -332,23 +385,40 @@ export default function TablesScreen() {
                 <Text style={styles.statusBadgeText}>RESERVED</Text>
               </View>
             )}
+            {isCleaning && (
+              <View style={styles.statusBadgeCleaning}>
+                <Text style={styles.statusBadgeText}>CLEANING</Text>
+              </View>
+            )}
+            {isOutOfService && (
+              <View style={styles.statusBadgeOutOfService}>
+                <Text style={styles.statusBadgeText}>OUT OF SERVICE</Text>
+              </View>
+            )}
 
             {/* Seats */}
             {table.capacity && (
               <View style={styles.seatsRow}>
-                <Ionicons name="people" size={12} color={Colors.textMedium} />
-                <Text style={styles.seatsText}>{table.capacity} Seats</Text>
+                <Ionicons name="people" size={12} color={isOutOfService ? Colors.textMedium : Colors.textMedium} />
+                <Text style={[styles.seatsText, isOutOfService && styles.seatsTextDisabled]}>{table.capacity} Seats</Text>
               </View>
             )}
 
             {/* Action Buttons */}
             <View style={styles.tableActions}>
-              {isAvailable ? (
+              {isOutOfService ? (
+                // Out of service - no actions allowed
+                <View style={styles.outOfServiceButtonContainer}>
+                  <Ionicons name="ban" size={12} color="#9ca3af" />
+                  <Text style={styles.outOfServiceButtonText}>Not Available</Text>
+                </View>
+              ) : isAvailable ? (
                 <View style={styles.takeOrderButtonContainer}>
                   <Ionicons name="restaurant" size={12} color="#fff" />
                   <Text style={styles.takeOrderButtonText}>Take Order</Text>
                 </View>
               ) : (
+                // Cleaning, occupied, or reserved - allow all operations
                 <View style={styles.occupiedActions}>
                   <TouchableOpacity
                     style={styles.viewButton}
@@ -691,6 +761,7 @@ const styles = StyleSheet.create({
     margin: 4,
     borderRadius: 12,
     overflow: 'hidden',
+    backgroundColor: '#fff', // default background to prevent grey bleed when status missing
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -705,6 +776,12 @@ const styles = StyleSheet.create({
   },
   tableCardReserved: {
     backgroundColor: '#faf5ff',
+  },
+  tableCardCleaning: {
+    backgroundColor: '#eff6ff',
+  },
+  tableCardOutOfService: {
+    backgroundColor: '#f9fafb',
   },
   cardGradient: {
     padding: 10,
@@ -750,6 +827,28 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
+  statusDotBlue: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#3b82f6',
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  statusDotRed: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ef4444',
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
+    elevation: 2,
+  },
   watermarkIcon: {
     position: 'absolute',
     bottom: -8,
@@ -766,6 +865,9 @@ const styles = StyleSheet.create({
     color: Colors.textDark,
     letterSpacing: 0,
   },
+  tableNumberDisabled: {
+    color: '#9ca3af',
+  },
   statusBadgeOccupied: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -779,6 +881,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     backgroundColor: '#e9d5ff',
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  statusBadgeCleaning: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#dbeafe',
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  statusBadgeOutOfService: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#e5e7eb',
     borderRadius: 6,
     marginTop: 4,
   },
@@ -798,6 +916,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textMedium,
     fontWeight: '500',
+  },
+  seatsTextDisabled: {
+    color: '#9ca3af',
   },
   tableActions: {
     marginTop: 8,
@@ -858,6 +979,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#5b7ff5',
+  },
+  outOfServiceButtonContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  outOfServiceButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9ca3af',
   },
   loadingContainer: {
     flex: 1,
