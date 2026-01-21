@@ -213,6 +213,121 @@ class ApiClient {
       method: 'DELETE',
     });
   }
+
+  // ==================== HOTEL MANAGEMENT ====================
+
+  // Room Management
+  async getRooms(restaurantId, filters = {}) {
+    const params = new URLSearchParams({ restaurantId, ...filters });
+    return this.request(`/api/rooms?${params.toString()}`);
+  }
+
+  async addRoom(roomData) {
+    return this.request('/api/rooms', {
+      method: 'POST',
+      data: roomData,
+    });
+  }
+
+  async bulkAddRooms(bulkData) {
+    return this.request('/api/rooms/bulk', {
+      method: 'POST',
+      data: bulkData,
+    });
+  }
+
+  async updateRoomStatus(roomId, status, currentGuest = null) {
+    return this.request(`/api/rooms/${roomId}/status`, {
+      method: 'PATCH',
+      data: { status, currentGuest },
+    });
+  }
+
+  async deleteRoom(roomId) {
+    return this.request(`/api/rooms/${roomId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getRoomMaintenanceSchedules(roomId, restaurantId) {
+    return this.request(`/api/room/${roomId}/maintenance?restaurantId=${restaurantId}`);
+  }
+
+  async cancelRoomMaintenance(roomId, restaurantId, startDate = null, endDate = null) {
+    const data = { restaurantId };
+    if (startDate) data.startDate = startDate;
+    if (endDate) data.endDate = endDate;
+    return this.request(`/api/room/${roomId}/maintenance`, {
+      method: 'DELETE',
+      data,
+    });
+  }
+
+  async getRoomAvailability(restaurantId, date) {
+    return this.request(`/api/hotel/rooms/availability?date=${date}&restaurantId=${restaurantId}`);
+  }
+
+  // Booking Management
+  async getBookings(restaurantId, filters = {}) {
+    const params = new URLSearchParams({ restaurantId, ...filters });
+    return this.request(`/api/bookings/${restaurantId}?${params.toString()}`);
+  }
+
+  async createBooking(bookingData) {
+    return this.request('/api/bookings', {
+      method: 'POST',
+      data: bookingData,
+    });
+  }
+
+  async validateBooking(validationData) {
+    return this.request('/api/hotel/bookings/validate', {
+      method: 'POST',
+      data: validationData,
+    });
+  }
+
+  async cancelBooking(bookingId, reason) {
+    return this.request(`/api/bookings/${bookingId}/cancel`, {
+      method: 'POST',
+      data: { reason },
+    });
+  }
+
+  // Check-in/Check-out
+  async hotelCheckIn(checkInData) {
+    return this.request('/api/hotel/checkin', {
+      method: 'POST',
+      data: checkInData,
+    });
+  }
+
+  async getHotelCheckIns(restaurantId, status = 'all') {
+    return this.request(`/api/hotel/checkins/${restaurantId}?status=${status}`);
+  }
+
+  async hotelCheckOut(checkInId, checkoutData) {
+    return this.request(`/api/hotel/checkout/${checkInId}`, {
+      method: 'POST',
+      data: checkoutData,
+    });
+  }
+
+  // Invoice
+  async getHotelInvoice(checkInId) {
+    return this.request(`/api/hotel/invoice/${checkInId}`);
+  }
+
+  // History
+  async getHotelHistory(restaurantId, filters = {}) {
+    const params = new URLSearchParams({ restaurantId, ...filters });
+    return this.request(`/api/hotel/history?${params.toString()}`);
+  }
+
+  // Calendar
+  async getCalendarSummary(restaurantId, month, year) {
+    return this.request(`/api/hotel/calendar/summary?month=${month}&year=${year}&restaurantId=${restaurantId}`);
+  }
 }
 
 export default new ApiClient();

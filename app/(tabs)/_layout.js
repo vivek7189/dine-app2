@@ -96,6 +96,21 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="hotel"
+        options={{
+          title: 'Hotel',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "bed" : "bed-outline"}
+              size={26}
+              color={color}
+            />
+          ),
+          // Only show hotel tab for owner and manager roles
+          href: userRole && !['owner', 'manager'].includes(userRole.toLowerCase()) ? null : undefined,
+        }}
+      />
+      <Tabs.Screen
         name="menu-management"
         options={{
           title: 'Manage',
