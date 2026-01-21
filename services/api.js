@@ -218,12 +218,13 @@ class ApiClient {
 
   // Room Management
   async getRooms(restaurantId, filters = {}) {
-    const params = new URLSearchParams({ restaurantId, ...filters });
-    return this.request(`/api/rooms?${params.toString()}`);
+    const params = new URLSearchParams(filters);
+    const queryString = params.toString();
+    return this.request(`/api/rooms/${restaurantId}${queryString ? `?${queryString}` : ''}`);
   }
 
   async addRoom(roomData) {
-    return this.request('/api/rooms', {
+    return this.request('/api/room', {
       method: 'POST',
       data: roomData,
     });
@@ -237,14 +238,14 @@ class ApiClient {
   }
 
   async updateRoomStatus(roomId, status, currentGuest = null) {
-    return this.request(`/api/rooms/${roomId}/status`, {
+    return this.request(`/api/room/${roomId}/status`, {
       method: 'PATCH',
       data: { status, currentGuest },
     });
   }
 
   async deleteRoom(roomId) {
-    return this.request(`/api/rooms/${roomId}`, {
+    return this.request(`/api/room/${roomId}`, {
       method: 'DELETE',
     });
   }
@@ -269,12 +270,13 @@ class ApiClient {
 
   // Booking Management
   async getBookings(restaurantId, filters = {}) {
-    const params = new URLSearchParams({ restaurantId, ...filters });
-    return this.request(`/api/bookings/${restaurantId}?${params.toString()}`);
+    const params = new URLSearchParams(filters);
+    const queryString = params.toString();
+    return this.request(`/api/bookings/${restaurantId}${queryString ? `?${queryString}` : ''}`);
   }
 
   async createBooking(bookingData) {
-    return this.request('/api/bookings', {
+    return this.request('/api/booking', {
       method: 'POST',
       data: bookingData,
     });
@@ -288,8 +290,8 @@ class ApiClient {
   }
 
   async cancelBooking(bookingId, reason) {
-    return this.request(`/api/bookings/${bookingId}/cancel`, {
-      method: 'POST',
+    return this.request(`/api/booking/${bookingId}/cancel`, {
+      method: 'PATCH',
       data: { reason },
     });
   }

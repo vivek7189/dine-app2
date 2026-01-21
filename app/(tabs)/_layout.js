@@ -106,8 +106,6 @@ export default function TabsLayout() {
               color={color}
             />
           ),
-          // Only show hotel tab for owner and manager roles
-          href: userRole && !['owner', 'manager'].includes(userRole.toLowerCase()) ? null : undefined,
         }}
       />
       <Tabs.Screen

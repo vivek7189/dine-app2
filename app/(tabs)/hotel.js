@@ -209,10 +209,25 @@ export default function HotelScreen() {
   const loadRooms = async (restId) => {
     try {
       const response = await apiClient.getRooms(restId, {});
-      setRooms(response.rooms || []);
+      const roomsData = response?.rooms || response || [];
+      // Ensure all rooms have required fields
+      const safeRooms = Array.isArray(roomsData) 
+        ? roomsData.map(room => ({
+            id: room?.id || '',
+            roomNumber: room?.roomNumber || '',
+            status: room?.status || 'available',
+            type: room?.type || '',
+            floor: room?.floor || '',
+            capacity: room?.capacity || '',
+            tariff: room?.tariff || 0,
+            currentGuest: room?.currentGuest || null,
+          }))
+        : [];
+      setRooms(safeRooms);
     } catch (err) {
       console.error('Error loading rooms:', err);
       setError('Failed to load rooms');
+      setRooms([]);
     }
   };
 
@@ -646,8 +661,9 @@ export default function HotelScreen() {
 
   // Render room card
   const renderRoomCard = ({ item: room }) => {
+    if (!room) return null;
     const statusColor = RoomStatusColors[room.status] || '#6b7280';
-    const statusText = RoomStatusText[room.status] || room.status;
+    const statusText = RoomStatusText[room.status] || room.status || 'Unknown';
 
     return (
       <TouchableOpacity
@@ -655,29 +671,39 @@ export default function HotelScreen() {
         onPress={() => handleRoomPress(room)}
       >
         <View style={styles.roomCardHeader}>
-          <Text style={styles.roomNumber}>{room.roomNumber}</Text>
+          <Text style={styles.roomNumber}>{String(room.roomNumber || '')}</Text>
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-            <Text style={styles.statusBadgeText}>{statusText}</Text>
+            <Text style={styles.statusBadgeText}>{String(statusText || '')}</Text>
           </View>
         </View>
         <View style={styles.roomCardDetails}>
-          <Text style={styles.roomDetail}>
-            <Ionicons name="layers-outline" size={12} color={Colors.textLight} /> {room.floor}
-          </Text>
-          <Text style={styles.roomDetail}>
-            <Ionicons name="bed-outline" size={12} color={Colors.textLight} /> {room.type}
-          </Text>
-          <Text style={styles.roomDetail}>
-            <Ionicons name="people-outline" size={12} color={Colors.textLight} /> {room.capacity}
-          </Text>
+          {room.floor != null && room.floor !== '' && (
+            <View style={styles.roomDetail}>
+              <Ionicons name="layers-outline" size={12} color={Colors.textLight} />
+              <Text style={styles.roomDetailText}>{String(room.floor)}</Text>
+            </View>
+          )}
+          {room.type != null && room.type !== '' && (
+            <View style={styles.roomDetail}>
+              <Ionicons name="bed-outline" size={12} color={Colors.textLight} />
+              <Text style={styles.roomDetailText}>{String(room.type)}</Text>
+            </View>
+          )}
+          {room.capacity != null && (
+            <View style={styles.roomDetail}>
+              <Ionicons name="people-outline" size={12} color={Colors.textLight} />
+              <Text style={styles.roomDetailText}>{String(room.capacity)}</Text>
+            </View>
+          )}
         </View>
-        {room.tariff && (
-          <Text style={styles.roomTariff}>₹{room.tariff}/night</Text>
+        {room.tariff != null && room.tariff !== 0 && (
+          <Text style={styles.roomTariff}>₹{String(room.tariff)}/night</Text>
         )}
-        {room.currentGuest && (
-          <Text style={styles.currentGuest} numberOfLines={1}>
-            <Ionicons name="person" size={12} color={Colors.primary} /> {room.currentGuest}
-          </Text>
+        {room.currentGuest != null && room.currentGuest !== '' && (
+          <View style={styles.currentGuest}>
+            <Ionicons name="person" size={12} color={Colors.primary} />
+            <Text style={styles.currentGuestText} numberOfLines={1}>{String(room.currentGuest)}</Text>
+          </View>
         )}
       </TouchableOpacity>
     );
@@ -708,15 +734,18 @@ export default function HotelScreen() {
           </View>
         </View>
         <View style={styles.bookingDates}>
-          <Text style={styles.bookingDateText}>
+          <View style={styles.bookingDateText}>
             <Ionicons name="calendar-outline" size={14} color={Colors.textLight} />
-            {' '}{checkIn?.toLocaleDateString()} - {checkOut?.toLocaleDateString()}
-          </Text>
+            <Text style={styles.bookingDateTextContent}>
+              {checkIn?.toLocaleDateString()} - {checkOut?.toLocaleDateString()}
+            </Text>
+          </View>
         </View>
         {booking.guestPhone && (
-          <Text style={styles.bookingPhone}>
-            <Ionicons name="call-outline" size={12} color={Colors.textLight} /> {booking.guestPhone}
-          </Text>
+          <View style={styles.bookingPhone}>
+            <Ionicons name="call-outline" size={12} color={Colors.textLight} />
+            <Text style={styles.bookingPhoneText}>{booking.guestPhone}</Text>
+          </View>
         )}
         <View style={styles.bookingActions}>
           {booking.status === 'confirmed' && (
@@ -757,14 +786,17 @@ export default function HotelScreen() {
           <View style={{ flex: 1, marginLeft: Spacing.md }}>
             <Text style={styles.checkInGuest}>{checkIn.guestName}</Text>
             {checkIn.guestPhone && (
-              <Text style={styles.checkInPhone}>
-                <Ionicons name="call-outline" size={12} color={Colors.textLight} /> {checkIn.guestPhone}
-              </Text>
+              <View style={styles.checkInPhone}>
+                <Ionicons name="call-outline" size={12} color={Colors.textLight} />
+                <Text style={styles.checkInPhoneText}>{checkIn.guestPhone}</Text>
+              </View>
             )}
-            <Text style={styles.checkInDates}>
+            <View style={styles.checkInDates}>
               <Ionicons name="calendar-outline" size={12} color={Colors.textLight} />
-              {' '}{checkInDate?.toLocaleDateString()} - {checkOutDate?.toLocaleDateString()}
-            </Text>
+              <Text style={styles.checkInDatesText}>
+                {checkInDate?.toLocaleDateString()} - {checkOutDate?.toLocaleDateString()}
+              </Text>
+            </View>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.checkInAmount}>
@@ -970,9 +1002,9 @@ export default function HotelScreen() {
       <View style={styles.content}>
         {activeTab === 'rooms' && (
           <FlatList
-            data={rooms}
+            data={rooms || []}
             renderItem={renderRoomCard}
-            keyExtractor={item => item.id}
+            keyExtractor={(item, index) => item?.id || `room-${index}`}
             numColumns={2}
             columnWrapperStyle={styles.roomsRow}
             contentContainerStyle={styles.listContent}
@@ -2131,6 +2163,11 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   roomDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  roomDetailText: {
     ...Typography.small,
     color: Colors.textLight,
   },
@@ -2141,9 +2178,14 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
   currentGuest: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: Spacing.xs,
+  },
+  currentGuestText: {
     ...Typography.small,
     color: Colors.primary,
-    marginTop: Spacing.xs,
   },
   bookingCard: {
     backgroundColor: Colors.backgroundWhite,
@@ -2181,13 +2223,23 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   bookingDateText: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  bookingDateTextContent: {
     ...Typography.caption,
     color: Colors.textLight,
   },
   bookingPhone: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: Spacing.sm,
+  },
+  bookingPhoneText: {
     ...Typography.small,
     color: Colors.textLight,
-    marginBottom: Spacing.sm,
   },
   bookingActions: {
     flexDirection: 'row',
@@ -2241,14 +2293,24 @@ const styles = StyleSheet.create({
     color: Colors.textDark,
   },
   checkInPhone: {
-    ...Typography.small,
-    color: Colors.textLight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     marginTop: 2,
   },
-  checkInDates: {
+  checkInPhoneText: {
     ...Typography.small,
     color: Colors.textLight,
+  },
+  checkInDates: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     marginTop: 4,
+  },
+  checkInDatesText: {
+    ...Typography.small,
+    color: Colors.textLight,
   },
   checkInAmount: {
     ...Typography.bodyBold,
