@@ -152,7 +152,7 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
 
           {/* Footer */}
           <View style={styles.drawerFooter}>
-            <Text style={styles.footerText}>DineOpen Waiter</Text>
+            <Text style={styles.footerText}>DineOpen Staff</Text>
             <Text style={styles.footerVersion}>Version 1.0.0</Text>
           </View>
         </View>

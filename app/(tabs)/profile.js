@@ -6,6 +6,8 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +19,12 @@ export default function ProfileScreen() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [passwordChangeError, setPasswordChangeError] = useState('');
 
   useEffect(() => {
     loadUserData();
@@ -67,6 +75,71 @@ export default function ProfileScreen() {
         return 'Employee';
       default:
         return role || 'Staff';
+    }
+  };
+
+  // Check if user is a staff member (staff roles)
+  const isStaffMember = () => {
+    const role = user?.role?.toLowerCase();
+    const isStaff = ['waiter', 'manager', 'employee'].includes(role);
+    console.log('Staff check:', { role, isStaff, hasLoginId: !!user?.loginId });
+    return isStaff;
+  };
+
+  const handlePasswordChange = async () => {
+    // Reset error
+    setPasswordChangeError('');
+
+    // Validate inputs
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordChangeError('All fields are required');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setPasswordChangeError('New password must be at least 6 characters long');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError('New password and confirmation do not match');
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setPasswordChangeError('New password must be different from current password');
+      return;
+    }
+
+    setPasswordChangeLoading(true);
+
+    try {
+      await apiClient.changeStaffPassword(
+        user?.loginId,
+        currentPassword,
+        newPassword,
+        confirmPassword
+      );
+      
+      Alert.alert(
+        'Success',
+        'Password changed successfully!',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setShowPasswordChange(false);
+              setCurrentPassword('');
+              setNewPassword('');
+              setConfirmPassword('');
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      setPasswordChangeError(error.message || 'Failed to change password');
+    } finally {
+      setPasswordChangeLoading(false);
     }
   };
 
@@ -142,6 +215,100 @@ export default function ProfileScreen() {
           </View>
         )}
 
+        {/* Password Change Section - Only show for staff members */}
+        {isStaffMember() && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Security</Text>
+            <View style={styles.infoCard}>
+              {!showPasswordChange ? (
+                <TouchableOpacity
+                  style={styles.changePasswordButton}
+                  onPress={() => setShowPasswordChange(true)}
+                >
+                  <Ionicons name="lock-closed-outline" size={20} color={Colors.primary} />
+                  <Text style={styles.changePasswordButtonText}>Change Password</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.passwordChangeForm}>
+                  <Text style={styles.passwordChangeTitle}>Change Password</Text>
+                  
+                  {passwordChangeError ? (
+                    <View style={styles.errorContainer}>
+                      <Text style={styles.errorText}>{passwordChangeError}</Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Current Password</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={currentPassword}
+                      onChangeText={setCurrentPassword}
+                      placeholder="Enter current password"
+                      secureTextEntry
+                      autoCapitalize="none"
+                      editable={!passwordChangeLoading}
+                    />
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>New Password</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      placeholder="Enter new password (min 6 characters)"
+                      secureTextEntry
+                      autoCapitalize="none"
+                      editable={!passwordChangeLoading}
+                    />
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Confirm New Password</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      placeholder="Confirm new password"
+                      secureTextEntry
+                      autoCapitalize="none"
+                      editable={!passwordChangeLoading}
+                    />
+                  </View>
+
+                  <View style={styles.passwordChangeActions}>
+                    <TouchableOpacity
+                      style={[styles.passwordChangeButton, styles.cancelButton]}
+                      onPress={() => {
+                        setShowPasswordChange(false);
+                        setCurrentPassword('');
+                        setNewPassword('');
+                        setConfirmPassword('');
+                        setPasswordChangeError('');
+                      }}
+                      disabled={passwordChangeLoading}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.passwordChangeButton, styles.submitButton, passwordChangeLoading && styles.submitButtonDisabled]}
+                      onPress={handlePasswordChange}
+                      disabled={passwordChangeLoading}
+                    >
+                      {passwordChangeLoading ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.submitButtonText}>Change Password</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* Actions */}
         <View style={styles.section}>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -152,8 +319,8 @@ export default function ProfileScreen() {
 
         {/* App Info */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>DineOpen Waiter App</Text>
-          <Text style={styles.footerText}>Version 1.0.0</Text>
+          <Text style={styles.footerText}>DineOpen Staff App</Text>
+          <Text style={styles.footerText}>Version 1.1.0</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -256,5 +423,90 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: Typography.small.fontSize,
     color: Colors.textLight,
+  },
+  changePasswordButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    gap: Spacing.sm,
+  },
+  changePasswordButtonText: {
+    color: Colors.primary,
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
+  },
+  passwordChangeForm: {
+    gap: Spacing.md,
+  },
+  passwordChangeTitle: {
+    fontSize: Typography.h3.fontSize,
+    fontWeight: Typography.h3.fontWeight,
+    color: Colors.textDark,
+    marginBottom: Spacing.xs,
+  },
+  errorContainer: {
+    backgroundColor: '#fee2e2',
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.small,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: Typography.caption.fontSize,
+  },
+  inputContainer: {
+    gap: Spacing.xs,
+  },
+  inputLabel: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textMedium,
+    fontWeight: '600',
+  },
+  input: {
+    backgroundColor: Colors.backgroundLight,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    borderRadius: BorderRadius.small,
+    padding: Spacing.sm,
+    fontSize: Typography.body.fontSize,
+    color: Colors.textDark,
+  },
+  passwordChangeActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  passwordChangeButton: {
+    flex: 1,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    backgroundColor: Colors.backgroundLight,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  cancelButtonText: {
+    color: Colors.textDark,
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
+  },
+  submitButton: {
+    backgroundColor: Colors.primary,
+  },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
   },
 });

@@ -330,6 +330,14 @@ class ApiClient {
   async getCalendarSummary(restaurantId, month, year) {
     return this.request(`/api/hotel/calendar/summary?month=${month}&year=${year}&restaurantId=${restaurantId}`);
   }
+
+  // Staff password change (for staff members using loginId)
+  async changeStaffPassword(loginId, currentPassword, newPassword, confirmPassword) {
+    return this.request('/api/staff/change-password', {
+      method: 'POST',
+      data: { loginId, currentPassword, newPassword, confirmPassword },
+    });
+  }
 }
 
 export default new ApiClient();
