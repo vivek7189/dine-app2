@@ -12,8 +12,9 @@
     "build:android": "expo prebuild --platform android && cd android && ./gradlew assembleRelease",
     "build:apk": "expo run:android --variant release",
     "build:apk-release": "cd android && ./gradlew assembleRelease",
-    "build:aab": "cd android && ./gradlew bundleRelease",
-    "build:aab-clean": "expo prebuild --platform android --clean && cd android && ./gradlew bundleRelease"
+    "build:aab": "expo prebuild --platform android && cd android && ./gradlew bundleRelease",
+    "build:aab-clean": "expo prebuild --platform android --clean && cd android && ./gradlew bundleRelease",
+    "build:aab-fresh": "expo prebuild --platform android && cd android && ./gradlew clean bundleRelease"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

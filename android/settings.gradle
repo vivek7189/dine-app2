@@ -31,7 +31,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 }
 expoAutolinking.useExpoModules()
 
-rootProject.name = 'DineOpen Waiter'
+rootProject.name = 'DineOpen Staff'
 
 expoAutolinking.useExpoVersionCatalog()
 

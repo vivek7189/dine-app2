@@ -17,7 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { getDisplayImage } from '../../utils/placeholderImages';
-import VoiceOrderModal from '../../components/VoiceOrderModal';
+// import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
 import WaiterCartModal from '../../components/WaiterCartModal';
 import KOTModal from '../../components/KOTModal';
@@ -34,7 +34,7 @@ export default function MenuScreen() {
   const [cart, setCart] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
   const [showCart, setShowCart] = useState(false);
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  // const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showKOTModal, setShowKOTModal] = useState(false);
   const [kotOrderData, setKotOrderData] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
@@ -608,9 +608,9 @@ export default function MenuScreen() {
                     color="#6b7280"
                   />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
+                {/* <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
                   <Ionicons name="mic" size={22} color={Colors.primary} />
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
             </View>
           </>
@@ -630,9 +630,9 @@ export default function MenuScreen() {
                     color="#6b7280"
                   />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
+                {/* <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
                   <Ionicons name="mic" size={22} color={Colors.primary} />
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
             </View>
           </>
@@ -736,8 +736,8 @@ export default function MenuScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Voice Order Modal */}
-      <VoiceOrderModal
+      {/* Voice Order Modal - Disabled */}
+      {/* <VoiceOrderModal
         visible={showVoiceModal}
         onClose={() => setShowVoiceModal(false)}
         onItemsAdded={(items) => {
@@ -745,7 +745,7 @@ export default function MenuScreen() {
           setShowVoiceModal(false);
         }}
         restaurantId={restaurantId}
-      />
+      /> */}
 
       {/* Cart Modal - Permission Based */}
       {isWaiter ? (
