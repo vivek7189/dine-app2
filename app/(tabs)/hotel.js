@@ -62,9 +62,25 @@ export default function HotelScreen() {
   // Filters
   const [checkInStatusFilter, setCheckInStatusFilter] = useState('active');
 
+  // Bookings calendar view
+  const [bookingsViewMode, setBookingsViewMode] = useState('calendar'); // 'calendar' or 'list'
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+  const [calendarSummary, setCalendarSummary] = useState({});
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
+  const [loadingCalendarSummary, setLoadingCalendarSummary] = useState(false);
+
   // Room availability
   const [roomsViewDate, setRoomsViewDate] = useState(new Date());
   const [roomAvailability, setRoomAvailability] = useState(null);
+  const [loadingRoomAvailability, setLoadingRoomAvailability] = useState(false);
+  
+  // Room card dropdown
+  const [openRoomDropdown, setOpenRoomDropdown] = useState(null);
+  
+  // Per-card loading states
+  const [loadingRooms, setLoadingRooms] = useState({}); // { roomId: true/false }
+  const [successRooms, setSuccessRooms] = useState({}); // { roomId: timestamp }
 
   // History filters
   const [historyFilters, setHistoryFilters] = useState({
@@ -158,6 +174,33 @@ export default function HotelScreen() {
     }, [restaurantId, activeTab])
   );
 
+  // Load room availability when date changes
+  useEffect(() => {
+    if (restaurantId && activeTab === 'rooms' && roomsViewDate) {
+      loadRoomAvailability();
+    }
+  }, [roomsViewDate, restaurantId, activeTab]);
+
+  // Close dropdown when clicking outside (using a simple approach)
+  useEffect(() => {
+    if (openRoomDropdown) {
+      // Close dropdown when tab changes
+      const timer = setTimeout(() => {
+        if (activeTab !== 'rooms') {
+          setOpenRoomDropdown(null);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, openRoomDropdown]);
+
+  // Load calendar summary when month/year changes or bookings tab is active
+  useEffect(() => {
+    if (restaurantId && activeTab === 'bookings') {
+      loadCalendarSummary();
+    }
+  }, [calendarMonth, calendarYear, restaurantId, activeTab]);
+
   const loadInitialData = async () => {
     try {
       setLoading(true);
@@ -238,6 +281,115 @@ export default function HotelScreen() {
     } catch (err) {
       console.error('Error loading bookings:', err);
     }
+  };
+
+  const loadCalendarSummary = async () => {
+    if (!restaurantId) return;
+    try {
+      setLoadingCalendarSummary(true);
+      const response = await apiClient.getCalendarSummary(restaurantId, calendarMonth + 1, calendarYear);
+      // API returns summary as object with date keys like "2026-01-15"
+      const summaryMap = {};
+      if (response?.summary && typeof response.summary === 'object') {
+        Object.entries(response.summary).forEach(([dateKey, dayData]) => {
+          summaryMap[dateKey] = {
+            bookings: dayData.bookingCount || dayData.bookingListCount || 0,
+            checkIns: dayData.checkInCount || 0,
+            checkOuts: dayData.checkOutCount || 0,
+            occupancyRate: dayData.occupancyRate || 0,
+            availableRooms: dayData.availableRooms || 0,
+          };
+        });
+      }
+      setCalendarSummary(summaryMap);
+    } catch (err) {
+      console.error('Error loading calendar summary:', err);
+    } finally {
+      setLoadingCalendarSummary(false);
+    }
+  };
+
+  const loadRoomAvailability = async () => {
+    if (!restaurantId || !roomsViewDate) return;
+    
+    try {
+      setLoadingRoomAvailability(true);
+      const dateStr = roomsViewDate instanceof Date 
+        ? roomsViewDate.toISOString().split('T')[0] 
+        : roomsViewDate;
+      const response = await apiClient.getRoomAvailability(restaurantId, dateStr);
+      setRoomAvailability(response);
+    } catch (err) {
+      console.error('Error loading room availability:', err);
+    } finally {
+      setLoadingRoomAvailability(false);
+    }
+  };
+
+  // Date navigation functions
+  const navigateDate = (direction) => {
+    const currentDate = roomsViewDate instanceof Date ? roomsViewDate : new Date(roomsViewDate);
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() + direction);
+    setRoomsViewDate(newDate);
+  };
+
+  const goToToday = () => {
+    setRoomsViewDate(new Date());
+  };
+
+  // Calendar navigation
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const getDaysInMonth = (month, year) => {
+    return new Date(year, month + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (month, year) => {
+    return new Date(year, month, 1).getDay();
+  };
+
+  const goToPreviousMonth = () => {
+    if (calendarMonth === 0) {
+      setCalendarMonth(11);
+      setCalendarYear(calendarYear - 1);
+    } else {
+      setCalendarMonth(calendarMonth - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (calendarMonth === 11) {
+      setCalendarMonth(0);
+      setCalendarYear(calendarYear + 1);
+    } else {
+      setCalendarMonth(calendarMonth + 1);
+    }
+  };
+
+  const goToCurrentMonth = () => {
+    const today = new Date();
+    setCalendarMonth(today.getMonth());
+    setCalendarYear(today.getFullYear());
+    setSelectedCalendarDate(null);
+  };
+
+  const isToday = (day) => {
+    const today = new Date();
+    return day === today.getDate() &&
+           calendarMonth === today.getMonth() &&
+           calendarYear === today.getFullYear();
+  };
+
+  const getBookingsForDate = (dateStr) => {
+    return bookings.filter(booking => {
+      const checkIn = new Date(booking.checkInDate);
+      const checkOut = new Date(booking.checkOutDate);
+      const targetDate = new Date(dateStr);
+      return targetDate >= checkIn && targetDate <= checkOut && booking.status === 'confirmed';
+    });
   };
 
   const loadCheckIns = async (restId) => {
@@ -356,16 +508,39 @@ export default function HotelScreen() {
 
   const handleUpdateRoomStatus = async (roomId, newStatus) => {
     try {
+      setLoadingRooms(prev => ({ ...prev, [roomId]: true }));
       await apiClient.updateRoomStatus(roomId, newStatus);
       setRooms(prevRooms =>
         prevRooms.map(room =>
           room.id === roomId ? { ...room, status: newStatus } : room
         )
       );
+      
+      // Reload availability if viewing by date
+      if (restaurantId && roomsViewDate) {
+        await loadRoomAvailability();
+      }
+      
+      // Show success indicator
+      setSuccessRooms(prev => ({ ...prev, [roomId]: Date.now() }));
+      setTimeout(() => {
+        setSuccessRooms(prev => {
+          const newState = { ...prev };
+          delete newState[roomId];
+          return newState;
+        });
+      }, 2000);
+      
       setShowRoomActionsModal(false);
       setSelectedRoom(null);
     } catch (err) {
       Alert.alert('Error', err.message || 'Failed to update room status');
+    } finally {
+      setLoadingRooms(prev => {
+        const newState = { ...prev };
+        delete newState[roomId];
+        return newState;
+      });
     }
   };
 
@@ -405,7 +580,19 @@ export default function HotelScreen() {
     try {
       setLoading(true);
 
-      // Validate dates
+      // Validate check-in date is not in the past
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const checkInDate = new Date(bookingForm.checkInDate);
+      checkInDate.setHours(0, 0, 0, 0);
+
+      if (checkInDate < today) {
+        Alert.alert('Error', 'Check-in date cannot be in the past');
+        setLoading(false);
+        return;
+      }
+
+      // Validate check-out date is not before check-in date
       if (bookingForm.checkOutDate < bookingForm.checkInDate) {
         Alert.alert('Error', 'Check-out date cannot be before check-in date');
         setLoading(false);
@@ -445,6 +632,9 @@ export default function HotelScreen() {
       setShowBookingModal(false);
       resetBookingForm();
       await loadBookings(restaurantId);
+      if (restaurantId && roomsViewDate) {
+        await loadRoomAvailability();
+      }
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       Alert.alert('Error', err.message || 'Failed to create booking');
@@ -467,6 +657,9 @@ export default function HotelScreen() {
               await apiClient.cancelBooking(bookingId, 'Cancelled by user');
               setSuccess('Booking cancelled successfully');
               await loadBookings(restaurantId);
+              if (restaurantId && roomsViewDate) {
+                await loadRoomAvailability();
+              }
               setTimeout(() => setSuccess(null), 3000);
             } catch (err) {
               Alert.alert('Error', err.message || 'Failed to cancel booking');
@@ -504,6 +697,23 @@ export default function HotelScreen() {
       return;
     }
 
+    // Validate check-in date is not in the past
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkInDate = new Date(checkInForm.checkInDate);
+    checkInDate.setHours(0, 0, 0, 0);
+
+    if (checkInDate < today) {
+      Alert.alert('Error', 'Check-in date cannot be in the past');
+      return;
+    }
+
+    // Validate check-out date is not before check-in date
+    if (checkInForm.checkOutDate < checkInForm.checkInDate) {
+      Alert.alert('Error', 'Check-out date cannot be before check-in date');
+      return;
+    }
+
     try {
       setLoading(true);
       await apiClient.hotelCheckIn({
@@ -531,6 +741,9 @@ export default function HotelScreen() {
       resetCheckInForm();
       await loadRooms(restaurantId);
       await loadCheckIns(restaurantId);
+      if (restaurantId && roomsViewDate) {
+        await loadRoomAvailability();
+      }
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       Alert.alert('Error', err.message || 'Check-in failed');
@@ -631,16 +844,69 @@ export default function HotelScreen() {
     setSelectedBooking(null);
   };
 
-  // Date picker handler
+  // Get today's date at midnight for comparison
+  const getToday = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+  };
+
+  // Date picker handler with validation
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
     if (selectedDate && datePickerField) {
       const { form, field } = datePickerField;
+      const today = getToday();
+
       if (form === 'booking') {
-        setBookingForm(prev => ({ ...prev, [field]: selectedDate }));
+        if (field === 'checkInDate') {
+          // Check-in cannot be in the past
+          if (selectedDate < today) {
+            Alert.alert('Invalid Date', 'Check-in date cannot be in the past');
+            return;
+          }
+          // If new checkInDate is after current checkOutDate, adjust checkOutDate
+          setBookingForm(prev => {
+            const newCheckOut = selectedDate > prev.checkOutDate
+              ? new Date(selectedDate.getTime() + 86400000)
+              : prev.checkOutDate;
+            return { ...prev, checkInDate: selectedDate, checkOutDate: newCheckOut };
+          });
+        } else if (field === 'checkOutDate') {
+          // Check-out cannot be before check-in
+          if (selectedDate < bookingForm.checkInDate) {
+            Alert.alert('Invalid Date', 'Check-out date cannot be before check-in date');
+            return;
+          }
+          setBookingForm(prev => ({ ...prev, checkOutDate: selectedDate }));
+        }
       } else if (form === 'checkIn') {
-        setCheckInForm(prev => ({ ...prev, [field]: selectedDate }));
+        if (field === 'checkInDate') {
+          // Check-in cannot be in the past
+          if (selectedDate < today) {
+            Alert.alert('Invalid Date', 'Check-in date cannot be in the past');
+            return;
+          }
+          // If new checkInDate is after current checkOutDate, adjust checkOutDate
+          setCheckInForm(prev => {
+            const newCheckOut = selectedDate > prev.checkOutDate
+              ? new Date(selectedDate.getTime() + 86400000)
+              : prev.checkOutDate;
+            return { ...prev, checkInDate: selectedDate, checkOutDate: newCheckOut };
+          });
+        } else if (field === 'checkOutDate') {
+          // Check-out cannot be before check-in
+          if (selectedDate < checkInForm.checkInDate) {
+            Alert.alert('Invalid Date', 'Check-out date cannot be before check-in date');
+            return;
+          }
+          setCheckInForm(prev => ({ ...prev, checkOutDate: selectedDate }));
+        }
       } else if (form === 'history') {
+        if (field === 'endDate' && historyFilters.startDate && selectedDate < historyFilters.startDate) {
+          Alert.alert('Invalid Date', 'End date cannot be before start date');
+          return;
+        }
         setHistoryFilters(prev => ({ ...prev, [field]: selectedDate }));
       } else if (form === 'roomsView') {
         setRoomsViewDate(selectedDate);
@@ -653,59 +919,213 @@ export default function HotelScreen() {
     setShowDatePicker(true);
   };
 
-  // Room card press handler
+  // Determine which status to show based on availability
+  const getRoomDisplayStatus = (room) => {
+    if (!roomAvailability) return room.status;
+
+    const roomData = roomAvailability.rooms?.find(r => r.id === room.id);
+    if (!roomData) return room.status;
+
+    return roomData.currentStatus || room.status;
+  };
+
+  // Room card press handler - toggle dropdown
   const handleRoomPress = (room) => {
-    setSelectedRoom(room);
-    setShowRoomActionsModal(true);
+    if (loadingRooms[room.id]) return;
+    setOpenRoomDropdown(openRoomDropdown === room.id ? null : room.id);
   };
 
   // Render room card
   const renderRoomCard = ({ item: room }) => {
     if (!room) return null;
-    const statusColor = RoomStatusColors[room.status] || '#6b7280';
-    const statusText = RoomStatusText[room.status] || room.status || 'Unknown';
+    const displayStatus = getRoomDisplayStatus(room);
+    const effectiveStatus = displayStatus || room.status;
+    const statusColor = RoomStatusColors[effectiveStatus] || '#6b7280';
+    const statusText = RoomStatusText[effectiveStatus] || effectiveStatus || 'Unknown';
+    const isDropdownOpen = openRoomDropdown === room.id;
+    const isLoading = loadingRooms[room.id];
+    const showSuccess = successRooms[room.id];
+
+    // Find booking for this room and date
+    const roomData = roomAvailability?.rooms?.find(r => r.id === room.id);
+    const bookingInfo = roomData?.booking;
+    let fullBooking = null;
+    if (bookingInfo?.id) {
+      fullBooking = bookings.find(b => b.id === bookingInfo.id);
+    }
 
     return (
-      <TouchableOpacity
-        style={[styles.roomCard, { borderLeftColor: statusColor }]}
-        onPress={() => handleRoomPress(room)}
-      >
-        <View style={styles.roomCardHeader}>
-          <Text style={styles.roomNumber}>{String(room.roomNumber || '')}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-            <Text style={styles.statusBadgeText}>{String(statusText || '')}</Text>
+      <View style={styles.roomCardWrapper}>
+        <View style={{ position: 'relative', width: '100%' }}>
+          <TouchableOpacity
+            style={[
+              styles.roomCard,
+              { borderLeftColor: statusColor },
+              isLoading && styles.roomCardLoading,
+              showSuccess && styles.roomCardSuccess
+            ]}
+            onPress={() => handleRoomPress(room)}
+            disabled={isLoading}
+          >
+          {/* Loading Overlay */}
+          {isLoading && (
+            <View style={styles.roomCardLoader}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+            </View>
+          )}
+
+          {/* Success Indicator */}
+          {showSuccess && (
+            <View style={styles.roomCardSuccessBadge}>
+              <Ionicons name="checkmark-circle" size={16} color="#10b981" />
+            </View>
+          )}
+
+          <View style={styles.roomCardHeader}>
+            <Text style={styles.roomNumber}>{String(room.roomNumber || '')}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+              <Text style={styles.statusBadgeText}>{String(statusText || '')}</Text>
+            </View>
           </View>
-        </View>
-        <View style={styles.roomCardDetails}>
-          {room.floor != null && room.floor !== '' && (
-            <View style={styles.roomDetail}>
-              <Ionicons name="layers-outline" size={12} color={Colors.textLight} />
-              <Text style={styles.roomDetailText}>{String(room.floor)}</Text>
+          <View style={styles.roomCardDetails}>
+            {room.floor != null && room.floor !== '' && (
+              <View style={styles.roomDetail}>
+                <Ionicons name="layers-outline" size={12} color={Colors.textLight} />
+                <Text style={styles.roomDetailText}>{String(room.floor)}</Text>
+              </View>
+            )}
+            {room.type != null && room.type !== '' && (
+              <View style={styles.roomDetail}>
+                <Ionicons name="bed-outline" size={12} color={Colors.textLight} />
+                <Text style={styles.roomDetailText}>{String(room.type)}</Text>
+              </View>
+            )}
+            {room.capacity != null && (
+              <View style={styles.roomDetail}>
+                <Ionicons name="people-outline" size={12} color={Colors.textLight} />
+                <Text style={styles.roomDetailText}>{String(room.capacity)}</Text>
+              </View>
+            )}
+          </View>
+          {room.tariff != null && room.tariff !== 0 && (
+            <Text style={styles.roomTariff}>₹{String(room.tariff)}/night</Text>
+          )}
+          {room.currentGuest != null && room.currentGuest !== '' && (
+            <View style={styles.currentGuest}>
+              <Ionicons name="person" size={12} color={Colors.primary} />
+              <Text style={styles.currentGuestText} numberOfLines={1}>{String(room.currentGuest)}</Text>
             </View>
           )}
-          {room.type != null && room.type !== '' && (
-            <View style={styles.roomDetail}>
-              <Ionicons name="bed-outline" size={12} color={Colors.textLight} />
-              <Text style={styles.roomDetailText}>{String(room.type)}</Text>
-            </View>
-          )}
-          {room.capacity != null && (
-            <View style={styles.roomDetail}>
-              <Ionicons name="people-outline" size={12} color={Colors.textLight} />
-              <Text style={styles.roomDetailText}>{String(room.capacity)}</Text>
-            </View>
-          )}
-        </View>
-        {room.tariff != null && room.tariff !== 0 && (
-          <Text style={styles.roomTariff}>₹{String(room.tariff)}/night</Text>
-        )}
-        {room.currentGuest != null && room.currentGuest !== '' && (
-          <View style={styles.currentGuest}>
-            <Ionicons name="person" size={12} color={Colors.primary} />
-            <Text style={styles.currentGuestText} numberOfLines={1}>{String(room.currentGuest)}</Text>
+        </TouchableOpacity>
+
+        {/* Dropdown Menu */}
+        {isDropdownOpen && (
+          <View style={styles.roomDropdown}>
+            {effectiveStatus === 'available' && (
+              <>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setCheckInForm({ ...checkInForm, roomNumber: room.roomNumber, roomTariff: room.tariff });
+                    setShowCheckInModal(true);
+                    setOpenRoomDropdown(null);
+                  }}
+                >
+                  <Ionicons name="log-in" size={18} color="#10b981" />
+                  <Text style={styles.dropdownItemText}>Check In</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setBookingForm({ ...bookingForm, roomNumber: room.roomNumber, estimatedTariff: room.tariff });
+                    setShowBookingModal(true);
+                    setOpenRoomDropdown(null);
+                  }}
+                >
+                  <Ionicons name="bookmark" size={18} color="#3b82f6" />
+                  <Text style={styles.dropdownItemText}>Book Room</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {effectiveStatus === 'booked' && fullBooking && (
+              <>
+                {fullBooking.status === 'confirmed' && (
+                  <TouchableOpacity
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      handleCheckInFromBooking(fullBooking);
+                      setOpenRoomDropdown(null);
+                    }}
+                  >
+                    <Ionicons name="log-in" size={18} color="#10b981" />
+                    <Text style={styles.dropdownItemText}>Check In</Text>
+                  </TouchableOpacity>
+                )}
+                {fullBooking.status === 'confirmed' && (
+                  <TouchableOpacity
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      setSelectedBooking(fullBooking);
+                      setOpenRoomDropdown(null);
+                      handleCancelBooking(fullBooking.id);
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#ef4444" />
+                    <Text style={[styles.dropdownItemText, { color: '#ef4444' }]}>Cancel Booking</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {effectiveStatus === 'occupied' && (
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => {
+                  setActiveTab('checkins');
+                  setOpenRoomDropdown(null);
+                }}
+              >
+                <Ionicons name="log-out" size={18} color="#3b82f6" />
+                <Text style={styles.dropdownItemText}>Check Out</Text>
+              </TouchableOpacity>
+            )}
+
+            {(effectiveStatus === 'cleaning' || effectiveStatus === 'maintenance') && (
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => {
+                  handleUpdateRoomStatus(room.id, 'available');
+                  setOpenRoomDropdown(null);
+                }}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#10b981" />
+                ) : (
+                  <Ionicons name="checkmark-circle" size={18} color="#10b981" />
+                )}
+                <Text style={styles.dropdownItemText}>Mark Available</Text>
+              </TouchableOpacity>
+            )}
+
+            {effectiveStatus !== 'maintenance' && (
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => {
+                  setSelectedRoom(room);
+                  setShowRoomActionsModal(true);
+                  setOpenRoomDropdown(null);
+                }}
+              >
+                <Ionicons name="construct" size={18} color="#f59e0b" />
+                <Text style={styles.dropdownItemText}>Mark Maintenance</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
-      </TouchableOpacity>
+        </View>
+      </View>
     );
   };
 
@@ -1001,43 +1421,268 @@ export default function HotelScreen() {
       {/* Content */}
       <View style={styles.content}>
         {activeTab === 'rooms' && (
-          <FlatList
-            data={rooms || []}
-            renderItem={renderRoomCard}
-            keyExtractor={(item, index) => item?.id || `room-${index}`}
-            numColumns={2}
-            columnWrapperStyle={styles.roomsRow}
-            contentContainerStyle={styles.listContent}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Ionicons name="bed-outline" size={48} color={Colors.textLight} />
-                <Text style={styles.emptyText}>No rooms found</Text>
-                <Text style={styles.emptySubtext}>Add rooms to get started</Text>
+          <>
+            {/* Date Picker and Navigation - Single Line */}
+            <View style={styles.datePickerContainer}>
+              <View style={styles.datePickerRow}>
+                <TouchableOpacity
+                  style={styles.dateNavButton}
+                  onPress={() => navigateDate(-1)}
+                >
+                  <Ionicons name="chevron-back" size={22} color={Colors.primary} />
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.datePickerButton}
+                  onPress={() => {
+                    setDatePickerField({ form: 'roomsView' });
+                    setShowDatePicker(true);
+                  }}
+                >
+                  <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                  <Text style={styles.datePickerText}>
+                    {roomsViewDate instanceof Date 
+                      ? roomsViewDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      : new Date(roomsViewDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.dateNavButton}
+                  onPress={() => navigateDate(1)}
+                >
+                  <Ionicons name="chevron-forward" size={22} color={Colors.primary} />
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.todayButton}
+                  onPress={goToToday}
+                >
+                  <Text style={styles.todayButtonText}>Today</Text>
+                </TouchableOpacity>
               </View>
-            }
-          />
+            </View>
+
+            {/* Rooms List with Loader */}
+            <View style={styles.roomsListContainer}>
+              {loadingRoomAvailability && (
+                <View style={styles.loaderOverlay}>
+                  <ActivityIndicator size="large" color={Colors.primary} />
+                  <Text style={styles.loaderText}>Loading room availability...</Text>
+                </View>
+              )}
+              
+              <FlatList
+                data={rooms || []}
+                renderItem={renderRoomCard}
+                keyExtractor={(item, index) => item?.id || `room-${index}`}
+                numColumns={2}
+                columnWrapperStyle={styles.roomsRow}
+                contentContainerStyle={styles.listContent}
+                refreshControl={
+                  <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                }
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    <Ionicons name="bed-outline" size={48} color={Colors.textLight} />
+                    <Text style={styles.emptyText}>No rooms found</Text>
+                    <Text style={styles.emptySubtext}>Add rooms to get started</Text>
+                  </View>
+                }
+                showsVerticalScrollIndicator={false}
+              />
+            </View>
+          </>
         )}
 
         {activeTab === 'bookings' && (
-          <FlatList
-            data={bookings.filter(b => b.status === 'confirmed')}
-            renderItem={renderBookingCard}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContent}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Ionicons name="bookmark-outline" size={48} color={Colors.textLight} />
-                <Text style={styles.emptyText}>No bookings found</Text>
-                <Text style={styles.emptySubtext}>Create a booking to get started</Text>
-              </View>
-            }
-          />
+          <ScrollView
+            style={styles.bookingsContainer}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          >
+            {/* View Mode Toggle */}
+            <View style={styles.viewModeToggle}>
+              <TouchableOpacity
+                style={[styles.viewModeBtn, bookingsViewMode === 'calendar' && styles.viewModeBtnActive]}
+                onPress={() => setBookingsViewMode('calendar')}
+              >
+                <Ionicons
+                  name="calendar"
+                  size={18}
+                  color={bookingsViewMode === 'calendar' ? '#fff' : Colors.primary}
+                />
+                <Text style={[styles.viewModeBtnText, bookingsViewMode === 'calendar' && styles.viewModeBtnTextActive]}>
+                  Calendar
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.viewModeBtn, bookingsViewMode === 'list' && styles.viewModeBtnActive]}
+                onPress={() => setBookingsViewMode('list')}
+              >
+                <Ionicons
+                  name="list"
+                  size={18}
+                  color={bookingsViewMode === 'list' ? '#fff' : Colors.primary}
+                />
+                <Text style={[styles.viewModeBtnText, bookingsViewMode === 'list' && styles.viewModeBtnTextActive]}>
+                  List
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {bookingsViewMode === 'calendar' ? (
+              <>
+                {/* Calendar Header */}
+                <View style={styles.calendarHeader}>
+                  <TouchableOpacity onPress={goToPreviousMonth} style={styles.calendarNavBtn}>
+                    <Ionicons name="chevron-back" size={24} color={Colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={goToCurrentMonth} style={styles.calendarMonthBtn}>
+                    <Text style={styles.calendarMonthText}>
+                      {MONTH_NAMES[calendarMonth]} {calendarYear}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={goToNextMonth} style={styles.calendarNavBtn}>
+                    <Ionicons name="chevron-forward" size={24} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Weekday Headers */}
+                <View style={styles.weekdayRow}>
+                  {WEEKDAYS.map(day => (
+                    <View key={day} style={styles.weekdayCell}>
+                      <Text style={styles.weekdayText}>{day}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Calendar Grid */}
+                {loadingCalendarSummary ? (
+                  <View style={styles.calendarLoading}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  </View>
+                ) : (
+                  <View style={styles.calendarGrid}>
+                    {(() => {
+                      const daysInMonth = getDaysInMonth(calendarMonth, calendarYear);
+                      const firstDay = getFirstDayOfMonth(calendarMonth, calendarYear);
+                      const cells = [];
+
+                      // Empty cells for days before month starts
+                      for (let i = 0; i < firstDay; i++) {
+                        cells.push(<View key={`empty-${i}`} style={styles.calendarCell} />);
+                      }
+
+                      // Day cells
+                      for (let day = 1; day <= daysInMonth; day++) {
+                        const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const dayData = calendarSummary[dateStr] || {};
+                        const hasBookings = dayData.bookings > 0 || getBookingsForDate(dateStr).length > 0;
+                        const hasCheckIns = dayData.checkIns > 0;
+                        const hasCheckOuts = dayData.checkOuts > 0;
+                        const isTodayDate = isToday(day);
+                        const isSelected = selectedCalendarDate === dateStr;
+
+                        cells.push(
+                          <TouchableOpacity
+                            key={day}
+                            style={[
+                              styles.calendarCell,
+                              isTodayDate && styles.calendarCellToday,
+                              isSelected && styles.calendarCellSelected,
+                            ]}
+                            onPress={() => setSelectedCalendarDate(dateStr)}
+                          >
+                            <Text style={[
+                              styles.calendarDayText,
+                              isTodayDate && styles.calendarDayTextToday,
+                              isSelected && styles.calendarDayTextSelected,
+                            ]}>
+                              {day}
+                            </Text>
+                            {(hasBookings || hasCheckIns || hasCheckOuts) && (
+                              <View style={styles.calendarDots}>
+                                {hasBookings && <View style={[styles.calendarDot, { backgroundColor: '#3b82f6' }]} />}
+                                {hasCheckIns && <View style={[styles.calendarDot, { backgroundColor: '#10b981' }]} />}
+                                {hasCheckOuts && <View style={[styles.calendarDot, { backgroundColor: '#ef4444' }]} />}
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      }
+
+                      return cells;
+                    })()}
+                  </View>
+                )}
+
+                {/* Calendar Legend */}
+                <View style={styles.calendarLegend}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
+                    <Text style={styles.legendText}>Booking</Text>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                    <Text style={styles.legendText}>Check-in</Text>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#ef4444' }]} />
+                    <Text style={styles.legendText}>Check-out</Text>
+                  </View>
+                </View>
+
+                {/* Selected Date Bookings */}
+                {selectedCalendarDate && (
+                  <View style={styles.selectedDateSection}>
+                    <Text style={styles.selectedDateTitle}>
+                      Bookings for {new Date(selectedCalendarDate).toLocaleDateString('en-IN', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'long'
+                      })}
+                    </Text>
+                    {getBookingsForDate(selectedCalendarDate).length > 0 ? (
+                      getBookingsForDate(selectedCalendarDate).map(booking => (
+                        <View key={booking.id} style={styles.calendarBookingCard}>
+                          <View style={styles.calendarBookingInfo}>
+                            <Text style={styles.calendarBookingRoom}>Room {booking.room?.roomNumber || booking.roomNumber}</Text>
+                            <Text style={styles.calendarBookingGuest}>{booking.guestName}</Text>
+                            <Text style={styles.calendarBookingDates}>
+                              {new Date(booking.checkInDate).toLocaleDateString()} - {new Date(booking.checkOutDate).toLocaleDateString()}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.calendarBookingAction}
+                            onPress={() => handleCheckInFromBooking(booking)}
+                          >
+                            <Ionicons name="enter-outline" size={20} color={Colors.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.noBookingsText}>No bookings for this date</Text>
+                    )}
+                  </View>
+                )}
+              </>
+            ) : (
+              // List View
+              bookings.filter(b => b.status === 'confirmed').length > 0 ? (
+                bookings.filter(b => b.status === 'confirmed').map(booking => (
+                  <View key={booking.id}>
+                    {renderBookingCard({ item: booking })}
+                  </View>
+                ))
+              ) : (
+                <View style={styles.emptyState}>
+                  <Ionicons name="bookmark-outline" size={48} color={Colors.textLight} />
+                  <Text style={styles.emptyText}>No bookings found</Text>
+                  <Text style={styles.emptySubtext}>Create a booking to get started</Text>
+                </View>
+              )
+            )}
+          </ScrollView>
         )}
 
         {activeTab === 'checkins' && (
@@ -1961,6 +2606,22 @@ export default function HotelScreen() {
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={handleDateChange}
+          minimumDate={
+            // For checkInDate fields, minimum is today
+            (datePickerField?.field === 'checkInDate')
+              ? new Date(new Date().setHours(0, 0, 0, 0))
+              // For checkOutDate fields, minimum is the corresponding checkInDate
+              : datePickerField?.field === 'checkOutDate'
+              ? (datePickerField?.form === 'booking'
+                  ? bookingForm.checkInDate
+                  : datePickerField?.form === 'checkIn'
+                  ? checkInForm.checkInDate
+                  : undefined)
+              // For history endDate, minimum is startDate
+              : datePickerField?.field === 'endDate' && historyFilters.startDate
+              ? historyFilters.startDate
+              : undefined
+          }
         />
       )}
 
@@ -2121,20 +2782,22 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: Spacing.md,
     paddingBottom: 100,
   },
   roomsRow: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
   },
   roomCard: {
-    width: '48%',
+    width: '100%',
     backgroundColor: Colors.backgroundWhite,
     borderRadius: BorderRadius.medium,
     padding: Spacing.md,
-    marginBottom: Spacing.md,
     borderLeftWidth: 4,
     ...Shadows.small,
+    minHeight: 140,
   },
   roomCardHeader: {
     flexDirection: 'row',
@@ -2701,5 +3364,317 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     ...Shadows.medium,
+  },
+  // Date picker styles - Single line
+  datePickerContainer: {
+    padding: Spacing.md,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.backgroundWhite,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  datePickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.xs,
+  },
+  dateNavButton: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.medium,
+    backgroundColor: '#fef2f2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  datePickerButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    backgroundColor: '#fef2f2',
+    minHeight: 44,
+  },
+  datePickerText: {
+    ...Typography.body,
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  todayButton: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    backgroundColor: Colors.primary,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  todayButtonText: {
+    ...Typography.small,
+    color: '#fff',
+    fontWeight: '700',
+  },
+  // Rooms list container
+  roomsListContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  loaderOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  loaderText: {
+    ...Typography.small,
+    color: Colors.textMedium,
+    marginTop: Spacing.sm,
+    fontWeight: '600',
+  },
+  // Room card wrapper and dropdown
+  roomCardWrapper: {
+    width: '48%',
+    alignItems: 'stretch',
+  },
+  roomCardLoading: {
+    opacity: 0.6,
+  },
+  roomCardSuccess: {
+    borderWidth: 2,
+    borderColor: '#10b981',
+  },
+  roomCardLoader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: BorderRadius.medium,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  roomCardSuccessBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 20,
+  },
+  roomDropdown: {
+    position: 'absolute',
+    top: '50%',
+    left: 0,
+    right: 0,
+    marginTop: -60,
+    backgroundColor: Colors.backgroundWhite,
+    borderRadius: BorderRadius.medium,
+    paddingVertical: Spacing.xs,
+    ...Shadows.medium,
+    zIndex: 2000,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    elevation: 8,
+    width: '100%',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    gap: Spacing.sm,
+  },
+  dropdownItemText: {
+    ...Typography.body,
+    color: Colors.textDark,
+  },
+  // Calendar styles
+  bookingsContainer: {
+    flex: 1,
+  },
+  viewModeToggle: {
+    flexDirection: 'row',
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  viewModeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    gap: Spacing.xs,
+  },
+  viewModeBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  viewModeBtnText: {
+    ...Typography.caption,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  viewModeBtnTextActive: {
+    color: '#fff',
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.backgroundWhite,
+    marginHorizontal: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    ...Shadows.small,
+  },
+  calendarNavBtn: {
+    padding: Spacing.sm,
+  },
+  calendarMonthBtn: {
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+  },
+  calendarMonthText: {
+    ...Typography.h3,
+    color: Colors.textDark,
+    fontWeight: '600',
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  weekdayCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  weekdayText: {
+    ...Typography.small,
+    color: Colors.textMedium,
+    fontWeight: '600',
+  },
+  calendarLoading: {
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  calendarCell: {
+    width: '14.28%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 2,
+  },
+  calendarCellToday: {
+    backgroundColor: Colors.primaryLight + '30',
+    borderRadius: BorderRadius.medium,
+  },
+  calendarCellSelected: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.medium,
+  },
+  calendarDayText: {
+    ...Typography.body,
+    color: Colors.textDark,
+  },
+  calendarDayTextToday: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  calendarDayTextSelected: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  calendarDots: {
+    flexDirection: 'row',
+    marginTop: 2,
+    gap: 2,
+  },
+  calendarDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
+  calendarLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.lg,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: {
+    ...Typography.small,
+    color: Colors.textMedium,
+  },
+  selectedDateSection: {
+    padding: Spacing.md,
+  },
+  selectedDateTitle: {
+    ...Typography.h4,
+    color: Colors.textDark,
+    marginBottom: Spacing.sm,
+  },
+  calendarBookingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundWhite,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.sm,
+    ...Shadows.small,
+  },
+  calendarBookingInfo: {
+    flex: 1,
+  },
+  calendarBookingRoom: {
+    ...Typography.body,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  calendarBookingGuest: {
+    ...Typography.caption,
+    color: Colors.textMedium,
+    marginTop: 2,
+  },
+  calendarBookingDates: {
+    ...Typography.small,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  calendarBookingAction: {
+    padding: Spacing.sm,
+  },
+  noBookingsText: {
+    ...Typography.caption,
+    color: Colors.textLight,
+    textAlign: 'center',
+    paddingVertical: Spacing.md,
   },
 });

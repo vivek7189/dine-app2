@@ -19,7 +19,6 @@
     "android": {
       "package": "com.dineopen.waiter",
       "permissions": [
-        "android.permission.RECORD_AUDIO",
         "android.permission.INTERNET"
       ]
     },
