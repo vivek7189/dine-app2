@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   RefreshControl,
   ActivityIndicator,
   Alert,
@@ -12,6 +13,8 @@ import {
   TextInput,
   ScrollView,
   Platform,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -41,8 +44,28 @@ const RoomStatusText = {
   'out-of-service': 'Out of Service',
 };
 
+const HEADER_MAX_HEIGHT = 100;
+const HEADER_MIN_HEIGHT = 0;
+const HEADER_SCROLL_DISTANCE = HEADER_MAX_HEIGHT - HEADER_MIN_HEIGHT;
+
 export default function HotelScreen() {
   const router = useRouter();
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const tabScrollRef = useRef(null);
+
+  // Animated header height
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_DISTANCE],
+    outputRange: [HEADER_MAX_HEIGHT, HEADER_MIN_HEIGHT],
+    extrapolate: 'clamp',
+  });
+
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_DISTANCE / 2, HEADER_SCROLL_DISTANCE],
+    outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
@@ -1315,85 +1338,149 @@ export default function HotelScreen() {
     );
   }
 
+  // Close dropdown when tapping outside
+  const closeDropdown = () => {
+    if (openRoomDropdown) {
+      setOpenRoomDropdown(null);
+    }
+  };
+
+  // Tab scroll constants
+  const TAB_WIDTH = 100;
+  const SCREEN_WIDTH = Dimensions.get('window').width;
+
+  const tabs = [
+    { id: 'rooms', label: 'Rooms', icon: 'bed-outline' },
+    { id: 'bookings', label: 'Bookings', icon: 'calendar-outline' },
+    { id: 'checkins', label: 'Check-ins', icon: 'enter-outline' },
+    { id: 'history', label: 'History', icon: 'time-outline' },
+    { id: 'settings', label: 'Setup', icon: 'settings-outline' },
+  ];
+
+  const handleTabPress = (tabId, index) => {
+    setActiveTab(tabId);
+    // Auto-scroll to center the selected tab
+    if (tabScrollRef.current) {
+      const scrollX = (index * TAB_WIDTH) - (SCREEN_WIDTH / 2) + (TAB_WIDTH / 2);
+      tabScrollRef.current.scrollTo({ x: Math.max(0, scrollX), animated: true });
+    }
+  };
+
+  // Close dropdown on scroll
+  const handleScroll = () => {
+    if (openRoomDropdown) {
+      setOpenRoomDropdown(null);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Hotel Management</Text>
-          <Text style={styles.headerSubtitle}>Rooms, Bookings & Check-ins</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => {
-            if (activeTab === 'rooms') setShowAddRoomModal(true);
-            else if (activeTab === 'bookings') setShowBookingModal(true);
-            else if (activeTab === 'checkins') setShowCheckInModal(true);
-          }}
-        >
-          <Ionicons name="add" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Success/Error Messages */}
-      {success && (
-        <View style={styles.successBanner}>
-          <Ionicons name="checkmark-circle" size={20} color="#166534" />
-          <Text style={styles.successText}>{success}</Text>
-        </View>
-      )}
-      {error && (
-        <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle" size={20} color="#991b1b" />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={() => setError(null)}>
-            <Ionicons name="close" size={20} color="#991b1b" />
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Stats Cards (only on rooms tab) */}
-      {activeTab === 'rooms' && (
-        <View style={styles.statsContainer}>
-          <View style={[styles.statCard, { backgroundColor: '#dcfce7' }]}>
-            <Text style={[styles.statValue, { color: '#166534' }]}>{availableRooms}</Text>
-            <Text style={[styles.statLabel, { color: '#166534' }]}>Available</Text>
+        {/* Header with Summary Card */}
+        <View style={styles.headerSection}>
+          <View style={styles.headerTop}>
+            <View>
+              <Text style={styles.headerGreeting}>Hotel Management</Text>
+              <Text style={styles.headerDate}>
+                {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
+              </Text>
+            </View>
+            {(activeTab === 'rooms' || activeTab === 'bookings') && (
+              <TouchableOpacity
+                style={styles.addBookingBtn}
+                onPress={() => setShowBookingModal(true)}
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.addBookingBtnText}>New Booking</Text>
+              </TouchableOpacity>
+            )}
+            {activeTab === 'checkins' && (
+              <TouchableOpacity
+                style={styles.addBookingBtn}
+                onPress={() => setShowCheckInModal(true)}
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.addBookingBtnText}>Check In</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          <View style={[styles.statCard, { backgroundColor: '#fef2f2' }]}>
-            <Text style={[styles.statValue, { color: '#991b1b' }]}>{occupiedRooms}</Text>
-            <Text style={[styles.statLabel, { color: '#991b1b' }]}>Occupied</Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: '#fef3c7' }]}>
-            <Text style={[styles.statValue, { color: '#92400e' }]}>{rooms.length}</Text>
-            <Text style={[styles.statLabel, { color: '#92400e' }]}>Total</Text>
+
+          {/* Summary Stats Card */}
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryItem}>
+              <View style={[styles.summaryIcon, { backgroundColor: '#dcfce7' }]}>
+                <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
+              </View>
+              <View>
+                <Text style={styles.summaryValue}>{availableRooms}</Text>
+                <Text style={styles.summaryLabel}>Available</Text>
+              </View>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <View style={[styles.summaryIcon, { backgroundColor: '#fee2e2' }]}>
+                <Ionicons name="person" size={20} color="#dc2626" />
+              </View>
+              <View>
+                <Text style={styles.summaryValue}>{occupiedRooms}</Text>
+                <Text style={styles.summaryLabel}>Occupied</Text>
+              </View>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <View style={[styles.summaryIcon, { backgroundColor: '#e0e7ff' }]}>
+                <Ionicons name="bed" size={20} color="#4f46e5" />
+              </View>
+              <View>
+                <Text style={styles.summaryValue}>{rooms.length}</Text>
+                <Text style={styles.summaryLabel}>Total</Text>
+              </View>
+            </View>
           </View>
         </View>
-      )}
 
-      {/* Tabs */}
-      <View style={styles.tabsContainer}>
-        {[
-          { id: 'rooms', label: 'Rooms', icon: 'bed-outline' },
-          { id: 'bookings', label: 'Bookings', icon: 'bookmark-outline' },
-          { id: 'checkins', label: 'Check-ins', icon: 'person-outline' },
-          { id: 'history', label: 'History', icon: 'time-outline' },
-        ].map(tab => (
-          <TouchableOpacity
-            key={tab.id}
-            style={[styles.tab, activeTab === tab.id && styles.activeTab]}
-            onPress={() => setActiveTab(tab.id)}
+        {/* Success/Error Messages */}
+        {success && (
+          <View style={styles.successBanner}>
+            <Ionicons name="checkmark-circle" size={16} color="#166534" />
+            <Text style={styles.successText}>{success}</Text>
+          </View>
+        )}
+        {error && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={16} color="#991b1b" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={() => setError(null)}>
+              <Ionicons name="close" size={16} color="#991b1b" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Scrollable Tabs */}
+        <View style={styles.tabsWrapper}>
+          <ScrollView
+            ref={tabScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabsScrollContent}
           >
-            <Ionicons
-              name={tab.icon}
-              size={18}
-              color={activeTab === tab.id ? Colors.primary : Colors.textLight}
-            />
-            <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+            {tabs.map((tab, index) => (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.tab, activeTab === tab.id && styles.activeTab]}
+                onPress={() => handleTabPress(tab.id, index)}
+              >
+                <Ionicons
+                  name={activeTab === tab.id ? tab.icon.replace('-outline', '') : tab.icon}
+                  size={18}
+                  color={activeTab === tab.id ? Colors.primary : Colors.textLight}
+                />
+                <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
       {/* Check-ins filter */}
       {activeTab === 'checkins' && (
@@ -1479,6 +1566,8 @@ export default function HotelScreen() {
                 numColumns={2}
                 columnWrapperStyle={styles.roomsRow}
                 contentContainerStyle={styles.listContent}
+                onScroll={handleScroll}
+                scrollEventThrottle={16}
                 refreshControl={
                   <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
                 }
@@ -1721,6 +1810,74 @@ export default function HotelScreen() {
               </View>
             }
           />
+        )}
+
+        {/* Settings/Setup Tab */}
+        {activeTab === 'settings' && (
+          <ScrollView
+            style={styles.settingsContainer}
+            contentContainerStyle={styles.settingsContent}
+          >
+            <Text style={styles.settingsSectionTitle}>Room Management</Text>
+
+            <TouchableOpacity
+              style={styles.settingsCard}
+              onPress={() => setShowAddRoomModal(true)}
+            >
+              <View style={styles.settingsCardIcon}>
+                <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
+              </View>
+              <View style={styles.settingsCardContent}>
+                <Text style={styles.settingsCardTitle}>Add Single Room</Text>
+                <Text style={styles.settingsCardDesc}>Add a new room to your hotel</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.settingsCard}
+              onPress={() => setShowBulkAddModal(true)}
+            >
+              <View style={styles.settingsCardIcon}>
+                <Ionicons name="layers-outline" size={24} color={Colors.primary} />
+              </View>
+              <View style={styles.settingsCardContent}>
+                <Text style={styles.settingsCardTitle}>Bulk Add Rooms</Text>
+                <Text style={styles.settingsCardDesc}>Add multiple rooms at once</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
+            </TouchableOpacity>
+
+            <Text style={[styles.settingsSectionTitle, { marginTop: Spacing.lg }]}>Quick Stats</Text>
+
+            <View style={styles.settingsStatsRow}>
+              <View style={[styles.settingsStatCard, { backgroundColor: '#dcfce7' }]}>
+                <Ionicons name="checkmark-circle" size={24} color="#166534" />
+                <Text style={[styles.settingsStatValue, { color: '#166534' }]}>{availableRooms}</Text>
+                <Text style={[styles.settingsStatLabel, { color: '#166534' }]}>Available</Text>
+              </View>
+              <View style={[styles.settingsStatCard, { backgroundColor: '#fef2f2' }]}>
+                <Ionicons name="person" size={24} color="#991b1b" />
+                <Text style={[styles.settingsStatValue, { color: '#991b1b' }]}>{occupiedRooms}</Text>
+                <Text style={[styles.settingsStatLabel, { color: '#991b1b' }]}>Occupied</Text>
+              </View>
+              <View style={[styles.settingsStatCard, { backgroundColor: '#eff6ff' }]}>
+                <Ionicons name="bed" size={24} color="#1d4ed8" />
+                <Text style={[styles.settingsStatValue, { color: '#1d4ed8' }]}>{rooms.length}</Text>
+                <Text style={[styles.settingsStatLabel, { color: '#1d4ed8' }]}>Total</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.settingsSectionTitle, { marginTop: Spacing.lg }]}>Legend</Text>
+            <View style={styles.legendContainer}>
+              {Object.entries(RoomStatusColors).map(([status, color]) => (
+                <View key={status} style={styles.legendRow}>
+                  <View style={[styles.legendDotLarge, { backgroundColor: color }]} />
+                  <Text style={styles.legendTextLarge}>{RoomStatusText[status]}</Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
         )}
       </View>
 
@@ -2625,15 +2782,6 @@ export default function HotelScreen() {
         />
       )}
 
-      {/* FAB for Bulk Add (only on rooms tab) */}
-      {activeTab === 'rooms' && (
-        <TouchableOpacity
-          style={styles.fabSecondary}
-          onPress={() => setShowBulkAddModal(true)}
-        >
-          <Ionicons name="layers" size={20} color="#fff" />
-        </TouchableOpacity>
-      )}
     </SafeAreaView>
   );
 }
@@ -2654,32 +2802,87 @@ const styles = StyleSheet.create({
     color: Colors.textMedium,
     ...Typography.body,
   },
-  header: {
+  headerSection: {
+    backgroundColor: Colors.backgroundWhite,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
+  },
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
+  },
+  headerGreeting: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  headerDate: {
+    fontSize: 13,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  addBookingBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.large,
+    gap: 6,
+    ...Shadows.small,
+  },
+  addBookingBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  summaryCard: {
+    flexDirection: 'row',
+    backgroundColor: '#f8fafc',
+    borderRadius: BorderRadius.large,
     padding: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  summaryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  summaryIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: Colors.textLight,
+    marginTop: -2,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: '#e2e8f0',
+  },
+  tabsWrapper: {
     backgroundColor: Colors.backgroundWhite,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
   },
-  headerTitle: {
-    ...Typography.h2,
-    color: Colors.textDark,
-  },
-  headerSubtitle: {
-    ...Typography.caption,
-    color: Colors.textLight,
-    marginTop: 2,
-  },
-  addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...Shadows.medium,
+  tabsScrollContent: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    gap: Spacing.xs,
   },
   successBanner: {
     flexDirection: 'row',
@@ -2711,45 +2914,111 @@ const styles = StyleSheet.create({
     ...Typography.caption,
     flex: 1,
   },
-  statsContainer: {
-    flexDirection: 'row',
+  // Settings tab styles
+  settingsContainer: {
+    flex: 1,
+  },
+  settingsContent: {
     padding: Spacing.md,
+  },
+  settingsSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textMedium,
+    marginBottom: Spacing.sm,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  settingsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundWhite,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.sm,
+    ...Shadows.small,
+  },
+  settingsCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primaryLight + '20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  settingsCardContent: {
+    flex: 1,
+  },
+  settingsCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textDark,
+  },
+  settingsCardDesc: {
+    fontSize: 12,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  settingsStatsRow: {
+    flexDirection: 'row',
     gap: Spacing.sm,
   },
-  statCard: {
+  settingsStatCard: {
     flex: 1,
     padding: Spacing.md,
     borderRadius: BorderRadius.medium,
     alignItems: 'center',
+    gap: 4,
   },
-  statValue: {
-    ...Typography.h2,
+  settingsStatValue: {
+    fontSize: 24,
+    fontWeight: '700',
   },
-  statLabel: {
-    ...Typography.small,
-    marginTop: 2,
+  settingsStatLabel: {
+    fontSize: 11,
+    fontWeight: '500',
   },
-  tabsContainer: {
-    flexDirection: 'row',
+  legendContainer: {
     backgroundColor: Colors.backgroundWhite,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    ...Shadows.small,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+  },
+  legendDotLarge: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: Spacing.sm,
+  },
+  legendTextLarge: {
+    fontSize: 14,
+    color: Colors.textMedium,
   },
   tab: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginHorizontal: 4,
+    borderRadius: BorderRadius.large,
     gap: 6,
+    minWidth: 90,
+    backgroundColor: 'transparent',
   },
   activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: Colors.primary,
+    backgroundColor: Colors.primary + '15',
   },
   tabText: {
-    ...Typography.caption,
+    fontSize: 13,
     color: Colors.textLight,
+    fontWeight: '500',
   },
   activeTabText: {
     color: Colors.primary,
@@ -3352,18 +3621,6 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.textLight,
     textAlign: 'center',
-  },
-  fabSecondary: {
-    position: 'absolute',
-    bottom: 100,
-    right: Spacing.md,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Colors.secondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...Shadows.medium,
   },
   // Date picker styles - Single line
   datePickerContainer: {
