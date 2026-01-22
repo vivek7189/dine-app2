@@ -44,25 +44,67 @@ const RoomStatusText = {
   'out-of-service': 'Out of Service',
 };
 
-const HEADER_MAX_HEIGHT = 100;
-const HEADER_MIN_HEIGHT = 0;
-const HEADER_SCROLL_DISTANCE = HEADER_MAX_HEIGHT - HEADER_MIN_HEIGHT;
+// Animation constants
+const HEADER_EXPANDED_HEIGHT = 170; // Full header with stats card
+const HEADER_COLLAPSED_HEIGHT = 50; // Compact header
+const SCROLL_THRESHOLD = 100;
 
 export default function HotelScreen() {
   const router = useRouter();
   const scrollY = useRef(new Animated.Value(0)).current;
   const tabScrollRef = useRef(null);
 
-  // Animated header height
-  const headerHeight = scrollY.interpolate({
-    inputRange: [0, HEADER_SCROLL_DISTANCE],
-    outputRange: [HEADER_MAX_HEIGHT, HEADER_MIN_HEIGHT],
+  // Header title animation - stays visible but gets smaller
+  const headerTitleScale = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [1, 0.85],
     extrapolate: 'clamp',
   });
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, HEADER_SCROLL_DISTANCE / 2, HEADER_SCROLL_DISTANCE],
-    outputRange: [1, 0.5, 0],
+  // Summary card animation - fades out and collapses
+  const summaryCardHeight = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [80, 0],
+    extrapolate: 'clamp',
+  });
+
+  const summaryCardOpacity = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD * 0.5],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  // Header section padding animation
+  const headerPaddingBottom = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [16, 8],
+    extrapolate: 'clamp',
+  });
+
+  // Compact stats that appear when collapsed
+  const compactStatsOpacity = scrollY.interpolate({
+    inputRange: [SCROLL_THRESHOLD * 0.7, SCROLL_THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  // Tabs section padding animation
+  const tabsPadding = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [8, 4],
+    extrapolate: 'clamp',
+  });
+
+  // Date picker section animation
+  const datePickerHeight = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [56, 40],
+    extrapolate: 'clamp',
+  });
+
+  const datePickerPadding = scrollY.interpolate({
+    inputRange: [0, SCROLL_THRESHOLD],
+    outputRange: [12, 6],
     extrapolate: 'clamp',
   });
 
@@ -1375,22 +1417,39 @@ export default function HotelScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-        {/* Header with Summary Card */}
-        <View style={styles.headerSection}>
+        {/* Animated Header with Summary Card */}
+        <Animated.View style={[styles.headerSection, { paddingBottom: headerPaddingBottom }]}>
           <View style={styles.headerTop}>
-            <View>
+            <Animated.View style={{ transform: [{ scale: headerTitleScale }] }}>
               <Text style={styles.headerGreeting}>Hotel Management</Text>
-              <Text style={styles.headerDate}>
-                {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
-              </Text>
-            </View>
+              <View style={styles.headerSubRow}>
+                <Text style={styles.headerDate}>
+                  {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                </Text>
+                {/* Compact stats - appears when scrolled */}
+                <Animated.View style={[styles.compactStats, { opacity: compactStatsOpacity }]}>
+                  <View style={styles.compactStatItem}>
+                    <View style={[styles.compactDot, { backgroundColor: '#16a34a' }]} />
+                    <Text style={styles.compactStatText}>{availableRooms}</Text>
+                  </View>
+                  <View style={styles.compactStatItem}>
+                    <View style={[styles.compactDot, { backgroundColor: '#dc2626' }]} />
+                    <Text style={styles.compactStatText}>{occupiedRooms}</Text>
+                  </View>
+                  <View style={styles.compactStatItem}>
+                    <View style={[styles.compactDot, { backgroundColor: '#4f46e5' }]} />
+                    <Text style={styles.compactStatText}>{rooms.length}</Text>
+                  </View>
+                </Animated.View>
+              </View>
+            </Animated.View>
             {(activeTab === 'rooms' || activeTab === 'bookings') && (
               <TouchableOpacity
                 style={styles.addBookingBtn}
                 onPress={() => setShowBookingModal(true)}
               >
-                <Ionicons name="add" size={18} color="#fff" />
-                <Text style={styles.addBookingBtnText}>New Booking</Text>
+                <Ionicons name="add" size={16} color="#fff" />
+                <Text style={styles.addBookingBtnText}>Booking</Text>
               </TouchableOpacity>
             )}
             {activeTab === 'checkins' && (
@@ -1398,17 +1457,20 @@ export default function HotelScreen() {
                 style={styles.addBookingBtn}
                 onPress={() => setShowCheckInModal(true)}
               >
-                <Ionicons name="add" size={18} color="#fff" />
+                <Ionicons name="add" size={16} color="#fff" />
                 <Text style={styles.addBookingBtnText}>Check In</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* Summary Stats Card */}
-          <View style={styles.summaryCard}>
+          {/* Animated Summary Stats Card - collapses on scroll */}
+          <Animated.View style={[
+            styles.summaryCard,
+            { height: summaryCardHeight, opacity: summaryCardOpacity, overflow: 'hidden' }
+          ]}>
             <View style={styles.summaryItem}>
               <View style={[styles.summaryIcon, { backgroundColor: '#dcfce7' }]}>
-                <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
+                <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
               </View>
               <View>
                 <Text style={styles.summaryValue}>{availableRooms}</Text>
@@ -1418,7 +1480,7 @@ export default function HotelScreen() {
             <View style={styles.summaryDivider} />
             <View style={styles.summaryItem}>
               <View style={[styles.summaryIcon, { backgroundColor: '#fee2e2' }]}>
-                <Ionicons name="person" size={20} color="#dc2626" />
+                <Ionicons name="person" size={18} color="#dc2626" />
               </View>
               <View>
                 <Text style={styles.summaryValue}>{occupiedRooms}</Text>
@@ -1428,15 +1490,15 @@ export default function HotelScreen() {
             <View style={styles.summaryDivider} />
             <View style={styles.summaryItem}>
               <View style={[styles.summaryIcon, { backgroundColor: '#e0e7ff' }]}>
-                <Ionicons name="bed" size={20} color="#4f46e5" />
+                <Ionicons name="bed" size={18} color="#4f46e5" />
               </View>
               <View>
                 <Text style={styles.summaryValue}>{rooms.length}</Text>
                 <Text style={styles.summaryLabel}>Total</Text>
               </View>
             </View>
-          </View>
-        </View>
+          </Animated.View>
+        </Animated.View>
 
         {/* Success/Error Messages */}
         {success && (
@@ -1456,7 +1518,7 @@ export default function HotelScreen() {
         )}
 
         {/* Scrollable Tabs */}
-        <View style={styles.tabsWrapper}>
+        <Animated.View style={[styles.tabsWrapper, { paddingVertical: tabsPadding }]}>
           <ScrollView
             ref={tabScrollRef}
             horizontal
@@ -1471,7 +1533,7 @@ export default function HotelScreen() {
               >
                 <Ionicons
                   name={activeTab === tab.id ? tab.icon.replace('-outline', '') : tab.icon}
-                  size={18}
+                  size={16}
                   color={activeTab === tab.id ? Colors.primary : Colors.textLight}
                 />
                 <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
@@ -1480,7 +1542,7 @@ export default function HotelScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
-        </View>
+        </Animated.View>
 
       {/* Check-ins filter */}
       {activeTab === 'checkins' && (
@@ -1509,16 +1571,16 @@ export default function HotelScreen() {
       <View style={styles.content}>
         {activeTab === 'rooms' && (
           <>
-            {/* Date Picker and Navigation - Single Line */}
-            <View style={styles.datePickerContainer}>
+            {/* Date Picker and Navigation - Animated */}
+            <Animated.View style={[styles.datePickerContainer, { height: datePickerHeight, paddingVertical: datePickerPadding }]}>
               <View style={styles.datePickerRow}>
                 <TouchableOpacity
                   style={styles.dateNavButton}
                   onPress={() => navigateDate(-1)}
                 >
-                  <Ionicons name="chevron-back" size={22} color={Colors.primary} />
+                  <Ionicons name="chevron-back" size={20} color={Colors.primary} />
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity
                   style={styles.datePickerButton}
                   onPress={() => {
@@ -1526,21 +1588,21 @@ export default function HotelScreen() {
                     setShowDatePicker(true);
                   }}
                 >
-                  <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                  <Ionicons name="calendar-outline" size={16} color={Colors.primary} />
                   <Text style={styles.datePickerText}>
-                    {roomsViewDate instanceof Date 
+                    {roomsViewDate instanceof Date
                       ? roomsViewDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                       : new Date(roomsViewDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </Text>
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity
                   style={styles.dateNavButton}
                   onPress={() => navigateDate(1)}
                 >
-                  <Ionicons name="chevron-forward" size={22} color={Colors.primary} />
+                  <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity
                   style={styles.todayButton}
                   onPress={goToToday}
@@ -1548,7 +1610,7 @@ export default function HotelScreen() {
                   <Text style={styles.todayButtonText}>Today</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </Animated.View>
 
             {/* Rooms List with Loader */}
             <View style={styles.roomsListContainer}>
@@ -1559,14 +1621,20 @@ export default function HotelScreen() {
                 </View>
               )}
               
-              <FlatList
+              <Animated.FlatList
                 data={rooms || []}
                 renderItem={renderRoomCard}
                 keyExtractor={(item, index) => item?.id || `room-${index}`}
                 numColumns={2}
                 columnWrapperStyle={styles.roomsRow}
                 contentContainerStyle={styles.listContent}
-                onScroll={handleScroll}
+                onScroll={Animated.event(
+                  [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                  {
+                    useNativeDriver: false,
+                    listener: handleScroll
+                  }
+                )}
                 scrollEventThrottle={16}
                 refreshControl={
                   <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -2811,8 +2879,8 @@ const styles = StyleSheet.create({
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: Spacing.md,
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
   },
   headerGreeting: {
     fontSize: 22,
@@ -2822,7 +2890,32 @@ const styles = StyleSheet.create({
   headerDate: {
     fontSize: 13,
     color: Colors.textLight,
+  },
+  headerSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 2,
+    gap: Spacing.md,
+  },
+  compactStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  compactStatItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  compactDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  compactStatText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMedium,
   },
   addBookingBtn: {
     flexDirection: 'row',
@@ -2881,8 +2974,8 @@ const styles = StyleSheet.create({
   },
   tabsScrollContent: {
     paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
     gap: Spacing.xs,
+    alignItems: 'center',
   },
   successBanner: {
     flexDirection: 'row',
@@ -3004,12 +3097,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    marginHorizontal: 4,
-    borderRadius: BorderRadius.large,
-    gap: 6,
-    minWidth: 90,
+    paddingVertical: 6,
+    paddingHorizontal: Spacing.sm,
+    marginHorizontal: 3,
+    borderRadius: BorderRadius.medium,
+    gap: 4,
+    minWidth: 80,
     backgroundColor: 'transparent',
   },
   activeTab: {
@@ -3624,11 +3717,12 @@ const styles = StyleSheet.create({
   },
   // Date picker styles - Single line
   datePickerContainer: {
-    padding: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
     backgroundColor: Colors.backgroundWhite,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
   datePickerRow: {
     flexDirection: 'row',
