@@ -599,6 +599,17 @@ export default function MenuScreen() {
               <View style={styles.tableInfoCard}>
                 <Ionicons name="restaurant" size={18} color={Colors.primary} />
                 <Text style={styles.tableInfoText}>Table {selectedTable.name}</Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    setSelectedTable(null);
+                    setCart([]);
+                    setExistingOrderId(null);
+                  }}
+                  style={styles.clearTableButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close-circle" size={18} color={Colors.primary} />
+                </TouchableOpacity>
               </View>
               <View style={styles.headerIcons}>
                 <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
@@ -851,6 +862,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.primary,
     letterSpacing: 0.3,
+    flex: 1,
+  },
+  clearTableButton: {
+    marginLeft: 8,
+    padding: 4,
   },
   headerTitleSection: {
     flex: 1,

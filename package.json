@@ -1,9 +1,10 @@
 {
   "name": "dine-app",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
+    "start:staging": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
@@ -12,9 +13,12 @@
     "build:android": "expo prebuild --platform android && cd android && ./gradlew assembleRelease",
     "build:apk": "expo run:android --variant release",
     "build:apk-release": "cd android && ./gradlew assembleRelease",
-    "build:aab": "expo prebuild --platform android && cd android && ./gradlew bundleRelease",
-    "build:aab-clean": "expo prebuild --platform android --clean && cd android && ./gradlew bundleRelease",
-    "build:aab-fresh": "expo prebuild --platform android && cd android && ./gradlew clean bundleRelease"
+    "build:aab": "node scripts/protect-gradle-props.js && expo prebuild --platform android && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew bundleRelease",
+    "build:aab-clean": "node scripts/protect-gradle-props.js && expo prebuild --platform android --clean && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew bundleRelease",
+    "build:aab-fresh": "node scripts/protect-gradle-props.js && expo prebuild --platform android && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew clean bundleRelease",
+    "build:apk-staging": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:apk-release",
+    "build:aab-staging": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:aab",
+    "build:aab-staging-clean": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:aab-clean"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -31,7 +35,6 @@
     "expo-linking": "~8.0.11",
     "expo-modules-core": "~3.0.29",
     "expo-router": "~6.0.21",
-    "expo-speech": "~14.0.8",
     "expo-splash-screen": "^31.0.13",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",

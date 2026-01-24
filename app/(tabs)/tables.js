@@ -487,11 +487,69 @@ export default function TablesScreen() {
   const stats = getTableStats();
   let currentFloorTables = selectedFloor?.tables || [];
   
+  // Sort tables: text-named tables first (alphabetically), then pure numbers (numerically)
+  // Example: "Sofa", "apple sofa 1", "apple sofa 2", "banana table 1", then "1", "2", "3", "10"
+  const sortTablesAlphabetically = (tables) => {
+    return [...tables].sort((a, b) => {
+      const nameA = (a.name || '').trim();
+      const nameB = (b.name || '').trim();
+      
+      // Check if both are pure numbers (like "1", "2", "10")
+      const isPureNumberA = /^\d+$/.test(nameA);
+      const isPureNumberB = /^\d+$/.test(nameB);
+      
+      // If both are pure numbers, sort numerically (1, 2, 3, 10, 11, not 1, 10, 11, 2, 3)
+      if (isPureNumberA && isPureNumberB) {
+        return parseInt(nameA, 10) - parseInt(nameB, 10);
+      }
+      
+      // If one is pure number and other has text, text comes first
+      if (isPureNumberA && !isPureNumberB) {
+        return 1; // Pure numbers come after text
+      }
+      if (!isPureNumberA && isPureNumberB) {
+        return -1; // Text comes before numbers
+      }
+      
+      // Both have text, extract text and number parts
+      // Handles: "apple sofa 1" -> text: "apple sofa", number: 1
+      // Handles: "Table 10" -> text: "Table", number: 10
+      // Handles: "Sofa" -> text: "Sofa", number: 0
+      const extractParts = (name) => {
+        // Match text and trailing numbers (numbers at the end)
+        const match = name.match(/^(.+?)\s*(\d+)$/);
+        if (match) {
+          const text = match[1].trim().toLowerCase();
+          const number = parseInt(match[2], 10);
+          return { text, number };
+        }
+        // No number found, just text
+        return { text: name.toLowerCase(), number: 0 };
+      };
+      
+      const partsA = extractParts(nameA);
+      const partsB = extractParts(nameB);
+      
+      // First compare by text alphabetically
+      const textCompare = partsA.text.localeCompare(partsB.text);
+      if (textCompare !== 0) {
+        return textCompare;
+      }
+      
+      // If text is same, compare by number numerically
+      return partsA.number - partsB.number;
+    });
+  };
+  
+  // Sort tables alphabetically
+  currentFloorTables = sortTablesAlphabetically(currentFloorTables);
+  
   // Filter and sort tables by selected status
   if (selectedStatus) {
     const filtered = currentFloorTables.filter(t => t.status === selectedStatus);
     const rest = currentFloorTables.filter(t => t.status !== selectedStatus);
-    currentFloorTables = [...filtered, ...rest];
+    // Sort both groups alphabetically
+    currentFloorTables = [...sortTablesAlphabetically(filtered), ...sortTablesAlphabetically(rest)];
   }
 
   return (

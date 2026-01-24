@@ -9,7 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Speech from 'expo-speech';
+// import * as Speech from 'expo-speech';
 import apiClient from '../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 

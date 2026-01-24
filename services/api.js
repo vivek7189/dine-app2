@@ -338,6 +338,59 @@ class ApiClient {
       data: { loginId, currentPassword, newPassword, confirmPassword },
     });
   }
+
+  // ==================== CRAVE APP PUBLIC ENDPOINTS ====================
+
+  // Get restaurant by code (for QR scanning)
+  async getRestaurantByCode(code) {
+    return this.request(`/api/public/restaurant/code/${code}`);
+  }
+
+  // Get public menu (no auth required)
+  async getPublicMenu(restaurantId) {
+    return this.request(`/api/public/menu/${restaurantId}`);
+  }
+
+  // Get public menu theme
+  async getPublicMenuTheme(restaurantId) {
+    return this.request(`/api/public/menu-theme/${restaurantId}`);
+  }
+
+  // Get active offers for a restaurant
+  async getActiveOffers(restaurantId) {
+    return this.request(`/api/public/offers/${restaurantId}`);
+  }
+
+  // Place public order (for customer self-ordering)
+  async placePublicOrder(restaurantId, orderData) {
+    return this.request(`/api/public/orders/${restaurantId}`, {
+      method: 'POST',
+      data: orderData,
+    });
+  }
+
+  // Get floors and tables (public)
+  async getPublicTables(restaurantId) {
+    return this.request(`/api/tables/${restaurantId}`);
+  }
+
+  // Get public floors
+  async getPublicFloors(restaurantId) {
+    return this.request(`/api/floors/${restaurantId}`);
+  }
+
+  // Get customer app settings (public)
+  async getPublicCustomerAppSettings(restaurantId) {
+    return this.request(`/api/public/customer-app-settings/${restaurantId}`);
+  }
+
+  // Lookup customer by phone (for loyalty points)
+  async lookupCustomerByPhone(restaurantId, phone) {
+    return this.request('/api/public/customer/lookup', {
+      method: 'POST',
+      data: { restaurantId, phone },
+    });
+  }
 }
 
 export default new ApiClient();

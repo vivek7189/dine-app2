@@ -133,7 +133,7 @@ Order #: ${data.orderNumber || data.orderId?.slice(-6) || 'N/A'}
 ${location}
 Time: ${formatTime(data.timestamp)}
 Date: ${formatDate(data.timestamp)}
-${data.waiterName ? `Waiter: ${data.waiterName}` : ''}
+${data.waiterName ? `Staff: ${data.waiterName}` : ''}
 ${'-'.repeat(width)}
 ${itemsText}
 ${'-'.repeat(width)}
@@ -277,7 +277,7 @@ ${'='.repeat(width)}
             </div>
             ${data.waiterName ? `
             <div class="order-info-row">
-              <span><strong>Waiter:</strong> ${data.waiterName}</span>
+              <span><strong>Staff:</strong> ${data.waiterName}</span>
             </div>
             ` : ''}
           </div>
@@ -314,58 +314,58 @@ ${'='.repeat(width)}
     >
       <View style={styles.overlay}>
         <View style={styles.modalContent}>
-          {/* Header */}
+          {/* Header - Sleek and Compact */}
           <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <View style={styles.headerTop}>
-                <View style={styles.restaurantBadge}>
-                  <Ionicons name="restaurant" size={20} color="#fff" />
-                  <Text style={styles.restaurantName}>{restaurantName || 'RESTAURANT'}</Text>
-                </View>
-                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                  <Ionicons name="close" size={24} color={Colors.textDark} />
-                </TouchableOpacity>
+            <View style={styles.headerTop}>
+              <View style={styles.restaurantBadge}>
+                <Ionicons name="restaurant" size={18} color="#fff" />
+                <Text style={styles.restaurantName}>{restaurantName || 'RESTAURANT'}</Text>
               </View>
-              <View style={styles.kotLabel}>
-                <Ionicons name="receipt" size={18} color={Colors.primary} />
-                <Text style={styles.kotLabelText}>KITCHEN ORDER TICKET</Text>
-              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Ionicons name="close" size={20} color="#fff" />
+              </TouchableOpacity>
             </View>
           </View>
 
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* Order Info Section */}
+            {/* Order Info Section - Two Column Layout */}
             <View style={styles.orderInfoSection}>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Order #:</Text>
-                <Text style={styles.infoValue}>{orderNumber || orderId?.slice(-6) || 'N/A'}</Text>
-              </View>
-              
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>
-                  {roomNumber ? 'Room:' : 'Table:'}
-                </Text>
-                <Text style={styles.infoValueBold}>
-                  {roomNumber || tableNumber || 'N/A'}
-                </Text>
-              </View>
-
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Time:</Text>
-                <Text style={styles.infoValue}>{formatTime(timestamp)}</Text>
-              </View>
-
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Date:</Text>
-                <Text style={styles.infoValue}>{formatDate(timestamp)}</Text>
-              </View>
-
-              {waiterName && (
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Waiter:</Text>
-                  <Text style={styles.infoValue}>{waiterName}</Text>
+              <View style={styles.orderInfoGrid}>
+                <View style={styles.orderInfoColumn}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Order #:</Text>
+                    <Text style={styles.infoValue}>{orderNumber || orderId?.slice(-6) || 'N/A'}</Text>
+                  </View>
+                  
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>
+                      {roomNumber ? 'Room:' : 'Table:'}
+                    </Text>
+                    <Text style={styles.infoValueBold}>
+                      {roomNumber || tableNumber || 'N/A'}
+                    </Text>
+                  </View>
                 </View>
-              )}
+
+                <View style={styles.orderInfoColumn}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Date:</Text>
+                    <Text style={styles.infoValue}>{formatDate(timestamp)}</Text>
+                  </View>
+
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Time:</Text>
+                    <Text style={styles.infoValue}>{formatTime(timestamp)}</Text>
+                  </View>
+
+                  {waiterName && (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Staff:</Text>
+                      <Text style={styles.infoValue}>{waiterName}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
             </View>
 
             {/* Divider */}
@@ -403,6 +403,9 @@ ${'='.repeat(width)}
                 </Text>
               </View>
             </View>
+
+            {/* Extra spacing before instructions */}
+            <View style={{ height: Spacing.xl }} />
 
             {/* Print Instructions Section */}
             <View style={styles.instructionsSection}>
@@ -531,10 +534,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-  },
-  headerContent: {
-    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
   },
   headerTop: {
     flexDirection: 'row',
@@ -546,42 +547,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.xs,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
     borderRadius: BorderRadius.medium,
   },
   restaurantName: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: '#fff',
     textTransform: 'uppercase',
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  kotLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    marginTop: Spacing.xs,
-  },
-  kotLabelText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#fff',
-    letterSpacing: 1,
   },
   content: {
     padding: Spacing.lg,
     maxHeight: 500,
   },
   orderInfoSection: {
+    marginBottom: Spacing.xs,
+  },
+  orderInfoGrid: {
+    flexDirection: 'row',
+    gap: Spacing.lg,
+  },
+  orderInfoColumn: {
+    flex: 1,
     gap: Spacing.sm,
   },
   infoRow: {
