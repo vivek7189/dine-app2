@@ -67,6 +67,8 @@ export default function TabsLayout() {
               color={color}
             />
           ),
+          // Hide for simple mode roles
+          href: userRole && ['cashier', 'sales'].includes(userRole.toLowerCase()) ? null : undefined,
         }}
       />
       <Tabs.Screen
@@ -106,6 +108,8 @@ export default function TabsLayout() {
               color={color}
             />
           ),
+          // Hide for simple mode roles
+          href: userRole && ['cashier', 'sales'].includes(userRole.toLowerCase()) ? null : undefined,
         }}
       />
       <Tabs.Screen
@@ -119,8 +123,8 @@ export default function TabsLayout() {
               color={color}
             />
           ),
-          // Hide menu management tab for waiters
-          href: userRole && !['owner', 'manager'].includes(userRole.toLowerCase()) ? null : undefined,
+          // Hide menu management tab for waiters and simple mode roles
+          href: userRole && (!['owner', 'manager'].includes(userRole.toLowerCase()) || ['cashier', 'sales'].includes(userRole.toLowerCase())) ? null : undefined,
         }}
       />
       <Tabs.Screen

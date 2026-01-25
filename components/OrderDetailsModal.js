@@ -8,6 +8,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  TextInput,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
@@ -18,14 +20,30 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Invoice Mode State
+  const [showInvoice, setShowInvoice] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerTaxId, setCustomerTaxId] = useState('');
+  const [invoiceEditable, setInvoiceEditable] = useState(false);
+
   useEffect(() => {
     if (visible && orderId && restaurantId) {
       loadOrderDetails();
     } else {
       setOrder(null);
       setError(null);
+      setShowInvoice(false);
+      setInvoiceEditable(false);
     }
   }, [visible, orderId, restaurantId]);
+
+  // Reset invoice state when order loads
+  useEffect(() => {
+    if (order) {
+      setCustomerName(order.customerInfo?.name || 'Customer');
+      setCustomerTaxId('');
+    }
+  }, [order]);
 
   const loadOrderDetails = async () => {
     setLoading(true);
@@ -70,10 +88,10 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
 
   const formatDate = (dateInput) => {
     if (!dateInput) return 'N/A';
-    
+
     try {
       let date;
-      
+
       // Handle Firestore timestamp
       if (dateInput.toDate && typeof dateInput.toDate === 'function') {
         date = dateInput.toDate();
@@ -87,12 +105,12 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
       } else {
         return 'N/A';
       }
-      
+
       // Check if date is valid
       if (isNaN(date.getTime())) {
         return 'N/A';
       }
-      
+
       return date.toLocaleString('en-IN', {
         day: '2-digit',
         month: 'short',
@@ -118,6 +136,43 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
         return Colors.textMedium;
       default:
         return Colors.textMedium;
+    }
+  };
+
+  const toggleInvoice = () => {
+    setShowInvoice(!showInvoice);
+  };
+
+  const handleShareInvoice = async () => {
+    try {
+      const total = calculateTotal().toFixed(2);
+      const itemsList = order.items.map(item =>
+        `${item.quantity}x ${item.name || 'Item'} - ₹${(item.price * item.quantity).toFixed(2)}`
+      ).join('\n');
+
+      const invoiceText = `
+*INVOICE*
+${order?.restaurantName || 'Restaurant'}
+
+*Order #:* ${order?.dailyOrderId || order?.orderNumber || orderId?.slice(-6)}
+*Date:* ${formatDate(order.createdAt || new Date())}
+
+*Customer:* ${customerName}
+${customerTaxId ? `*GST/Tax ID:* ${customerTaxId}` : ''}
+
+*Items:*
+${itemsList}
+
+*TOTAL: ₹${total}*
+
+Thank you for your business!
+      `.trim();
+
+      await Share.share({
+        message: invoiceText,
+      });
+    } catch (error) {
+      Alert.alert('Error', 'Failed to share invoice');
     }
   };
 
@@ -150,8 +205,8 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
           </View>
 
           {/* Content */}
-          <ScrollView 
-            style={styles.content} 
+          <ScrollView
+            style={styles.content}
             showsVerticalScrollIndicator={true}
             contentContainerStyle={styles.scrollContent}
           >
@@ -205,7 +260,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                       const itemPrice = item.price || item.unitPrice || item.itemPrice || item.menuItem?.price || 0;
                       const itemQuantity = item.quantity || 1;
                       const itemTotal = item.total || (itemPrice * itemQuantity);
-                      
+
                       return (
                         <View key={`item-${index}-${item.menuItemId || item.id || index}`} style={styles.itemRow}>
                           <View style={styles.itemInfo}>
@@ -247,8 +302,70 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 </View>
               </>
             ) : null}
-          </ScrollView>
 
+            {/* Invoice View */}
+            {order && showInvoice && (
+              <View style={styles.invoiceContainer}>
+                <View style={styles.invoiceHeader}>
+                  <Text style={styles.invoiceTitle}>INVOICE</Text>
+                  <Text style={styles.invoiceSubtitle}>{order?.restaurantName || 'Restaurant'}</Text>
+                  <Text style={styles.invoiceDate}>{formatDate(order.createdAt)}</Text>
+                </View>
+
+                {/* Editable Fields */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Customer Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={customerName}
+                    onChangeText={setCustomerName}
+                    placeholder="Enter customer name"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>GST / Tax ID (Optional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={customerTaxId}
+                    onChangeText={setCustomerTaxId}
+                    placeholder="Enter Tax ID"
+                  />
+                </View>
+
+                <View style={styles.divider} />
+
+                {/* Invoice Items */}
+                <View style={styles.invoiceItems}>
+                  {order.items.map((item, index) => (
+                    <View key={index} style={styles.invoiceItemRow}>
+                      <Text style={styles.invoiceItemName}>
+                        {item.quantity}x {item.name || 'Item'}
+                      </Text>
+                      <Text style={styles.invoiceItemPrice}>
+                        ₹{(item.price * item.quantity).toFixed(2)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.divider} />
+
+                <View style={styles.invoiceTotalRow}>
+                  <Text style={styles.invoiceTotalLabel}>TOTAL AMOUNT</Text>
+                  <Text style={styles.invoiceTotalValue}>₹{calculateTotal().toFixed(2)}</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.shareButton}
+                  onPress={handleShareInvoice}
+                >
+                  <Ionicons name="share-social" size={20} color="#fff" />
+                  <Text style={styles.shareButtonText}>Share Invoice</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
           {/* Footer Actions */}
           {order && !loading && !error && (
             <View style={styles.footer}>
@@ -258,7 +375,8 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
               >
                 <Text style={styles.cancelButtonText}>Close</Text>
               </TouchableOpacity>
-              {typeof onAddItems === 'function' && (
+
+              {!showInvoice && typeof onAddItems === 'function' && (
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={() => {
@@ -281,11 +399,25 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                   <Text style={styles.addButtonText}>Add Items</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                style={[styles.invoiceButton, showInvoice && styles.invoiceButtonActive]}
+                onPress={toggleInvoice}
+              >
+                <Ionicons
+                  name={showInvoice ? "receipt" : "receipt-outline"}
+                  size={18}
+                  color={showInvoice ? "#fff" : Colors.primary}
+                />
+                <Text style={[styles.invoiceButtonText, showInvoice && styles.invoiceButtonTextActive]}>
+                  {showInvoice ? 'View Order' : 'Invoice'}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
       </View>
-    </Modal>
+    </Modal >
   );
 }
 

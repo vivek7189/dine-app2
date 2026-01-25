@@ -20,6 +20,7 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
       icon: 'restaurant',
       route: '/(tabs)/tables',
       color: Colors.primary,
+      restrictedRoles: ['cashier', 'sales'],
     },
     {
       title: 'Menu',
@@ -65,6 +66,7 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
   };
 
   const shouldShowItem = (item) => {
+    if (user?.role && item.restrictedRoles?.includes(user.role.toLowerCase())) return false;
     if (!item.requiresRole) return true;
     if (!user?.role) return false;
     return item.requiresRole.includes(user.role.toLowerCase());

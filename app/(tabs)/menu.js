@@ -20,6 +20,8 @@ import { getDisplayImage } from '../../utils/placeholderImages';
 // import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
 import WaiterCartModal from '../../components/WaiterCartModal';
+import CashierCartModal from '../../components/CashierCartModal';
+import CashierInvoiceModal from '../../components/CashierInvoiceModal';
 import KOTModal from '../../components/KOTModal';
 
 export default function MenuScreen() {
@@ -42,8 +44,11 @@ export default function MenuScreen() {
   const [restaurantName, setRestaurantName] = useState('');
   const [sendingOrder, setSendingOrder] = useState(false);
   const [isWaiter, setIsWaiter] = useState(false);
+  const [isCashier, setIsCashier] = useState(false);
   const [showImages, setShowImages] = useState(true);
   const [existingOrderId, setExistingOrderId] = useState(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [lastOrderData, setLastOrderData] = useState(null);
 
   useEffect(() => {
     loadInitialData();
@@ -138,6 +143,8 @@ export default function MenuScreen() {
       // Check if user is waiter (not owner/manager)
       const userRole = userData.role?.toLowerCase();
       setIsWaiter(userRole === 'waiter' || userRole === 'employee');
+      // Check if user is cashier/sales (counter sales mode - no table required)
+      setIsCashier(userRole === 'cashier' || userRole === 'sales');
 
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {
@@ -363,6 +370,81 @@ export default function MenuScreen() {
     } catch (error) {
       console.error('Error placing order:', error);
       Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
+    }
+  };
+
+  // Cashier/Sales - Counter sales without table requirement
+  const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '') => {
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
+      return;
+    }
+
+    setSendingOrder(true);
+
+    try {
+      const subtotal = getCartTotal();
+      const gst = subtotal * 0.05; // 5% GST
+      const grandTotal = subtotal + gst;
+
+      const orderData = {
+        restaurantId,
+        items: cart.map(item => ({
+          menuItemId: item.menuItemId || item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+        })),
+        orderType: orderType,
+        paymentMethod: paymentMethod,
+        status: 'completed', // Counter sales are completed immediately
+        staffInfo: {
+          waiterId: user?.id,
+          waiterName: user?.name || 'Cashier',
+        },
+        customerInfo: {
+          name: customerName || 'Walk-in Customer',
+          mobile: customerMobile || '',
+        },
+        subtotal: subtotal,
+        gst: gst,
+        total: grandTotal,
+      };
+
+      const response = await apiClient.createOrder(orderData);
+
+      // Prepare invoice data for display
+      const invoiceData = {
+        orderId: response.order?.id,
+        orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+        restaurantName: restaurantName,
+        restaurantInfo: user?.restaurant || {},
+        items: cart.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.price * item.quantity,
+        })),
+        subtotal: subtotal,
+        gst: gst,
+        grandTotal: grandTotal,
+        customerName: customerName || 'Walk-in Customer',
+        customerMobile: customerMobile || '',
+        orderType: orderType,
+        paymentMethod: paymentMethod,
+        timestamp: new Date(),
+        staffName: user?.name || 'Cashier',
+      };
+
+      setLastOrderData(invoiceData);
+      setShowInvoiceModal(true);
+      setCart([]);
+      setShowCart(false);
+    } catch (error) {
+      console.error('Error placing order:', error);
+      Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
+    } finally {
+      setSendingOrder(false);
     }
   };
 
@@ -733,8 +815,33 @@ export default function MenuScreen() {
         </View>
       )}
 
-      {/* Cart FAB - For Admin/Manager */}
-      {!isWaiter && cart.length > 0 && (
+      {/* Bottom Order Button - For Cashier/Sales (Counter Sales) */}
+      {isCashier && cart.length > 0 && (
+        <View style={styles.bottomOrderBar}>
+          <View style={styles.orderSummary}>
+            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
+            <Text style={styles.orderTotal}>₹{(getCartTotal() * 1.05).toFixed(2)}</Text>
+            <Text style={styles.gstNote}>incl. 5% GST</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.orderButton, styles.placeOrderBtn, sendingOrder && styles.orderButtonDisabled]}
+            onPress={() => setShowCart(true)}
+            disabled={sendingOrder}
+          >
+            {sendingOrder ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="receipt" size={18} color="#fff" />
+                <Text style={styles.orderButtonText}>Place Order</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Cart FAB - For Admin/Manager (not for cashier) */}
+      {!isWaiter && !isCashier && cart.length > 0 && (
         <TouchableOpacity
           style={styles.cartFAB}
           onPress={() => setShowCart(true)}
@@ -771,6 +878,18 @@ export default function MenuScreen() {
           tableNumber={selectedTable?.name || params.tableNumber}
           sending={sendingOrder}
         />
+      ) : isCashier ? (
+        <CashierCartModal
+          visible={showCart}
+          onClose={() => setShowCart(false)}
+          cart={cart}
+          onUpdateQuantity={updateCartQuantity}
+          onRemoveItem={removeFromCart}
+          onPlaceOrder={handleCashierPlaceOrder}
+          total={getCartTotal()}
+          restaurantName={restaurantName}
+          sending={sendingOrder}
+        />
       ) : (
         <CartModal
           visible={showCart}
@@ -794,7 +913,7 @@ export default function MenuScreen() {
           if (selectedTable || params.tableId) {
             router.replace({
               pathname: '/(tabs)/tables',
-              params: { 
+              params: {
                 tableId: selectedTable?.id || params.tableId,
                 orderId: kotOrderData?.orderId,
                 tableStatus: 'occupied',
@@ -804,6 +923,20 @@ export default function MenuScreen() {
           }
         }}
         orderData={kotOrderData}
+      />
+
+      {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
+      <CashierInvoiceModal
+        visible={showInvoiceModal}
+        onClose={() => {
+          setShowInvoiceModal(false);
+          setLastOrderData(null);
+        }}
+        invoiceData={lastOrderData}
+        onNewOrder={() => {
+          setShowInvoiceModal(false);
+          setLastOrderData(null);
+        }}
       />
     </SafeAreaView>
   );
@@ -1268,6 +1401,14 @@ const styles = StyleSheet.create({
     fontSize: Typography.h3.fontSize,
     fontWeight: '700',
     color: Colors.textDark,
+  },
+  gstNote: {
+    fontSize: 10,
+    color: Colors.textMedium,
+    marginTop: 2,
+  },
+  placeOrderBtn: {
+    backgroundColor: '#10b981',
   },
   orderButton: {
     flexDirection: 'row',

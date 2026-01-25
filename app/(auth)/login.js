@@ -30,7 +30,16 @@ export default function LoginScreen() {
   const checkAuth = async () => {
     const isAuth = await apiClient.isAuthenticated();
     if (isAuth) {
-      router.replace('/(tabs)/tables');
+      // Check user role to determine default page
+      const userData = await apiClient.getUser();
+      const userRole = userData?.role?.toLowerCase();
+
+      // Cashier/sales roles go directly to menu (counter sales mode)
+      if (userRole && ['cashier', 'sales'].includes(userRole)) {
+        router.replace('/(tabs)/menu');
+      } else {
+        router.replace('/(tabs)/tables');
+      }
     }
   };
 
@@ -47,8 +56,16 @@ export default function LoginScreen() {
       const response = await apiClient.staffLogin(loginId, password);
 
       if (response.token) {
-        // Navigate to main app
-        router.replace('/(tabs)/tables');
+        // Get user data to check role
+        const userData = await apiClient.getUser();
+        const userRole = userData?.role?.toLowerCase();
+
+        // Cashier/sales roles go directly to menu (counter sales mode)
+        if (userRole && ['cashier', 'sales'].includes(userRole)) {
+          router.replace('/(tabs)/menu');
+        } else {
+          router.replace('/(tabs)/tables');
+        }
       } else {
         setError('Login failed. Please check your credentials.');
       }
