@@ -7,7 +7,7 @@ if (fs.existsSync(buildGradlePath)) {
   let content = fs.readFileSync(buildGradlePath, 'utf8');
   
   // Target version for this release
-  const TARGET_VERSION_CODE = 6;
+  const TARGET_VERSION_CODE = 8;
   const TARGET_VERSION_NAME = '1.1.2';
   
   // Check if versionCode is already set to target or higher

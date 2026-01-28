@@ -320,7 +320,7 @@ export default function ProfileScreen() {
         {/* App Info */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>DineOpen Staff App</Text>
-          <Text style={styles.footerText}>Version 1.1.1</Text>
+          <Text style={styles.footerText}>Version 1.1.2</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.dineopen.waiter",
+      "versionCode": 8,
       "permissions": [
         "android.permission.INTERNET"
       ]

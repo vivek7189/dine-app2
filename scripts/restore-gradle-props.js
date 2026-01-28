@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const gradlePropsPath = path.join(__dirname, '..', 'android', 'gradle.properties');
-const backupPath = path.join(__dirname, '..', 'android', 'gradle.properties.backup');
+const backupPath = path.join(__dirname, '..', 'gradle.properties.backup');
 
 if (fs.existsSync(backupPath)) {
   // Check if gradle.properties exists and if it's missing our custom properties
