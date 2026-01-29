@@ -1,5 +1,7 @@
 import axios from 'axios';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 
 // Get API URL from environment or use deployed backend
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-lake.vercel.app';
@@ -82,6 +84,18 @@ class ApiClient {
       return response.data;
     } catch (error) {
       if (error.response) {
+        // Staff/employee deactivated: show friendly notice, clear auth, then redirect to login
+        if (error.response.status === 401 && error.response.data?.inactive === true) {
+          await this.clearToken();
+          const message = error.response.data?.message || 'Your account has been deactivated. Please contact your manager.';
+          Alert.alert(
+            'Account deactivated',
+            `${message} You have been logged out.`,
+            [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }],
+            { cancelable: false }
+          );
+          throw new Error('Account deactivated');
+        }
         throw new Error(error.response.data?.error || error.response.data?.message || 'Request failed');
       } else if (error.request) {
         throw new Error('Network error. Please check your connection.');
