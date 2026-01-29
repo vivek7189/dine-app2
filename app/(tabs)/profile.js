@@ -184,6 +184,13 @@ export default function ProfileScreen() {
                 <Text style={styles.infoValue}>{user.loginId}</Text>
               </View>
             )}
+            {user?.username && (
+              <View style={styles.infoRow}>
+                <Ionicons name="person-outline" size={20} color={Colors.textMedium} />
+                <Text style={styles.infoLabel}>Username</Text>
+                <Text style={styles.infoValue}>{user.username}</Text>
+              </View>
+            )}
           </View>
         </View>
 

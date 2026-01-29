@@ -45,7 +45,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!loginId || !password) {
-      setError('Please enter both User ID and password');
+      setError('Please enter User ID or username and password');
       return;
     }
 
@@ -104,10 +104,10 @@ export default function LoginScreen() {
           ) : null}
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>User ID</Text>
+            <Text style={styles.label}>User ID or username</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter your User ID"
+              placeholder="Enter User ID or username"
               placeholderTextColor={Colors.textLight}
               value={loginId}
               onChangeText={setLoginId}
