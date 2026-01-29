@@ -214,6 +214,45 @@ class ApiClient {
     });
   }
 
+  // Bulk menu upload (image/PDF/CSV/doc) - AI extraction, same as web
+  async bulkUploadMenu(restaurantId, formData) {
+    const token = await this.getToken();
+    const url = `${this.baseURL}/api/menus/bulk-upload/${restaurantId}`;
+    const config = {
+      method: 'POST',
+      data: formData,
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+        // Omit Content-Type so axios sets multipart/form-data with boundary
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    };
+    try {
+      const response = await axios(url, config);
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        throw new Error(error.response.data?.error || error.response.data?.message || 'Upload failed');
+      }
+      if (error.request) {
+        throw new Error('Network error. Please check your connection.');
+      }
+      throw new Error(error.message || 'Upload failed');
+    }
+  }
+
+  async bulkSaveMenuItems(restaurantId, menuItems, categories = null) {
+    const body = { menuItems };
+    if (categories && Array.isArray(categories) && categories.length > 0) {
+      body.categories = categories;
+    }
+    return this.request(`/api/menus/bulk-save/${restaurantId}`, {
+      method: 'POST',
+      data: body,
+    });
+  }
+
   // ==================== HOTEL MANAGEMENT ====================
 
   // Room Management

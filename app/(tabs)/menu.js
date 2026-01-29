@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Animated,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,6 +50,11 @@ export default function MenuScreen() {
   const [existingOrderId, setExistingOrderId] = useState(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
+
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const HEADER_EXPANDED = 200;
+  const HEADER_COLLAPSED = 92; // room for row1 + row2 chips (wrap)
+  const SCROLL_THRESHOLD = 100;
 
   useEffect(() => {
     loadInitialData();
@@ -669,8 +675,20 @@ export default function MenuScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Clean Header */}
-      <View style={styles.headerSection}>
+      {/* Clean Header - shrinks on scroll in default mode */}
+      <Animated.View
+        style={[
+          styles.headerSection,
+          !selectedTable && {
+            height: scrollY.interpolate({
+              inputRange: [0, SCROLL_THRESHOLD],
+              outputRange: [182, HEADER_COLLAPSED], // tight to content (title+search+chips)
+              extrapolate: 'clamp',
+            }),
+            overflow: 'hidden',
+          },
+        ]}
+      >
         {selectedTable ? (
           <>
             {/* Table Selection Mode */}
@@ -709,13 +727,20 @@ export default function MenuScreen() {
           </>
         ) : (
           <>
-            {/* Default Menu Mode */}
-            <View style={styles.headerTop}>
+            {/* Default Menu Mode - Expanded: cool header with accent */}
+            <Animated.View style={[styles.headerTop, styles.headerTopAccent, { opacity: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
               <View style={styles.headerTitleSection}>
                 <Text style={styles.headerTitle}>Menu</Text>
                 <Text style={styles.headerSubtitle}>{restaurantName}</Text>
               </View>
               <View style={styles.headerIcons}>
+                <TouchableOpacity
+                  style={styles.iconBtn}
+                  onPress={() => router.push('/(tabs)/menu-management')}
+                  accessibilityLabel="Manage menu"
+                >
+                  <Ionicons name="create-outline" size={22} color="#6b7280" />
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
                   <Ionicons
                     name={showImages ? "image" : "image-outline"}
@@ -723,57 +748,138 @@ export default function MenuScreen() {
                     color="#6b7280"
                   />
                 </TouchableOpacity>
-                {/* <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
-                  <Ionicons name="mic" size={22} color={Colors.primary} />
-                </TouchableOpacity> */}
               </View>
-            </View>
+            </Animated.View>
+
+            {/* Expanded Search Bar */}
+            <Animated.View style={[styles.searchContainer, { opacity: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
+              <Ionicons name="search" size={20} color="#9ca3af" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search menu items..."
+                placeholderTextColor="#9ca3af"
+                value={searchTerm || shortCodeSearch}
+                onChangeText={(text) => {
+                  if (text.length <= 5 && text === text.toUpperCase()) {
+                    setShortCodeSearch(text);
+                    setSearchTerm('');
+                  } else {
+                    setSearchTerm(text);
+                    setShortCodeSearch('');
+                  }
+                }}
+              />
+              {(searchTerm || shortCodeSearch) && (
+                <TouchableOpacity onPress={() => { setSearchTerm(''); setShortCodeSearch(''); }}>
+                  <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                </TouchableOpacity>
+              )}
+            </Animated.View>
+
+            {/* Expanded Category Pills - hide when scrolled (chips move to compact bar) */}
+            <Animated.View style={[styles.categoriesSection, { maxHeight: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD], outputRange: [44, 0], extrapolate: 'clamp' }), overflow: 'hidden', opacity: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD * 0.6], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
+              <FlatList
+                horizontal
+                data={categories}
+                renderItem={renderCategory}
+                keyExtractor={(item) => item.id}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categoriesContainer}
+              />
+            </Animated.View>
+
+            {/* Compact sticky bar - visible when scrolled: row1 = name + search, row2 = chips (wrap) */}
+            <Animated.View
+              pointerEvents="box-none"
+              style={[
+                styles.compactHeaderBar,
+                {
+                  opacity: scrollY.interpolate({ inputRange: [SCROLL_THRESHOLD * 0.4, SCROLL_THRESHOLD], outputRange: [0, 1], extrapolate: 'clamp' }),
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 10,
+                }
+              ]}
+            >
+              <View style={styles.compactHeaderRow1}>
+                <Text style={styles.compactHeaderName} numberOfLines={1}>{restaurantName}</Text>
+                <View style={styles.compactSearchWrap}>
+                  <Ionicons name="search" size={16} color="#9ca3af" />
+                  <TextInput
+                    style={styles.compactSearchInput}
+                    placeholder="Search..."
+                    placeholderTextColor="#9ca3af"
+                    value={searchTerm || shortCodeSearch}
+                    onChangeText={(text) => {
+                      if (text.length <= 5 && text === text.toUpperCase()) {
+                        setShortCodeSearch(text);
+                        setSearchTerm('');
+                      } else {
+                        setSearchTerm(text);
+                        setShortCodeSearch('');
+                      }
+                    }}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={styles.compactManageBtn}
+                  onPress={() => router.push('/(tabs)/menu-management')}
+                >
+                  <Ionicons name="create-outline" size={18} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.compactChipsWrap}>
+                {categories.map((item) => {
+                  const isSelected = selectedCategory === item.id;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[styles.categoryPillCompact, isSelected && styles.categoryPillCompactSelected]}
+                      onPress={() => setSelectedCategory(item.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryPillCompactText,
+                          isSelected && styles.categoryPillCompactTextSelected,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </Animated.View>
           </>
         )}
 
-        {/* Separate Search Bar */}
-        <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color="#9ca3af" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search menu items..."
-            placeholderTextColor="#9ca3af"
-            value={searchTerm || shortCodeSearch}
-            onChangeText={(text) => {
-              if (text.length <= 5 && text === text.toUpperCase()) {
-                setShortCodeSearch(text);
-                setSearchTerm('');
-              } else {
-                setSearchTerm(text);
-                setShortCodeSearch('');
-              }
-            }}
-          />
-          {(searchTerm || shortCodeSearch) && (
-            <TouchableOpacity onPress={() => {
-              setSearchTerm('');
-              setShortCodeSearch('');
-            }}>
-              <Ionicons name="close-circle" size={20} color="#9ca3af" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+      </Animated.View>
 
-      {/* Compact Category Pills */}
-      <View style={styles.categoriesSection}>
-        <FlatList
-          horizontal
-          data={categories}
-          renderItem={renderCategory}
-          keyExtractor={(item) => item.id}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoriesContainer}
-        />
-      </View>
+      {/* Categories section - only for table mode; default mode has categories inside header above */}
+      {selectedTable && (
+        <View style={styles.categoriesSection}>
+          <FlatList
+            horizontal
+            data={categories}
+            renderItem={renderCategory}
+            keyExtractor={(item) => item.id}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesContainer}
+          />
+        </View>
+      )}
 
       {/* Menu Items - 2 Column Grid */}
       <FlatList
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
         data={filteredItems}
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
@@ -950,12 +1056,75 @@ const styles = StyleSheet.create({
   // Clean Header Section
   headerSection: {
     backgroundColor: '#fff',
-    paddingBottom: 16,
+    paddingBottom: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 3,
+  },
+  // Compact sticky bar (when scrolled): row1 = name + search, row2 = chips (wrap)
+  compactHeaderBar: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 6,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  compactHeaderRow1: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 36,
+  },
+  compactHeaderName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1f2937',
+    maxWidth: 72,
+  },
+  compactSearchWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    minWidth: 0,
+  },
+  compactSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1f2937',
+    padding: 0,
+    minWidth: 0,
+  },
+  compactManageBtn: {
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  compactChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    alignSelf: 'stretch',
+  },
+  compactChipsContainer: {
+    gap: 4,
+    paddingRight: 8,
   },
   headerTop: {
     flexDirection: 'row',
@@ -964,6 +1133,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 12,
+  },
+  headerTopAccent: {
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+    marginLeft: 12,
+    paddingLeft: 4,
   },
   backButton: {
     width: 44,
@@ -1005,13 +1180,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerTitle: {
-    fontSize: 32,
-    fontWeight: '800',
+    fontSize: 22,
+    fontWeight: '700',
     color: '#1f2937',
     letterSpacing: -0.5,
   },
   headerSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#6b7280',
     marginTop: 2,
     fontWeight: '500',
@@ -1052,20 +1227,20 @@ const styles = StyleSheet.create({
   // Clean Category Pills
   categoriesSection: {
     backgroundColor: '#fff',
-    paddingVertical: 12,
-    marginBottom: 8,
+    paddingVertical: 4,
+    marginBottom: 0,
   },
   categoriesContainer: {
     paddingHorizontal: 16,
-    gap: 8,
+    gap: 6,
   },
   categoryPill: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 10,
     backgroundColor: '#f3f4f6',
-    marginRight: 10,
-    minHeight: 40,
+    marginRight: 6,
+    minHeight: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1073,7 +1248,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   categoryPillText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: '#4b5563',
   },
@@ -1081,10 +1256,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
   },
+  // Compact bar chips (smaller, wrapping)
+  categoryPillCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+    marginRight: 4,
+    marginBottom: 4,
+    minHeight: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryPillCompactSelected: {
+    backgroundColor: Colors.primary,
+  },
+  categoryPillCompactText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4b5563',
+  },
+  categoryPillCompactTextSelected: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   // Grid Menu List
   menuList: {
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 0,
     paddingBottom: 100,
   },
   menuRow: {

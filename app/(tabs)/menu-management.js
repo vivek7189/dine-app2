@@ -11,13 +11,18 @@ import {
   Modal,
   ScrollView,
   Switch,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import MenuItemForm from '../../components/MenuItemForm';
+
+const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
 export default function MenuManagementScreen() {
   const router = useRouter();
@@ -30,6 +35,11 @@ export default function MenuManagementScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all-items');
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'grid'
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
+  const [processingStep, setProcessingStep] = useState('');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -55,7 +65,7 @@ export default function MenuManagementScreen() {
       }
 
       // Check if user has access to menu management (owner or manager only)
-      const allowedRoles = ['owner', 'manager'];
+      const allowedRoles = ['owner', 'manager',"cashier"];
       if (!allowedRoles.includes(userData.role?.toLowerCase())) {
         Alert.alert(
           'Access Denied',
@@ -142,6 +152,95 @@ export default function MenuManagementScreen() {
     } catch (error) {
       console.error('Error loading menu:', error);
       throw error;
+    }
+  };
+
+  const uploadAndExtract = async (fileInfo) => {
+    if (!restaurantId || !fileInfo) return;
+    try {
+      setUploading(true);
+      setUploadError('');
+      setUploadSuccess('');
+      setProcessingStep('Uploading...');
+      const formData = new FormData();
+      formData.append('menuFiles', fileInfo);
+      setProcessingStep('Extracting menu with AI...');
+      const response = await apiClient.bulkUploadMenu(restaurantId, formData);
+      if (!response.success && response.success !== undefined) {
+        setUploadError(response.error || 'Upload failed');
+        setUploading(false);
+        return;
+      }
+      if (!response.data || response.data.length === 0) {
+        setUploadError('No menu data was extracted. Try a clearer photo or PDF.');
+        setUploading(false);
+        return;
+      }
+      const allMenuItems = response.data.flatMap((m) => m.menuItems || []);
+      if (allMenuItems.length === 0) {
+        setUploadError('No menu items found in the file. Try a different file.');
+        setUploading(false);
+        return;
+      }
+      const normalized = allMenuItems.map((it) => ({ ...it, category: toCategoryId(it.category) }));
+      const extractedCategories = response.extractedCategories || [];
+      setProcessingStep('Saving to menu...');
+      await apiClient.bulkSaveMenuItems(restaurantId, normalized, extractedCategories);
+      setUploadSuccess(`${normalized.length} items added to menu!`);
+      await loadMenu(restaurantId);
+    } catch (error) {
+      console.error('Upload/extract error:', error);
+      setUploadError(error.message || 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+      setProcessingStep('');
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Camera access is required to take a photo of your menu.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const asset = result.assets[0];
+      const fileInfo = {
+        uri: asset.uri,
+        name: 'menu.jpg',
+        type: 'image/jpeg',
+      };
+      await uploadAndExtract(fileInfo);
+    } catch (error) {
+      setUploadError(error.message || 'Camera failed');
+      setUploading(false);
+    }
+  };
+
+  const handleUploadFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf', 'text/csv', 'text/plain', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      const fileInfo = {
+        uri: asset.uri,
+        name: asset.name || 'menu',
+        type: asset.mimeType || 'image/jpeg',
+      };
+      await uploadAndExtract(fileInfo);
+    } catch (error) {
+      setUploadError(error.message || 'Upload failed');
+      setUploading(false);
     }
   };
 
@@ -331,6 +430,54 @@ export default function MenuManagementScreen() {
     );
   }
 
+  // Empty state: no menu items — show Take Photo / Upload File
+  if (menuItems.length === 0) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.emptyStateContainer}>
+          <View style={styles.emptyStateCard}>
+            <Ionicons name="restaurant-outline" size={56} color={Colors.primary} />
+            <Text style={styles.emptyStateTitle}>Menu Management</Text>
+            <Text style={styles.emptyStateSubtitle}>
+              Take a photo of your menu or upload a file. AI will extract items, prices, and categories.
+            </Text>
+            {uploadError ? <Text style={styles.uploadErrorText}>{uploadError}</Text> : null}
+            {uploadSuccess ? <Text style={styles.uploadSuccessText}>{uploadSuccess}</Text> : null}
+            <View style={styles.emptyStateActions}>
+              <TouchableOpacity
+                style={[styles.uploadActionButton, styles.takePhotoButton]}
+                onPress={handleTakePhoto}
+                disabled={uploading}
+              >
+                <Ionicons name="camera" size={28} color="#fff" />
+                <Text style={styles.uploadActionLabel}>Take Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.uploadActionButton, styles.uploadFileButton]}
+                onPress={handleUploadFile}
+                disabled={uploading}
+              >
+                <Ionicons name="document-attach" size={28} color="#fff" />
+                <Text style={styles.uploadActionLabel}>Upload File</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.emptyStateHint}>Images, PDF, CSV, or documents — one file at a time.</Text>
+          </View>
+        </View>
+        {uploading && (
+          <Modal visible transparent animationType="fade">
+            <View style={styles.processingOverlay}>
+              <View style={styles.processingCard}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.processingStep}>{processingStep}</Text>
+              </View>
+            </View>
+          </Modal>
+        )}
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
@@ -345,18 +492,18 @@ export default function MenuManagementScreen() {
             onPress={handleRefresh}
             disabled={loading}
           >
-            <Ionicons
-              name="refresh"
-              size={24}
-              color={Colors.primary}
-              style={loading && { opacity: 0.5 }}
-            />
+            <Ionicons name="refresh" size={24} color={Colors.primary} style={loading && { opacity: 0.5 }} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.addButton} onPress={handleAdd}>
-            <Ionicons name="add" size={24} color="#fff" />
+          <TouchableOpacity style={styles.uploadIconButton} onPress={handleTakePhoto} disabled={uploading}>
+            <Ionicons name="camera" size={22} color={Colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.uploadIconButton} onPress={handleUploadFile} disabled={uploading}>
+            <Ionicons name="document-attach" size={22} color={Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
+      {uploadError ? <Text style={styles.inlineError}>{uploadError}</Text> : null}
+      {uploadSuccess ? <Text style={styles.inlineSuccess}>{uploadSuccess}</Text> : null}
 
       {/* Search */}
       <View style={styles.searchContainer}>
@@ -401,6 +548,15 @@ export default function MenuManagementScreen() {
           </View>
         }
       />
+
+      {/* Floating Action Button - Add item */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={handleAdd}
+        activeOpacity={0.9}
+      >
+        <Ionicons name="add" size={30} color="#fff" />
+      </TouchableOpacity>
 
       {/* Add/Edit Modal */}
       <Modal
@@ -453,6 +609,16 @@ export default function MenuManagementScreen() {
           </View>
         </View>
       </Modal>
+      {uploading && (
+        <Modal visible transparent animationType="fade">
+          <View style={styles.processingOverlay}>
+            <View style={styles.processingCard}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.processingStep}>{processingStep}</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -490,13 +656,132 @@ const styles = StyleSheet.create({
     color: Colors.textMedium,
     marginTop: 2,
   },
-  addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: BorderRadius.full,
+  fab: {
+    position: 'absolute',
+    bottom: 88,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  uploadIconButton: {
+    padding: Spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineError: {
+    backgroundColor: '#fee2e2',
+    color: Colors.error,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    fontSize: 13,
+  },
+  inlineSuccess: {
+    backgroundColor: '#d1fae5',
+    color: Colors.success,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    fontSize: 13,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  emptyStateCard: {
+    backgroundColor: Colors.backgroundWhite,
+    borderRadius: BorderRadius.large,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  emptyStateTitle: {
+    fontSize: Typography.h2.fontSize,
+    fontWeight: Typography.h2.fontWeight,
+    color: Colors.textDark,
+    marginTop: Spacing.md,
+  },
+  emptyStateSubtitle: {
+    fontSize: Typography.body.fontSize,
+    color: Colors.textMedium,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
+    lineHeight: 22,
+  },
+  emptyStateActions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginTop: Spacing.xl,
+  },
+  uploadActionButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.medium,
+    alignItems: 'center',
+    gap: Spacing.sm,
+    minWidth: 120,
+  },
+  takePhotoButton: {
+    backgroundColor: Colors.primary,
+  },
+  uploadFileButton: {
+    backgroundColor: Colors.secondary,
+  },
+  uploadActionLabel: {
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
+    color: '#fff',
+  },
+  emptyStateHint: {
+    fontSize: Typography.small.fontSize,
+    color: Colors.textLight,
+    marginTop: Spacing.lg,
+    textAlign: 'center',
+  },
+  uploadErrorText: {
+    fontSize: 13,
+    color: Colors.error,
+    marginTop: Spacing.md,
+    textAlign: 'center',
+  },
+  uploadSuccessText: {
+    fontSize: 13,
+    color: Colors.success,
+    marginTop: Spacing.md,
+    textAlign: 'center',
+  },
+  processingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  processingCard: {
+    backgroundColor: Colors.backgroundWhite,
+    borderRadius: BorderRadius.large,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    minWidth: 200,
+  },
+  processingStep: {
+    marginTop: Spacing.md,
+    fontSize: Typography.body.fontSize,
+    color: Colors.textDark,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -518,29 +803,34 @@ const styles = StyleSheet.create({
   },
   categoriesContainer: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.md,
     gap: Spacing.sm,
   },
   categoryButton: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm + 2,
+    minHeight: 40,
     borderRadius: BorderRadius.full,
     backgroundColor: Colors.backgroundLight,
     marginRight: Spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   categoryButtonSelected: {
     backgroundColor: Colors.primary,
   },
   categoryText: {
-    fontSize: Typography.caption.fontSize,
+    fontSize: 15,
     fontWeight: '600',
-    color: Colors.textMedium,
+    color: Colors.textDark,
   },
   categoryTextSelected: {
     color: '#fff',
+    fontWeight: '700',
   },
   list: {
     padding: Spacing.md,
+    paddingBottom: 100,
   },
   menuItemCard: {
     backgroundColor: Colors.backgroundWhite,
