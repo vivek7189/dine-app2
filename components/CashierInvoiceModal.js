@@ -10,8 +10,11 @@ import {
   Share,
   Alert,
   Linking,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 
 export default function CashierInvoiceModal({
@@ -53,12 +56,10 @@ export default function CashierInvoiceModal({
 
     const invoiceText = `
 ================================
-        *${invoiceData.restaurantName}*
+        ${invoiceData.restaurantName}
 ================================
 Invoice #: ${invoiceData.orderNumber}
 Date: ${formatDate(invoiceData.timestamp)}
-Type: ${invoiceData.orderType?.toUpperCase() || 'COUNTER'}
-Payment: ${invoiceData.paymentMethod?.toUpperCase() || 'CASH'}
 --------------------------------
 Customer: ${customerName}
 ${customerGST ? `GSTIN: ${customerGST}` : ''}
@@ -67,17 +68,214 @@ ITEMS:
 --------------------------------
 ${itemsList}
 --------------------------------
-Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}
-GST (5%):        ₹${invoiceData.gst.toFixed(2)}
+Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : ''}
 ================================
-*GRAND TOTAL:    ₹${invoiceData.grandTotal.toFixed(2)}*
+GRAND TOTAL:     ₹${invoiceData.grandTotal.toFixed(2)}
 ================================
 
-Thank you for your business!
-Served by: ${invoiceData.staffName}
+Thank you for your visit!
     `.trim();
 
     return invoiceText;
+  };
+
+  const generateInvoiceHTML = () => {
+    const itemsHTML = invoiceData.items.map(item => `
+      <tr>
+        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd;">${item.name}</td>
+        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: center;">${item.quantity}</td>
+        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right;">₹${item.price}</td>
+        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 600;">₹${item.total.toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+              font-family: 'Courier New', monospace;
+              padding: 20px;
+              max-width: 400px;
+              margin: 0 auto;
+              background: #fff;
+            }
+            .receipt {
+              border: 2px dashed #333;
+              padding: 20px;
+            }
+            .header {
+              text-align: center;
+              padding-bottom: 15px;
+              border-bottom: 2px dashed #333;
+              margin-bottom: 15px;
+            }
+            .restaurant-name {
+              font-size: 24px;
+              font-weight: bold;
+              margin-bottom: 5px;
+            }
+            .invoice-info {
+              font-size: 12px;
+              color: #666;
+            }
+            .customer-section {
+              background: #f8f8f8;
+              padding: 10px;
+              margin-bottom: 15px;
+              border-radius: 4px;
+            }
+            .customer-row {
+              display: flex;
+              justify-content: space-between;
+              font-size: 12px;
+              margin-bottom: 4px;
+            }
+            .items-table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 13px;
+              margin-bottom: 15px;
+            }
+            .items-table th {
+              text-align: left;
+              padding: 8px 0;
+              border-bottom: 2px solid #333;
+              font-size: 11px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            }
+            .items-table th:nth-child(2),
+            .items-table th:nth-child(3),
+            .items-table th:nth-child(4) {
+              text-align: right;
+            }
+            .items-table th:nth-child(2) {
+              text-align: center;
+            }
+            .totals {
+              border-top: 2px dashed #333;
+              padding-top: 15px;
+              margin-top: 15px;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 6px 0;
+              font-size: 14px;
+            }
+            .grand-total {
+              border-top: 2px solid #333;
+              margin-top: 10px;
+              padding-top: 10px;
+              font-size: 20px;
+              font-weight: bold;
+            }
+            .footer {
+              text-align: center;
+              margin-top: 20px;
+              padding-top: 15px;
+              border-top: 2px dashed #333;
+              font-size: 12px;
+              color: #666;
+            }
+            .footer .thanks {
+              font-size: 14px;
+              font-weight: bold;
+              color: #333;
+              margin-bottom: 5px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="receipt">
+            <div class="header">
+              <div class="restaurant-name">${invoiceData.restaurantName}</div>
+              <div class="invoice-info">
+                Invoice #${invoiceData.orderNumber}<br>
+                ${formatDate(invoiceData.timestamp)}
+              </div>
+            </div>
+
+            <div class="customer-section">
+              <div class="customer-row">
+                <span>Customer:</span>
+                <span><strong>${customerName}</strong></span>
+              </div>
+              ${customerGST ? `
+              <div class="customer-row">
+                <span>GSTIN:</span>
+                <span>${customerGST}</span>
+              </div>
+              ` : ''}
+            </div>
+
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Rate</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsHTML}
+              </tbody>
+            </table>
+
+            <div class="totals">
+              <div class="total-row">
+                <span>Subtotal</span>
+                <span>₹${invoiceData.subtotal.toFixed(2)}</span>
+              </div>
+              ${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+              <div class="total-row">
+                <span>${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</span>
+                <span>₹${invoiceData.tax.toFixed(2)}</span>
+              </div>
+              ` : ''}
+              <div class="total-row grand-total">
+                <span>TOTAL</span>
+                <span>₹${invoiceData.grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div class="footer">
+              <div class="thanks">Thank you for your visit!</div>
+              <div>Served by: ${invoiceData.staffName}</div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  const handleDownloadPDF = async () => {
+    try {
+      const html = generateInvoiceHTML();
+      const { uri } = await Print.printToFileAsync({
+        html,
+        base64: false,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: `Invoice #${invoiceData.orderNumber}`,
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        Alert.alert('Success', 'PDF saved to: ' + uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to generate PDF');
+    }
   };
 
   const handleShareGeneric = async () => {
@@ -96,13 +294,11 @@ Served by: ${invoiceData.staffName}
       const invoiceText = generateInvoiceText();
       const encodedText = encodeURIComponent(invoiceText);
 
-      // If customer has mobile number, pre-fill it
       let whatsappUrl = `whatsapp://send?text=${encodedText}`;
       if (invoiceData.customerMobile) {
-        // Format phone number (add country code if needed)
         let phone = invoiceData.customerMobile.replace(/\D/g, '');
         if (phone.length === 10) {
-          phone = '91' + phone; // Add India country code
+          phone = '91' + phone;
         }
         whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodedText}`;
       }
@@ -111,43 +307,20 @@ Served by: ${invoiceData.staffName}
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
       } else {
-        // Fallback to web WhatsApp
         const webUrl = `https://wa.me/?text=${encodedText}`;
         await Linking.openURL(webUrl);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to open WhatsApp. Make sure WhatsApp is installed.');
-    }
-  };
-
-  const handleShareEmail = async () => {
-    try {
-      const invoiceText = generateInvoiceText();
-      const subject = `Invoice #${invoiceData.orderNumber} - ${invoiceData.restaurantName}`;
-      const emailUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(invoiceText)}`;
-
-      const canOpen = await Linking.canOpenURL(emailUrl);
-      if (canOpen) {
-        await Linking.openURL(emailUrl);
-      } else {
-        Alert.alert('Error', 'No email app available');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to open email app');
+      Alert.alert('Error', 'Failed to open WhatsApp');
     }
   };
 
   const handlePrint = async () => {
-    // For now, we'll use share which can trigger print on some devices
-    // In a production app, you'd integrate with a thermal printer SDK
     try {
-      const invoiceText = generateInvoiceText();
-      await Share.share({
-        message: invoiceText,
-        title: `Invoice #${invoiceData.orderNumber}`,
-      });
+      const html = generateInvoiceHTML();
+      await Print.printAsync({ html });
     } catch (error) {
-      Alert.alert('Print', 'Connect a Bluetooth printer in Settings to enable printing.');
+      Alert.alert('Error', 'Failed to print');
     }
   };
 
@@ -163,101 +336,99 @@ Served by: ${invoiceData.staffName}
           {/* Success Header */}
           <View style={styles.successHeader}>
             <View style={styles.successIcon}>
-              <Ionicons name="checkmark-circle" size={48} color="#10b981" />
+              <Ionicons name="checkmark-circle" size={56} color="#10b981" />
             </View>
             <Text style={styles.successTitle}>Order Completed!</Text>
-            <Text style={styles.successSubtitle}>Invoice #{invoiceData.orderNumber}</Text>
           </View>
 
           <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {/* Invoice Card */}
-            <View style={styles.invoiceCard}>
-              {/* Invoice Header */}
-              <View style={styles.invoiceHeader}>
+            {/* Invoice Receipt */}
+            <View style={styles.receiptContainer}>
+              {/* Dashed border top */}
+              <View style={styles.dashedBorder} />
+
+              {/* Receipt Header */}
+              <View style={styles.receiptHeader}>
                 <Text style={styles.restaurantName}>{invoiceData.restaurantName}</Text>
-                <Text style={styles.invoiceDate}>{formatDate(invoiceData.timestamp)}</Text>
+                <View style={styles.invoiceInfo}>
+                  <Text style={styles.invoiceNumber}>Invoice #{invoiceData.orderNumber}</Text>
+                  <Text style={styles.invoiceDate}>{formatDate(invoiceData.timestamp)}</Text>
+                </View>
               </View>
 
-              {/* Customer Info - Editable */}
+              {/* Dashed separator */}
+              <View style={styles.dashedSeparator} />
+
+              {/* Customer Info */}
               <View style={styles.customerSection}>
                 <View style={styles.customerRow}>
-                  <Text style={styles.customerLabel}>Customer:</Text>
+                  <Text style={styles.customerLabel}>Customer</Text>
                   {isEditing ? (
                     <TextInput
                       style={styles.editInput}
                       value={customerName}
                       onChangeText={setCustomerName}
                       placeholder="Customer Name"
+                      placeholderTextColor="#999"
                     />
                   ) : (
                     <Text style={styles.customerValue}>{customerName}</Text>
                   )}
                 </View>
-                <View style={styles.customerRow}>
-                  <Text style={styles.customerLabel}>GSTIN:</Text>
-                  {isEditing ? (
-                    <TextInput
-                      style={styles.editInput}
-                      value={customerGST}
-                      onChangeText={setCustomerGST}
-                      placeholder="GST Number (Optional)"
-                    />
-                  ) : (
-                    <Text style={styles.customerValue}>{customerGST || '-'}</Text>
-                  )}
-                </View>
+                {(customerGST || isEditing) && (
+                  <View style={styles.customerRow}>
+                    <Text style={styles.customerLabel}>GSTIN</Text>
+                    {isEditing ? (
+                      <TextInput
+                        style={styles.editInput}
+                        value={customerGST}
+                        onChangeText={setCustomerGST}
+                        placeholder="GST Number (Optional)"
+                        placeholderTextColor="#999"
+                      />
+                    ) : (
+                      <Text style={styles.customerValue}>{customerGST || '-'}</Text>
+                    )}
+                  </View>
+                )}
                 <TouchableOpacity
                   style={styles.editButton}
                   onPress={() => setIsEditing(!isEditing)}
                 >
                   <Ionicons
-                    name={isEditing ? "checkmark" : "pencil"}
-                    size={16}
+                    name={isEditing ? "checkmark" : "create-outline"}
+                    size={14}
                     color={Colors.primary}
                   />
                   <Text style={styles.editButtonText}>
-                    {isEditing ? 'Done' : 'Edit'}
+                    {isEditing ? 'Save' : 'Edit'}
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Order Type & Payment */}
-              <View style={styles.orderInfoRow}>
-                <View style={styles.orderInfoItem}>
-                  <Ionicons name="storefront-outline" size={16} color={Colors.textMedium} />
-                  <Text style={styles.orderInfoText}>
-                    {invoiceData.orderType?.toUpperCase() || 'COUNTER'}
-                  </Text>
-                </View>
-                <View style={styles.orderInfoItem}>
-                  <Ionicons name="card-outline" size={16} color={Colors.textMedium} />
-                  <Text style={styles.orderInfoText}>
-                    {invoiceData.paymentMethod?.toUpperCase() || 'CASH'}
-                  </Text>
-                </View>
-              </View>
+              {/* Dashed separator */}
+              <View style={styles.dashedSeparator} />
 
-              {/* Divider */}
-              <View style={styles.divider} />
+              {/* Items Header */}
+              <View style={styles.itemsHeader}>
+                <Text style={[styles.itemHeaderText, { flex: 2 }]}>ITEM</Text>
+                <Text style={[styles.itemHeaderText, { width: 40, textAlign: 'center' }]}>QTY</Text>
+                <Text style={[styles.itemHeaderText, { width: 60, textAlign: 'right' }]}>RATE</Text>
+                <Text style={[styles.itemHeaderText, { width: 70, textAlign: 'right' }]}>AMT</Text>
+              </View>
 
               {/* Items */}
-              <View style={styles.itemsSection}>
-                <Text style={styles.itemsSectionTitle}>ITEMS</Text>
-                {invoiceData.items.map((item, index) => (
-                  <View key={index} style={styles.itemRow}>
-                    <View style={styles.itemDetails}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      <Text style={styles.itemQty}>
-                        {item.quantity} x ₹{item.price}
-                      </Text>
-                    </View>
-                    <Text style={styles.itemTotal}>₹{item.total.toFixed(2)}</Text>
-                  </View>
-                ))}
-              </View>
+              {invoiceData.items.map((item, index) => (
+                <View key={index} style={styles.itemRow}>
+                  <Text style={[styles.itemName, { flex: 2 }]} numberOfLines={2}>{item.name}</Text>
+                  <Text style={[styles.itemText, { width: 40, textAlign: 'center' }]}>{item.quantity}</Text>
+                  <Text style={[styles.itemText, { width: 60, textAlign: 'right' }]}>₹{item.price}</Text>
+                  <Text style={[styles.itemAmount, { width: 70, textAlign: 'right' }]}>₹{item.total.toFixed(2)}</Text>
+                </View>
+              ))}
 
-              {/* Divider */}
-              <View style={styles.divider} />
+              {/* Dashed separator */}
+              <View style={styles.dashedSeparator} />
 
               {/* Totals */}
               <View style={styles.totalsSection}>
@@ -265,53 +436,63 @@ Served by: ${invoiceData.staffName}
                   <Text style={styles.totalLabel}>Subtotal</Text>
                   <Text style={styles.totalValue}>₹{invoiceData.subtotal.toFixed(2)}</Text>
                 </View>
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>GST (5%)</Text>
-                  <Text style={styles.totalValue}>₹{invoiceData.gst.toFixed(2)}</Text>
-                </View>
-                <View style={styles.grandTotalRow}>
-                  <Text style={styles.grandTotalLabel}>GRAND TOTAL</Text>
-                  <Text style={styles.grandTotalValue}>₹{invoiceData.grandTotal.toFixed(2)}</Text>
-                </View>
+                {invoiceData.taxEnabled && invoiceData.tax > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>{invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</Text>
+                    <Text style={styles.totalValue}>₹{invoiceData.tax.toFixed(2)}</Text>
+                  </View>
+                )}
               </View>
+
+              {/* Grand Total */}
+              <View style={styles.grandTotalSection}>
+                <Text style={styles.grandTotalLabel}>TOTAL</Text>
+                <Text style={styles.grandTotalValue}>₹{invoiceData.grandTotal.toFixed(2)}</Text>
+              </View>
+
+              {/* Dashed separator */}
+              <View style={styles.dashedSeparator} />
 
               {/* Footer */}
-              <View style={styles.invoiceFooter}>
-                <Text style={styles.footerText}>Thank you for your business!</Text>
+              <View style={styles.receiptFooter}>
+                <Text style={styles.thankYouText}>Thank you for your visit!</Text>
                 <Text style={styles.staffText}>Served by: {invoiceData.staffName}</Text>
               </View>
+
+              {/* Dashed border bottom */}
+              <View style={styles.dashedBorder} />
             </View>
 
-            {/* Share Options */}
+            {/* Share Section */}
             <View style={styles.shareSection}>
               <Text style={styles.shareSectionTitle}>Share Invoice</Text>
               <View style={styles.shareButtons}>
                 <TouchableOpacity style={styles.shareButton} onPress={handleShareWhatsApp}>
                   <View style={[styles.shareIconBg, { backgroundColor: '#25D366' }]}>
-                    <Ionicons name="logo-whatsapp" size={24} color="#fff" />
+                    <Ionicons name="logo-whatsapp" size={22} color="#fff" />
                   </View>
                   <Text style={styles.shareButtonText}>WhatsApp</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.shareButton} onPress={handleShareEmail}>
-                  <View style={[styles.shareIconBg, { backgroundColor: '#EA4335' }]}>
-                    <Ionicons name="mail" size={24} color="#fff" />
+                <TouchableOpacity style={styles.shareButton} onPress={handleDownloadPDF}>
+                  <View style={[styles.shareIconBg, { backgroundColor: '#E53935' }]}>
+                    <Ionicons name="document-text" size={22} color="#fff" />
                   </View>
-                  <Text style={styles.shareButtonText}>Email</Text>
+                  <Text style={styles.shareButtonText}>PDF</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.shareButton} onPress={handlePrint}>
                   <View style={[styles.shareIconBg, { backgroundColor: '#333' }]}>
-                    <Ionicons name="print" size={24} color="#fff" />
+                    <Ionicons name="print" size={22} color="#fff" />
                   </View>
                   <Text style={styles.shareButtonText}>Print</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.shareButton} onPress={handleShareGeneric}>
                   <View style={[styles.shareIconBg, { backgroundColor: Colors.primary }]}>
-                    <Ionicons name="share-social" size={24} color="#fff" />
+                    <Ionicons name="share-social" size={22} color="#fff" />
                   </View>
-                  <Text style={styles.shareButtonText}>More</Text>
+                  <Text style={styles.shareButtonText}>Share</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -346,213 +527,218 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: Spacing.lg,
+    paddingVertical: Spacing.lg,
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
   },
   successIcon: {
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   successTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
     color: '#10b981',
-    marginBottom: 4,
-  },
-  successSubtitle: {
-    fontSize: 14,
-    color: Colors.textMedium,
   },
   scrollContent: {
     padding: Spacing.md,
   },
-  invoiceCard: {
+  receiptContainer: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: Spacing.lg,
-    ...Shadows.medium,
+    borderRadius: 4,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    // Receipt paper effect
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  invoiceHeader: {
+  dashedBorder: {
+    height: 2,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    marginVertical: Spacing.sm,
+  },
+  dashedSeparator: {
+    height: 1,
+    borderStyle: 'dashed',
+    borderWidth: 0.5,
+    borderColor: '#ddd',
+    marginVertical: Spacing.md,
+  },
+  receiptHeader: {
     alignItems: 'center',
-    marginBottom: Spacing.md,
+    paddingVertical: Spacing.sm,
   },
   restaurantName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: 4,
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#222',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: Spacing.xs,
+  },
+  invoiceInfo: {
+    alignItems: 'center',
+  },
+  invoiceNumber: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 2,
   },
   invoiceDate: {
     fontSize: 12,
-    color: Colors.textMedium,
+    color: '#666',
   },
   customerSection: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 8,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    backgroundColor: '#fafafa',
+    borderRadius: 6,
+    padding: Spacing.sm,
     position: 'relative',
   },
   customerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    paddingVertical: 4,
   },
   customerLabel: {
-    fontSize: 13,
-    color: Colors.textMedium,
-    width: 80,
+    fontSize: 12,
+    color: '#666',
+    width: 70,
   },
   customerValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#333',
     flex: 1,
   },
   editInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#333',
     borderBottomWidth: 1,
     borderBottomColor: Colors.primary,
     paddingVertical: 2,
+    paddingHorizontal: 4,
   },
   editButton: {
     position: 'absolute',
-    top: Spacing.sm,
-    right: Spacing.sm,
+    top: 6,
+    right: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    backgroundColor: '#fff',
+    borderRadius: 4,
   },
   editButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: Colors.primary,
   },
-  orderInfoRow: {
+  itemsHeader: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: Spacing.lg,
-    marginBottom: Spacing.md,
+    paddingBottom: Spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
-  orderInfoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  orderInfoText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textMedium,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e5e5e5',
-    marginVertical: Spacing.md,
-  },
-  itemsSection: {
-    marginBottom: Spacing.sm,
-  },
-  itemsSectionTitle: {
-    fontSize: 11,
+  itemHeaderText: {
+    fontSize: 10,
     fontWeight: '700',
-    color: Colors.textMedium,
-    letterSpacing: 1,
-    marginBottom: Spacing.sm,
+    color: '#666',
+    letterSpacing: 0.5,
   },
   itemRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  itemDetails: {
-    flex: 1,
-  },
   itemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
-    marginBottom: 2,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#333',
   },
-  itemQty: {
+  itemText: {
     fontSize: 12,
-    color: Colors.textMedium,
+    color: '#555',
   },
-  itemTotal: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textDark,
+  itemAmount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
   },
   totalsSection: {
-    marginTop: Spacing.sm,
+    paddingTop: Spacing.xs,
   },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
   totalLabel: {
-    fontSize: 14,
-    color: Colors.textMedium,
+    fontSize: 13,
+    color: '#666',
   },
   totalValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#333',
   },
-  grandTotalRow: {
+  grandTotalSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
+    backgroundColor: '#f8f8f8',
+    marginHorizontal: -Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
     marginTop: Spacing.sm,
-    borderTopWidth: 2,
-    borderTopColor: '#e5e5e5',
   },
   grandTotalLabel: {
     fontSize: 16,
-    fontWeight: '700',
-    color: Colors.textDark,
+    fontWeight: '800',
+    color: '#222',
+    letterSpacing: 1,
   },
   grandTotalValue: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     color: '#10b981',
   },
-  invoiceFooter: {
+  receiptFooter: {
     alignItems: 'center',
-    marginTop: Spacing.lg,
-    paddingTop: Spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    paddingVertical: Spacing.sm,
   },
-  footerText: {
-    fontSize: 13,
-    color: Colors.textMedium,
-    fontStyle: 'italic',
+  thankYouText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 4,
   },
   staffText: {
     fontSize: 11,
-    color: Colors.textLight,
-    marginTop: 4,
+    color: '#888',
   },
   shareSection: {
     marginTop: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   shareSectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    color: Colors.textDark,
+    color: '#555',
     marginBottom: Spacing.md,
+    textAlign: 'center',
   },
   shareButtons: {
     flexDirection: 'row',
@@ -560,24 +746,23 @@ const styles = StyleSheet.create({
   },
   shareButton: {
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   shareIconBg: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
-    ...Shadows.small,
   },
   shareButtonText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
-    color: Colors.textMedium,
+    color: '#666',
   },
   bottomActions: {
     padding: Spacing.md,
-    paddingBottom: Spacing.xl,
+    paddingBottom: Platform.OS === 'ios' ? Spacing.xl + 10 : Spacing.xl,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e5e5e5',
@@ -588,9 +773,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.sm,
     backgroundColor: Colors.primary,
-    paddingVertical: Spacing.md + 4,
+    paddingVertical: Spacing.md + 2,
     borderRadius: 12,
-    ...Shadows.medium,
   },
   newOrderButtonText: {
     fontSize: 16,

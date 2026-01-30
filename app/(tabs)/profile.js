@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import TaxSettings from '../../components/TaxSettings';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -84,6 +85,17 @@ export default function ProfileScreen() {
     const isStaff = ['waiter', 'manager', 'employee'].includes(role);
     console.log('Staff check:', { role, isStaff, hasLoginId: !!user?.loginId });
     return isStaff;
+  };
+
+  // Check if user can manage tax settings (owner, admin, cashier, manager)
+  const canManageTaxSettings = () => {
+    const role = user?.role?.toLowerCase();
+    return ['owner', 'admin', 'cashier', 'manager'].includes(role);
+  };
+
+  // Get restaurant ID for tax settings
+  const getRestaurantId = () => {
+    return user?.restaurantId || user?.restaurant?.id || restaurant?.id;
   };
 
   const handlePasswordChange = async () => {
@@ -313,6 +325,19 @@ export default function ProfileScreen() {
                 </View>
               )}
             </View>
+          </View>
+        )}
+
+        {/* Tax Settings - Only for owner, admin, cashier, manager */}
+        {canManageTaxSettings() && getRestaurantId() && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Settings</Text>
+            <TaxSettings
+              restaurantId={getRestaurantId()}
+              onTaxSettingsChange={(settings) => {
+                console.log('Tax settings updated:', settings);
+              }}
+            />
           </View>
         )}
 

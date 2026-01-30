@@ -9,8 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  ScrollView,
-  Switch,
+  Image,
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -35,11 +34,12 @@ export default function MenuManagementScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all-items');
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'grid'
   const [uploading, setUploading] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [uploadSuccess, setUploadSuccess] = useState('');
   const [processingStep, setProcessingStep] = useState('');
+  const [actionLoading, setActionLoading] = useState(null); // Track which item action is loading
 
   // Form state
   const [formData, setFormData] = useState({
@@ -47,9 +47,11 @@ export default function MenuManagementScreen() {
     description: '',
     price: '',
     category: '',
+    shortCode: '',
     isVeg: true,
     spiceLevel: 'medium',
     status: 'active',
+    images: [],
   });
 
   useEffect(() => {
@@ -64,18 +66,12 @@ export default function MenuManagementScreen() {
         return;
       }
 
-      // Check if user has access to menu management (owner or manager only)
-      const allowedRoles = ['owner', 'manager',"cashier"];
+      const allowedRoles = ['owner', 'manager', 'cashier', 'admin'];
       if (!allowedRoles.includes(userData.role?.toLowerCase())) {
         Alert.alert(
           'Access Denied',
-          'Menu management is only available for owners and managers.',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.back(),
-            },
-          ]
+          'Menu management is only available for authorized staff.',
+          [{ text: 'OK', onPress: () => router.back() }]
         );
         return;
       }
@@ -122,7 +118,6 @@ export default function MenuManagementScreen() {
         setLoading(true);
         await loadMenu(restaurantId);
       } catch (error) {
-        console.error('Error refreshing menu:', error);
         Alert.alert('Error', 'Failed to refresh menu.');
       } finally {
         setLoading(false);
@@ -131,28 +126,22 @@ export default function MenuManagementScreen() {
   };
 
   const loadMenu = async (rid) => {
-    try {
-      const response = await apiClient.getMenu(rid);
-      const items = response.menuItems || [];
-      setMenuItems(items);
+    const response = await apiClient.getMenu(rid);
+    const items = response.menuItems || [];
+    setMenuItems(items);
 
-      // Extract unique categories
-      const categorySet = new Set(['all-items']);
-      items.forEach(item => {
-        if (item.category) {
-          categorySet.add(item.category.toLowerCase());
-        }
-      });
+    const categorySet = new Set(['all-items']);
+    items.forEach(item => {
+      if (item.category) {
+        categorySet.add(item.category.toLowerCase());
+      }
+    });
 
-      const cats = Array.from(categorySet).map(cat => ({
-        id: cat,
-        name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1),
-      }));
-      setCategories(cats);
-    } catch (error) {
-      console.error('Error loading menu:', error);
-      throw error;
-    }
+    const cats = Array.from(categorySet).map(cat => ({
+      id: cat,
+      name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1).replace(/-/g, ' '),
+    }));
+    setCategories(cats);
   };
 
   const uploadAndExtract = async (fileInfo) => {
@@ -168,29 +157,24 @@ export default function MenuManagementScreen() {
       const response = await apiClient.bulkUploadMenu(restaurantId, formData);
       if (!response.success && response.success !== undefined) {
         setUploadError(response.error || 'Upload failed');
-        setUploading(false);
         return;
       }
       if (!response.data || response.data.length === 0) {
-        setUploadError('No menu data was extracted. Try a clearer photo or PDF.');
-        setUploading(false);
+        setUploadError('No menu data extracted. Try a clearer photo.');
         return;
       }
       const allMenuItems = response.data.flatMap((m) => m.menuItems || []);
       if (allMenuItems.length === 0) {
-        setUploadError('No menu items found in the file. Try a different file.');
-        setUploading(false);
+        setUploadError('No menu items found.');
         return;
       }
       const normalized = allMenuItems.map((it) => ({ ...it, category: toCategoryId(it.category) }));
-      const extractedCategories = response.extractedCategories || [];
       setProcessingStep('Saving to menu...');
-      await apiClient.bulkSaveMenuItems(restaurantId, normalized, extractedCategories);
-      setUploadSuccess(`${normalized.length} items added to menu!`);
+      await apiClient.bulkSaveMenuItems(restaurantId, normalized, response.extractedCategories || []);
+      setUploadSuccess(`${normalized.length} items added!`);
       await loadMenu(restaurantId);
     } catch (error) {
-      console.error('Upload/extract error:', error);
-      setUploadError(error.message || 'Upload failed. Please try again.');
+      setUploadError(error.message || 'Upload failed.');
     } finally {
       setUploading(false);
       setProcessingStep('');
@@ -201,51 +185,46 @@ export default function MenuManagementScreen() {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Camera access is required to take a photo of your menu.');
+        Alert.alert('Permission needed', 'Camera access required.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
         quality: 0.8,
       });
-      if (result.canceled || !result.assets?.[0]?.uri) return;
-      const asset = result.assets[0];
-      const fileInfo = {
-        uri: asset.uri,
-        name: 'menu.jpg',
-        type: 'image/jpeg',
-      };
-      await uploadAndExtract(fileInfo);
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        await uploadAndExtract({
+          uri: result.assets[0].uri,
+          name: 'menu.jpg',
+          type: 'image/jpeg',
+        });
+      }
     } catch (error) {
       setUploadError(error.message || 'Camera failed');
-      setUploading(false);
     }
   };
 
   const handleUploadFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf', 'text/csv', 'text/plain', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        type: ['image/*', 'application/pdf', 'text/csv'],
         copyToCacheDirectory: true,
-        multiple: false,
       });
-      if (result.canceled || !result.assets?.[0]) return;
-      const asset = result.assets[0];
-      const fileInfo = {
-        uri: asset.uri,
-        name: asset.name || 'menu',
-        type: asset.mimeType || 'image/jpeg',
-      };
-      await uploadAndExtract(fileInfo);
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        await uploadAndExtract({
+          uri: asset.uri,
+          name: asset.name || 'menu',
+          type: asset.mimeType || 'image/jpeg',
+        });
+      }
     } catch (error) {
       setUploadError(error.message || 'Upload failed');
-      setUploading(false);
     }
   };
 
   const filterItems = () => {
-    let filtered = [...menuItems];
+    let filtered = [...menuItems].filter(i => i.status !== 'deleted');
 
     if (selectedCategory !== 'all-items') {
       filtered = filtered.filter(item =>
@@ -257,7 +236,7 @@ export default function MenuManagementScreen() {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(item =>
         item.name?.toLowerCase().includes(term) ||
-        item.description?.toLowerCase().includes(term)
+        item.shortCode?.toLowerCase().includes(term)
       );
     }
 
@@ -270,9 +249,11 @@ export default function MenuManagementScreen() {
       description: '',
       price: '',
       category: '',
+      shortCode: '',
       isVeg: true,
       spiceLevel: 'medium',
       status: 'active',
+      images: [],
     });
     setEditingItem(null);
   };
@@ -288,9 +269,11 @@ export default function MenuManagementScreen() {
       description: item.description || '',
       price: item.price?.toString() || '',
       category: item.category || '',
+      shortCode: item.shortCode || '',
       isVeg: item.isVeg !== false,
       spiceLevel: item.spiceLevel || 'medium',
       status: item.status || 'active',
+      images: item.images || [],
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -298,8 +281,8 @@ export default function MenuManagementScreen() {
 
   const handleDelete = (item) => {
     Alert.alert(
-      'Delete Menu Item',
-      `Are you sure you want to delete "${item.name}"? This action cannot be undone.`,
+      'Delete Item',
+      `Delete "${item.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -307,13 +290,13 @@ export default function MenuManagementScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              setActionLoading(item.id);
               await apiClient.deleteMenuItem(item.id);
-              setMenuItems(items => items.filter(i => i.id !== item.id));
-              Alert.alert('Success', 'Menu item deleted successfully');
               await loadMenu(restaurantId);
             } catch (error) {
-              console.error('Error deleting item:', error);
-              Alert.alert('Error', error.message || 'Failed to delete menu item');
+              Alert.alert('Error', error.message || 'Failed to delete');
+            } finally {
+              setActionLoading(null);
             }
           },
         },
@@ -321,9 +304,105 @@ export default function MenuManagementScreen() {
     );
   };
 
+  const handleToggleFavorite = async (item) => {
+    try {
+      setActionLoading(item.id);
+      const newFavorite = !item.isFavorite;
+      await apiClient.toggleMenuItemFavorite(restaurantId, item.id, newFavorite);
+      setMenuItems(items =>
+        items.map(i => i.id === item.id ? { ...i, isFavorite: newFavorite } : i)
+      );
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to update');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleToggleAvailability = async (item) => {
+    try {
+      setActionLoading(item.id);
+      const newAvailability = item.isAvailable === false ? true : false;
+      await apiClient.toggleMenuItemAvailability(item.id, newAvailability);
+      setMenuItems(items =>
+        items.map(i => i.id === item.id ? { ...i, isAvailable: newAvailability } : i)
+      );
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to update');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleImageUpload = async (assets) => {
+    if (!editingItem) {
+      // For new items, just add to local state
+      const newImages = assets.map(a => ({ uri: a.uri, local: true }));
+      setFormData(prev => ({
+        ...prev,
+        images: [...(prev.images || []), ...newImages].slice(0, 4),
+      }));
+      return;
+    }
+
+    // For existing items, upload immediately
+    try {
+      setUploadingImage(true);
+      const uploadFormData = new FormData();
+      assets.forEach((asset, index) => {
+        uploadFormData.append('images', {
+          uri: asset.uri,
+          name: `image_${index}.jpg`,
+          type: 'image/jpeg',
+        });
+      });
+      const response = await apiClient.uploadMenuItemImages(editingItem.id, uploadFormData);
+      if (response.images) {
+        setFormData(prev => ({
+          ...prev,
+          images: [...(prev.images || []), ...response.images].slice(0, 4),
+        }));
+      }
+      await loadMenu(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Image upload failed');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleImageDelete = async (index) => {
+    const image = formData.images[index];
+
+    if (image.local) {
+      // Local image, just remove from state
+      setFormData(prev => ({
+        ...prev,
+        images: prev.images.filter((_, i) => i !== index),
+      }));
+      return;
+    }
+
+    if (!editingItem) return;
+
+    try {
+      setUploadingImage(true);
+      await apiClient.deleteMenuItemImage(editingItem.id, index);
+      setFormData(prev => ({
+        ...prev,
+        images: prev.images.filter((_, i) => i !== index),
+      }));
+      await loadMenu(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to delete image');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!formData.name || !formData.price || !formData.category) {
-      Alert.alert('Validation Error', 'Please fill in name, price, and category');
+      Alert.alert('Required', 'Please fill name, price, and category');
       return;
     }
 
@@ -333,6 +412,7 @@ export default function MenuManagementScreen() {
         description: formData.description,
         price: parseFloat(formData.price),
         category: formData.category,
+        shortCode: formData.shortCode || undefined,
         isVeg: formData.isVeg,
         spiceLevel: formData.spiceLevel,
         status: formData.status,
@@ -340,65 +420,132 @@ export default function MenuManagementScreen() {
 
       if (editingItem) {
         await apiClient.updateMenuItem(editingItem.id, itemData);
-        Alert.alert('Success', 'Menu item updated successfully');
       } else {
-        await apiClient.createMenuItem(restaurantId, itemData);
-        Alert.alert('Success', 'Menu item added successfully');
+        const response = await apiClient.createMenuItem(restaurantId, itemData);
+        // Upload local images for new item
+        const localImages = formData.images.filter(img => img.local);
+        if (localImages.length > 0 && response.menuItem?.id) {
+          const uploadFormData = new FormData();
+          localImages.forEach((img, index) => {
+            uploadFormData.append('images', {
+              uri: img.uri,
+              name: `image_${index}.jpg`,
+              type: 'image/jpeg',
+            });
+          });
+          await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData);
+        }
       }
 
       setShowAddModal(false);
       resetForm();
       await loadMenu(restaurantId);
     } catch (error) {
-      console.error('Error saving item:', error);
-      Alert.alert('Error', error.message || 'Failed to save menu item');
+      Alert.alert('Error', error.message || 'Failed to save');
     }
   };
 
-  const renderMenuItem = ({ item }) => (
-    <View style={styles.menuItemCard}>
-      <View style={styles.menuItemHeader}>
-        <View style={styles.menuItemInfo}>
-          <Text style={styles.menuItemName}>{item.name}</Text>
-          <Text style={styles.menuItemCategory}>{item.category || 'Uncategorized'}</Text>
-        </View>
-        <View style={styles.menuItemActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleEdit(item)}
-          >
-            <Ionicons name="create-outline" size={20} color={Colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleDelete(item)}
-          >
-            <Ionicons name="trash-outline" size={20} color={Colors.error} />
-          </TouchableOpacity>
-        </View>
-      </View>
-      {item.description && (
-        <Text style={styles.menuItemDescription} numberOfLines={2}>
-          {item.description}
-        </Text>
-      )}
-      <View style={styles.menuItemFooter}>
-        <Text style={styles.menuItemPrice}>₹{item.price}</Text>
-        <View style={styles.menuItemBadges}>
-          {item.isVeg !== false && (
-            <View style={styles.vegBadge}>
-              <Text style={styles.vegText}>VEG</Text>
+  const renderMenuItem = ({ item }) => {
+    const isOutOfStock = item.isAvailable === false;
+    const isLoading = actionLoading === item.id;
+
+    return (
+      <View style={[styles.menuItemCard, isOutOfStock && styles.menuItemCardOutOfStock]}>
+        {/* Image */}
+        {item.images?.[0] && (
+          <Image
+            source={{ uri: item.images[0].url }}
+            style={styles.menuItemImage}
+          />
+        )}
+
+        {/* Content */}
+        <View style={styles.menuItemContent}>
+          <View style={styles.menuItemHeader}>
+            <View style={styles.menuItemTitleRow}>
+              <View style={[styles.vegIndicator, { borderColor: item.isVeg !== false ? Colors.accentGreen : Colors.primary }]}>
+                <View style={[styles.vegDot, { backgroundColor: item.isVeg !== false ? Colors.accentGreen : Colors.primary }]} />
+              </View>
+              <Text style={styles.menuItemName} numberOfLines={1}>{item.name}</Text>
+              {item.isFavorite && (
+                <Ionicons name="star" size={14} color={Colors.accentYellow} />
+              )}
             </View>
+            <Text style={styles.menuItemCategory}>{item.category || 'Uncategorized'}</Text>
+          </View>
+
+          {item.description && (
+            <Text style={styles.menuItemDescription} numberOfLines={2}>{item.description}</Text>
           )}
-          <View style={[styles.statusBadge, { backgroundColor: item.status === 'active' ? Colors.accentGreen + '20' : Colors.textLight + '20' }]}>
-            <Text style={[styles.statusText, { color: item.status === 'active' ? Colors.accentGreen : Colors.textLight }]}>
-              {item.status}
-            </Text>
+
+          <View style={styles.menuItemFooter}>
+            <View style={styles.priceContainer}>
+              <Text style={styles.menuItemPrice}>₹{item.price}</Text>
+              {item.shortCode && (
+                <Text style={styles.menuItemShortCode}>#{item.shortCode}</Text>
+              )}
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.menuItemActions}>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, item.isFavorite && styles.actionBtnActive]}
+                    onPress={() => handleToggleFavorite(item)}
+                  >
+                    <Ionicons
+                      name={item.isFavorite ? 'star' : 'star-outline'}
+                      size={18}
+                      color={item.isFavorite ? Colors.accentYellow : Colors.textLight}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.actionBtn}
+                    onPress={() => handleEdit(item)}
+                  >
+                    <Ionicons name="create-outline" size={18} color={Colors.info} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, isOutOfStock && styles.actionBtnOutOfStock]}
+                    onPress={() => handleToggleAvailability(item)}
+                  >
+                    <Ionicons
+                      name={isOutOfStock ? 'add-circle-outline' : 'remove-circle-outline'}
+                      size={18}
+                      color={isOutOfStock ? Colors.accentGreen : Colors.secondary}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.actionBtn}
+                    onPress={() => handleDelete(item)}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={Colors.error} />
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+
+          {/* Status badges */}
+          <View style={styles.badgeRow}>
+            {isOutOfStock && (
+              <View style={styles.outOfStockBadge}>
+                <Text style={styles.outOfStockText}>Out of Stock</Text>
+              </View>
+            )}
+            {item.status === 'inactive' && (
+              <View style={styles.inactiveBadge}>
+                <Text style={styles.inactiveText}>Inactive</Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderCategory = ({ item }) => {
     const isSelected = selectedCategory === item.id;
@@ -407,12 +554,7 @@ export default function MenuManagementScreen() {
         style={[styles.categoryButton, isSelected && styles.categoryButtonSelected]}
         onPress={() => setSelectedCategory(item.id)}
       >
-        <Text
-          style={[
-            styles.categoryText,
-            isSelected && styles.categoryTextSelected,
-          ]}
-        >
+        <Text style={[styles.categoryText, isSelected && styles.categoryTextSelected]}>
           {item.name}
         </Text>
       </TouchableOpacity>
@@ -430,7 +572,6 @@ export default function MenuManagementScreen() {
     );
   }
 
-  // Empty state: no menu items — show Take Photo / Upload File
   if (menuItems.length === 0) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
@@ -439,7 +580,7 @@ export default function MenuManagementScreen() {
             <Ionicons name="restaurant-outline" size={56} color={Colors.primary} />
             <Text style={styles.emptyStateTitle}>Menu Management</Text>
             <Text style={styles.emptyStateSubtitle}>
-              Take a photo of your menu or upload a file. AI will extract items, prices, and categories.
+              Take a photo or upload your menu. AI will extract items automatically.
             </Text>
             {uploadError ? <Text style={styles.uploadErrorText}>{uploadError}</Text> : null}
             {uploadSuccess ? <Text style={styles.uploadSuccessText}>{uploadSuccess}</Text> : null}
@@ -458,10 +599,13 @@ export default function MenuManagementScreen() {
                 disabled={uploading}
               >
                 <Ionicons name="document-attach" size={28} color="#fff" />
-                <Text style={styles.uploadActionLabel}>Upload File</Text>
+                <Text style={styles.uploadActionLabel}>Upload</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.emptyStateHint}>Images, PDF, CSV, or documents — one file at a time.</Text>
+            <TouchableOpacity style={styles.manualAddButton} onPress={handleAdd}>
+              <Ionicons name="add-circle-outline" size={20} color={Colors.primary} />
+              <Text style={styles.manualAddText}>Add item manually</Text>
+            </TouchableOpacity>
           </View>
         </View>
         {uploading && (
@@ -474,6 +618,44 @@ export default function MenuManagementScreen() {
             </View>
           </Modal>
         )}
+        {/* Add Modal */}
+        <Modal
+          visible={showAddModal}
+          animationType="slide"
+          onRequestClose={() => { setShowAddModal(false); resetForm(); }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => { setShowAddModal(false); resetForm(); }}
+                >
+                  <Ionicons name="close" size={24} color={Colors.textDark} />
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Add Menu Item</Text>
+                <View style={styles.closeButtonPlaceholder} />
+              </View>
+              <MenuItemForm
+                formData={formData}
+                setFormData={setFormData}
+                isEditing={false}
+                categories={categories}
+                onImageUpload={handleImageUpload}
+                onImageDelete={handleImageDelete}
+                uploadingImage={uploadingImage}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
+                  <Text style={styles.saveButtonText}>Add Item</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -484,33 +666,30 @@ export default function MenuManagementScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Menu Management</Text>
-          <Text style={styles.headerSubtitle}>{menuItems.length} items</Text>
+          <Text style={styles.headerSubtitle}>{filteredItems.length} of {menuItems.filter(i => i.status !== 'deleted').length} items</Text>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={handleRefresh}
-            disabled={loading}
-          >
-            <Ionicons name="refresh" size={24} color={Colors.primary} style={loading && { opacity: 0.5 }} />
+          <TouchableOpacity style={styles.iconButton} onPress={handleRefresh}>
+            <Ionicons name="refresh" size={22} color={Colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.uploadIconButton} onPress={handleTakePhoto} disabled={uploading}>
+          <TouchableOpacity style={styles.iconButton} onPress={handleTakePhoto}>
             <Ionicons name="camera" size={22} color={Colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.uploadIconButton} onPress={handleUploadFile} disabled={uploading}>
+          <TouchableOpacity style={styles.iconButton} onPress={handleUploadFile}>
             <Ionicons name="document-attach" size={22} color={Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
+
       {uploadError ? <Text style={styles.inlineError}>{uploadError}</Text> : null}
       {uploadSuccess ? <Text style={styles.inlineSuccess}>{uploadSuccess}</Text> : null}
 
       {/* Search */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color={Colors.textLight} style={styles.searchIcon} />
+        <Ionicons name="search" size={20} color={Colors.textLight} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search menu items..."
+          placeholder="Search items or short code..."
           placeholderTextColor={Colors.textLight}
           value={searchTerm}
           onChangeText={setSearchTerm}
@@ -532,7 +711,7 @@ export default function MenuManagementScreen() {
         contentContainerStyle={styles.categoriesContainer}
       />
 
-      {/* Menu Items List */}
+      {/* Menu Items */}
       <FlatList
         data={filteredItems}
         renderItem={renderMenuItem}
@@ -540,64 +719,48 @@ export default function MenuManagementScreen() {
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
+            <Ionicons name="search" size={48} color={Colors.textLight} />
             <Text style={styles.emptyText}>No items found</Text>
-            <Text style={styles.emptySubtext}>
-              {searchTerm ? 'Try a different search term' : 'Add your first menu item'}
-            </Text>
           </View>
         }
       />
 
-      {/* Floating Action Button - Add item */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={handleAdd}
-        activeOpacity={0.9}
-      >
-        <Ionicons name="add" size={30} color="#fff" />
+      {/* FAB */}
+      <TouchableOpacity style={styles.fab} onPress={handleAdd}>
+        <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
       {/* Add/Edit Modal */}
       <Modal
         visible={showAddModal}
         animationType="slide"
-        transparent
-        onRequestClose={() => {
-          setShowAddModal(false);
-          resetForm();
-        }}
+        onRequestClose={() => { setShowAddModal(false); resetForm(); }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingItem ? 'Edit Menu Item' : 'Add Menu Item'}
-              </Text>
               <TouchableOpacity
-                onPress={() => {
-                  setShowAddModal(false);
-                  resetForm();
-                }}
+                style={styles.closeButton}
+                onPress={() => { setShowAddModal(false); resetForm(); }}
               >
                 <Ionicons name="close" size={24} color={Colors.textDark} />
               </TouchableOpacity>
+              <Text style={styles.modalTitle}>
+                {editingItem ? 'Edit Menu Item' : 'Add Menu Item'}
+              </Text>
+              <View style={styles.closeButtonPlaceholder} />
             </View>
-
             <MenuItemForm
               formData={formData}
               setFormData={setFormData}
               isEditing={!!editingItem}
+              categories={categories}
+              onImageUpload={handleImageUpload}
+              onImageDelete={handleImageDelete}
+              uploadingImage={uploadingImage}
             />
-
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setShowAddModal(false);
-                  resetForm();
-                }}
-              >
+              <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
@@ -609,6 +772,8 @@ export default function MenuManagementScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Processing Modal */}
       {uploading && (
         <Modal visible transparent animationType="fade">
           <View style={styles.processingOverlay}>
@@ -633,33 +798,32 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     backgroundColor: Colors.backgroundWhite,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
   },
-  headerActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    alignItems: 'center',
-  },
-  refreshButton: {
-    padding: Spacing.sm,
-  },
   headerTitle: {
-    fontSize: Typography.h2.fontSize,
-    fontWeight: Typography.h2.fontWeight,
+    fontSize: 20,
+    fontWeight: '700',
     color: Colors.textDark,
   },
   headerSubtitle: {
-    fontSize: Typography.caption.fontSize,
+    fontSize: 12,
     color: Colors.textMedium,
     marginTop: 2,
   },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  iconButton: {
+    padding: Spacing.sm,
+  },
   fab: {
     position: 'absolute',
-    bottom: 88,
-    right: 20,
+    bottom: 90,
+    right: 16,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -668,28 +832,218 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 8,
-  },
-  uploadIconButton: {
-    padding: Spacing.sm,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   inlineError: {
     backgroundColor: '#fee2e2',
     color: Colors.error,
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    fontSize: 13,
+    paddingVertical: Spacing.xs,
+    fontSize: 12,
   },
   inlineSuccess: {
     backgroundColor: '#d1fae5',
     color: Colors.success,
     paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    fontSize: 12,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundWhite,
+    marginHorizontal: Spacing.md,
+    marginVertical: Spacing.sm,
+    borderRadius: BorderRadius.medium,
+    paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.textDark,
+  },
+  categoriesContainer: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  categoryButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.backgroundWhite,
+    marginRight: Spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryButtonSelected: {
+    backgroundColor: Colors.primary,
+  },
+  categoryText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  categoryTextSelected: {
+    color: '#fff',
+  },
+  list: {
+    padding: Spacing.md,
+    paddingBottom: 160,
+  },
+  menuItemCard: {
+    backgroundColor: Colors.backgroundWhite,
+    borderRadius: BorderRadius.medium,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  menuItemCardOutOfStock: {
+    opacity: 0.7,
+  },
+  menuItemImage: {
+    width: '100%',
+    height: 140,
+    backgroundColor: Colors.backgroundLight,
+  },
+  menuItemContent: {
+    padding: Spacing.md,
+  },
+  menuItemHeader: {
+    marginBottom: Spacing.xs,
+  },
+  menuItemTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  vegIndicator: {
+    width: 16,
+    height: 16,
+    borderWidth: 2,
+    borderRadius: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vegDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  menuItemName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textDark,
+  },
+  menuItemCategory: {
+    fontSize: 12,
+    color: Colors.textLight,
+    marginTop: 2,
+    marginLeft: 20,
+  },
+  menuItemDescription: {
     fontSize: 13,
+    color: Colors.textMedium,
+    marginBottom: Spacing.sm,
+    lineHeight: 18,
+  },
+  menuItemFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  priceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  menuItemPrice: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  menuItemShortCode: {
+    fontSize: 12,
+    color: Colors.textLight,
+    backgroundColor: Colors.backgroundLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  menuItemActions: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  actionBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.backgroundLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionBtnActive: {
+    backgroundColor: Colors.accentYellow + '20',
+  },
+  actionBtnOutOfStock: {
+    backgroundColor: Colors.accentGreen + '20',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+  },
+  outOfStockBadge: {
+    backgroundColor: Colors.secondary + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  outOfStockText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.secondary,
+  },
+  inactiveBadge: {
+    backgroundColor: Colors.textLight + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  inactiveText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textLight,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  loadingText: {
+    fontSize: 15,
+    color: Colors.textMedium,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: Colors.textMedium,
   },
   emptyStateContainer: {
     flex: 1,
@@ -702,7 +1056,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.large,
     padding: Spacing.xl,
     alignItems: 'center',
-    maxWidth: 340,
+    maxWidth: 320,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -710,31 +1064,29 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   emptyStateTitle: {
-    fontSize: Typography.h2.fontSize,
-    fontWeight: Typography.h2.fontWeight,
+    fontSize: 22,
+    fontWeight: '700',
     color: Colors.textDark,
     marginTop: Spacing.md,
   },
   emptyStateSubtitle: {
-    fontSize: Typography.body.fontSize,
+    fontSize: 14,
     color: Colors.textMedium,
     textAlign: 'center',
     marginTop: Spacing.sm,
-    lineHeight: 22,
+    lineHeight: 20,
   },
   emptyStateActions: {
     flexDirection: 'row',
     gap: Spacing.md,
-    marginTop: Spacing.xl,
+    marginTop: Spacing.lg,
   },
   uploadActionButton: {
-    flex: 1,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     borderRadius: BorderRadius.medium,
     alignItems: 'center',
-    gap: Spacing.sm,
-    minWidth: 120,
+    gap: Spacing.xs,
   },
   takePhotoButton: {
     backgroundColor: Colors.primary,
@@ -743,24 +1095,30 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secondary,
   },
   uploadActionLabel: {
-    fontSize: Typography.bodyBold.fontSize,
-    fontWeight: Typography.bodyBold.fontWeight,
+    fontSize: 14,
+    fontWeight: '600',
     color: '#fff',
   },
-  emptyStateHint: {
-    fontSize: Typography.small.fontSize,
-    color: Colors.textLight,
+  manualAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
     marginTop: Spacing.lg,
-    textAlign: 'center',
+    paddingVertical: Spacing.sm,
+  },
+  manualAddText: {
+    fontSize: 14,
+    color: Colors.primary,
+    fontWeight: '500',
   },
   uploadErrorText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.error,
     marginTop: Spacing.md,
     textAlign: 'center',
   },
   uploadSuccessText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.success,
     marginTop: Spacing.md,
     textAlign: 'center',
@@ -776,195 +1134,53 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.large,
     padding: Spacing.xl,
     alignItems: 'center',
-    minWidth: 200,
+    minWidth: 180,
   },
   processingStep: {
     marginTop: Spacing.md,
-    fontSize: Typography.body.fontSize,
+    fontSize: 14,
     color: Colors.textDark,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.backgroundLight,
-    marginHorizontal: Spacing.md,
-    marginVertical: Spacing.sm,
-    borderRadius: BorderRadius.medium,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-  },
-  searchIcon: {
-    marginRight: Spacing.sm,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: Typography.body.fontSize,
-    color: Colors.textDark,
-  },
-  categoriesContainer: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    gap: Spacing.sm,
-  },
-  categoryButton: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm + 2,
-    minHeight: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.backgroundLight,
-    marginRight: Spacing.sm,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  categoryButtonSelected: {
-    backgroundColor: Colors.primary,
-  },
-  categoryText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.textDark,
-  },
-  categoryTextSelected: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  list: {
-    padding: Spacing.md,
-    paddingBottom: 100,
-  },
-  menuItemCard: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: BorderRadius.medium,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  menuItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: Spacing.xs,
-  },
-  menuItemInfo: {
-    flex: 1,
-  },
-  menuItemName: {
-    fontSize: Typography.bodyBold.fontSize,
-    fontWeight: Typography.bodyBold.fontWeight,
-    color: Colors.textDark,
-    marginBottom: 4,
-  },
-  menuItemCategory: {
-    fontSize: Typography.small.fontSize,
-    color: Colors.textMedium,
-  },
-  menuItemActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  actionButton: {
-    padding: Spacing.xs,
-  },
-  menuItemDescription: {
-    fontSize: Typography.caption.fontSize,
-    color: Colors.textMedium,
-    marginBottom: Spacing.sm,
-  },
-  menuItemFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: Spacing.xs,
-  },
-  menuItemPrice: {
-    fontSize: Typography.bodyBold.fontSize,
-    fontWeight: Typography.bodyBold.fontWeight,
-    color: Colors.primary,
-  },
-  menuItemBadges: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-  },
-  vegBadge: {
-    backgroundColor: Colors.accentGreen,
-    paddingHorizontal: Spacing.xs,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.small,
-  },
-  vegText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  statusBadge: {
-    paddingHorizontal: Spacing.xs,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.small,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  loadingText: {
-    fontSize: Typography.body.fontSize,
-    color: Colors.textMedium,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.xl,
-    gap: Spacing.md,
-  },
-  emptyText: {
-    fontSize: Typography.h3.fontSize,
-    fontWeight: Typography.h3.fontWeight,
-    color: Colors.textDark,
-    marginTop: Spacing.md,
-  },
-  emptySubtext: {
-    fontSize: Typography.body.fontSize,
-    color: Colors.textMedium,
-    textAlign: 'center',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: Colors.backgroundWhite,
   },
   modalContent: {
+    flex: 1,
     backgroundColor: Colors.backgroundWhite,
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-    maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingTop: Platform.OS === 'ios' ? 60 : Spacing.xl,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
+    backgroundColor: Colors.backgroundWhite,
   },
   modalTitle: {
-    fontSize: Typography.h2.fontSize,
-    fontWeight: Typography.h2.fontWeight,
+    fontSize: 18,
+    fontWeight: '700',
     color: Colors.textDark,
+    flex: 1,
+    textAlign: 'center',
+  },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.backgroundLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonPlaceholder: {
+    width: 40,
   },
   modalActions: {
     flexDirection: 'row',
-    padding: Spacing.lg,
+    padding: Spacing.md,
     gap: Spacing.md,
     borderTopWidth: 1,
     borderTopColor: Colors.borderLight,
@@ -977,8 +1193,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButtonText: {
-    fontSize: Typography.bodyBold.fontSize,
-    fontWeight: Typography.bodyBold.fontWeight,
+    fontSize: 15,
+    fontWeight: '600',
     color: Colors.textDark,
   },
   saveButton: {
@@ -989,8 +1205,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveButtonText: {
-    fontSize: Typography.bodyBold.fontSize,
-    fontWeight: Typography.bodyBold.fontWeight,
+    fontSize: 15,
+    fontWeight: '600',
     color: '#fff',
   },
 });

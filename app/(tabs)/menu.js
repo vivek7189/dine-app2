@@ -11,11 +11,13 @@ import {
   Image,
   Animated,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
+
+const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { getDisplayImage } from '../../utils/placeholderImages';
 // import VoiceOrderModal from '../../components/VoiceOrderModal';
@@ -50,6 +52,7 @@ export default function MenuScreen() {
   const [existingOrderId, setExistingOrderId] = useState(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
+  const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const HEADER_EXPANDED = 200;
@@ -60,6 +63,58 @@ export default function MenuScreen() {
     loadInitialData();
     loadImagePreference();
   }, []);
+
+  // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
+  useFocusEffect(
+    useCallback(() => {
+      const refreshTaxSettings = async () => {
+        if (!restaurantId) return;
+
+        // First, load from cache for instant update
+        try {
+          const cached = await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`);
+          if (cached) {
+            const cachedSettings = JSON.parse(cached);
+            const totalRate = cachedSettings.taxes?.filter(t => t.enabled)
+              .reduce((sum, t) => sum + (t.rate || 0), 0) || 0;
+            setTaxSettings({
+              enabled: cachedSettings.enabled || false,
+              rate: totalRate,
+              taxes: cachedSettings.taxes || [],
+            });
+          }
+        } catch (e) {
+          console.log('Cache read error:', e);
+        }
+
+        // Then fetch from API in background
+        try {
+          const response = await apiClient.getTaxSettings(restaurantId);
+          if (response.taxSettings) {
+            const settings = response.taxSettings;
+            const totalRate = settings.taxes?.filter(t => t.enabled)
+              .reduce((sum, t) => sum + (t.rate || 0), 0) || 0;
+
+            setTaxSettings({
+              enabled: settings.enabled || false,
+              rate: totalRate,
+              taxes: settings.taxes || [],
+            });
+
+            // Update cache
+            await AsyncStorage.setItem(
+              `${TAX_STORAGE_KEY}_${restaurantId}`,
+              JSON.stringify(settings)
+            );
+          }
+        } catch (e) {
+          console.log('API fetch error (using cached):', e);
+        }
+      };
+
+      refreshTaxSettings();
+    }, [restaurantId])
+  );
 
   const loadImagePreference = async () => {
     try {
@@ -160,12 +215,68 @@ export default function MenuScreen() {
 
       setRestaurantId(rid);
       setRestaurantName(userData.restaurant?.name || 'Restaurant');
+
+      // Load tax settings - first from cache, then background refresh
+      await loadTaxSettings(rid);
+
       await loadMenu(rid);
     } catch (error) {
       console.error('Error loading menu:', error);
       Alert.alert('Error', 'Failed to load menu. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load tax settings with cache-first approach
+  const loadTaxSettings = async (rid) => {
+    if (!rid) return;
+
+    try {
+      // First, try to load from local storage for instant use
+      const cached = await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${rid}`);
+      if (cached) {
+        const cachedSettings = JSON.parse(cached);
+        const totalRate = cachedSettings.taxes?.filter(t => t.enabled)
+          .reduce((sum, t) => sum + (t.rate || 0), 0) || 0;
+        setTaxSettings({
+          enabled: cachedSettings.enabled || false,
+          rate: totalRate,
+          taxes: cachedSettings.taxes || [],
+        });
+      }
+    } catch (cacheError) {
+      console.log('No cached tax settings:', cacheError);
+    }
+
+    // Then fetch from API in background and update
+    fetchTaxSettingsInBackground(rid);
+  };
+
+  // Fetch tax settings from API in background
+  const fetchTaxSettingsInBackground = async (rid) => {
+    try {
+      const response = await apiClient.getTaxSettings(rid);
+      if (response.taxSettings) {
+        const settings = response.taxSettings;
+        const totalRate = settings.taxes?.filter(t => t.enabled)
+          .reduce((sum, t) => sum + (t.rate || 0), 0) || 0;
+
+        setTaxSettings({
+          enabled: settings.enabled || false,
+          rate: totalRate,
+          taxes: settings.taxes || [],
+        });
+
+        // Cache the settings
+        await AsyncStorage.setItem(
+          `${TAX_STORAGE_KEY}_${rid}`,
+          JSON.stringify(settings)
+        );
+      }
+    } catch (error) {
+      console.log('Could not fetch tax settings from API:', error);
+      // Keep using cached data or default
     }
   };
 
@@ -231,6 +342,32 @@ export default function MenuScreen() {
 
   const getCartTotal = () => {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
+  };
+
+  // Calculate tax based on restaurant settings
+  const calculateTax = (subtotal) => {
+    if (!taxSettings.enabled) {
+      return { taxAmount: 0, taxRate: 0, taxLabel: '' };
+    }
+
+    // If taxes array exists and has items, use total of all taxes
+    if (taxSettings.taxes && taxSettings.taxes.length > 0) {
+      const totalRate = taxSettings.taxes.reduce((sum, tax) => sum + (tax.rate || 0), 0);
+      const taxAmount = subtotal * (totalRate / 100);
+      const taxLabel = taxSettings.taxes.map(t => t.name || 'Tax').join(' + ');
+      return { taxAmount, taxRate: totalRate, taxLabel };
+    }
+
+    // Fallback to single rate
+    const rate = taxSettings.rate || 0;
+    const taxAmount = subtotal * (rate / 100);
+    return { taxAmount, taxRate: rate, taxLabel: rate > 0 ? `GST (${rate}%)` : '' };
+  };
+
+  const getGrandTotal = () => {
+    const subtotal = getCartTotal();
+    const { taxAmount } = calculateTax(subtotal);
+    return subtotal + taxAmount;
   };
 
   const handleSendToKitchen = async () => {
@@ -390,8 +527,8 @@ export default function MenuScreen() {
 
     try {
       const subtotal = getCartTotal();
-      const gst = subtotal * 0.05; // 5% GST
-      const grandTotal = subtotal + gst;
+      const { taxAmount, taxRate, taxLabel } = calculateTax(subtotal);
+      const grandTotal = subtotal + taxAmount;
 
       const orderData = {
         restaurantId,
@@ -413,7 +550,8 @@ export default function MenuScreen() {
           mobile: customerMobile || '',
         },
         subtotal: subtotal,
-        gst: gst,
+        tax: taxAmount,
+        taxRate: taxRate,
         total: grandTotal,
       };
 
@@ -432,7 +570,10 @@ export default function MenuScreen() {
           total: item.price * item.quantity,
         })),
         subtotal: subtotal,
-        gst: gst,
+        tax: taxAmount,
+        taxRate: taxRate,
+        taxLabel: taxLabel,
+        taxEnabled: taxSettings.enabled,
         grandTotal: grandTotal,
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
@@ -926,8 +1067,10 @@ export default function MenuScreen() {
         <View style={styles.bottomOrderBar}>
           <View style={styles.orderSummary}>
             <Text style={styles.orderItemsCount}>{cart.length} items</Text>
-            <Text style={styles.orderTotal}>₹{(getCartTotal() * 1.05).toFixed(2)}</Text>
-            <Text style={styles.gstNote}>incl. 5% GST</Text>
+            <Text style={styles.orderTotal}>₹{getGrandTotal().toFixed(2)}</Text>
+            {taxSettings.enabled && taxSettings.rate > 0 && (
+              <Text style={styles.gstNote}>incl. {taxSettings.rate}% tax</Text>
+            )}
           </View>
           <TouchableOpacity
             style={[styles.orderButton, styles.placeOrderBtn, sendingOrder && styles.orderButtonDisabled]}
@@ -995,6 +1138,7 @@ export default function MenuScreen() {
           total={getCartTotal()}
           restaurantName={restaurantName}
           sending={sendingOrder}
+          taxSettings={taxSettings}
         />
       ) : (
         <CartModal

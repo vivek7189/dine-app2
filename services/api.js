@@ -267,6 +267,58 @@ class ApiClient {
     });
   }
 
+  // Upload images to menu item (max 4 images)
+  async uploadMenuItemImages(itemId, formData) {
+    const token = await this.getToken();
+    const url = `${this.baseURL}/api/menu-items/${itemId}/images`;
+    const config = {
+      method: 'POST',
+      data: formData,
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    };
+    try {
+      const response = await axios(url, config);
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        throw new Error(error.response.data?.error || error.response.data?.message || 'Image upload failed');
+      }
+      throw new Error(error.message || 'Image upload failed');
+    }
+  }
+
+  // Delete menu item image
+  async deleteMenuItemImage(itemId, imageIndex) {
+    return this.request(`/api/menu-items/${itemId}/images/${imageIndex}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Toggle menu item favorite
+  async toggleMenuItemFavorite(restaurantId, itemId, isFavorite) {
+    if (isFavorite) {
+      return this.request(`/api/menus/${restaurantId}/item/${itemId}/favorite`, {
+        method: 'POST',
+      });
+    } else {
+      return this.request(`/api/menus/${restaurantId}/item/${itemId}/favorite`, {
+        method: 'DELETE',
+      });
+    }
+  }
+
+  // Toggle menu item availability (out of stock)
+  async toggleMenuItemAvailability(itemId, isAvailable) {
+    return this.request(`/api/menus/item/${itemId}`, {
+      method: 'PATCH',
+      data: { isAvailable },
+    });
+  }
+
   // ==================== HOTEL MANAGEMENT ====================
 
   // Room Management
@@ -442,6 +494,21 @@ class ApiClient {
     return this.request('/api/public/customer/lookup', {
       method: 'POST',
       data: { restaurantId, phone },
+    });
+  }
+
+  // ==================== TAX SETTINGS ====================
+
+  // Get tax settings for a restaurant
+  async getTaxSettings(restaurantId) {
+    return this.request(`/api/admin/tax/${restaurantId}`);
+  }
+
+  // Update tax settings for a restaurant
+  async updateTaxSettings(restaurantId, taxSettings) {
+    return this.request(`/api/admin/tax/${restaurantId}`, {
+      method: 'PUT',
+      data: { taxSettings },
     });
   }
 }

@@ -25,16 +25,18 @@ export default function CashierCartModal({
   total,
   restaurantName,
   sending,
+  taxSettings = { enabled: false, rate: 0, taxes: [] },
 }) {
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
 
-  const GST_RATE = 0.05; // 5%
+  // Calculate tax based on restaurant settings
   const subtotal = total;
-  const gst = subtotal * GST_RATE;
-  const grandTotal = subtotal + gst;
+  const taxRate = taxSettings.enabled ? (taxSettings.rate || 0) : 0;
+  const taxAmount = subtotal * (taxRate / 100);
+  const grandTotal = subtotal + taxAmount;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handlePlaceOrder = () => {
@@ -141,10 +143,12 @@ export default function CashierCartModal({
                   <Text style={styles.billLabel}>Subtotal</Text>
                   <Text style={styles.billValue}>₹{subtotal.toFixed(2)}</Text>
                 </View>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>GST (5%)</Text>
-                  <Text style={styles.billValue}>₹{gst.toFixed(2)}</Text>
-                </View>
+                {taxSettings.enabled && taxRate > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Tax ({taxRate}%)</Text>
+                    <Text style={styles.billValue}>₹{taxAmount.toFixed(2)}</Text>
+                  </View>
+                )}
                 <View style={styles.billTotalRow}>
                   <Text style={styles.billTotalLabel}>Total</Text>
                   <Text style={styles.billTotalValue}>₹{grandTotal.toFixed(2)}</Text>
