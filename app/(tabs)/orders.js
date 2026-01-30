@@ -211,11 +211,11 @@ export default function OrdersScreen() {
         }}
         activeOpacity={0.7}
       >
-        {/* Order Header */}
+        {/* Order Header - short ID only (like web app) */}
         <View style={styles.orderHeader}>
           <View style={styles.orderInfo}>
             <Text style={styles.orderNumber}>
-              {item.orderNumber || item.dailyOrderId || `ORD-${item.id.slice(-8)}`}
+              #{item.dailyOrderId ?? (item.id ? item.id.slice(-6).toUpperCase() : '—')}
             </Text>
             {item.tableNumber && (
               <View style={styles.tableBadge}>
@@ -265,10 +265,15 @@ export default function OrdersScreen() {
           </View>
         </View>
 
-        {/* Date Display */}
-        <View style={styles.dateContainer}>
-          <Ionicons name="calendar-outline" size={14} color={Colors.textMedium} />
-          <Text style={styles.dateText}>{date}</Text>
+        {/* Card footer: date + full order number in small text (like web app) */}
+        <View style={styles.cardFooter}>
+          <View style={styles.dateContainer}>
+            <Ionicons name="calendar-outline" size={14} color={Colors.textMedium} />
+            <Text style={styles.dateText}>{date}</Text>
+          </View>
+          <Text style={styles.orderIdFull} numberOfLines={1} ellipsizeMode="middle">
+            {item.orderNumber || item.id || ''}
+          </Text>
         </View>
       </TouchableOpacity>
     );
@@ -668,18 +673,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.textDark,
   },
+  cardFooter: {
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#f9fafb',
+    gap: 4,
+  },
   dateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingTop: Spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: '#f9fafb',
   },
   dateText: {
     fontSize: 12,
     color: Colors.textMedium,
     fontWeight: '500',
+  },
+  orderIdFull: {
+    fontSize: 10,
+    color: Colors.textLight,
+    fontFamily: 'monospace',
+    maxWidth: '100%',
   },
   loadingContainer: {
     flex: 1,

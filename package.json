@@ -1,6 +1,6 @@
 {
   "name": "dine-app",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -15,7 +15,7 @@
     "build:apk-release": "cd android && ./gradlew assembleRelease",
     "build:aab": "node scripts/protect-gradle-props.js && expo prebuild --platform android && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew bundleRelease",
     "build:aab-clean": "node scripts/protect-gradle-props.js && expo prebuild --platform android --clean && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew bundleRelease",
-    "build:aab-fresh": "node scripts/protect-gradle-props.js && expo prebuild --platform android && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew clean bundleRelease",
+    "build:aab-fresh": "node scripts/protect-gradle-props.js && expo prebuild --platform android && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && cd android && ./gradlew bundleRelease",
     "build:apk-staging": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:apk-release",
     "build:aab-staging": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:aab",
     "build:aab-staging-clean": "EXPO_PUBLIC_API_URL=https://dine-backend-git-staging-kapils-projects-bfc8fbae.vercel.app npm run build:aab-clean"

@@ -79,12 +79,13 @@ export default function ProfileScreen() {
     }
   };
 
-  // Check if user is a staff member (staff roles)
+  // Check if user is a staff member (can change password via staff API)
   const isStaffMember = () => {
-    const role = user?.role?.toLowerCase();
-    const isStaff = ['waiter', 'manager', 'employee'].includes(role);
-    console.log('Staff check:', { role, isStaff, hasLoginId: !!user?.loginId });
-    return isStaff;
+    if (!user) return false;
+    const role = user.role?.toLowerCase();
+    const hasLoginId = !!user.loginId;
+    const isStaffRole = ['waiter', 'manager', 'employee', 'cashier', 'sales'].includes(role);
+    return hasLoginId && isStaffRole;
   };
 
   // Check if user can manage tax settings (owner, admin, cashier, manager)
@@ -234,11 +235,12 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* Password Change Section - Only show for staff members */}
+        {/* Reset / Change Password Section - for all staff (waiter, manager, employee, cashier, sales) */}
         {isStaffMember() && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Security</Text>
             <View style={styles.infoCard}>
+              <Text style={styles.securityHint}>Reset your password. Enter your current password, then set a new one.</Text>
               {!showPasswordChange ? (
                 <TouchableOpacity
                   style={styles.changePasswordButton}
@@ -352,7 +354,7 @@ export default function ProfileScreen() {
         {/* App Info */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>DineOpen Staff App</Text>
-          <Text style={styles.footerText}>Version 1.1.2</Text>
+          <Text style={styles.footerText}>Version 1.1.3</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -470,6 +472,11 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: Typography.bodyBold.fontSize,
     fontWeight: Typography.bodyBold.fontWeight,
+  },
+  securityHint: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textMedium,
+    marginBottom: Spacing.sm,
   },
   passwordChangeForm: {
     gap: Spacing.md,
