@@ -185,6 +185,13 @@ class ApiClient {
     });
   }
 
+  // Delete order (soft delete - sets status to 'deleted')
+  async deleteOrder(orderId) {
+    return this.request(`/api/orders/${orderId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Get order by ID
   async getOrderById(restaurantId, orderId) {
     const response = await this.getOrders(restaurantId, { search: orderId, limit: 1 });
@@ -205,6 +212,14 @@ class ApiClient {
   // Get restaurant details
   async getRestaurant(restaurantId) {
     return this.request(`/api/restaurants/${restaurantId}`);
+  }
+
+  // Update restaurant details (business info, legal name, GSTIN, etc.)
+  async updateRestaurant(restaurantId, data) {
+    return this.request(`/api/restaurants/${restaurantId}`, {
+      method: 'PATCH',
+      data,
+    });
   }
 
   // Menu Management
@@ -509,6 +524,21 @@ class ApiClient {
     return this.request(`/api/admin/tax/${restaurantId}`, {
       method: 'PUT',
       data: { taxSettings },
+    });
+  }
+
+  // ==================== BUSINESS SETTINGS ====================
+
+  // Get business settings for a restaurant (legal name, GSTIN for invoices)
+  async getBusinessSettings(restaurantId) {
+    return this.request(`/api/admin/business/${restaurantId}`);
+  }
+
+  // Update business settings for a restaurant
+  async updateBusinessSettings(restaurantId, settings) {
+    return this.request(`/api/admin/business/${restaurantId}`, {
+      method: 'PUT',
+      data: settings,
     });
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   Modal,
   TouchableOpacity,
   ScrollView,
-  TextInput,
   Share,
   Alert,
   Linking,
@@ -23,17 +22,6 @@ export default function CashierInvoiceModal({
   invoiceData,
   onNewOrder,
 }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerGST, setCustomerGST] = useState('');
-
-  useEffect(() => {
-    if (invoiceData) {
-      setCustomerName(invoiceData.customerName || 'Walk-in Customer');
-      setCustomerGST('');
-    }
-  }, [invoiceData]);
-
   if (!invoiceData) return null;
 
   const formatDate = (date) => {
@@ -54,15 +42,21 @@ export default function CashierInvoiceModal({
       `${item.quantity} x ${item.name} @ ₹${item.price} = ₹${item.total.toFixed(2)}`
     ).join('\n');
 
+    // Get business details from restaurantInfo (only if showGstOnInvoice is true)
+    const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
+    const legalName = showGstInfo ? invoiceData.restaurantInfo?.legalBusinessName : null;
+    const gstin = showGstInfo ? invoiceData.restaurantInfo?.gstin : null;
+    const businessAddress = invoiceData.restaurantInfo?.address;
+
     const invoiceText = `
 ================================
         ${invoiceData.restaurantName}
+${legalName ? `        ${legalName}` : ''}
+${gstin ? `GSTIN: ${gstin}` : ''}${businessAddress ? `
+${businessAddress}` : ''}
 ================================
 Invoice #: ${invoiceData.orderNumber}
 Date: ${formatDate(invoiceData.timestamp)}
---------------------------------
-Customer: ${customerName}
-${customerGST ? `GSTIN: ${customerGST}` : ''}
 ================================
 ITEMS:
 --------------------------------
@@ -89,6 +83,12 @@ Thank you for your visit!
         <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 600;">₹${item.total.toFixed(2)}</td>
       </tr>
     `).join('');
+
+    // Get business details from restaurantInfo (only if showGstOnInvoice is true)
+    const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
+    const legalName = showGstInfo ? invoiceData.restaurantInfo?.legalBusinessName : null;
+    const gstin = showGstInfo ? invoiceData.restaurantInfo?.gstin : null;
+    const businessAddress = invoiceData.restaurantInfo?.address;
 
     return `
       <!DOCTYPE html>
@@ -120,21 +120,24 @@ Thank you for your visit!
               font-weight: bold;
               margin-bottom: 5px;
             }
+            .legal-name {
+              font-size: 12px;
+              color: #444;
+              margin-bottom: 5px;
+            }
+            .gstin {
+              font-size: 11px;
+              color: #666;
+              margin-bottom: 3px;
+            }
+            .business-address {
+              font-size: 10px;
+              color: #888;
+              margin-bottom: 8px;
+            }
             .invoice-info {
               font-size: 12px;
               color: #666;
-            }
-            .customer-section {
-              background: #f8f8f8;
-              padding: 10px;
-              margin-bottom: 15px;
-              border-radius: 4px;
-            }
-            .customer-row {
-              display: flex;
-              justify-content: space-between;
-              font-size: 12px;
-              margin-bottom: 4px;
             }
             .items-table {
               width: 100%;
@@ -196,23 +199,13 @@ Thank you for your visit!
           <div class="receipt">
             <div class="header">
               <div class="restaurant-name">${invoiceData.restaurantName}</div>
+              ${legalName ? `<div class="legal-name">${legalName}</div>` : ''}
+              ${gstin ? `<div class="gstin">GSTIN: ${gstin}</div>` : ''}
+              ${businessAddress ? `<div class="business-address">${businessAddress}</div>` : ''}
               <div class="invoice-info">
                 Invoice #${invoiceData.orderNumber}<br>
                 ${formatDate(invoiceData.timestamp)}
               </div>
-            </div>
-
-            <div class="customer-section">
-              <div class="customer-row">
-                <span>Customer:</span>
-                <span><strong>${customerName}</strong></span>
-              </div>
-              ${customerGST ? `
-              <div class="customer-row">
-                <span>GSTIN:</span>
-                <span>${customerGST}</span>
-              </div>
-              ` : ''}
             </div>
 
             <table class="items-table">
@@ -350,60 +343,19 @@ Thank you for your visit!
               {/* Receipt Header */}
               <View style={styles.receiptHeader}>
                 <Text style={styles.restaurantName}>{invoiceData.restaurantName}</Text>
+                {invoiceData.restaurantInfo?.showGstOnInvoice === true && invoiceData.restaurantInfo?.legalBusinessName && (
+                  <Text style={styles.legalName}>{invoiceData.restaurantInfo.legalBusinessName}</Text>
+                )}
+                {invoiceData.restaurantInfo?.showGstOnInvoice === true && invoiceData.restaurantInfo?.gstin && (
+                  <Text style={styles.gstinText}>GSTIN: {invoiceData.restaurantInfo.gstin}</Text>
+                )}
+                {invoiceData.restaurantInfo?.address && (
+                  <Text style={styles.businessAddress}>{invoiceData.restaurantInfo.address}</Text>
+                )}
                 <View style={styles.invoiceInfo}>
                   <Text style={styles.invoiceNumber}>Invoice #{invoiceData.orderNumber}</Text>
                   <Text style={styles.invoiceDate}>{formatDate(invoiceData.timestamp)}</Text>
                 </View>
-              </View>
-
-              {/* Dashed separator */}
-              <View style={styles.dashedSeparator} />
-
-              {/* Customer Info */}
-              <View style={styles.customerSection}>
-                <View style={styles.customerRow}>
-                  <Text style={styles.customerLabel}>Customer</Text>
-                  {isEditing ? (
-                    <TextInput
-                      style={styles.editInput}
-                      value={customerName}
-                      onChangeText={setCustomerName}
-                      placeholder="Customer Name"
-                      placeholderTextColor="#999"
-                    />
-                  ) : (
-                    <Text style={styles.customerValue}>{customerName}</Text>
-                  )}
-                </View>
-                {(customerGST || isEditing) && (
-                  <View style={styles.customerRow}>
-                    <Text style={styles.customerLabel}>GSTIN</Text>
-                    {isEditing ? (
-                      <TextInput
-                        style={styles.editInput}
-                        value={customerGST}
-                        onChangeText={setCustomerGST}
-                        placeholder="GST Number (Optional)"
-                        placeholderTextColor="#999"
-                      />
-                    ) : (
-                      <Text style={styles.customerValue}>{customerGST || '-'}</Text>
-                    )}
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => setIsEditing(!isEditing)}
-                >
-                  <Ionicons
-                    name={isEditing ? "checkmark" : "create-outline"}
-                    size={14}
-                    color={Colors.primary}
-                  />
-                  <Text style={styles.editButtonText}>
-                    {isEditing ? 'Save' : 'Edit'}
-                  </Text>
-                </TouchableOpacity>
               </View>
 
               {/* Dashed separator */}
@@ -579,10 +531,29 @@ const styles = StyleSheet.create({
     color: '#222',
     letterSpacing: 1,
     textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  legalName: {
+    fontSize: 11,
+    color: '#444',
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  gstinText: {
+    fontSize: 10,
+    color: '#666',
+    marginBottom: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  businessAddress: {
+    fontSize: 9,
+    color: '#888',
     marginBottom: Spacing.xs,
+    textAlign: 'center',
   },
   invoiceInfo: {
     alignItems: 'center',
+    marginTop: Spacing.xs,
   },
   invoiceNumber: {
     fontSize: 14,
@@ -593,55 +564,6 @@ const styles = StyleSheet.create({
   invoiceDate: {
     fontSize: 12,
     color: '#666',
-  },
-  customerSection: {
-    backgroundColor: '#fafafa',
-    borderRadius: 6,
-    padding: Spacing.sm,
-    position: 'relative',
-  },
-  customerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  customerLabel: {
-    fontSize: 12,
-    color: '#666',
-    width: 70,
-  },
-  customerValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  editInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.primary,
-    paddingVertical: 2,
-    paddingHorizontal: 4,
-  },
-  editButton: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#fff',
-    borderRadius: 4,
-  },
-  editButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.primary,
   },
   itemsHeader: {
     flexDirection: 'row',

@@ -116,6 +116,24 @@ export default function MenuScreen() {
     }, [restaurantId])
   );
 
+  // Refresh user/restaurant data when tab is focused (e.g., after changing business settings in Profile)
+  useFocusEffect(
+    useCallback(() => {
+      const refreshUserData = async () => {
+        try {
+          const userData = await apiClient.getUser();
+          if (userData) {
+            setUser(userData);
+          }
+        } catch (e) {
+          console.log('User data refresh error:', e);
+        }
+      };
+
+      refreshUserData();
+    }, [])
+  );
+
   const loadImagePreference = async () => {
     try {
       const saved = await AsyncStorage.getItem('menu_show_images');
@@ -557,12 +575,16 @@ export default function MenuScreen() {
 
       const response = await apiClient.createOrder(orderData);
 
+      // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
+      const latestUserData = await apiClient.getUser();
+      const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
+
       // Prepare invoice data for display
       const invoiceData = {
         orderId: response.order?.id,
         orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
         restaurantName: restaurantName,
-        restaurantInfo: user?.restaurant || {},
+        restaurantInfo: latestRestaurantInfo,
         items: cart.map(item => ({
           name: item.name,
           quantity: item.quantity,

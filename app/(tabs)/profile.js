@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import TaxSettings from '../../components/TaxSettings';
+import BusinessSettings from '../../components/BusinessSettings';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -90,6 +91,12 @@ export default function ProfileScreen() {
 
   // Check if user can manage tax settings (owner, admin, cashier, manager)
   const canManageTaxSettings = () => {
+    const role = user?.role?.toLowerCase();
+    return ['owner', 'admin', 'cashier', 'manager'].includes(role);
+  };
+
+  // Check if user can view/manage business settings (all roles that can see settings)
+  const canManageBusinessSettings = () => {
     const role = user?.role?.toLowerCase();
     return ['owner', 'admin', 'cashier', 'manager'].includes(role);
   };
@@ -330,16 +337,38 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* Tax Settings - Only for owner, admin, cashier, manager */}
-        {canManageTaxSettings() && getRestaurantId() && (
+        {/* Business & Tax Settings */}
+        {(canManageBusinessSettings() || canManageTaxSettings()) && getRestaurantId() && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Settings</Text>
-            <TaxSettings
-              restaurantId={getRestaurantId()}
-              onTaxSettingsChange={(settings) => {
-                console.log('Tax settings updated:', settings);
-              }}
-            />
+
+            {/* Business Details - Legal name, GSTIN for invoices */}
+            {canManageBusinessSettings() && (
+              <BusinessSettings
+                restaurantId={getRestaurantId()}
+                onBusinessSettingsChange={(settings) => {
+                  console.log('Business settings updated:', settings);
+                  // Update local user data with new business settings
+                  if (restaurant) {
+                    setRestaurant({
+                      ...restaurant,
+                      legalBusinessName: settings.legalBusinessName,
+                      gstin: settings.gstin,
+                    });
+                  }
+                }}
+              />
+            )}
+
+            {/* Tax Settings */}
+            {canManageTaxSettings() && (
+              <TaxSettings
+                restaurantId={getRestaurantId()}
+                onTaxSettingsChange={(settings) => {
+                  console.log('Tax settings updated:', settings);
+                }}
+              />
+            )}
           </View>
         )}
 
@@ -354,7 +383,7 @@ export default function ProfileScreen() {
         {/* App Info */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>DineOpen Staff App</Text>
-          <Text style={styles.footerText}>Version 1.1.3</Text>
+          <Text style={styles.footerText}>Version 1.1.5</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
