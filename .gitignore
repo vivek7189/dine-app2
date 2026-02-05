@@ -30,6 +30,8 @@ local.properties
 .cxx/
 *.keystore
 !debug.keystore
+keystore.properties
+release.keystore
 
 # node.js
 node_modules/
