@@ -9,6 +9,59 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-la
 class ApiClient {
   constructor() {
     this.baseURL = API_BASE_URL;
+    this.isRefreshing = false;
+    this.refreshQueue = [];
+  }
+
+  // Process queued requests after token refresh
+  processQueue(newToken) {
+    this.refreshQueue.forEach(({ resolve }) => resolve(newToken));
+    this.refreshQueue = [];
+  }
+
+  // Reject all queued requests on refresh failure
+  rejectQueue(error) {
+    this.refreshQueue.forEach(({ reject }) => reject(error));
+    this.refreshQueue = [];
+  }
+
+  // Wait for token refresh if one is in progress
+  waitForRefresh() {
+    return new Promise((resolve, reject) => {
+      this.refreshQueue.push({ resolve, reject });
+    });
+  }
+
+  // Attempt to refresh the token
+  async refreshToken() {
+    const currentToken = await this.getToken();
+    if (!currentToken) {
+      throw new Error('No token to refresh');
+    }
+
+    try {
+      const response = await axios({
+        url: `${this.baseURL}/api/auth/refresh`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentToken}`
+        }
+      });
+
+      const data = response.data;
+
+      if (!data.success) {
+        throw new Error(data.error || 'Token refresh failed');
+      }
+
+      // Save the new token
+      await this.setToken(data.token);
+      return data.token;
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      throw error;
+    }
   }
 
   // Get auth token from storage
@@ -54,6 +107,9 @@ class ApiClient {
   async clearToken() {
     try {
       await AsyncStorage.multiRemove(['authToken', 'user']);
+      // Reset refresh state
+      this.isRefreshing = false;
+      this.refreshQueue = [];
     } catch (error) {
       console.error('Error clearing token:', error);
     }
@@ -66,7 +122,7 @@ class ApiClient {
   }
 
   // Make authenticated request
-  async request(endpoint, options = {}) {
+  async request(endpoint, options = {}, isRetry = false) {
     const token = await this.getToken();
     const url = `${this.baseURL}${endpoint}`;
 
@@ -96,12 +152,78 @@ class ApiClient {
           );
           throw new Error('Account deactivated');
         }
+
+        // Handle token expiration (403 with "Invalid or expired token")
+        if (error.response.status === 403 && !isRetry) {
+          const errorMsg = error.response.data?.error || error.response.data?.message || '';
+
+          if (errorMsg.toLowerCase().includes('invalid or expired token')) {
+            console.log('🔄 Token expired - attempting refresh...');
+
+            // If already refreshing, wait for it
+            if (this.isRefreshing) {
+              try {
+                await this.waitForRefresh();
+                // Retry with new token
+                return this.request(endpoint, options, true);
+              } catch (refreshError) {
+                await this.clearToken();
+                Alert.alert(
+                  'Session Expired',
+                  'Your session has expired. Please login again.',
+                  [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }],
+                  { cancelable: false }
+                );
+                throw new Error('Session expired. Please login again.');
+              }
+            }
+
+            // Start token refresh
+            this.isRefreshing = true;
+
+            try {
+              const newToken = await this.refreshToken();
+              this.isRefreshing = false;
+              this.processQueue(newToken);
+
+              console.log('✅ Token refreshed successfully - retrying request');
+              // Retry the original request with new token
+              return this.request(endpoint, options, true);
+            } catch (refreshError) {
+              this.isRefreshing = false;
+              this.rejectQueue(refreshError);
+
+              console.log('❌ Token refresh failed - logging out');
+              await this.clearToken();
+              Alert.alert(
+                'Session Expired',
+                'Your session has expired. Please login again.',
+                [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }],
+                { cancelable: false }
+              );
+              throw new Error('Session expired. Please login again.');
+            }
+          }
+        }
+
         throw new Error(error.response.data?.error || error.response.data?.message || 'Request failed');
       } else if (error.request) {
         throw new Error('Network error. Please check your connection.');
       } else {
         throw new Error(error.message || 'An unexpected error occurred');
       }
+    }
+  }
+
+  // Manually refresh the auth token - can be used proactively
+  async refreshAuthToken() {
+    try {
+      const newToken = await this.refreshToken();
+      console.log('✅ Auth token refreshed successfully');
+      return { success: true, token: newToken };
+    } catch (error) {
+      console.error('❌ Failed to refresh auth token:', error);
+      return { success: false, error: error.message };
     }
   }
 
