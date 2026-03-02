@@ -315,6 +315,37 @@ export default function TablesScreen() {
     });
   };
 
+  const getTimeElapsed = (createdAt) => {
+    if (!createdAt) return '';
+    try {
+      const now = new Date();
+      let created;
+      if (createdAt._seconds) {
+        created = new Date(createdAt._seconds * 1000);
+      } else if (createdAt.toDate) {
+        created = createdAt.toDate();
+      } else if (typeof createdAt === 'string') {
+        created = new Date(createdAt);
+      } else {
+        created = new Date(createdAt);
+      }
+      if (isNaN(created.getTime())) return '';
+      const diffMs = now - created;
+      const diffMins = Math.floor(diffMs / 60000);
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      const diffHrs = Math.floor(diffMins / 60);
+      const remainingMins = diffMins % 60;
+      if (diffHrs < 24) {
+        return remainingMins > 0 ? `${diffHrs}h ${remainingMins}m ago` : `${diffHrs}h ago`;
+      }
+      const diffDays = Math.floor(diffHrs / 24);
+      return `${diffDays}d ago`;
+    } catch (e) {
+      return '';
+    }
+  };
+
   const renderTable = ({ item: table }) => {
     // Normalize status to avoid undefined showing as blank/grey cards
     const normalizedStatus = table.status || 'available';
@@ -371,8 +402,24 @@ export default function TablesScreen() {
 
           {/* Table Content */}
           <View style={styles.tableContent}>
-            {/* Table Number */}
-            <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]}>{table.name}</Text>
+            {/* Table Number + Elapsed Time */}
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+              <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]}>{table.name}</Text>
+              {isOccupied && table.lastOrderTime && (() => {
+                const elapsed = getTimeElapsed(table.lastOrderTime);
+                if (!elapsed) return null;
+                const isOverADay = elapsed.includes('d');
+                return (
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: isOverADay ? '#dc2626' : '#92400e',
+                  }}>
+                    {elapsed}
+                  </Text>
+                );
+              })()}
+            </View>
 
             {/* Status Badge */}
             {isOccupied && (
