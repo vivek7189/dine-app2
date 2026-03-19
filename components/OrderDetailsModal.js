@@ -293,11 +293,43 @@ Thank you for your business!
                   )}
                 </View>
 
-                {/* Total */}
+                {/* Total with Discount Breakdown */}
                 <View style={styles.totalSection}>
                   <View style={styles.totalRow}>
-                    <Text style={styles.totalLabel}>Total Amount</Text>
-                    <Text style={styles.totalAmount}>₹{calculateTotal().toFixed(2)}</Text>
+                    <Text style={styles.totalLabel}>Subtotal</Text>
+                    <Text style={styles.totalAmount}>₹{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
+                  </View>
+                  {order.discountAmount > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>
+                        {order.appliedOffer?.name || 'Offer Discount'}
+                      </Text>
+                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.discountAmount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {order.manualDiscount > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>Manual Discount</Text>
+                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.manualDiscount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {order.loyaltyDiscount > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>Loyalty Points</Text>
+                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.loyaltyDiscount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {(order.taxAmount || 0) > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>Tax</Text>
+                      <Text style={styles.totalAmount}>₹{order.taxAmount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  <View style={[styles.totalRow, { borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 8, marginTop: 4 }]}>
+                    <Text style={[styles.totalLabel, { fontWeight: '700', fontSize: 16 }]}>Total Amount</Text>
+                    <Text style={[styles.totalAmount, { fontWeight: '800', fontSize: 18 }]}>
+                      ₹{(order.finalAmount || calculateTotal()).toFixed(2)}
+                    </Text>
                   </View>
                 </View>
               </>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,12 @@ import {
   Alert,
   Animated,
   Easing,
+  Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import Pusher from 'pusher-js';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
@@ -42,6 +44,13 @@ export default function OrdersScreen() {
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Date filter states
+  const [dateFilterMode, setDateFilterMode] = useState('today');
+  const [customStartDate, setCustomStartDate] = useState(new Date());
+  const [customEndDate, setCustomEndDate] = useState(new Date());
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+
   // Order detail modal
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
@@ -65,7 +74,7 @@ export default function OrdersScreen() {
     if (restaurantId) {
       loadOrders(restaurantId);
     }
-  }, [selectedStatus, searchTerm, restaurantId]);
+  }, [selectedStatus, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
 
   // Background refresh when tab is focused
   useFocusEffect(
@@ -74,7 +83,7 @@ export default function OrdersScreen() {
         // Fetch latest data in background
         loadOrdersInBackground(restaurantId);
       }
-    }, [restaurantId, loading, selectedStatus, searchTerm])
+    }, [restaurantId, loading, selectedStatus, searchTerm, dateFilterMode, customStartDate, customEndDate])
   );
 
   // Spinning animation effect
@@ -97,6 +106,77 @@ export default function OrdersScreen() {
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
+
+  // Role-based date restriction
+  const isRestrictedRole = useMemo(() => {
+    if (!user) return true;
+    const role = (user.role || '').toLowerCase();
+    return !['owner', 'admin', 'manager'].includes(role);
+  }, [user]);
+
+  const thirtyDaysAgo = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  // Compute date range from filter mode
+  const getDateRange = useCallback(() => {
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    switch (dateFilterMode) {
+      case 'today':
+        return { startDate: todayStart.toISOString(), endDate: todayEnd.toISOString() };
+      case 'yesterday': {
+        const ys = new Date(todayStart);
+        ys.setDate(ys.getDate() - 1);
+        const ye = new Date(ys);
+        ye.setHours(23, 59, 59, 999);
+        return { startDate: ys.toISOString(), endDate: ye.toISOString() };
+      }
+      case '7days': {
+        const s = new Date(todayStart);
+        s.setDate(s.getDate() - 6);
+        return { startDate: s.toISOString(), endDate: todayEnd.toISOString() };
+      }
+      case '30days': {
+        const s = new Date(todayStart);
+        s.setDate(s.getDate() - 29);
+        return { startDate: s.toISOString(), endDate: todayEnd.toISOString() };
+      }
+      case 'custom': {
+        const cs = new Date(customStartDate);
+        cs.setHours(0, 0, 0, 0);
+        const ce = new Date(customEndDate);
+        ce.setHours(23, 59, 59, 999);
+        return { startDate: cs.toISOString(), endDate: ce.toISOString() };
+      }
+      case 'all':
+      default:
+        if (isRestrictedRole) {
+          return { startDate: thirtyDaysAgo.toISOString(), endDate: todayEnd.toISOString() };
+        }
+        return {};
+    }
+  }, [dateFilterMode, customStartDate, customEndDate, isRestrictedRole, thirtyDaysAgo]);
+
+  const dateFilterOptions = [
+    { value: 'today', label: 'Today' },
+    { value: 'yesterday', label: 'Yesterday' },
+    { value: '7days', label: '7 Days' },
+    { value: '30days', label: '30 Days' },
+    { value: 'all', label: 'All' },
+    { value: 'custom', label: 'Custom' },
+  ];
+
+  const formatShortDate = (date) => {
+    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
 
   // Pusher subscription for real-time order updates
   useEffect(() => {
@@ -167,10 +247,12 @@ export default function OrdersScreen() {
 
   const loadOrders = async (rid) => {
     try {
+      const dateRange = getDateRange();
       const filters = {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         search: searchTerm.trim() || undefined,
+        ...dateRange,
       };
 
       // Remove undefined filters
@@ -202,10 +284,12 @@ export default function OrdersScreen() {
   const loadOrdersInBackground = async (rid) => {
     setBackgroundLoading(true);
     try {
+      const dateRange = getDateRange();
       const filters = {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         search: searchTerm.trim() || undefined,
+        ...dateRange,
       };
 
       Object.keys(filters).forEach(key => filters[key] === undefined && delete filters[key]);
@@ -466,6 +550,9 @@ export default function OrdersScreen() {
     const statusColor = getStatusColor(selectedOrder.status);
     const { date, time } = formatDate(selectedOrder.createdAt);
     const subtotal = selectedOrder.subtotal || selectedOrder.totalAmount || 0;
+    const offerDiscount = selectedOrder.discountAmount || 0;
+    const manualDiscountAmt = selectedOrder.manualDiscount || 0;
+    const loyaltyDiscountAmt = selectedOrder.loyaltyDiscount || 0;
     const tax = selectedOrder.taxAmount || selectedOrder.tax || 0;
     const total = selectedOrder.finalAmount || selectedOrder.totalAmount || subtotal + tax;
 
@@ -535,6 +622,26 @@ export default function OrdersScreen() {
                   <Text style={styles.summaryLabel}>Subtotal</Text>
                   <Text style={styles.summaryValue}>₹{subtotal.toFixed(2)}</Text>
                 </View>
+                {offerDiscount > 0 && (
+                  <View style={styles.summaryRow}>
+                    <Text style={[styles.summaryLabel, { color: '#10b981' }]}>
+                      {selectedOrder.appliedOffer?.name || 'Offer Discount'}
+                    </Text>
+                    <Text style={[styles.summaryValue, { color: '#10b981' }]}>-₹{offerDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {manualDiscountAmt > 0 && (
+                  <View style={styles.summaryRow}>
+                    <Text style={[styles.summaryLabel, { color: '#10b981' }]}>Manual Discount</Text>
+                    <Text style={[styles.summaryValue, { color: '#10b981' }]}>-₹{manualDiscountAmt.toFixed(2)}</Text>
+                  </View>
+                )}
+                {loyaltyDiscountAmt > 0 && (
+                  <View style={styles.summaryRow}>
+                    <Text style={[styles.summaryLabel, { color: '#10b981' }]}>Loyalty Points</Text>
+                    <Text style={[styles.summaryValue, { color: '#10b981' }]}>-₹{loyaltyDiscountAmt.toFixed(2)}</Text>
+                  </View>
+                )}
                 {tax > 0 && (
                   <View style={styles.summaryRow}>
                     <Text style={styles.summaryLabel}>Tax</Text>
@@ -618,6 +725,145 @@ export default function OrdersScreen() {
           )}
         </View>
 
+        {/* Date Filter Chips */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.dateFiltersContainer}
+          contentContainerStyle={styles.filtersContent}
+        >
+          {dateFilterOptions.map((option) => {
+            // Hide "All" for restricted roles if they shouldn't see unlimited
+            const disabled = isRestrictedRole && option.value === 'all';
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[
+                  styles.dateFilterChip,
+                  dateFilterMode === option.value && styles.dateFilterChipActive,
+                  disabled && styles.dateFilterChipDisabled,
+                ]}
+                onPress={() => {
+                  if (disabled) return;
+                  setDateFilterMode(option.value);
+                }}
+              >
+                {option.value === 'custom' && (
+                  <Ionicons
+                    name="calendar-outline"
+                    size={13}
+                    color={dateFilterMode === 'custom' ? '#fff' : Colors.textMedium}
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                <Text style={[
+                  styles.dateFilterChipText,
+                  dateFilterMode === option.value && styles.dateFilterChipTextActive,
+                  disabled && styles.dateFilterChipTextDisabled,
+                ]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Custom Date Range Picker */}
+        {dateFilterMode === 'custom' && (
+          <View style={styles.customDateRow}>
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              onPress={() => setShowStartPicker(true)}
+            >
+              <Ionicons name="calendar" size={16} color={Colors.primary} />
+              <Text style={styles.datePickerText}>{formatShortDate(customStartDate)}</Text>
+            </TouchableOpacity>
+            <Text style={styles.dateRangeSeparator}>to</Text>
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              onPress={() => setShowEndPicker(true)}
+            >
+              <Ionicons name="calendar" size={16} color={Colors.primary} />
+              <Text style={styles.datePickerText}>{formatShortDate(customEndDate)}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* DateTimePicker Modals */}
+        {showStartPicker && (
+          Platform.OS === 'ios' ? (
+            <Modal transparent animationType="fade" visible={showStartPicker}>
+              <View style={styles.pickerModalOverlay}>
+                <View style={styles.pickerModalContent}>
+                  <View style={styles.pickerModalHeader}>
+                    <Text style={styles.pickerModalTitle}>From Date</Text>
+                    <TouchableOpacity onPress={() => setShowStartPicker(false)}>
+                      <Text style={styles.pickerDoneText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <DateTimePicker
+                    value={customStartDate}
+                    mode="date"
+                    display="spinner"
+                    maximumDate={customEndDate}
+                    minimumDate={isRestrictedRole ? thirtyDaysAgo : undefined}
+                    onChange={(e, date) => { if (date) setCustomStartDate(date); }}
+                  />
+                </View>
+              </View>
+            </Modal>
+          ) : (
+            <DateTimePicker
+              value={customStartDate}
+              mode="date"
+              display="default"
+              maximumDate={customEndDate}
+              minimumDate={isRestrictedRole ? thirtyDaysAgo : undefined}
+              onChange={(e, date) => {
+                setShowStartPicker(false);
+                if (date) setCustomStartDate(date);
+              }}
+            />
+          )
+        )}
+
+        {showEndPicker && (
+          Platform.OS === 'ios' ? (
+            <Modal transparent animationType="fade" visible={showEndPicker}>
+              <View style={styles.pickerModalOverlay}>
+                <View style={styles.pickerModalContent}>
+                  <View style={styles.pickerModalHeader}>
+                    <Text style={styles.pickerModalTitle}>To Date</Text>
+                    <TouchableOpacity onPress={() => setShowEndPicker(false)}>
+                      <Text style={styles.pickerDoneText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <DateTimePicker
+                    value={customEndDate}
+                    mode="date"
+                    display="spinner"
+                    minimumDate={customStartDate}
+                    maximumDate={new Date()}
+                    onChange={(e, date) => { if (date) setCustomEndDate(date); }}
+                  />
+                </View>
+              </View>
+            </Modal>
+          ) : (
+            <DateTimePicker
+              value={customEndDate}
+              mode="date"
+              display="default"
+              minimumDate={customStartDate}
+              maximumDate={new Date()}
+              onChange={(e, date) => {
+                setShowEndPicker(false);
+                if (date) setCustomEndDate(date);
+              }}
+            />
+          )
+        )}
+
         {/* Status Filter Pills */}
         <ScrollView
           horizontal
@@ -658,8 +904,8 @@ export default function OrdersScreen() {
             <Ionicons name="receipt-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyText}>No orders found</Text>
             <Text style={styles.emptySubtext}>
-              {searchTerm || selectedStatus !== 'all'
-                ? 'Try adjusting your filters'
+              {searchTerm || selectedStatus !== 'all' || dateFilterMode !== 'all'
+                ? 'Try adjusting your filters or date range'
                 : 'Orders will appear here once placed'}
             </Text>
           </View>
@@ -721,6 +967,97 @@ const styles = StyleSheet.create({
   },
   clearSearchButton: {
     padding: 4,
+  },
+  dateFiltersContainer: {
+    paddingBottom: 4,
+  },
+  dateFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#f0f9ff',
+    marginRight: Spacing.xs,
+    borderWidth: 1,
+    borderColor: '#e0f2fe',
+  },
+  dateFilterChipActive: {
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
+  },
+  dateFilterChipDisabled: {
+    opacity: 0.4,
+  },
+  dateFilterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3b82f6',
+  },
+  dateFilterChipTextActive: {
+    color: '#fff',
+  },
+  dateFilterChipTextDisabled: {
+    color: Colors.textLight,
+  },
+  customDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  datePickerButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f0f9ff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e0f2fe',
+  },
+  datePickerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textDark,
+  },
+  dateRangeSeparator: {
+    fontSize: 13,
+    color: Colors.textMedium,
+    fontWeight: '500',
+  },
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  pickerModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 20,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  pickerModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  pickerDoneText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3b82f6',
   },
   filtersContainer: {
     paddingBottom: Spacing.xs,

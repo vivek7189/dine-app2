@@ -14,8 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
-import TaxSettings from '../../components/TaxSettings';
-import BusinessSettings from '../../components/BusinessSettings';
+import SettingsHub from '../../components/SettingsHub';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -89,19 +88,7 @@ export default function ProfileScreen() {
     return hasLoginId && isStaffRole;
   };
 
-  // Check if user can manage tax settings (owner, admin, cashier, manager)
-  const canManageTaxSettings = () => {
-    const role = user?.role?.toLowerCase();
-    return ['owner', 'admin', 'cashier', 'manager'].includes(role);
-  };
-
-  // Check if user can view/manage business settings (all roles that can see settings)
-  const canManageBusinessSettings = () => {
-    const role = user?.role?.toLowerCase();
-    return ['owner', 'admin', 'cashier', 'manager'].includes(role);
-  };
-
-  // Get restaurant ID for tax settings
+  // Get restaurant ID for settings
   const getRestaurantId = () => {
     return user?.restaurantId || user?.restaurant?.id || restaurant?.id;
   };
@@ -337,38 +324,20 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* Business & Tax Settings */}
-        {(canManageBusinessSettings() || canManageTaxSettings()) && getRestaurantId() && (
+        {/* Settings Hub - iPhone-style settings navigation */}
+        {getRestaurantId() && user && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Settings</Text>
-
-            {/* Business Details - Legal name, GSTIN for invoices */}
-            {canManageBusinessSettings() && (
-              <BusinessSettings
-                restaurantId={getRestaurantId()}
-                onBusinessSettingsChange={(settings) => {
-                  console.log('Business settings updated:', settings);
-                  // Update local user data with new business settings
-                  if (restaurant) {
-                    setRestaurant({
-                      ...restaurant,
-                      legalBusinessName: settings.legalBusinessName,
-                      gstin: settings.gstin,
-                    });
-                  }
-                }}
-              />
-            )}
-
-            {/* Tax Settings */}
-            {canManageTaxSettings() && (
-              <TaxSettings
-                restaurantId={getRestaurantId()}
-                onTaxSettingsChange={(settings) => {
-                  console.log('Tax settings updated:', settings);
-                }}
-              />
-            )}
+            <SettingsHub
+              restaurantId={getRestaurantId()}
+              user={user}
+              restaurant={restaurant}
+              onRestaurantChange={(data) => {
+                if (data && restaurant) {
+                  setRestaurant({ ...restaurant, ...data });
+                }
+              }}
+            />
           </View>
         )}
 

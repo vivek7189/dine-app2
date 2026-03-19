@@ -388,7 +388,7 @@ export default function MenuScreen() {
     return subtotal + taxAmount;
   };
 
-  const handleSendToKitchen = async () => {
+  const handleSendToKitchen = async (customerPhone = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before sending to kitchen.');
       return;
@@ -439,6 +439,7 @@ export default function MenuScreen() {
             waiterId: user?.id,
             waiterName: user?.name || 'Waiter',
           },
+          ...(customerPhone && { customerPhone }),
         };
 
         response = await apiClient.createOrder(orderData);
@@ -485,8 +486,8 @@ export default function MenuScreen() {
     }
   };
 
-  const handlePlaceOrder = async () => {
-    // For admin/manager - full billing flow
+  const handlePlaceOrder = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}) => {
+    // For admin/manager - full billing flow with discount support
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -497,7 +498,15 @@ export default function MenuScreen() {
       return;
     }
 
+    setSendingOrder(true);
+
     try {
+      const subtotal = getCartTotal();
+      const totalDiscount = discountData.totalDiscount || 0;
+      const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+      const { taxAmount } = calculateTax(discountedSubtotal);
+      const grandTotal = discountedSubtotal + taxAmount;
+
       const orderData = {
         restaurantId,
         tableNumber: selectedTable?.name || params.tableNumber,
@@ -507,13 +516,19 @@ export default function MenuScreen() {
           price: item.price,
           quantity: item.quantity,
         })),
-        orderType: 'dine-in',
-        paymentMethod: 'cash',
+        orderType: orderType,
+        paymentMethod: paymentMethod,
         status: 'confirmed',
         staffInfo: {
           waiterId: user?.id,
-          waiterName: user?.name || 'Waiter',
+          waiterName: user?.name || 'Manager',
         },
+        ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+        ...(customerMobile && { customerPhone: customerMobile }),
+        // Discount fields for backend validation
+        offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+        manualDiscount: discountData.manualDiscountAmount || 0,
+        redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
       };
 
       const response = await apiClient.createOrder(orderData);
@@ -531,11 +546,13 @@ export default function MenuScreen() {
     } catch (error) {
       console.error('Error placing order:', error);
       Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
+    } finally {
+      setSendingOrder(false);
     }
   };
 
   // Cashier/Sales - Counter sales without table requirement
-  const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '') => {
+  const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}) => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -545,8 +562,10 @@ export default function MenuScreen() {
 
     try {
       const subtotal = getCartTotal();
-      const { taxAmount, taxRate, taxLabel } = calculateTax(subtotal);
-      const grandTotal = subtotal + taxAmount;
+      const totalDiscount = discountData.totalDiscount || 0;
+      const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+      const { taxAmount, taxRate, taxLabel } = calculateTax(discountedSubtotal);
+      const grandTotal = discountedSubtotal + taxAmount;
 
       const orderData = {
         restaurantId,
@@ -571,6 +590,12 @@ export default function MenuScreen() {
         tax: taxAmount,
         taxRate: taxRate,
         total: grandTotal,
+        // Discount/loyalty data
+        ...(discountData.selectedOfferId && { offerIds: [discountData.selectedOfferId] }),
+        ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
+        ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
+        ...(customerMobile && { customerPhone: customerMobile }),
+        discountAmount: totalDiscount,
       };
 
       const response = await apiClient.createOrder(orderData);
@@ -603,6 +628,11 @@ export default function MenuScreen() {
         paymentMethod: paymentMethod,
         timestamp: new Date(),
         staffName: user?.name || 'Cashier',
+        // Discount fields for invoice
+        offerDiscount: discountData.offerDiscount || 0,
+        offerName: discountData.selectedOfferName || null,
+        manualDiscount: discountData.manualDiscountAmount || 0,
+        loyaltyDiscount: discountData.loyaltyDiscount || 0,
       };
 
       setLastOrderData(invoiceData);
@@ -1161,6 +1191,7 @@ export default function MenuScreen() {
           restaurantName={restaurantName}
           sending={sendingOrder}
           taxSettings={taxSettings}
+          restaurantId={restaurantId}
         />
       ) : (
         <CartModal
@@ -1172,6 +1203,8 @@ export default function MenuScreen() {
           onPlaceOrder={handlePlaceOrder}
           total={getCartTotal()}
           tableNumber={selectedTable?.name || params.tableNumber}
+          restaurantId={restaurantId}
+          sending={sendingOrder}
         />
       )}
 

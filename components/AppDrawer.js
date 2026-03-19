@@ -16,6 +16,12 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
 
   const menuItems = [
     {
+      title: 'Home',
+      icon: 'home',
+      route: '/(tabs)/home',
+      color: '#3b82f6',
+    },
+    {
       title: 'Tables',
       icon: 'restaurant',
       route: '/(tabs)/tables',
@@ -42,7 +48,7 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
       requiresRole: ['owner', 'manager'],
     },
     {
-      title: 'Profile',
+      title: 'Settings',
       icon: 'person',
       route: '/(tabs)/profile',
       color: '#06b6d4',

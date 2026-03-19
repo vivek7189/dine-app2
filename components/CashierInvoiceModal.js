@@ -62,7 +62,10 @@ ITEMS:
 --------------------------------
 ${itemsList}
 --------------------------------
-Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.offerDiscount > 0 ? `
+Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : ''}${invoiceData.manualDiscount > 0 ? `
+Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
+Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
 ${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : ''}
 ================================
 GRAND TOTAL:     ₹${invoiceData.grandTotal.toFixed(2)}
@@ -227,6 +230,24 @@ Thank you for your visit!
                 <span>Subtotal</span>
                 <span>₹${invoiceData.subtotal.toFixed(2)}</span>
               </div>
+              ${invoiceData.offerDiscount > 0 ? `
+              <div class="total-row" style="color: #10b981;">
+                <span>${invoiceData.offerName || 'Offer'} Discount</span>
+                <span>-₹${invoiceData.offerDiscount.toFixed(2)}</span>
+              </div>
+              ` : ''}
+              ${invoiceData.manualDiscount > 0 ? `
+              <div class="total-row" style="color: #10b981;">
+                <span>Manual Discount</span>
+                <span>-₹${invoiceData.manualDiscount.toFixed(2)}</span>
+              </div>
+              ` : ''}
+              ${invoiceData.loyaltyDiscount > 0 ? `
+              <div class="total-row" style="color: #10b981;">
+                <span>Loyalty Points Redeemed</span>
+                <span>-₹${invoiceData.loyaltyDiscount.toFixed(2)}</span>
+              </div>
+              ` : ''}
               ${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
               <div class="total-row">
                 <span>${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</span>
@@ -388,6 +409,24 @@ Thank you for your visit!
                   <Text style={styles.totalLabel}>Subtotal</Text>
                   <Text style={styles.totalValue}>₹{invoiceData.subtotal.toFixed(2)}</Text>
                 </View>
+                {invoiceData.offerDiscount > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#10b981' }]}>{invoiceData.offerName || 'Offer'} Discount</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.offerDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {invoiceData.manualDiscount > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#10b981' }]}>Manual Discount</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.manualDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {invoiceData.loyaltyDiscount > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#10b981' }]}>Loyalty Points</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.loyaltyDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
                 {invoiceData.taxEnabled && invoiceData.tax > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>{invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</Text>

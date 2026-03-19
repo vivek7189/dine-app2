@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   FlatList,
   ScrollView,
+  TextInput,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +24,7 @@ export default function WaiterCartModal({
   tableNumber,
   sending,
 }) {
+  const [customerPhone, setCustomerPhone] = useState('');
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const renderCartItem = ({ item }) => (
@@ -103,6 +105,20 @@ export default function WaiterCartModal({
                   scrollEnabled={false}
                 />
                 
+                {/* Customer Phone (optional - for loyalty points) */}
+                <View style={styles.phoneContainer}>
+                  <Ionicons name="call-outline" size={16} color={Colors.textLight} />
+                  <TextInput
+                    style={styles.phoneInput}
+                    placeholder="Customer phone (for loyalty)"
+                    placeholderTextColor="#999"
+                    keyboardType="phone-pad"
+                    value={customerPhone}
+                    onChangeText={(t) => setCustomerPhone(t.replace(/\D/g, '').slice(0, 10))}
+                    maxLength={10}
+                  />
+                </View>
+
                 {/* Total */}
                 <View style={styles.totalContainer}>
                   <Text style={styles.totalLabel}>Total Amount</Text>
@@ -117,7 +133,7 @@ export default function WaiterCartModal({
             <View style={styles.footer}>
               <TouchableOpacity
                 style={[styles.sendButton, sending && styles.sendButtonDisabled]}
-                onPress={onSendToKitchen}
+                onPress={() => onSendToKitchen(customerPhone)}
                 disabled={sending}
               >
                 {sending ? (
@@ -247,6 +263,24 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: Typography.caption.fontSize,
     color: Colors.textLight,
+  },
+  phoneContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.backgroundLight,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.textDark,
+    paddingVertical: 2,
   },
   totalContainer: {
     flexDirection: 'row',

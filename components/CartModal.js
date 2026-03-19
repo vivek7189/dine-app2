@@ -8,9 +8,12 @@ import {
   FlatList,
   ScrollView,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import CustomerLookup from './CustomerLookup';
+import OfferSelector from './OfferSelector';
 
 export default function CartModal({
   visible,
@@ -21,17 +24,70 @@ export default function CartModal({
   onPlaceOrder,
   total,
   tableNumber,
+  restaurantId,
+  sending,
 }) {
   const [orderType, setOrderType] = useState('dine-in');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
 
-  const GST_RATE = 0.05; // 5%
+  // Discount / Loyalty state
+  const [customerData, setCustomerData] = useState(null);
+  const [redeemPoints, setRedeemPoints] = useState(0);
+  const [loyaltySettings, setLoyaltySettings] = useState(null);
+  const [selectedOfferId, setSelectedOfferId] = useState(null);
+  const [offerDiscount, setOfferDiscount] = useState(0);
+  const [selectedOffer, setSelectedOffer] = useState(null);
+  const [manualDiscount, setManualDiscount] = useState('');
+  const [manualDiscountType, setManualDiscountType] = useState('flat');
+
   const subtotal = total;
-  const gst = subtotal * GST_RATE;
-  const grandTotal = subtotal + gst;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Calculate manual discount amount
+  const manualDiscountAmount = (() => {
+    const val = parseFloat(manualDiscount) || 0;
+    if (manualDiscountType === 'percentage') {
+      return Math.round((subtotal * val / 100) * 100) / 100;
+    }
+    return Math.min(val, subtotal);
+  })();
+
+  // Calculate loyalty discount
+  const loyaltyDiscount = (() => {
+    if (!redeemPoints || !loyaltySettings) return 0;
+    const rate = loyaltySettings.redemptionRate || 100;
+    return Math.round((redeemPoints / rate) * 100) / 100;
+  })();
+
+  const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount;
+  const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+
+  const handleOfferSelected = (offerId, discount, offer) => {
+    setSelectedOfferId(offerId);
+    setOfferDiscount(discount || 0);
+    setSelectedOffer(offer);
+  };
+
+  const handleManualDiscountChange = (value, type) => {
+    setManualDiscount(value);
+    setManualDiscountType(type);
+  };
+
+  const handlePlaceOrder = () => {
+    const discountData = {
+      offerDiscount,
+      manualDiscountAmount,
+      loyaltyDiscount,
+      totalDiscount,
+      redeemLoyaltyPoints: redeemPoints,
+      selectedOfferId,
+      selectedOfferName: selectedOffer?.name || null,
+      customerPhone: customerMobile || customerData?.phone || '',
+    };
+    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData);
+  };
 
   const renderCartItem = ({ item }) => (
     <View style={styles.cartItem}>
@@ -40,6 +96,7 @@ export default function CartModal({
         <TouchableOpacity
           style={styles.removeIconButton}
           onPress={() => onRemoveItem(item.id)}
+          disabled={sending}
         >
           <Ionicons name="close" size={18} color={Colors.error} />
         </TouchableOpacity>
@@ -49,15 +106,13 @@ export default function CartModal({
         <View style={styles.cartItemPricing}>
           <Text style={styles.cartItemSubtotal}>Subtotal: ₹{item.price * item.quantity}</Text>
           <Text style={styles.cartItemPrice}>₹{item.price}</Text>
-          <View style={styles.vegIndicatorTiny}>
-            <View style={styles.vegDotTiny} />
-          </View>
         </View>
 
         <View style={styles.quantityControls}>
           <TouchableOpacity
             style={styles.quantityButton}
             onPress={() => onUpdateQuantity(item.id, item.quantity - 1)}
+            disabled={sending}
           >
             <Ionicons name="remove" size={16} color={Colors.textDark} />
           </TouchableOpacity>
@@ -65,6 +120,7 @@ export default function CartModal({
           <TouchableOpacity
             style={styles.quantityButton}
             onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
+            disabled={sending}
           >
             <Ionicons name="add" size={16} color={Colors.primary} />
           </TouchableOpacity>
@@ -84,7 +140,7 @@ export default function CartModal({
         <View style={styles.modalContent}>
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton} disabled={sending}>
               <Ionicons name="close" size={24} color="#fff" />
             </TouchableOpacity>
             <View style={styles.headerTitle}>
@@ -135,10 +191,6 @@ export default function CartModal({
                     <Text style={styles.servingTable}>Table {tableNumber}</Text>
                   </View>
                 </View>
-                <TouchableOpacity style={styles.changeButton}>
-                  <Ionicons name="swap-horizontal" size={16} color={Colors.primary} />
-                  <Text style={styles.changeButtonText}>Change</Text>
-                </TouchableOpacity>
               </View>
             )}
 
@@ -160,23 +212,74 @@ export default function CartModal({
 
             {cart.length > 0 && (
               <>
+                {/* Customer Lookup */}
+                {restaurantId && (
+                  <View style={styles.sectionContainer}>
+                    <CustomerLookup
+                      restaurantId={restaurantId}
+                      onCustomerFound={(data) => {
+                        setCustomerData(data.customer);
+                        setLoyaltySettings(data.loyaltySettings);
+                        if (data.customer?.name) setCustomerName(data.customer.name);
+                      }}
+                      onPhoneChange={(phone) => setCustomerMobile(phone)}
+                      onRedeemChange={(pts) => setRedeemPoints(pts)}
+                      redeemPoints={redeemPoints}
+                      compact
+                    />
+                  </View>
+                )}
+
+                {/* Offer Selector */}
+                {restaurantId && (
+                  <OfferSelector
+                    restaurantId={restaurantId}
+                    cartItems={cart}
+                    subtotal={subtotal}
+                    onOfferSelected={handleOfferSelected}
+                    onManualDiscountChange={handleManualDiscountChange}
+                    selectedOfferId={selectedOfferId}
+                    manualDiscount={manualDiscount}
+                    manualDiscountType={manualDiscountType}
+                  />
+                )}
+
                 {/* Pricing Summary */}
                 <View style={styles.pricingSummary}>
                   <View style={styles.pricingRow}>
                     <Text style={styles.pricingLabel}>Subtotal:</Text>
                     <Text style={styles.pricingValue}>₹{subtotal.toFixed(2)}</Text>
                   </View>
-                  <View style={styles.pricingRow}>
-                    <Text style={styles.pricingLabel}>GST (5%):</Text>
-                    <Text style={styles.pricingValue}>₹{gst.toFixed(2)}</Text>
-                  </View>
+                  {offerDiscount > 0 && (
+                    <View style={styles.pricingRow}>
+                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>
+                        {selectedOffer?.name || 'Offer Discount'}:
+                      </Text>
+                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{offerDiscount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {manualDiscountAmount > 0 && (
+                    <View style={styles.pricingRow}>
+                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>Manual Discount:</Text>
+                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{manualDiscountAmount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {loyaltyDiscount > 0 && (
+                    <View style={styles.pricingRow}>
+                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>Loyalty Points:</Text>
+                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{loyaltyDiscount.toFixed(2)}</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Total */}
                 <View style={styles.totalBox}>
                   <Text style={styles.totalLabel}>Total</Text>
-                  <Text style={styles.totalAmount}>₹{grandTotal.toFixed(2)}</Text>
+                  <Text style={styles.totalAmount}>₹{discountedSubtotal.toFixed(2)}</Text>
                 </View>
+                {totalDiscount > 0 && (
+                  <Text style={styles.savingsText}>You save ₹{totalDiscount.toFixed(0)}</Text>
+                )}
 
                 {/* Customer Details */}
                 <View style={styles.customerDetails}>
@@ -198,13 +301,6 @@ export default function CartModal({
                       onChangeText={setCustomerMobile}
                     />
                   </View>
-                  {tableNumber && (
-                    <TextInput
-                      style={[styles.input, styles.inputFull]}
-                      value={tableNumber}
-                      editable={false}
-                    />
-                  )}
                 </View>
 
                 {/* Payment Method */}
@@ -214,52 +310,40 @@ export default function CartModal({
                     <Text style={styles.sectionTitle}>Payment Method</Text>
                   </View>
                   <View style={styles.paymentButtons}>
-                    <TouchableOpacity
-                      style={[styles.paymentButton, paymentMethod === 'cash' && styles.paymentButtonActive]}
-                      onPress={() => setPaymentMethod('cash')}
-                    >
-                      <Text style={[styles.paymentButtonText, paymentMethod === 'cash' && styles.paymentButtonTextActive]}>
-                        Cash
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.paymentButton, paymentMethod === 'upi' && styles.paymentButtonActive]}
-                      onPress={() => setPaymentMethod('upi')}
-                    >
-                      <Text style={[styles.paymentButtonText, paymentMethod === 'upi' && styles.paymentButtonTextActive]}>
-                        UPI
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.paymentButton, paymentMethod === 'card' && styles.paymentButtonActive]}
-                      onPress={() => setPaymentMethod('card')}
-                    >
-                      <Text style={[styles.paymentButtonText, paymentMethod === 'card' && styles.paymentButtonTextActive]}>
-                        Card
-                      </Text>
-                    </TouchableOpacity>
+                    {['cash', 'upi', 'card'].map((method) => (
+                      <TouchableOpacity
+                        key={method}
+                        style={[styles.paymentButton, paymentMethod === method && styles.paymentButtonActive]}
+                        onPress={() => setPaymentMethod(method)}
+                      >
+                        <Text style={[styles.paymentButtonText, paymentMethod === method && styles.paymentButtonTextActive]}>
+                          {method.charAt(0).toUpperCase() + method.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 </View>
 
                 {/* Action Buttons */}
                 <View style={styles.actionButtons}>
-                  <TouchableOpacity style={styles.saveButton}>
-                    <Ionicons name="bookmark-outline" size={18} color="#fff" />
-                    <Text style={styles.saveButtonText}>Save Order</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.placeOrderButton}
-                    onPress={onPlaceOrder}
+                    style={[styles.placeOrderButton, sending && { opacity: 0.6 }]}
+                    onPress={handlePlaceOrder}
+                    disabled={sending}
                   >
-                    <Ionicons name="restaurant" size={18} color="#fff" />
-                    <Text style={styles.placeOrderButtonText}>Place Order</Text>
+                    {sending ? (
+                      <>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={styles.placeOrderButtonText}>Placing Order...</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="restaurant" size={18} color="#fff" />
+                        <Text style={styles.placeOrderButtonText}>Place Order</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                 </View>
-
-                <TouchableOpacity style={styles.completeBillingButton}>
-                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
-                  <Text style={styles.completeBillingButtonText}>Complete Billing</Text>
-                </TouchableOpacity>
               </>
             )}
           </ScrollView>
@@ -364,23 +448,6 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '600',
   },
-  servingTableText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  changeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-  },
-  changeButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
   cartList: {
     paddingHorizontal: Spacing.md,
   },
@@ -424,22 +491,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.primary,
   },
-  vegIndicatorTiny: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#10b981',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  vegDotTiny: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#10b981',
-  },
   quantityControls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -459,6 +510,10 @@ const styles = StyleSheet.create({
     color: Colors.textDark,
     minWidth: 20,
     textAlign: 'center',
+  },
+  sectionContainer: {
+    paddingHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
   },
   pricingSummary: {
     paddingHorizontal: Spacing.lg,
@@ -499,6 +554,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#fff',
   },
+  savingsText: {
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#10b981',
+    marginTop: 6,
+  },
   customerDetails: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
@@ -524,11 +586,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textDark,
     backgroundColor: '#fff',
-  },
-  inputFull: {
-    flex: undefined,
-    width: '100%',
-    backgroundColor: '#f5f5f5',
   },
   paymentMethods: {
     paddingHorizontal: Spacing.lg,
@@ -566,28 +623,11 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   actionButtons: {
-    flexDirection: 'row',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  saveButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    paddingVertical: Spacing.md,
-    borderRadius: 8,
-    backgroundColor: '#f59e0b',
-  },
-  saveButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
+    paddingBottom: Spacing.lg,
   },
   placeOrderButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -597,23 +637,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   placeOrderButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  completeBillingButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: 8,
-    backgroundColor: '#10b981',
-  },
-  completeBillingButtonText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',

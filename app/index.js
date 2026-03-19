@@ -14,16 +14,8 @@ export default function Index() {
   const checkAuth = async () => {
     const isAuth = await apiClient.isAuthenticated();
     if (isAuth) {
-      // Check user role to determine default page
-      const userData = await apiClient.getUser();
-      const userRole = userData?.role?.toLowerCase();
-
-      // Cashier/sales roles go directly to menu (counter sales mode)
-      if (userRole && ['cashier', 'sales'].includes(userRole)) {
-        router.replace('/(tabs)/menu');
-      } else {
-        router.replace('/(tabs)/tables');
-      }
+      // All roles go to home — home screen adapts per role
+      router.replace('/(tabs)/home');
     } else {
       router.replace('/(auth)/login');
     }

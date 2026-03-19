@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "DineOpen Staff",
+    "name": "DineOpen",
     "slug": "dine-app",
     "version": "1.1.5",
     "orientation": "portrait",
@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.dineopen.waiter",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to microphone for voice order taking.",
         "NSSpeechRecognitionUsageDescription": "This app needs speech recognition for voice order taking."
@@ -19,12 +20,17 @@
     "android": {
       "package": "com.dineopen.waiter",
       "versionCode": 11,
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.INTERNET"
       ]
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@react-native-google-signin/google-signin",
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "expo-sqlite"
     ],
     "scheme": "dineopen",
     "extra": {

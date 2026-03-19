@@ -248,6 +248,84 @@ class ApiClient {
     return response;
   }
 
+  // ==================== OWNER AUTH ====================
+
+  // Google login (owner)
+  async googleLogin(uid, email, name, picture) {
+    const response = await this.request('/api/auth/google', {
+      method: 'POST',
+      data: { uid, email, name, picture },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+      }
+    }
+
+    return response;
+  }
+
+  // Email login (owner)
+  async emailLogin(email, password) {
+    const response = await this.request('/api/auth/email/login', {
+      method: 'POST',
+      data: { email, password },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+      }
+    }
+
+    return response;
+  }
+
+  // Email registration with OTP (owner)
+  async emailRegister(email, password, confirmPassword, name, otp) {
+    const response = await this.request('/api/auth/email/register', {
+      method: 'POST',
+      data: { email, password, confirmPassword, name, otp },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+      }
+    }
+
+    return response;
+  }
+
+  // Send email OTP for registration or linking
+  async emailSendOtp(email, purpose = 'registration') {
+    return this.request('/api/auth/email/send-otp', {
+      method: 'POST',
+      data: { email, purpose },
+    });
+  }
+
+  // Firebase verify (for phone OTP login via Firebase)
+  async firebaseVerify(uid, phoneNumber, email, displayName) {
+    const response = await this.request('/api/auth/firebase/verify', {
+      method: 'POST',
+      data: { uid, phoneNumber, email, displayName },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+      }
+    }
+
+    return response;
+  }
+
   // Get menu items
   async getMenu(restaurantId) {
     return this.request(`/api/menus/${restaurantId}`);
@@ -257,6 +335,58 @@ class ApiClient {
   async getFloors(restaurantId) {
     // Use the floors endpoint which returns floors with nested tables
     return this.request(`/api/floors/${restaurantId}`);
+  }
+
+  // Create a new floor
+  async createFloor(restaurantId, floorData) {
+    return this.request(`/api/floors/${restaurantId}`, {
+      method: 'POST',
+      data: floorData,
+    });
+  }
+
+  // Update a floor
+  async updateFloor(floorId, floorData) {
+    return this.request(`/api/floors/${floorId}`, {
+      method: 'PATCH',
+      data: floorData,
+    });
+  }
+
+  // Create a table
+  async createTable(restaurantId, tableData) {
+    return this.request(`/api/tables/${restaurantId}`, {
+      method: 'POST',
+      data: tableData,
+    });
+  }
+
+  // Bulk create tables
+  async bulkCreateTables(restaurantId, bulkData) {
+    return this.request(`/api/tables/${restaurantId}/bulk`, {
+      method: 'POST',
+      data: bulkData,
+    });
+  }
+
+  // Delete a table
+  async deleteTable(tableId, restaurantId = null) {
+    const data = {};
+    if (restaurantId) data.restaurantId = restaurantId;
+    return this.request(`/api/tables/${tableId}`, {
+      method: 'DELETE',
+      data,
+    });
+  }
+
+  // Delete a floor
+  async deleteFloor(floorId, restaurantId = null) {
+    const data = {};
+    if (restaurantId) data.restaurantId = restaurantId;
+    return this.request(`/api/floors/${floorId}`, {
+      method: 'DELETE',
+      data,
+    });
   }
 
   // Get tables (alternative endpoint)
@@ -341,6 +471,26 @@ class ApiClient {
     return this.request(`/api/restaurants/${restaurantId}`, {
       method: 'PATCH',
       data,
+    });
+  }
+
+  // Get all restaurants for authenticated user
+  async getRestaurants() {
+    return this.request('/api/restaurants');
+  }
+
+  // Create a new restaurant
+  async createRestaurant(data) {
+    return this.request('/api/restaurants', {
+      method: 'POST',
+      data,
+    });
+  }
+
+  // Delete a restaurant
+  async deleteRestaurant(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}`, {
+      method: 'DELETE',
     });
   }
 
@@ -517,8 +667,8 @@ class ApiClient {
     return this.request(`/api/bookings/${restaurantId}${queryString ? `?${queryString}` : ''}`);
   }
 
-  async createBooking(bookingData) {
-    return this.request('/api/booking', {
+  async createBooking(restaurantId, bookingData) {
+    return this.request(`/api/bookings/${restaurantId}`, {
       method: 'POST',
       data: bookingData,
     });
@@ -532,9 +682,9 @@ class ApiClient {
   }
 
   async cancelBooking(bookingId, reason) {
-    return this.request(`/api/booking/${bookingId}/cancel`, {
+    return this.request(`/api/bookings/${bookingId}`, {
       method: 'PATCH',
-      data: { reason },
+      data: { status: 'cancelled', reason },
     });
   }
 
@@ -649,6 +799,154 @@ class ApiClient {
     });
   }
 
+  // ==================== PRICING SETTINGS ====================
+
+  // Get pricing settings (zone pricing) for a restaurant
+  async getPricingSettings(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}/pricing-settings`);
+  }
+
+  // Update pricing settings for a restaurant
+  async updatePricingSettings(restaurantId, settings) {
+    return this.request(`/api/restaurants/${restaurantId}/pricing-settings`, {
+      method: 'PUT',
+      data: settings,
+    });
+  }
+
+  // ==================== ADMIN SETTINGS ====================
+
+  // Get admin settings (order management, system settings, etc.)
+  async getAdminSettings(restaurantId) {
+    return this.request(`/api/admin/settings/${restaurantId}`);
+  }
+
+  // Update admin settings
+  async updateAdminSettings(restaurantId, settings) {
+    return this.request(`/api/admin/settings/${restaurantId}`, {
+      method: 'PUT',
+      data: settings,
+    });
+  }
+
+  // ==================== OFFERS ====================
+
+  // Get all offers for a restaurant (admin)
+  async getOffers(restaurantId) {
+    return this.request(`/api/offers/${restaurantId}`);
+  }
+
+  // Create an offer
+  async createOffer(restaurantId, offerData) {
+    return this.request(`/api/offers/${restaurantId}`, {
+      method: 'POST',
+      data: offerData,
+    });
+  }
+
+  // Update an offer
+  async updateOffer(restaurantId, offerId, offerData) {
+    return this.request(`/api/offers/${restaurantId}/${offerId}`, {
+      method: 'PUT',
+      data: offerData,
+    });
+  }
+
+  // Delete an offer
+  async deleteOffer(restaurantId, offerId) {
+    return this.request(`/api/offers/${restaurantId}/${offerId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ==================== CUSTOMERS ====================
+
+  // Get customers list for a restaurant
+  async getCustomers(restaurantId, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/api/customers/${restaurantId}${queryString ? `?${queryString}` : ''}`);
+  }
+
+  // Get customer loyalty history
+  async getCustomerLoyaltyHistory(restaurantId, phone) {
+    return this.request(`/api/public/customer/loyalty-history`, {
+      method: 'POST',
+      data: { restaurantId, phone },
+    });
+  }
+
+  // ==================== STAFF MANAGEMENT ====================
+
+  async getStaffList(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/api/owner/staff${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async addStaff(restaurantId, staffData) {
+    return this.request(`/api/staff/${restaurantId}`, {
+      method: 'POST',
+      data: staffData,
+    });
+  }
+
+  async updateStaff(staffId, data) {
+    return this.request(`/api/staff/${staffId}`, {
+      method: 'PATCH',
+      data,
+    });
+  }
+
+  async deleteStaff(staffId) {
+    return this.request(`/api/staff/${staffId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateStaffStatus(staffId, status) {
+    return this.request(`/api/owner/staff/${staffId}/status`, {
+      method: 'PATCH',
+      data: { status },
+    });
+  }
+
+  // Get staff credentials (loginId + temporary password)
+  async getStaffCredentials(staffId) {
+    return this.request(`/api/staff/${staffId}/credentials`);
+  }
+
+  // Reset staff password (generates new temporary password)
+  async resetStaffPassword(staffId) {
+    return this.request(`/api/staff/${staffId}/reset-password`, {
+      method: 'POST',
+    });
+  }
+
+  // ==================== PRINT SETTINGS ====================
+
+  async getPrintSettings(restaurantId) {
+    return this.request(`/api/admin/print-settings/${restaurantId}`);
+  }
+
+  async updatePrintSettings(restaurantId, printSettings) {
+    return this.request(`/api/admin/print-settings/${restaurantId}`, {
+      method: 'PUT',
+      data: { printSettings },
+    });
+  }
+
+  // ==================== CURRENCY SETTINGS ====================
+
+  async getCurrencySettings(restaurantId) {
+    return this.request(`/api/admin/currency/${restaurantId}`);
+  }
+
+  async updateCurrencySettings(restaurantId, currencySettings) {
+    return this.request(`/api/admin/currency/${restaurantId}`, {
+      method: 'PUT',
+      data: currencySettings,
+    });
+  }
+
   // ==================== BUSINESS SETTINGS ====================
 
   // Get business settings for a restaurant (legal name, GSTIN for invoices)
@@ -661,6 +959,16 @@ class ApiClient {
     return this.request(`/api/admin/business/${restaurantId}`, {
       method: 'PUT',
       data: settings,
+    });
+  }
+
+  // ==================== PAYMENTS ====================
+
+  // Verify/record a payment
+  async verifyPayment(paymentData) {
+    return this.request('/api/payments/verify', {
+      method: 'POST',
+      data: paymentData,
     });
   }
 }

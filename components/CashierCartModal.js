@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
+import CustomerLookup from './CustomerLookup';
+import OfferSelector from './OfferSelector';
 
 export default function CashierCartModal({
   visible,
@@ -26,21 +28,84 @@ export default function CashierCartModal({
   restaurantName,
   sending,
   taxSettings = { enabled: false, rate: 0, taxes: [] },
+  restaurantId,
 }) {
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
 
-  // Calculate tax based on restaurant settings
+  // Loyalty state
+  const [customerData, setCustomerData] = useState(null);
+  const [redeemPoints, setRedeemPoints] = useState(0);
+  const [loyaltySettings, setLoyaltySettings] = useState(null);
+
+  // Offer/discount state
+  const [selectedOfferId, setSelectedOfferId] = useState(null);
+  const [offerDiscount, setOfferDiscount] = useState(0);
+  const [selectedOffer, setSelectedOffer] = useState(null);
+  const [manualDiscount, setManualDiscount] = useState('');
+  const [manualDiscountType, setManualDiscountType] = useState('flat');
+
+  // Calculate totals
   const subtotal = total;
   const taxRate = taxSettings.enabled ? (taxSettings.rate || 0) : 0;
-  const taxAmount = subtotal * (taxRate / 100);
-  const grandTotal = subtotal + taxAmount;
+
+  // Calculate manual discount amount
+  const manualDiscountAmount = (() => {
+    const val = parseFloat(manualDiscount) || 0;
+    if (manualDiscountType === 'percentage') {
+      return Math.round((subtotal * val / 100) * 100) / 100;
+    }
+    return Math.min(val, subtotal);
+  })();
+
+  // Calculate loyalty discount
+  const loyaltyDiscount = (() => {
+    if (!redeemPoints || !loyaltySettings) return 0;
+    const redemptionRate = loyaltySettings.redemptionValue || 0.1;
+    return Math.round(redeemPoints * redemptionRate * 100) / 100;
+  })();
+
+  const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount;
+  const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+  const taxAmount = discountedSubtotal * (taxRate / 100);
+  const grandTotal = discountedSubtotal + taxAmount;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  const handleCustomerFound = useCallback((customer, settings) => {
+    setCustomerData(customer);
+    setLoyaltySettings(settings);
+    if (customer) {
+      setCustomerName(customer.name || '');
+      setCustomerMobile(customer.phone || '');
+    }
+    // Reset redemption when customer changes
+    setRedeemPoints(0);
+  }, []);
+
+  const handleOfferSelected = useCallback((offerId, discount, offer) => {
+    setSelectedOfferId(offerId);
+    setOfferDiscount(discount);
+    setSelectedOffer(offer);
+  }, []);
+
+  const handleManualDiscountChange = useCallback((value, type) => {
+    setManualDiscount(value);
+    setManualDiscountType(type);
+  }, []);
+
   const handlePlaceOrder = () => {
-    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile);
+    // Pass all discount/loyalty data to parent
+    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, {
+      offerDiscount,
+      manualDiscountAmount,
+      loyaltyDiscount,
+      totalDiscount,
+      redeemLoyaltyPoints: redeemPoints,
+      selectedOfferId,
+      selectedOfferName: selectedOffer?.name || null,
+    });
   };
 
   const renderCartItem = ({ item }) => (
@@ -137,42 +202,91 @@ export default function CashierCartModal({
 
           {cart.length > 0 && (
             <>
+              {/* Customer Lookup with Loyalty */}
+              {restaurantId && (
+                <CustomerLookup
+                  restaurantId={restaurantId}
+                  onCustomerFound={handleCustomerFound}
+                  onPhoneChange={(phone) => setCustomerMobile(phone)}
+                  onRedeemChange={setRedeemPoints}
+                  redeemPoints={redeemPoints}
+                  compact
+                />
+              )}
+
+              {/* Offers & Manual Discount */}
+              {restaurantId && (
+                <OfferSelector
+                  restaurantId={restaurantId}
+                  cartItems={cart}
+                  subtotal={subtotal}
+                  onOfferSelected={handleOfferSelected}
+                  onManualDiscountChange={handleManualDiscountChange}
+                  selectedOfferId={selectedOfferId}
+                  manualDiscount={manualDiscount}
+                  manualDiscountType={manualDiscountType}
+                />
+              )}
+
               {/* Bill Summary */}
               <View style={styles.billSection}>
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Subtotal</Text>
                   <Text style={styles.billValue}>₹{subtotal.toFixed(2)}</Text>
                 </View>
+
+                {offerDiscount > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabelGreen}>
+                      {selectedOffer?.name || 'Offer'} Discount
+                    </Text>
+                    <Text style={styles.billValueGreen}>-₹{offerDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+
+                {manualDiscountAmount > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabelGreen}>Manual Discount</Text>
+                    <Text style={styles.billValueGreen}>-₹{manualDiscountAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+
+                {loyaltyDiscount > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabelGreen}>Loyalty Points ({redeemPoints} pts)</Text>
+                    <Text style={styles.billValueGreen}>-₹{loyaltyDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+
                 {taxSettings.enabled && taxRate > 0 && (
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Tax ({taxRate}%)</Text>
                     <Text style={styles.billValue}>₹{taxAmount.toFixed(2)}</Text>
                   </View>
                 )}
+
                 <View style={styles.billTotalRow}>
                   <Text style={styles.billTotalLabel}>Total</Text>
                   <Text style={styles.billTotalValue}>₹{grandTotal.toFixed(2)}</Text>
                 </View>
+
+                {totalDiscount > 0 && (
+                  <Text style={styles.savingsText}>You save ₹{totalDiscount.toFixed(0)}</Text>
+                )}
               </View>
 
-              {/* Customer Info (Compact) */}
-              <View style={styles.customerSection}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Customer Name (optional)"
-                  placeholderTextColor="#999"
-                  value={customerName}
-                  onChangeText={setCustomerName}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Mobile (optional)"
-                  placeholderTextColor="#999"
-                  keyboardType="phone-pad"
-                  value={customerMobile}
-                  onChangeText={setCustomerMobile}
-                />
-              </View>
+              {/* Customer Name (if not from lookup) */}
+              {!customerData && (
+                <View style={styles.customerSection}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Customer Name (optional)"
+                    placeholderTextColor="#999"
+                    value={customerName}
+                    onChangeText={setCustomerName}
+                  />
+                </View>
+              )}
 
               {/* Payment Method - Compact Pills */}
               <View style={styles.paymentSection}>
@@ -368,6 +482,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#1f2937',
   },
+  billLabelGreen: {
+    fontSize: 14,
+    color: '#10b981',
+  },
+  billValueGreen: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#10b981',
+  },
   billTotalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -386,12 +509,17 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#10b981',
   },
+  savingsText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#10b981',
+    textAlign: 'right',
+    marginTop: 6,
+  },
   customerSection: {
     backgroundColor: '#fff',
     marginTop: 8,
     padding: 16,
-    flexDirection: 'row',
-    gap: 12,
   },
   input: {
     flex: 1,

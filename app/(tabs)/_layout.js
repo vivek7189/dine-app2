@@ -8,6 +8,7 @@ export default function TabsLayout() {
   const router = useRouter();
   const segments = useSegments();
   const [userRole, setUserRole] = useState(null);
+  const [businessType, setBusinessType] = useState(null);
 
   useEffect(() => {
     // Check authentication on mount
@@ -22,10 +23,13 @@ export default function TabsLayout() {
       const userData = await apiClient.getUser();
       if (userData) {
         setUserRole(userData.role);
+        setBusinessType(userData.restaurant?.businessType || 'restaurant');
       }
     };
     checkAuth();
   }, []);
+
+  const roleLower = userRole?.toLowerCase() || '';
 
   return (
     <Tabs
@@ -56,6 +60,22 @@ export default function TabsLayout() {
         },
       }}
     >
+      {/* Home — visible to all roles */}
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "home" : "home-outline"}
+              size={26}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      {/* Tables — hidden for cashier/sales */}
       <Tabs.Screen
         name="tables"
         options={{
@@ -68,9 +88,11 @@ export default function TabsLayout() {
             />
           ),
           // Hide for simple mode roles
-          href: userRole && ['cashier', 'sales'].includes(userRole.toLowerCase()) ? null : undefined,
+          href: roleLower && ['cashier', 'sales'].includes(roleLower) ? null : undefined,
         }}
       />
+
+      {/* Menu (Billing) — hidden for bar-type restaurants */}
       <Tabs.Screen
         name="menu"
         options={{
@@ -82,8 +104,27 @@ export default function TabsLayout() {
               color={color}
             />
           ),
+          href: businessType === 'bar' ? null : undefined,
         }}
       />
+
+      {/* Bar POS — shown only for bar-type restaurants */}
+      <Tabs.Screen
+        name="bar-billing"
+        options={{
+          title: 'Bar',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "beer" : "beer-outline"}
+              size={26}
+              color={color}
+            />
+          ),
+          href: businessType === 'bar' ? undefined : null,
+        }}
+      />
+
+      {/* Orders — visible to all roles */}
       <Tabs.Screen
         name="orders"
         options={{
@@ -97,47 +138,53 @@ export default function TabsLayout() {
           ),
         }}
       />
+
+      {/* More — visible to all roles */}
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: 'More',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "grid" : "grid-outline"}
+              size={26}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      {/* === Hidden tabs — accessible via More screen navigation but not shown in tab bar === */}
+
+      {/* Hotel — accessed from More screen */}
       <Tabs.Screen
         name="hotel"
         options={{
-          title: 'Hotel',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "bed" : "bed-outline"}
-              size={26}
-              color={color}
-            />
-          ),
-          // Hide for simple mode roles
-          href: userRole && ['cashier', 'sales'].includes(userRole.toLowerCase()) ? null : undefined,
+          href: null, // Always hidden from tab bar
         }}
       />
+
+      {/* Menu Management — accessed from More screen */}
       <Tabs.Screen
         name="menu-management"
         options={{
-          title: 'Manage',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "settings" : "settings-outline"}
-              size={26}
-              color={color}
-            />
-          ),
-          // Hide menu management tab for waiters and simple mode roles
-          href: userRole && (!['owner', 'manager'].includes(userRole.toLowerCase()) || ['cashier', 'sales'].includes(userRole.toLowerCase())) ? null : undefined,
+          href: null, // Always hidden from tab bar
         }}
       />
+
+      {/* Offers — accessed from More screen */}
+      <Tabs.Screen
+        name="offers"
+        options={{
+          href: null, // Always hidden from tab bar
+        }}
+      />
+
+      {/* Profile/Settings — accessed from More screen */}
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "person" : "person-outline"}
-              size={26}
-              color={color}
-            />
-          ),
+          href: null, // Always hidden from tab bar
         }}
       />
     </Tabs>

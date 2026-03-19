@@ -8,6 +8,12 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  ActionSheetIOS,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,12 +33,33 @@ export default function TablesScreen() {
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
   const [user, setUser] = useState(null);
   const [selectedFloor, setSelectedFloor] = useState(null);
-  const [selectedStatus, setSelectedStatus] = useState(null); // 'available', 'occupied', 'reserved', or null
+  const [selectedStatus, setSelectedStatus] = useState(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedTableForOrder, setSelectedTableForOrder] = useState(null);
-  const [orderModalMode, setOrderModalMode] = useState('view'); // 'view' or 'add'
+  const [orderModalMode, setOrderModalMode] = useState('view');
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [showFloorModal, setShowFloorModal] = useState(false);
+  const [editingFloor, setEditingFloor] = useState(null);
+  const [floorForm, setFloorForm] = useState({ name: '', description: '', areaChargeType: 'none', areaChargeValue: '' });
+  const [savingFloor, setSavingFloor] = useState(false);
+  // Table management state
+  const [showAddTableModal, setShowAddTableModal] = useState(false);
+  const [addTableMode, setAddTableMode] = useState('single'); // 'single' or 'bulk'
+  const [tableForm, setTableForm] = useState({ name: '', capacity: '4', type: 'regular', floor: '' });
+  const [bulkForm, setBulkForm] = useState({ fromNumber: '', toNumber: '', capacity: '4', floor: '' });
+  const [savingTable, setSavingTable] = useState(false);
+  // Table action sheet state
+  const [showTableActions, setShowTableActions] = useState(false);
+  const [actionTable, setActionTable] = useState(null);
+  // Booking state
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingTable, setBookingTable] = useState(null);
+  const [bookingForm, setBookingForm] = useState({
+    customerName: '', customerPhone: '', partySize: '2',
+    bookingDate: '', bookingTime: '', notes: '',
+  });
+  const [savingBooking, setSavingBooking] = useState(false);
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
@@ -366,13 +393,12 @@ export default function TablesScreen() {
           isOutOfService && styles.tableCardOutOfService,
         ]}
         onPress={() => {
-          // Don't allow actions if out of service
           if (!isOutOfService) {
             handleTablePress(table);
           }
         }}
+        onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
-        disabled={isOutOfService}
       >
         {/* Gradient Overlay */}
         <View style={styles.cardGradient}>
@@ -496,12 +522,325 @@ export default function TablesScreen() {
     );
   };
 
+  const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());
+
+  const openAddFloor = () => {
+    setEditingFloor(null);
+    setFloorForm({ name: '', description: '', areaChargeType: 'none', areaChargeValue: '' });
+    setShowFloorModal(true);
+  };
+
+  const openEditFloor = (floor) => {
+    setEditingFloor(floor);
+    setFloorForm({
+      name: floor.name || '',
+      description: floor.description || '',
+      areaChargeType: floor.areaChargeType || 'none',
+      areaChargeValue: floor.areaChargeValue ? String(floor.areaChargeValue) : '',
+    });
+    setShowFloorModal(true);
+  };
+
+  const handleSaveFloor = async () => {
+    if (!floorForm.name.trim() || !selectedRestaurant?.id) return;
+    setSavingFloor(true);
+    try {
+      const data = {
+        name: floorForm.name.trim(),
+        description: floorForm.description.trim() || null,
+        areaChargeType: floorForm.areaChargeType || 'none',
+        areaChargeValue: parseFloat(floorForm.areaChargeValue) || 0,
+      };
+
+      if (editingFloor) {
+        await apiClient.updateFloor(editingFloor.id, { ...data, restaurantId: selectedRestaurant.id });
+        setFloors(prev => prev.map(f =>
+          f.id === editingFloor.id ? { ...f, ...data } : f
+        ));
+      } else {
+        const response = await apiClient.createFloor(selectedRestaurant.id, data);
+        if (response.floor) {
+          const newFloorData = { ...response.floor, tables: [] };
+          setFloors(prev => [...prev, newFloorData]);
+          setSelectedFloor(newFloorData);
+        }
+      }
+
+      setShowFloorModal(false);
+      setEditingFloor(null);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to save floor');
+    } finally {
+      setSavingFloor(false);
+    }
+  };
+
+  // Delete floor
+  const handleDeleteFloor = () => {
+    if (!editingFloor) return;
+    Alert.alert(
+      'Delete Floor',
+      `Are you sure you want to delete "${editingFloor.name}" and all its tables?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.deleteFloor(editingFloor.id, selectedRestaurant?.id);
+              setFloors(prev => prev.filter(f => f.id !== editingFloor.id));
+              if (selectedFloor?.id === editingFloor.id) {
+                setSelectedFloor(floors.length > 1 ? floors.find(f => f.id !== editingFloor.id) : null);
+              }
+              setShowFloorModal(false);
+              setEditingFloor(null);
+            } catch (error) {
+              Alert.alert('Error', error.message || 'Failed to delete floor');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Open add table modal
+  const openAddTable = () => {
+    setTableForm({ name: '', capacity: '4', type: 'regular', floor: selectedFloor?.name || '' });
+    setBulkForm({ fromNumber: '', toNumber: '', capacity: '4', floor: selectedFloor?.name || '' });
+    setAddTableMode('single');
+    setShowAddTableModal(true);
+  };
+
+  // Save single table
+  const handleSaveTable = async () => {
+    if (!tableForm.name.trim() || !selectedRestaurant?.id) return;
+    setSavingTable(true);
+    try {
+      const data = {
+        name: tableForm.name.trim(),
+        capacity: parseInt(tableForm.capacity) || 4,
+        type: tableForm.type,
+        floor: tableForm.floor || selectedFloor?.name || '',
+        status: 'available',
+      };
+      const response = await apiClient.createTable(selectedRestaurant.id, data);
+      // Refresh floors to get updated table data
+      await loadFloorsAndTables(selectedRestaurant.id);
+      setShowAddTableModal(false);
+      Alert.alert('Success', 'Table added successfully!');
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to add table');
+    } finally {
+      setSavingTable(false);
+    }
+  };
+
+  // Save bulk tables
+  const handleBulkCreate = async () => {
+    const from = parseInt(bulkForm.fromNumber);
+    const to = parseInt(bulkForm.toNumber);
+    if (!from || !to || from > to || !selectedRestaurant?.id) return;
+    if (to - from > 99) {
+      Alert.alert('Error', 'Cannot create more than 100 tables at once');
+      return;
+    }
+    setSavingTable(true);
+    try {
+      const data = {
+        floor: bulkForm.floor || selectedFloor?.name || '',
+        fromNumber: from,
+        toNumber: to,
+        capacity: parseInt(bulkForm.capacity) || 4,
+      };
+      const response = await apiClient.bulkCreateTables(selectedRestaurant.id, data);
+      await loadFloorsAndTables(selectedRestaurant.id);
+      setShowAddTableModal(false);
+      const count = response.created || (to - from + 1);
+      const skipped = response.duplicatesSkipped || 0;
+      Alert.alert('Success', `Created ${count} tables${skipped > 0 ? ` (${skipped} duplicates skipped)` : ''}`);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to create tables');
+    } finally {
+      setSavingTable(false);
+    }
+  };
+
+  // Delete table
+  const handleDeleteTable = (table) => {
+    Alert.alert(
+      'Delete Table',
+      `Are you sure you want to delete table "${table.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.deleteTable(table.id, selectedRestaurant?.id);
+              // Remove from local state
+              setFloors(prev => prev.map(f => ({
+                ...f,
+                tables: f.tables?.filter(t => t.id !== table.id) || [],
+              })));
+              setTables(prev => prev.filter(t => t.id !== table.id));
+            } catch (error) {
+              Alert.alert('Error', error.message || 'Failed to delete table');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Change table status
+  const handleChangeStatus = async (table, newStatus) => {
+    try {
+      await apiClient.updateTableStatus(table.id, newStatus, null, selectedRestaurant?.id);
+      updateTableStatusOptimistically(table.id, newStatus, null);
+      // Clear customer info if marking available
+      if (newStatus === 'available') {
+        setFloors(prev => prev.map(f => ({
+          ...f,
+          tables: f.tables?.map(t =>
+            t.id === table.id ? { ...t, status: 'available', customerName: null, reservationTime: null, currentOrderId: null } : t
+          ) || [],
+        })));
+      }
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to update table status');
+    }
+  };
+
+  // Show table action sheet
+  const showTableActionSheet = (table) => {
+    setActionTable(table);
+    const status = table.status || 'available';
+
+    if (Platform.OS === 'ios') {
+      const options = [];
+      const actions = [];
+
+      // Status-based actions
+      if (status === 'available') {
+        options.push('Take Order');
+        actions.push(() => handleTablePress(table));
+        options.push('Book Table');
+        actions.push(() => openBookingForm(table));
+      }
+      if (status !== 'available') {
+        options.push('Mark Available');
+        actions.push(() => handleChangeStatus(table, 'available'));
+      }
+      if (status === 'occupied' && table.currentOrderId) {
+        options.push('View Order');
+        actions.push(() => handleViewOrder(table));
+      }
+      if (status !== 'out-of-service') {
+        options.push('Mark Out of Service');
+        actions.push(() => handleChangeStatus(table, 'out-of-service'));
+      }
+      if (status !== 'cleaning') {
+        options.push('Mark Cleaning');
+        actions.push(() => handleChangeStatus(table, 'cleaning'));
+      }
+      if (isOwnerOrAdmin) {
+        options.push('Delete Table');
+        actions.push(() => handleDeleteTable(table));
+      }
+      options.push('Cancel');
+
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: options.length - 1,
+          destructiveButtonIndex: isOwnerOrAdmin ? options.length - 2 : undefined,
+          title: `Table ${table.name}`,
+          message: `Status: ${status} | ${table.capacity || 4} seats`,
+        },
+        (index) => {
+          if (index < actions.length) actions[index]();
+        }
+      );
+    } else {
+      // Android - use custom modal
+      setShowTableActions(true);
+    }
+  };
+
+  // Open booking form
+  const openBookingForm = (table) => {
+    const now = new Date();
+    setBookingTable(table);
+    setBookingForm({
+      customerName: '',
+      customerPhone: '',
+      partySize: String(table.capacity || 2),
+      bookingDate: now.toISOString().split('T')[0],
+      bookingTime: '',
+      notes: '',
+    });
+    setShowBookingModal(true);
+    setShowTableActions(false);
+  };
+
+  // Save booking
+  const handleSaveBooking = async () => {
+    if (!bookingForm.customerName.trim() || !bookingForm.bookingDate || !bookingForm.bookingTime || !bookingTable) return;
+    setSavingBooking(true);
+    try {
+      const data = {
+        tableId: bookingTable.id,
+        customerName: bookingForm.customerName.trim(),
+        customerPhone: bookingForm.customerPhone.trim() || null,
+        partySize: parseInt(bookingForm.partySize) || 2,
+        bookingDate: bookingForm.bookingDate,
+        bookingTime: bookingForm.bookingTime,
+        notes: bookingForm.notes.trim() || null,
+        status: 'confirmed',
+      };
+      await apiClient.createBooking(selectedRestaurant.id, data);
+      // Update table status to reserved
+      updateTableStatusOptimistically(bookingTable.id, 'reserved', null);
+      setFloors(prev => prev.map(f => ({
+        ...f,
+        tables: f.tables?.map(t =>
+          t.id === bookingTable.id ? { ...t, status: 'reserved', customerName: data.customerName, reservationTime: data.bookingTime } : t
+        ) || [],
+      })));
+      setShowBookingModal(false);
+      setBookingTable(null);
+      Alert.alert('Success', `Table ${bookingTable.name} booked for ${data.customerName}`);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to create booking');
+    } finally {
+      setSavingBooking(false);
+    }
+  };
+
+  // Generate time slots (10 AM to 11 PM, 30 min intervals)
+  const getTimeSlots = () => {
+    const slots = [];
+    for (let h = 10; h <= 23; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const hour = h.toString().padStart(2, '0');
+        const min = m.toString().padStart(2, '0');
+        const label = `${h > 12 ? h - 12 : h}:${min} ${h >= 12 ? 'PM' : 'AM'}`;
+        slots.push({ value: `${hour}:${min}`, label });
+      }
+    }
+    return slots;
+  };
+
   const renderFloorTab = ({ item: floor }) => {
     const isSelected = selectedFloor?.id === floor.id;
+    const hasAreaCharge = floor.areaChargeType && floor.areaChargeType !== 'none' && floor.areaChargeValue > 0;
     return (
       <TouchableOpacity
         style={[styles.floorChip, isSelected && styles.floorChipSelected]}
         onPress={() => setSelectedFloor(floor)}
+        onLongPress={() => isOwnerOrAdmin && openEditFloor(floor)}
       >
         <Ionicons
           name="layers-outline"
@@ -511,6 +850,11 @@ export default function TablesScreen() {
         <Text style={[styles.floorChipText, isSelected && styles.floorChipTextSelected]}>
           {floor.name}
         </Text>
+        {hasAreaCharge && (
+          <Text style={[styles.areaChargeBadge, isSelected && styles.areaChargeBadgeSelected]}>
+            +{floor.areaChargeType === 'percentage' ? `${floor.areaChargeValue}%` : `₹${floor.areaChargeValue}`}
+          </Text>
+        )}
         <View style={[styles.floorBadge, isSelected && styles.floorBadgeSelected]}>
           <Text style={[styles.floorBadgeText, isSelected && styles.floorBadgeTextSelected]}>
             {floor.tables?.length || 0}
@@ -619,9 +963,16 @@ export default function TablesScreen() {
             <Text style={styles.userName}>Hello, {user?.name || 'Staff'}</Text>
           </View>
         </View>
-        <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={styles.refreshButton}>
-          <Ionicons name="refresh-circle" size={32} color={Colors.primary} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {isOwnerOrAdmin && (
+            <TouchableOpacity onPress={openAddTable} style={styles.headerActionBtn}>
+              <Ionicons name="add-circle" size={28} color={Colors.primary} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={styles.refreshButton}>
+            <Ionicons name="refresh-circle" size={32} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Quick Stats - Icon + Count Only */}
@@ -656,7 +1007,7 @@ export default function TablesScreen() {
       </View>
 
       {/* Floor Selector */}
-      {floors.length > 1 && (
+      {(floors.length > 0 || isOwnerOrAdmin) && (
         <View style={styles.floorSelector}>
           <FlatList
             horizontal
@@ -665,6 +1016,12 @@ export default function TablesScreen() {
             keyExtractor={(item) => item.id}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.floorChipsContainer}
+            ListFooterComponent={isOwnerOrAdmin ? (
+              <TouchableOpacity style={styles.addFloorChip} onPress={openAddFloor}>
+                <Ionicons name="add" size={16} color={Colors.primary} />
+                <Text style={styles.addFloorText}>Add Floor</Text>
+              </TouchableOpacity>
+            ) : null}
           />
         </View>
       )}
@@ -685,7 +1042,15 @@ export default function TablesScreen() {
           <View style={styles.emptyContainer}>
             <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyText}>No tables found</Text>
-            <Text style={styles.emptySubtext}>Pull down to refresh</Text>
+            <Text style={styles.emptySubtext}>
+              {isOwnerOrAdmin ? 'Tap + to add tables' : 'Pull down to refresh'}
+            </Text>
+            {isOwnerOrAdmin && (
+              <TouchableOpacity style={styles.emptyAddBtn} onPress={openAddTable}>
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.emptyAddBtnText}>Add Tables</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
@@ -715,6 +1080,529 @@ export default function TablesScreen() {
           router.replace('/(auth)/login');
         }}
       />
+
+      {/* Floor Add/Edit Modal */}
+      <Modal
+        visible={showFloorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFloorModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.floorModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.floorModalCard}>
+            <Text style={styles.floorModalTitle}>
+              {editingFloor ? 'Edit Floor' : 'Add Floor'}
+            </Text>
+
+            <View style={styles.floorFormField}>
+              <Text style={styles.floorFormLabel}>Floor Name *</Text>
+              <TextInput
+                style={styles.floorFormInput}
+                value={floorForm.name}
+                onChangeText={(v) => setFloorForm({ ...floorForm, name: v })}
+                placeholder="e.g., Rooftop, AC Hall, Garden"
+                placeholderTextColor={Colors.textLight}
+                autoFocus={!editingFloor}
+              />
+            </View>
+
+            <View style={styles.floorFormField}>
+              <Text style={styles.floorFormLabel}>Description</Text>
+              <TextInput
+                style={styles.floorFormInput}
+                value={floorForm.description}
+                onChangeText={(v) => setFloorForm({ ...floorForm, description: v })}
+                placeholder="Optional description"
+                placeholderTextColor={Colors.textLight}
+              />
+            </View>
+
+            {/* Area Charge */}
+            <View style={styles.floorFormField}>
+              <Text style={styles.floorFormLabel}>Area Charge</Text>
+              <View style={styles.chargeTypeRow}>
+                {[
+                  { value: 'none', label: 'No charge' },
+                  { value: 'percentage', label: '% Percent' },
+                  { value: 'flat', label: '₹ Flat' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.chargeTypeBtn,
+                      floorForm.areaChargeType === opt.value && styles.chargeTypeBtnActive,
+                    ]}
+                    onPress={() => setFloorForm({
+                      ...floorForm,
+                      areaChargeType: opt.value,
+                      areaChargeValue: opt.value === 'none' ? '' : floorForm.areaChargeValue,
+                    })}
+                  >
+                    <Text style={[
+                      styles.chargeTypeBtnText,
+                      floorForm.areaChargeType === opt.value && styles.chargeTypeBtnTextActive,
+                    ]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {floorForm.areaChargeType !== 'none' && (
+                <TextInput
+                  style={[styles.floorFormInput, { marginTop: 8 }]}
+                  value={floorForm.areaChargeValue}
+                  onChangeText={(v) => setFloorForm({ ...floorForm, areaChargeValue: v })}
+                  placeholder={floorForm.areaChargeType === 'percentage' ? 'e.g., 10 (for 10%)' : 'e.g., 50 (₹50 flat)'}
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="decimal-pad"
+                />
+              )}
+              <Text style={styles.floorFormHint}>Extra charge applied to all orders on this floor</Text>
+            </View>
+
+            <View style={styles.floorModalActions}>
+              {editingFloor && (
+                <TouchableOpacity
+                  style={styles.floorDeleteBtn}
+                  onPress={handleDeleteFloor}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.floorModalCancel, !editingFloor && { flex: 1 }]}
+                onPress={() => { setShowFloorModal(false); setEditingFloor(null); }}
+              >
+                <Text style={styles.floorModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.floorModalSave, (!floorForm.name.trim() || savingFloor) && { opacity: 0.5 }]}
+                onPress={handleSaveFloor}
+                disabled={!floorForm.name.trim() || savingFloor}
+              >
+                {savingFloor ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.floorModalSaveText}>
+                    {editingFloor ? 'Update' : 'Create'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Add Table Modal */}
+      <Modal
+        visible={showAddTableModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddTableModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.floorModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={[styles.floorModalCard, { maxHeight: '85%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.floorModalTitle}>Add Tables</Text>
+              <TouchableOpacity onPress={() => setShowAddTableModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.textMedium} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Mode Toggle */}
+            <View style={styles.modeToggle}>
+              <TouchableOpacity
+                style={[styles.modeBtn, addTableMode === 'single' && styles.modeBtnActive]}
+                onPress={() => setAddTableMode('single')}
+              >
+                <Text style={[styles.modeBtnText, addTableMode === 'single' && styles.modeBtnTextActive]}>Single</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modeBtn, addTableMode === 'bulk' && styles.modeBtnActive]}
+                onPress={() => setAddTableMode('bulk')}
+              >
+                <Text style={[styles.modeBtnText, addTableMode === 'bulk' && styles.modeBtnTextActive]}>Bulk</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Floor selector */}
+              <View style={styles.floorFormField}>
+                <Text style={styles.floorFormLabel}>Floor</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {floors.map(f => (
+                      <TouchableOpacity
+                        key={f.id}
+                        style={[
+                          styles.floorPickChip,
+                          (addTableMode === 'single' ? tableForm.floor : bulkForm.floor) === f.name && styles.floorPickChipActive,
+                        ]}
+                        onPress={() => {
+                          if (addTableMode === 'single') {
+                            setTableForm({ ...tableForm, floor: f.name });
+                          } else {
+                            setBulkForm({ ...bulkForm, floor: f.name });
+                          }
+                        }}
+                      >
+                        <Text style={[
+                          styles.floorPickChipText,
+                          (addTableMode === 'single' ? tableForm.floor : bulkForm.floor) === f.name && styles.floorPickChipTextActive,
+                        ]}>{f.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+
+              {addTableMode === 'single' ? (
+                <>
+                  <View style={styles.floorFormField}>
+                    <Text style={styles.floorFormLabel}>Table Name *</Text>
+                    <TextInput
+                      style={styles.floorFormInput}
+                      value={tableForm.name}
+                      onChangeText={(v) => setTableForm({ ...tableForm, name: v })}
+                      placeholder="e.g., T1, VIP 1, Sofa"
+                      placeholderTextColor={Colors.textLight}
+                    />
+                  </View>
+                  <View style={styles.floorFormField}>
+                    <Text style={styles.floorFormLabel}>Capacity (seats)</Text>
+                    <TextInput
+                      style={styles.floorFormInput}
+                      value={tableForm.capacity}
+                      onChangeText={(v) => setTableForm({ ...tableForm, capacity: v })}
+                      keyboardType="number-pad"
+                      placeholder="4"
+                      placeholderTextColor={Colors.textLight}
+                    />
+                  </View>
+                  <View style={styles.floorFormField}>
+                    <Text style={styles.floorFormLabel}>Table Type</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {[
+                          { value: 'small', label: 'Small (1-2)' },
+                          { value: 'regular', label: 'Regular' },
+                          { value: 'large', label: 'Large (5-8)' },
+                          { value: 'vip', label: 'VIP' },
+                        ].map(opt => (
+                          <TouchableOpacity
+                            key={opt.value}
+                            style={[styles.floorPickChip, tableForm.type === opt.value && styles.floorPickChipActive]}
+                            onPress={() => setTableForm({ ...tableForm, type: opt.value })}
+                          >
+                            <Text style={[styles.floorPickChipText, tableForm.type === opt.value && styles.floorPickChipTextActive]}>
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={[styles.floorFormField, { flex: 1 }]}>
+                      <Text style={styles.floorFormLabel}>From #</Text>
+                      <TextInput
+                        style={styles.floorFormInput}
+                        value={bulkForm.fromNumber}
+                        onChangeText={(v) => setBulkForm({ ...bulkForm, fromNumber: v })}
+                        keyboardType="number-pad"
+                        placeholder="1"
+                        placeholderTextColor={Colors.textLight}
+                      />
+                    </View>
+                    <View style={[styles.floorFormField, { flex: 1 }]}>
+                      <Text style={styles.floorFormLabel}>To #</Text>
+                      <TextInput
+                        style={styles.floorFormInput}
+                        value={bulkForm.toNumber}
+                        onChangeText={(v) => setBulkForm({ ...bulkForm, toNumber: v })}
+                        keyboardType="number-pad"
+                        placeholder="10"
+                        placeholderTextColor={Colors.textLight}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.floorFormField}>
+                    <Text style={styles.floorFormLabel}>Capacity per table</Text>
+                    <TextInput
+                      style={styles.floorFormInput}
+                      value={bulkForm.capacity}
+                      onChangeText={(v) => setBulkForm({ ...bulkForm, capacity: v })}
+                      keyboardType="number-pad"
+                      placeholder="4"
+                      placeholderTextColor={Colors.textLight}
+                    />
+                  </View>
+                  {bulkForm.fromNumber && bulkForm.toNumber && parseInt(bulkForm.fromNumber) <= parseInt(bulkForm.toNumber) && (
+                    <View style={styles.bulkPreview}>
+                      <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+                      <Text style={styles.bulkPreviewText}>
+                        Will create {parseInt(bulkForm.toNumber) - parseInt(bulkForm.fromNumber) + 1} tables ({bulkForm.fromNumber} - {bulkForm.toNumber})
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </ScrollView>
+
+            <View style={styles.floorModalActions}>
+              <TouchableOpacity
+                style={styles.floorModalCancel}
+                onPress={() => setShowAddTableModal(false)}
+              >
+                <Text style={styles.floorModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.floorModalSave, savingTable && { opacity: 0.5 }]}
+                onPress={addTableMode === 'single' ? handleSaveTable : handleBulkCreate}
+                disabled={savingTable || (addTableMode === 'single' ? !tableForm.name.trim() : !bulkForm.fromNumber || !bulkForm.toNumber)}
+              >
+                {savingTable ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.floorModalSaveText}>
+                    {addTableMode === 'single' ? 'Add Table' : 'Create All'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Android Table Actions Modal */}
+      {Platform.OS !== 'ios' && (
+        <Modal
+          visible={showTableActions}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowTableActions(false)}
+        >
+          <TouchableOpacity
+            style={styles.actionSheetOverlay}
+            activeOpacity={1}
+            onPress={() => setShowTableActions(false)}
+          >
+            <View style={styles.actionSheetCard}>
+              <Text style={styles.actionSheetTitle}>Table {actionTable?.name}</Text>
+              <Text style={styles.actionSheetSubtitle}>
+                {actionTable?.status} | {actionTable?.capacity || 4} seats
+              </Text>
+
+              {actionTable?.status === 'available' && (
+                <>
+                  <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleTablePress(actionTable); }}>
+                    <Ionicons name="restaurant" size={20} color="#16a34a" />
+                    <Text style={styles.actionSheetBtnText}>Take Order</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); openBookingForm(actionTable); }}>
+                    <Ionicons name="calendar" size={20} color="#d97706" />
+                    <Text style={styles.actionSheetBtnText}>Book Table</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {actionTable?.status !== 'available' && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleChangeStatus(actionTable, 'available'); }}>
+                  <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
+                  <Text style={styles.actionSheetBtnText}>Mark Available</Text>
+                </TouchableOpacity>
+              )}
+
+              {actionTable?.status === 'occupied' && actionTable?.currentOrderId && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleViewOrder(actionTable); }}>
+                  <Ionicons name="eye" size={20} color="#3b82f6" />
+                  <Text style={styles.actionSheetBtnText}>View Order</Text>
+                </TouchableOpacity>
+              )}
+
+              {actionTable?.status !== 'out-of-service' && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleChangeStatus(actionTable, 'out-of-service'); }}>
+                  <Ionicons name="build" size={20} color="#7c3aed" />
+                  <Text style={styles.actionSheetBtnText}>Mark Out of Service</Text>
+                </TouchableOpacity>
+              )}
+
+              {actionTable?.status !== 'cleaning' && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleChangeStatus(actionTable, 'cleaning'); }}>
+                  <Ionicons name="water" size={20} color="#3b82f6" />
+                  <Text style={styles.actionSheetBtnText}>Mark Cleaning</Text>
+                </TouchableOpacity>
+              )}
+
+              {isOwnerOrAdmin && (
+                <TouchableOpacity style={[styles.actionSheetBtn, { borderTopWidth: 1, borderTopColor: '#fee2e2' }]} onPress={() => { setShowTableActions(false); handleDeleteTable(actionTable); }}>
+                  <Ionicons name="trash" size={20} color="#dc2626" />
+                  <Text style={[styles.actionSheetBtnText, { color: '#dc2626' }]}>Delete Table</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.actionSheetBtn, { backgroundColor: '#f5f5f5', borderRadius: 10, marginTop: 8 }]}
+                onPress={() => setShowTableActions(false)}
+              >
+                <Text style={[styles.actionSheetBtnText, { textAlign: 'center', color: Colors.textMedium }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Booking Modal */}
+      <Modal
+        visible={showBookingModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowBookingModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.floorModalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={[styles.floorModalCard, { maxHeight: '85%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.floorModalTitle}>
+                Book Table {bookingTable?.name}
+              </Text>
+              <TouchableOpacity onPress={() => setShowBookingModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.textMedium} />
+              </TouchableOpacity>
+            </View>
+
+            {bookingTable && (
+              <View style={styles.bookingTableInfo}>
+                <Ionicons name="restaurant" size={16} color={Colors.primary} />
+                <Text style={styles.bookingTableInfoText}>
+                  {bookingTable.name} - {bookingTable.capacity || 4} seats
+                </Text>
+              </View>
+            )}
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.floorFormField}>
+                <Text style={styles.floorFormLabel}>Customer Name *</Text>
+                <TextInput
+                  style={styles.floorFormInput}
+                  value={bookingForm.customerName}
+                  onChangeText={(v) => setBookingForm({ ...bookingForm, customerName: v })}
+                  placeholder="Customer name"
+                  placeholderTextColor={Colors.textLight}
+                  autoFocus
+                />
+              </View>
+
+              <View style={styles.floorFormField}>
+                <Text style={styles.floorFormLabel}>Phone</Text>
+                <TextInput
+                  style={styles.floorFormInput}
+                  value={bookingForm.customerPhone}
+                  onChangeText={(v) => setBookingForm({ ...bookingForm, customerPhone: v })}
+                  placeholder="+91 9876543210"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="phone-pad"
+                />
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={[styles.floorFormField, { flex: 1 }]}>
+                  <Text style={styles.floorFormLabel}>Date *</Text>
+                  <TextInput
+                    style={styles.floorFormInput}
+                    value={bookingForm.bookingDate}
+                    onChangeText={(v) => setBookingForm({ ...bookingForm, bookingDate: v })}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={Colors.textLight}
+                  />
+                </View>
+                <View style={[styles.floorFormField, { flex: 1 }]}>
+                  <Text style={styles.floorFormLabel}>Party Size</Text>
+                  <TextInput
+                    style={styles.floorFormInput}
+                    value={bookingForm.partySize}
+                    onChangeText={(v) => setBookingForm({ ...bookingForm, partySize: v })}
+                    keyboardType="number-pad"
+                    placeholder="2"
+                    placeholderTextColor={Colors.textLight}
+                  />
+                </View>
+              </View>
+
+              {/* Time Slots */}
+              <View style={styles.floorFormField}>
+                <Text style={styles.floorFormLabel}>Time *</Text>
+                <View style={styles.timeSlotsGrid}>
+                  {getTimeSlots().map(slot => (
+                    <TouchableOpacity
+                      key={slot.value}
+                      style={[
+                        styles.timeSlot,
+                        bookingForm.bookingTime === slot.value && styles.timeSlotActive,
+                      ]}
+                      onPress={() => setBookingForm({ ...bookingForm, bookingTime: slot.value })}
+                    >
+                      <Text style={[
+                        styles.timeSlotText,
+                        bookingForm.bookingTime === slot.value && styles.timeSlotTextActive,
+                      ]}>
+                        {slot.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.floorFormField}>
+                <Text style={styles.floorFormLabel}>Notes</Text>
+                <TextInput
+                  style={[styles.floorFormInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                  value={bookingForm.notes}
+                  onChangeText={(v) => setBookingForm({ ...bookingForm, notes: v })}
+                  placeholder="Special requests..."
+                  placeholderTextColor={Colors.textLight}
+                  multiline
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.floorModalActions}>
+              <TouchableOpacity
+                style={styles.floorModalCancel}
+                onPress={() => setShowBookingModal(false)}
+              >
+                <Text style={styles.floorModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.floorModalSave,
+                  { backgroundColor: '#d97706' },
+                  (!bookingForm.customerName.trim() || !bookingForm.bookingDate || !bookingForm.bookingTime || savingBooking) && { opacity: 0.5 },
+                ]}
+                onPress={handleSaveBooking}
+                disabled={!bookingForm.customerName.trim() || !bookingForm.bookingDate || !bookingForm.bookingTime || savingBooking}
+              >
+                {savingBooking ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.floorModalSaveText}>Confirm Booking</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1127,5 +2015,306 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: 13,
     color: Colors.textMedium,
+  },
+  // Area charge badge on floor chip
+  areaChargeBadge: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#ea580c',
+    backgroundColor: '#fff7ed',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  areaChargeBadgeSelected: {
+    color: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  // Add floor chip
+  addFloorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    borderStyle: 'dashed',
+  },
+  addFloorText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  // Floor modal
+  floorModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  floorModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    gap: 16,
+  },
+  floorModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.textDark,
+  },
+  floorFormField: {
+    gap: 6,
+  },
+  floorFormLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  floorFormInput: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    color: Colors.textDark,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  floorFormHint: {
+    fontSize: 11,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  chargeTypeRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  chargeTypeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+  },
+  chargeTypeBtnActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '10',
+  },
+  chargeTypeBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  chargeTypeBtnTextActive: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  floorModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  floorDeleteBtn: {
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#fef2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  floorModalCancel: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+  },
+  floorModalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  floorModalSave: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+  },
+  floorModalSaveText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  // Header action button
+  headerActionBtn: {
+    padding: 4,
+  },
+  // Empty state add button
+  emptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+  },
+  emptyAddBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Mode toggle
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    padding: 3,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modeBtnActive: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  modeBtnTextActive: {
+    color: Colors.textDark,
+  },
+  // Floor picker chip
+  floorPickChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
+  floorPickChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '10',
+  },
+  floorPickChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  floorPickChipTextActive: {
+    color: Colors.primary,
+  },
+  // Bulk preview
+  bulkPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f0fdf4',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  bulkPreviewText: {
+    fontSize: 13,
+    color: '#16a34a',
+    fontWeight: '600',
+  },
+  // Action sheet (Android)
+  actionSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionSheetCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 34,
+  },
+  actionSheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textDark,
+    textAlign: 'center',
+  },
+  actionSheetSubtitle: {
+    fontSize: 13,
+    color: Colors.textMedium,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  actionSheetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+  },
+  actionSheetBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textDark,
+  },
+  // Booking
+  bookingTableInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary + '10',
+    padding: 10,
+    borderRadius: 8,
+  },
+  bookingTableInfoText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  timeSlotsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  timeSlot: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
+  timeSlotActive: {
+    borderColor: '#d97706',
+    backgroundColor: '#fffbeb',
+  },
+  timeSlotText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  timeSlotTextActive: {
+    color: '#d97706',
   },
 });
