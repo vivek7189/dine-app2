@@ -161,6 +161,13 @@ export default function LoginScreen() {
   const [phoneConfirmation, setPhoneConfirmation] = useState(null);
   const [phoneOtp, setPhoneOtp] = useState('');
   const [phoneCountdown, setPhoneCountdown] = useState(0);
+  const [isTestAccount, setIsTestAccount] = useState(false);
+
+  // Whitelisted test numbers that bypass Firebase OTP
+  const isDemoPhone = (phone) => {
+    const cleaned = phone.replace(/\D/g, '');
+    return cleaned === '9000000000' || cleaned === '919000000000';
+  };
 
   useEffect(() => {
     checkAuth();
@@ -331,18 +338,36 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!phoneAuthAvailable) {
-      Alert.alert(
-        'Not Available',
-        'Phone login requires a development build with Firebase. It is not supported in Expo Go.\n\nPlease use Email login instead, or build with EAS.',
-      );
-      return;
-    }
-
     setLoading(true);
     setError('');
     try {
       const fullNumber = `${selectedCountry.dialCode}${cleaned}`;
+
+      // Bypass Firebase for test/whitelisted numbers — use backend OTP
+      if (isDemoPhone(cleaned)) {
+        console.log('🎭 Test account detected, using backend OTP');
+        const response = await apiClient.phoneSendOtp(fullNumber);
+        if (response.error) {
+          setError(response.error);
+        } else {
+          setIsTestAccount(true);
+          setPhoneConfirmation(null); // No Firebase confirmation needed
+          setOwnerStep('phoneOtp');
+          setPhoneCountdown(60);
+        }
+        return;
+      }
+
+      // Regular Firebase phone auth
+      if (!phoneAuthAvailable) {
+        Alert.alert(
+          'Not Available',
+          'Phone login requires a development build with Firebase. It is not supported in Expo Go.\n\nPlease use Email login instead, or build with EAS.',
+        );
+        return;
+      }
+
+      setIsTestAccount(false);
       const confirmation = await rnFirebaseAuth().signInWithPhoneNumber(fullNumber);
       setPhoneConfirmation(confirmation);
       setOwnerStep('phoneOtp');
@@ -368,19 +393,38 @@ export default function LoginScreen() {
   };
 
   const handleVerifyPhoneOtp = async () => {
-    if (phoneOtp.length !== 6) {
-      setError('Please enter the 6-digit code');
-      return;
-    }
-
-    if (!phoneConfirmation) {
-      setError('Please request a new verification code.');
-      return;
-    }
-
     setLoading(true);
     setError('');
     try {
+      // Test account — verify via backend (accepts 4-digit code "1234")
+      if (isTestAccount) {
+        if (phoneOtp.length < 4) {
+          setError('Please enter the OTP code');
+          return;
+        }
+        const cleaned = phoneNumber.replace(/\D/g, '');
+        const fullNumber = `${selectedCountry.dialCode}${cleaned}`;
+        const response = await apiClient.phoneVerifyOtp(fullNumber, phoneOtp);
+
+        if (response.token) {
+          router.replace('/(tabs)/home');
+        } else {
+          setError(response.error || 'Verification failed. Please try again.');
+        }
+        return;
+      }
+
+      // Regular Firebase verification (6-digit code)
+      if (phoneOtp.length !== 6) {
+        setError('Please enter the 6-digit code');
+        return;
+      }
+
+      if (!phoneConfirmation) {
+        setError('Please request a new verification code.');
+        return;
+      }
+
       const credential = await phoneConfirmation.confirm(phoneOtp);
       const firebaseUser = credential.user;
 
@@ -622,20 +666,25 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.inputContainer}>
-        <Text style={styles.label}>Enter 6-digit Code</Text>
+        <Text style={styles.label}>{isTestAccount ? 'Enter OTP Code' : 'Enter 6-digit Code'}</Text>
         <TextInput
           style={[styles.input, styles.otpInput]}
-          placeholder="000000"
+          placeholder={isTestAccount ? '1234' : '000000'}
           placeholderTextColor={Colors.textLight}
           value={phoneOtp}
           onChangeText={setPhoneOtp}
           keyboardType="number-pad"
-          maxLength={6}
+          maxLength={isTestAccount ? 4 : 6}
           editable={!loading}
           autoFocus
           textContentType="oneTimeCode"
           autoComplete="sms-otp"
         />
+        {isTestAccount && (
+          <Text style={{ fontSize: 13, color: Colors.primary, marginTop: 6, fontWeight: '600' }}>
+            For testing use: 1234
+          </Text>
+        )}
       </View>
 
       <TouchableOpacity

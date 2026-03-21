@@ -23,7 +23,24 @@ export default function TabsLayout() {
       const userData = await apiClient.getUser();
       if (userData) {
         setUserRole(userData.role);
-        setBusinessType(userData.restaurant?.businessType || 'restaurant');
+        const storedType = userData.restaurant?.businessType;
+        if (storedType) {
+          setBusinessType(storedType);
+        } else {
+          // Fallback: fetch fresh restaurant data if not in stored user
+          const restaurantId = userData.restaurantId || userData.restaurant?.id;
+          if (restaurantId) {
+            try {
+              const res = await apiClient.getRestaurant(restaurantId);
+              const freshType = res?.restaurant?.businessType || res?.businessType || 'restaurant';
+              setBusinessType(freshType);
+            } catch (e) {
+              setBusinessType('restaurant');
+            }
+          } else {
+            setBusinessType('restaurant');
+          }
+        }
       }
     };
     checkAuth();
@@ -183,6 +200,22 @@ export default function TabsLayout() {
       {/* Profile/Settings — accessed from More screen */}
       <Tabs.Screen
         name="profile"
+        options={{
+          href: null, // Always hidden from tab bar
+        }}
+      />
+
+      {/* Customers — accessed from More screen */}
+      <Tabs.Screen
+        name="customers"
+        options={{
+          href: null, // Always hidden from tab bar
+        }}
+      />
+
+      {/* Headquarters — accessed from Home/More screen (owner only) */}
+      <Tabs.Screen
+        name="headquarters"
         options={{
           href: null, // Always hidden from tab bar
         }}

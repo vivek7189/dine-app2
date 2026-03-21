@@ -76,6 +76,27 @@ export default function BarMenuModal({ visible, onClose, menuItems, activeTab, o
           {/* Item name */}
           <Text style={styles.menuItemName} numberOfLines={2}>{item.name}</Text>
 
+          {/* Bar-specific badges */}
+          {(item.spiritCategory || item.abv || item.bottleSize) && (
+            <View style={styles.barBadgeRow}>
+              {item.spiritCategory && (
+                <View style={styles.barBadge}>
+                  <Text style={styles.barBadgeText}>{item.spiritCategory}</Text>
+                </View>
+              )}
+              {item.abv && (
+                <View style={[styles.barBadge, { backgroundColor: '#fef3c7' }]}>
+                  <Text style={[styles.barBadgeText, { color: '#d97706' }]}>{item.abv}%</Text>
+                </View>
+              )}
+              {item.bottleSize && (
+                <View style={[styles.barBadge, { backgroundColor: '#dbeafe' }]}>
+                  <Text style={[styles.barBadgeText, { color: '#2563eb' }]}>{item.bottleSize}</Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Price */}
           <Text style={styles.menuItemPrice}>₹{(item.price || 0).toFixed(2)}</Text>
 
@@ -350,6 +371,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: Colors.textDark,
+  },
+  barBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  barBadge: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  barBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#7c3aed',
   },
   addBtnRow: {
     marginTop: 4,

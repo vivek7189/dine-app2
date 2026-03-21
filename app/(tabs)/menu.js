@@ -53,6 +53,8 @@ export default function MenuScreen() {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
   const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
+  const [businessType, setBusinessType] = useState('restaurant');
+  const [isBarTabMode, setIsBarTabMode] = useState(false);
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const HEADER_EXPANDED = 200;
@@ -158,8 +160,12 @@ export default function MenuScreen() {
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
       setSelectedTable({ id: params.tableId, name: params.tableNumber });
+    } else if (params.tableNumber && params.barTabMode === 'true') {
+      // Bar tab mode: use tableNumber as tab display name (no tableId)
+      setSelectedTable({ id: null, name: params.tableNumber });
+      setIsBarTabMode(true);
     }
-    
+
     // Handle existing order items from params
     if (params.existingOrder === 'true' && params.cartItems) {
       try {
@@ -172,7 +178,11 @@ export default function MenuScreen() {
         console.error('Error parsing cart items:', error);
       }
     }
-  }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId]);
+
+    if (params.barTabMode === 'true') {
+      setIsBarTabMode(true);
+    }
+  }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
 
   // Use useMemo instead of useEffect to prevent infinite loops
   const filteredItems = useMemo(() => {
@@ -233,6 +243,9 @@ export default function MenuScreen() {
 
       setRestaurantId(rid);
       setRestaurantName(userData.restaurant?.name || 'Restaurant');
+      // Store businessType for type-specific display on menu cards
+      const bType = userData.restaurant?.businessType || 'restaurant';
+      setBusinessType(bType);
 
       // Load tax settings - first from cache, then background refresh
       await loadTaxSettings(rid);
@@ -446,8 +459,8 @@ export default function MenuScreen() {
         orderId = response.order?.id;
       }
 
-      // Update table status to occupied in background (don't wait)
-      if (tableId && restaurantId) {
+      // Update table status to occupied in background (don't wait) — skip for bar tabs
+      if (tableId && restaurantId && !isBarTabMode) {
         apiClient.updateTableStatus(tableId, 'occupied', orderId, restaurantId).catch(err => {
           console.error('Error updating table status:', err);
           // Don't block user, just log error
@@ -507,42 +520,106 @@ export default function MenuScreen() {
       const { taxAmount } = calculateTax(discountedSubtotal);
       const grandTotal = discountedSubtotal + taxAmount;
 
-      const orderData = {
-        restaurantId,
-        tableNumber: selectedTable?.name || params.tableNumber,
-        items: cart.map(item => ({
-          menuItemId: item.menuItemId || item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-        })),
-        orderType: orderType,
-        paymentMethod: paymentMethod,
-        status: 'confirmed',
-        staffInfo: {
-          waiterId: user?.id,
-          waiterName: user?.name || 'Manager',
-        },
-        ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
-        ...(customerMobile && { customerPhone: customerMobile }),
-        // Discount fields for backend validation
-        offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
-        manualDiscount: discountData.manualDiscountAmount || 0,
-        redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
-      };
+      const items = cart.map(item => ({
+        menuItemId: item.menuItemId || item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }));
 
-      const response = await apiClient.createOrder(orderData);
+      if (existingOrderId && isBarTabMode) {
+        // Settle existing bar tab — update to completed
+        await apiClient.updateOrder(existingOrderId, {
+          items,
+          status: 'completed',
+          paymentStatus: 'paid',
+          paymentMethod: paymentMethod,
+          totalAmount: subtotal,
+          discountAmount: totalDiscount,
+          taxAmount: taxAmount,
+          finalAmount: grandTotal,
+          completedAt: new Date().toISOString(),
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          manualDiscount: discountData.manualDiscountAmount || 0,
+          redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+        });
 
-      Alert.alert('Success', 'Order placed successfully!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            setCart([]);
-            setShowCart(false);
-            router.push('/(tabs)/orders');
+        await apiClient.verifyPayment({
+          orderId: existingOrderId,
+          paymentMethod,
+          amount: grandTotal,
+          userId: user?.id,
+          restaurantId,
+          paymentStatus: 'completed',
+        }).catch(() => {}); // Don't block on payment verification
+
+        Alert.alert('Success', 'Tab settled!', [
+          {
+            text: 'OK',
+            onPress: () => {
+              setCart([]);
+              setShowCart(false);
+              setExistingOrderId(null);
+              router.back();
+            },
           },
-        },
-      ]);
+        ]);
+      } else {
+        const orderData = {
+          restaurantId,
+          tableNumber: selectedTable?.name || params.tableNumber,
+          items,
+          orderType: isBarTabMode ? 'dine-in' : orderType,
+          paymentMethod: paymentMethod,
+          status: isBarTabMode ? 'completed' : 'confirmed',
+          staffInfo: {
+            waiterId: user?.id,
+            waiterName: user?.name || 'Manager',
+          },
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          ...(customerMobile && { customerPhone: customerMobile }),
+          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          manualDiscount: discountData.manualDiscountAmount || 0,
+          redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+        };
+
+        const response = await apiClient.createOrder(orderData);
+
+        if (isBarTabMode) {
+          // Verify payment for bar tab settle
+          await apiClient.verifyPayment({
+            orderId: response.order?.id,
+            paymentMethod,
+            amount: grandTotal,
+            userId: user?.id,
+            restaurantId,
+            paymentStatus: 'completed',
+          }).catch(() => {});
+
+          Alert.alert('Success', 'Tab settled!', [
+            {
+              text: 'OK',
+              onPress: () => {
+                setCart([]);
+                setShowCart(false);
+                router.back();
+              },
+            },
+          ]);
+        } else {
+          Alert.alert('Success', 'Order placed successfully!', [
+            {
+              text: 'OK',
+              onPress: () => {
+                setCart([]);
+                setShowCart(false);
+                router.push('/(tabs)/orders');
+              },
+            },
+          ]);
+        }
+      }
     } catch (error) {
       console.error('Error placing order:', error);
       Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
@@ -647,6 +724,70 @@ export default function MenuScreen() {
     }
   };
 
+  // Bar Tab: Save as open tab (status: 'saved')
+  const handleSaveTab = async () => {
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items before saving the tab.');
+      return;
+    }
+
+    setSendingOrder(true);
+    try {
+      const subtotal = getCartTotal();
+      const { taxAmount } = calculateTax(subtotal);
+      const grandTotal = subtotal + taxAmount;
+
+      if (existingOrderId) {
+        // Update existing tab
+        await apiClient.updateOrder(existingOrderId, {
+          items: cart.map(item => ({
+            menuItemId: item.menuItemId || item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+          totalAmount: subtotal,
+          taxAmount: taxAmount,
+          finalAmount: grandTotal,
+          status: 'saved',
+        });
+      } else {
+        // Create new tab
+        await apiClient.createOrder({
+          restaurantId,
+          tableNumber: selectedTable?.name || 'Tab',
+          items: cart.map(item => ({
+            menuItemId: item.menuItemId || item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+          })),
+          orderType: 'dine-in',
+          paymentMethod: 'cash',
+          status: 'saved',
+          totalAmount: subtotal,
+          taxAmount: taxAmount,
+          finalAmount: grandTotal,
+          staffInfo: {
+            waiterId: user?.id,
+            waiterName: user?.name || 'Staff',
+          },
+        });
+      }
+
+      setCart([]);
+      setShowCart(false);
+      setExistingOrderId(null);
+      // Navigate back to bar billing
+      router.back();
+    } catch (error) {
+      console.error('Error saving tab:', error);
+      Alert.alert('Error', error.message || 'Failed to save tab.');
+    } finally {
+      setSendingOrder(false);
+    }
+  };
+
   const handleBack = () => {
     router.back();
   };
@@ -662,12 +803,29 @@ export default function MenuScreen() {
     return category?.name || 'Main Course';
   };
 
+  // Build type-specific subtitle for menu cards
+  const getTypeSubtitle = (item) => {
+    const parts = [];
+    if (businessType === 'bar') {
+      if (item.spiritCategory) parts.push(item.spiritCategory);
+      if (item.abv) parts.push(`${item.abv}% ABV`);
+      if (item.bottleSize) parts.push(item.bottleSize);
+    } else if (businessType === 'bakery') {
+      if (item.weight) parts.push(item.weight);
+      if (item.unit) parts.push(`per ${item.unit}`);
+    } else if (businessType === 'ice_cream') {
+      if (item.servingSize) parts.push(item.servingSize);
+    }
+    return parts.length > 0 ? parts.join(' | ') : null;
+  };
+
   const renderMenuItem = ({ item }) => {
     const cartItem = cart.find(c => c.id === item.id);
     const quantity = cartItem?.quantity || 0;
     const imageUrl = showImages ? getItemImage(item) : null;
     const isVeg = item.isVeg !== false;
     const hasImage = imageUrl !== null;
+    const typeSubtitle = getTypeSubtitle(item);
 
     // Modern Design with Full Image Background (when image exists)
     if (hasImage) {
@@ -712,7 +870,10 @@ export default function MenuScreen() {
             <Text style={styles.menuItemNameImage} numberOfLines={2}>
               {item.name}
             </Text>
-            
+            {typeSubtitle && (
+              <Text style={styles.typeSubtitleImage} numberOfLines={1}>{typeSubtitle}</Text>
+            )}
+
             <View style={styles.priceAddRow}>
               <Text style={styles.menuItemPriceImage}>₹{item.price}</Text>
               {quantity > 0 ? (
@@ -789,6 +950,9 @@ export default function MenuScreen() {
             <Text style={styles.menuItemDescriptionNoImage} numberOfLines={1}>
               {item.description}
             </Text>
+          )}
+          {typeSubtitle && (
+            <Text style={styles.typeSubtitleNoImage} numberOfLines={1}>{typeSubtitle}</Text>
           )}
         </View>
 
@@ -890,8 +1054,8 @@ export default function MenuScreen() {
                 <Ionicons name="arrow-back" size={24} color="#1f2937" />
               </TouchableOpacity>
               <View style={styles.tableInfoCard}>
-                <Ionicons name="restaurant" size={18} color={Colors.primary} />
-                <Text style={styles.tableInfoText}>Table {selectedTable.name}</Text>
+                <Ionicons name={isBarTabMode ? "beer" : "restaurant"} size={18} color={Colors.primary} />
+                <Text style={styles.tableInfoText}>{isBarTabMode ? selectedTable.name : `Table ${selectedTable.name}`}</Text>
                 <TouchableOpacity 
                   onPress={() => {
                     setSelectedTable(null);
@@ -1090,8 +1254,43 @@ export default function MenuScreen() {
         }
       />
 
+      {/* Bottom Bar - Bar Tab Mode (Save Tab / Settle) */}
+      {isBarTabMode && cart.length > 0 && (
+        <View style={styles.bottomOrderBar}>
+          <View style={styles.orderSummary}>
+            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
+            <Text style={styles.orderTotal}>₹{getGrandTotal().toFixed(2)}</Text>
+            {taxSettings.enabled && taxSettings.rate > 0 && (
+              <Text style={styles.gstNote}>incl. {taxSettings.rate}% tax</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            style={[styles.orderButton, { backgroundColor: '#6b7280' }, sendingOrder && styles.orderButtonDisabled]}
+            onPress={handleSaveTab}
+            disabled={sendingOrder}
+          >
+            {sendingOrder ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="save-outline" size={18} color="#fff" />
+                <Text style={styles.orderButtonText}>Save Tab</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.orderButton, styles.placeOrderBtn, sendingOrder && styles.orderButtonDisabled]}
+            onPress={() => setShowCart(true)}
+            disabled={sendingOrder}
+          >
+            <Ionicons name="checkmark-circle" size={18} color="#fff" />
+            <Text style={styles.orderButtonText}>Settle</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Bottom Order Button - For Waiters */}
-      {isWaiter && cart.length > 0 && (
+      {!isBarTabMode && isWaiter && cart.length > 0 && (
         <View style={styles.bottomOrderBar}>
           <View style={styles.orderSummary}>
             <Text style={styles.orderItemsCount}>{cart.length} items</Text>
@@ -1115,7 +1314,7 @@ export default function MenuScreen() {
       )}
 
       {/* Bottom Order Button - For Cashier/Sales (Counter Sales) */}
-      {isCashier && cart.length > 0 && (
+      {!isBarTabMode && isCashier && cart.length > 0 && (
         <View style={styles.bottomOrderBar}>
           <View style={styles.orderSummary}>
             <Text style={styles.orderItemsCount}>{cart.length} items</Text>
@@ -1142,7 +1341,7 @@ export default function MenuScreen() {
       )}
 
       {/* Cart FAB - For Admin/Manager (not for cashier) */}
-      {!isWaiter && !isCashier && cart.length > 0 && (
+      {!isBarTabMode && !isWaiter && !isCashier && cart.length > 0 && (
         <TouchableOpacity
           style={styles.cartFAB}
           onPress={() => setShowCart(true)}
@@ -1214,8 +1413,11 @@ export default function MenuScreen() {
         onClose={() => {
           setShowKOTModal(false);
           setKotOrderData(null);
-          // Redirect to tables screen after closing KOT
-          if (selectedTable || params.tableId) {
+          if (isBarTabMode) {
+            // Bar tab mode: go back to bar billing
+            router.back();
+          } else if (selectedTable || params.tableId) {
+            // Redirect to tables screen after closing KOT
             router.replace({
               pathname: '/(tabs)/tables',
               params: {
@@ -1586,6 +1788,14 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
+  typeSubtitleImage: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 1,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   priceAddRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1714,6 +1924,13 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     lineHeight: 12,
     textAlign: 'center',
+  },
+  typeSubtitleNoImage: {
+    fontSize: 9,
+    color: '#9ca3af',
+    marginTop: 2,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   bottomSectionNoImage: {
     flexDirection: 'row',

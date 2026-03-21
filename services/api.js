@@ -326,6 +326,30 @@ class ApiClient {
     return response;
   }
 
+  // Backend phone OTP (for test/whitelisted numbers that bypass Firebase)
+  async phoneSendOtp(phone) {
+    return this.request('/api/auth/phone/send-otp', {
+      method: 'POST',
+      data: { phone },
+    });
+  }
+
+  async phoneVerifyOtp(phone, otp) {
+    const response = await this.request('/api/auth/phone/verify-otp', {
+      method: 'POST',
+      data: { phone, otp },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+      }
+    }
+
+    return response;
+  }
+
   // Get menu items
   async getMenu(restaurantId) {
     return this.request(`/api/menus/${restaurantId}`);
@@ -660,7 +684,7 @@ class ApiClient {
     return this.request(`/api/hotel/rooms/availability?date=${date}&restaurantId=${restaurantId}`);
   }
 
-  // Booking Management
+  // Table Booking Management
   async getBookings(restaurantId, filters = {}) {
     const params = new URLSearchParams(filters);
     const queryString = params.toString();
@@ -674,6 +698,26 @@ class ApiClient {
     });
   }
 
+  async cancelBooking(bookingId) {
+    return this.request(`/api/bookings/${bookingId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Hotel Room Booking Management
+  async getHotelBookings(restaurantId, filters = {}) {
+    const params = new URLSearchParams(filters);
+    const queryString = params.toString();
+    return this.request(`/api/room-bookings/${restaurantId}${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async createHotelBooking(bookingData) {
+    return this.request('/api/booking', {
+      method: 'POST',
+      data: bookingData,
+    });
+  }
+
   async validateBooking(validationData) {
     return this.request('/api/hotel/bookings/validate', {
       method: 'POST',
@@ -681,10 +725,10 @@ class ApiClient {
     });
   }
 
-  async cancelBooking(bookingId, reason) {
-    return this.request(`/api/bookings/${bookingId}`, {
+  async cancelHotelBooking(bookingId, reason) {
+    return this.request(`/api/booking/${bookingId}/cancel`, {
       method: 'PATCH',
-      data: { status: 'cancelled', reason },
+      data: { reason },
     });
   }
 
@@ -774,6 +818,40 @@ class ApiClient {
   // Get customer app settings (public)
   async getPublicCustomerAppSettings(restaurantId) {
     return this.request(`/api/public/customer-app-settings/${restaurantId}`);
+  }
+
+  // Get customer app settings (authenticated - full settings)
+  async getCustomerAppSettings(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}/customer-app-settings`);
+  }
+
+  // Save customer app settings
+  async updateCustomerAppSettings(restaurantId, settings) {
+    return this.request(`/api/restaurants/${restaurantId}/customer-app-settings`, {
+      method: 'PUT',
+      data: settings,
+    });
+  }
+
+  // Generate restaurant code for Crave app
+  async generateRestaurantCode(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}/generate-code`, {
+      method: 'POST',
+    });
+  }
+
+  // Check URL slug availability
+  async checkSlugAvailability(slug, excludeRestaurantId = null) {
+    const params = excludeRestaurantId ? `?excludeRestaurantId=${excludeRestaurantId}` : '';
+    return this.request(`/api/public/check-slug/${slug}${params}`);
+  }
+
+  // Save custom URL slug
+  async updateRestaurantSlug(restaurantId, slug) {
+    return this.request(`/api/restaurants/${restaurantId}/slug`, {
+      method: 'PATCH',
+      data: { slug },
+    });
   }
 
   // Lookup customer by phone (for loyalty points)
@@ -868,11 +946,38 @@ class ApiClient {
   }
 
   // Get customer loyalty history
-  async getCustomerLoyaltyHistory(restaurantId, phone) {
-    return this.request(`/api/public/customer/loyalty-history`, {
+  async getCustomerLoyaltyHistory(customerId, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/api/public/customer/${customerId}/loyalty-history${queryString ? `?${queryString}` : ''}`);
+  }
+
+  // Create customer
+  async createCustomer(customerData) {
+    return this.request('/api/customers', {
       method: 'POST',
-      data: { restaurantId, phone },
+      data: customerData,
     });
+  }
+
+  // Update customer
+  async updateCustomer(customerId, customerData) {
+    return this.request(`/api/customers/${customerId}`, {
+      method: 'PATCH',
+      data: customerData,
+    });
+  }
+
+  // Delete customer
+  async deleteCustomer(customerId) {
+    return this.request(`/api/customers/${customerId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Get customer orders
+  async getCustomerOrders(customerId, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/api/public/customer/${customerId}/orders${queryString ? `?${queryString}` : ''}`);
   }
 
   // ==================== STAFF MANAGEMENT ====================
@@ -919,6 +1024,70 @@ class ApiClient {
     return this.request(`/api/staff/${staffId}/reset-password`, {
       method: 'POST',
     });
+  }
+
+  // ==================== HEADQUARTERS / OWNER DASHBOARD ====================
+
+  async getOwnerDashboard(params = {}) {
+    const query = new URLSearchParams();
+    if (params.period) query.append('period', params.period);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+    const qs = query.toString();
+    return this.request(`/api/owner/dashboard${qs ? `?${qs}` : ''}`);
+  }
+
+  async getOwnerAnalytics(params = {}) {
+    const query = new URLSearchParams();
+    if (params.period) query.append('period', params.period);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+    if (params.restaurantIds) {
+      params.restaurantIds.forEach(id => query.append('restaurantIds[]', id));
+    }
+    const qs = query.toString();
+    return this.request(`/api/owner/analytics${qs ? `?${qs}` : ''}`);
+  }
+
+  async getAIInsights(params = {}) {
+    const query = new URLSearchParams();
+    if (params.period) query.append('period', params.period);
+    if (params.restaurantIds) {
+      params.restaurantIds.forEach(id => query.append('restaurantIds[]', id));
+    }
+    const qs = query.toString();
+    return this.request(`/api/ai/insights${qs ? `?${qs}` : ''}`);
+  }
+
+  async getAIUsage() {
+    return this.request('/api/ai/usage');
+  }
+
+  async getOwnerMenuItems(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.append('page', params.page);
+    if (params.limit) query.append('limit', params.limit);
+    if (params.category) query.append('category', params.category);
+    if (params.search) query.append('search', params.search);
+    if (params.restaurantIds) {
+      params.restaurantIds.forEach(id => query.append('restaurantIds[]', id));
+    }
+    const qs = query.toString();
+    return this.request(`/api/owner/menu-items${qs ? `?${qs}` : ''}`);
+  }
+
+  async getOwnerInventory(params = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.append('page', params.page);
+    if (params.limit) query.append('limit', params.limit);
+    if (params.stockStatus) query.append('stockStatus', params.stockStatus);
+    if (params.category) query.append('category', params.category);
+    if (params.search) query.append('search', params.search);
+    if (params.restaurantIds) {
+      params.restaurantIds.forEach(id => query.append('restaurantIds[]', id));
+    }
+    const qs = query.toString();
+    return this.request(`/api/owner/inventory${qs ? `?${qs}` : ''}`);
   }
 
   // ==================== PRINT SETTINGS ====================

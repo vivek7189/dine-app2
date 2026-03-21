@@ -41,6 +41,9 @@ export default function HomeScreen() {
     available: 0,
   });
 
+  // Bar tabs (for bar-type businesses)
+  const [openTabs, setOpenTabs] = useState([]);
+
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -57,6 +60,10 @@ export default function HomeScreen() {
     return user?.restaurantId || user?.restaurant?.id || restaurant?.id;
   };
 
+  const businessType = restaurant?.businessType || user?.restaurant?.businessType || 'restaurant';
+  const isBarType = businessType === 'bar';
+  const newOrderRoute = isBarType ? '/(tabs)/bar-billing' : '/(tabs)/menu';
+
   const loadInitialData = async () => {
     try {
       const userData = await apiClient.getUser();
@@ -65,9 +72,27 @@ export default function HomeScreen() {
         return;
       }
       setUser(userData);
-      setRestaurant(userData.restaurant);
 
       const restaurantId = userData.restaurantId || userData.restaurant?.id;
+      // Fetch fresh restaurant data to ensure businessType and other fields are current
+      let restaurantData = userData.restaurant;
+      if (restaurantId) {
+        try {
+          const res = await apiClient.getRestaurant(restaurantId);
+          const freshData = res?.restaurant || res;
+          if (freshData && freshData.name) {
+            restaurantData = { id: restaurantId, ...freshData };
+            // Update stored user with fresh restaurant data
+            const updatedUser = { ...userData, restaurant: restaurantData, restaurantId };
+            await apiClient.setUser(updatedUser);
+            setUser(updatedUser);
+          }
+        } catch (e) {
+          console.log('Could not fetch fresh restaurant data:', e.message);
+        }
+      }
+      setRestaurant(restaurantData);
+
       if (restaurantId) {
         await loadStats(restaurantId);
       }
@@ -84,11 +109,18 @@ export default function HomeScreen() {
     try {
       const today = new Date();
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999).toISOString();
 
-      const [ordersResponse, floorsResponse] = await Promise.all([
-        apiClient.getOrders(restaurantId, { startDate: startOfDay, limit: 100 }),
+      const [ordersResponse, floorsResponse, tabsResponse] = await Promise.all([
+        apiClient.getOrders(restaurantId, { startDate: startOfDay, endDate: endOfDay, limit: 200 }),
         apiClient.getFloors(restaurantId).catch(() => ({ floors: [] })),
+        // Fetch open bar tabs for bar-type businesses
+        apiClient.getOrders(restaurantId, { status: 'saved', limit: 20 }).catch(() => ({ orders: [] })),
       ]);
+
+      // Set open tabs (for bar home view)
+      const savedTabs = (tabsResponse.orders || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setOpenTabs(savedTabs);
 
       const orders = ordersResponse.orders || [];
       setTodayOrders(orders.slice(0, 5));
@@ -196,7 +228,7 @@ export default function HomeScreen() {
   const renderCashierHero = () => (
     <TouchableOpacity
       style={styles.heroAction}
-      onPress={() => router.push('/(tabs)/menu')}
+      onPress={() => router.push(newOrderRoute)}
       activeOpacity={0.8}
     >
       <View style={styles.heroActionInner}>
@@ -216,7 +248,7 @@ export default function HomeScreen() {
   const renderWaiterHero = () => (
     <TouchableOpacity
       style={[styles.heroAction, { backgroundColor: '#3b82f6' }]}
-      onPress={() => router.push('/(tabs)/menu')}
+      onPress={() => router.push(newOrderRoute)}
       activeOpacity={0.8}
     >
       <View style={styles.heroActionInner}>
@@ -224,8 +256,8 @@ export default function HomeScreen() {
           <Ionicons name="add-circle-outline" size={28} color="#fff" />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.heroActionTitle}>New Order</Text>
-          <Text style={styles.heroActionSubtitle}>Take a new order for a table</Text>
+          <Text style={styles.heroActionTitle}>{isBarType ? 'Open Tab' : 'New Order'}</Text>
+          <Text style={styles.heroActionSubtitle}>{isBarType ? 'Open a new bar tab' : 'Take a new order for a table'}</Text>
         </View>
         <Ionicons name="chevron-forward" size={24} color="#fff" />
       </View>
@@ -380,12 +412,12 @@ export default function HomeScreen() {
             <View style={styles.actionsRow}>
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => router.push('/(tabs)/menu')}
+                onPress={() => router.push(newOrderRoute)}
               >
                 <View style={[styles.actionIcon, { backgroundColor: Colors.primary }]}>
                   <Ionicons name="add-circle-outline" size={24} color="#fff" />
                 </View>
-                <Text style={styles.actionText}>New Order</Text>
+                <Text style={styles.actionText}>{isBarType ? 'Open Tab' : 'New Order'}</Text>
               </TouchableOpacity>
 
               {!isCashier && (
@@ -410,6 +442,18 @@ export default function HomeScreen() {
                 <Text style={styles.actionText}>Orders</Text>
               </TouchableOpacity>
 
+              {role === 'owner' && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => router.push('/(tabs)/headquarters')}
+                >
+                  <View style={[styles.actionIcon, { backgroundColor: '#6366f1' }]}>
+                    <Ionicons name="business-outline" size={24} color="#fff" />
+                  </View>
+                  <Text style={styles.actionText}>HQ</Text>
+                </TouchableOpacity>
+              )}
+
               {isOwnerOrManager && (
                 <TouchableOpacity
                   style={styles.actionButton}
@@ -421,6 +465,51 @@ export default function HomeScreen() {
                   <Text style={styles.actionText}>Manage</Text>
                 </TouchableOpacity>
               )}
+            </View>
+          </>
+        )}
+
+        {/* Open Bar Tabs (bar-type only) */}
+        {isBarType && hasRestaurant && openTabs.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Open Tabs</Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/bar-billing')}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.openTabsGrid}>
+              {openTabs.slice(0, 4).map((tab) => {
+                const itemCount = (tab.items || []).reduce((sum, i) => sum + i.quantity, 0);
+                const total = tab.finalAmount || tab.totalAmount || 0;
+                const tabName = tab.customerInfo?.name || (tab.tabNumber ? `Tab #${tab.tabNumber}` : 'Tab');
+                const elapsed = getTabTimeAgo(tab.createdAt);
+                const hasItems = itemCount > 0;
+
+                return (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[styles.openTabCard, hasItems ? styles.openTabCardActive : styles.openTabCardEmpty]}
+                    onPress={() => router.push('/(tabs)/bar-billing')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.openTabCardHeader}>
+                      <View style={[styles.openTabDot, { backgroundColor: hasItems ? '#22c55e' : '#38bdf8' }]} />
+                      {elapsed ? <Text style={styles.openTabTime}>{elapsed}</Text> : null}
+                    </View>
+                    <Text style={styles.openTabName} numberOfLines={1}>{tabName}</Text>
+                    {total > 0 ? (
+                      <Text style={styles.openTabAmount}>{formatCurrency(total)}</Text>
+                    ) : (
+                      <Text style={styles.openTabEmptyLabel}>No items</Text>
+                    )}
+                    <View style={styles.openTabFooter}>
+                      <Ionicons name="fast-food-outline" size={11} color={Colors.textMedium} />
+                      <Text style={styles.openTabItemCount}>{itemCount} item{itemCount !== 1 ? 's' : ''}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
@@ -493,9 +582,9 @@ export default function HomeScreen() {
             </Text>
             <TouchableOpacity
               style={styles.emptyStateButton}
-              onPress={() => router.push('/(tabs)/menu')}
+              onPress={() => router.push(newOrderRoute)}
             >
-              <Text style={styles.emptyStateButtonText}>Take First Order</Text>
+              <Text style={styles.emptyStateButtonText}>{isBarType ? 'Open First Tab' : 'Take First Order'}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -510,6 +599,17 @@ export default function HomeScreen() {
       />
     </SafeAreaView>
   );
+}
+
+function getTabTimeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Now';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
 }
 
 function getStatusColor(status) {
@@ -857,5 +957,72 @@ const styles = StyleSheet.create({
   emptyStateButtonText: {
     ...Typography.bodyBold,
     color: '#fff',
+  },
+
+  // Open Bar Tabs Grid
+  openTabsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.md,
+    gap: 10,
+    marginBottom: Spacing.lg,
+  },
+  openTabCard: {
+    width: (SCREEN_WIDTH - 42 - 10) / 2,
+    borderRadius: 12,
+    padding: 10,
+    minHeight: 110,
+    borderWidth: 1.5,
+  },
+  openTabCardActive: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  openTabCardEmpty: {
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
+  },
+  openTabCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  openTabDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  openTabTime: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.textMedium,
+  },
+  openTabName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textDark,
+    marginBottom: 2,
+  },
+  openTabAmount: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.textDark,
+  },
+  openTabEmptyLabel: {
+    fontSize: 12,
+    color: Colors.textLight,
+    fontStyle: 'italic',
+  },
+  openTabFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 4,
+  },
+  openTabItemCount: {
+    fontSize: 10,
+    color: Colors.textMedium,
+    fontWeight: '500',
   },
 });

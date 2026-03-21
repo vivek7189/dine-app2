@@ -341,7 +341,7 @@ export default function HotelScreen() {
 
   const loadBookings = async (restId) => {
     try {
-      const response = await apiClient.getBookings(restId, {});
+      const response = await apiClient.getHotelBookings(restId, {});
       setBookings(response.bookings || []);
     } catch (err) {
       console.error('Error loading bookings:', err);
@@ -678,7 +678,7 @@ export default function HotelScreen() {
         return;
       }
 
-      await apiClient.createBooking({
+      await apiClient.createHotelBooking({
         restaurantId,
         roomNumber: bookingForm.roomNumber,
         guestInfo: {
@@ -719,7 +719,7 @@ export default function HotelScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await apiClient.cancelBooking(bookingId, 'Cancelled by user');
+              await apiClient.cancelHotelBooking(bookingId, 'Cancelled by user');
               setSuccess('Booking cancelled successfully');
               await loadBookings(restaurantId);
               if (restaurantId && roomsViewDate) {

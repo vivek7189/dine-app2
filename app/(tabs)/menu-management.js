@@ -40,6 +40,8 @@ export default function MenuManagementScreen() {
   const [uploadSuccess, setUploadSuccess] = useState('');
   const [processingStep, setProcessingStep] = useState('');
   const [actionLoading, setActionLoading] = useState(null); // Track which item action is loading
+  const [businessType, setBusinessType] = useState('restaurant');
+  const [hasDefaultMenu, setHasDefaultMenu] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -52,6 +54,23 @@ export default function MenuManagementScreen() {
     spiceLevel: 'medium',
     status: 'active',
     images: [],
+    variants: [],
+    customizations: [],
+    // Bar fields
+    spiritCategory: '',
+    abv: '',
+    servingUnit: '',
+    bottleSize: '',
+    ingredients: '',
+    // Bakery fields
+    unit: '',
+    weight: '',
+    shelfLife: '',
+    mfgDate: '',
+    expiryDate: '',
+    // Ice cream fields
+    servingSize: '',
+    scoopOptions: '',
   });
 
   useEffect(() => {
@@ -103,6 +122,8 @@ export default function MenuManagementScreen() {
       }
 
       setRestaurantId(rid);
+      setBusinessType(userData.restaurant?.businessType || 'restaurant');
+      setHasDefaultMenu(!!userData.restaurant?.hasDefaultMenu);
       await loadMenu(rid);
     } catch (error) {
       console.error('Error loading menu:', error);
@@ -172,6 +193,7 @@ export default function MenuManagementScreen() {
       setProcessingStep('Saving to menu...');
       await apiClient.bulkSaveMenuItems(restaurantId, normalized, response.extractedCategories || []);
       setUploadSuccess(`${normalized.length} items added!`);
+      setHasDefaultMenu(false);
       await loadMenu(restaurantId);
     } catch (error) {
       setUploadError(error.message || 'Upload failed.');
@@ -254,6 +276,20 @@ export default function MenuManagementScreen() {
       spiceLevel: 'medium',
       status: 'active',
       images: [],
+      variants: [],
+      customizations: [],
+      spiritCategory: '',
+      abv: '',
+      servingUnit: '',
+      bottleSize: '',
+      ingredients: '',
+      unit: '',
+      weight: '',
+      shelfLife: '',
+      mfgDate: '',
+      expiryDate: '',
+      servingSize: '',
+      scoopOptions: '',
     });
     setEditingItem(null);
   };
@@ -274,6 +310,20 @@ export default function MenuManagementScreen() {
       spiceLevel: item.spiceLevel || 'medium',
       status: item.status || 'active',
       images: item.images || [],
+      variants: item.variants || [],
+      customizations: item.customizations || [],
+      spiritCategory: item.spiritCategory || '',
+      abv: item.abv?.toString() || '',
+      servingUnit: item.servingUnit || '',
+      bottleSize: item.bottleSize || '',
+      ingredients: item.ingredients || '',
+      unit: item.unit || '',
+      weight: item.weight || '',
+      shelfLife: item.shelfLife?.toString() || '',
+      mfgDate: item.mfgDate || '',
+      expiryDate: item.expiryDate || '',
+      servingSize: item.servingSize || '',
+      scoopOptions: item.scoopOptions?.toString() || '',
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -418,6 +468,42 @@ export default function MenuManagementScreen() {
         status: formData.status,
       };
 
+      // Variants & customizations
+      if (formData.variants?.length > 0) {
+        itemData.variants = formData.variants
+          .filter(v => v.name?.trim())
+          .map(v => ({ name: v.name.trim(), price: v.price ? parseFloat(v.price) : 0 }));
+      }
+      if (formData.customizations?.length > 0) {
+        itemData.customizations = formData.customizations
+          .filter(c => c.name?.trim())
+          .map(c => ({ name: c.name.trim(), price: c.price ? parseFloat(c.price) : 0 }));
+      }
+
+      // Bar fields
+      if (businessType === 'bar') {
+        if (formData.spiritCategory) itemData.spiritCategory = formData.spiritCategory;
+        if (formData.abv) itemData.abv = parseFloat(formData.abv);
+        if (formData.servingUnit) itemData.servingUnit = formData.servingUnit;
+        if (formData.bottleSize) itemData.bottleSize = formData.bottleSize;
+        if (formData.ingredients) itemData.ingredients = formData.ingredients;
+      }
+
+      // Bakery fields
+      if (businessType === 'bakery') {
+        if (formData.unit) itemData.unit = formData.unit;
+        if (formData.weight) itemData.weight = formData.weight;
+        if (formData.shelfLife) itemData.shelfLife = parseInt(formData.shelfLife);
+        if (formData.mfgDate) itemData.mfgDate = formData.mfgDate;
+        if (formData.expiryDate) itemData.expiryDate = formData.expiryDate;
+      }
+
+      // Ice cream fields
+      if (businessType === 'ice_cream') {
+        if (formData.servingSize) itemData.servingSize = formData.servingSize;
+        if (formData.scoopOptions) itemData.scoopOptions = parseInt(formData.scoopOptions);
+      }
+
       if (editingItem) {
         await apiClient.updateMenuItem(editingItem.id, itemData);
       } else {
@@ -439,6 +525,7 @@ export default function MenuManagementScreen() {
 
       setShowAddModal(false);
       resetForm();
+      setHasDefaultMenu(false);
       await loadMenu(restaurantId);
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to save');
@@ -539,6 +626,42 @@ export default function MenuManagementScreen() {
             {item.status === 'inactive' && (
               <View style={styles.inactiveBadge}>
                 <Text style={styles.inactiveText}>Inactive</Text>
+              </View>
+            )}
+            {/* Type-specific badges */}
+            {item.spiritCategory && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#ede9fe' }]}>
+                <Text style={[styles.outOfStockText, { color: '#7c3aed' }]}>{item.spiritCategory}</Text>
+              </View>
+            )}
+            {item.abv && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#fef3c7' }]}>
+                <Text style={[styles.outOfStockText, { color: '#d97706' }]}>{item.abv}% ABV</Text>
+              </View>
+            )}
+            {item.bottleSize && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#dbeafe' }]}>
+                <Text style={[styles.outOfStockText, { color: '#2563eb' }]}>{item.bottleSize}</Text>
+              </View>
+            )}
+            {item.weight && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#fef3c7' }]}>
+                <Text style={[styles.outOfStockText, { color: '#d97706' }]}>{item.weight}</Text>
+              </View>
+            )}
+            {item.unit && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#fef3c7' }]}>
+                <Text style={[styles.outOfStockText, { color: '#d97706' }]}>per {item.unit}</Text>
+              </View>
+            )}
+            {item.servingSize && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#ecfeff' }]}>
+                <Text style={[styles.outOfStockText, { color: '#0891b2' }]}>{item.servingSize}</Text>
+              </View>
+            )}
+            {item.variants?.length > 0 && (
+              <View style={[styles.outOfStockBadge, { backgroundColor: '#f0fdf4' }]}>
+                <Text style={[styles.outOfStockText, { color: '#16a34a' }]}>{item.variants.length} variants</Text>
               </View>
             )}
           </View>
@@ -644,6 +767,7 @@ export default function MenuManagementScreen() {
                 onImageUpload={handleImageUpload}
                 onImageDelete={handleImageDelete}
                 uploadingImage={uploadingImage}
+                businessType={businessType}
               />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
@@ -711,6 +835,63 @@ export default function MenuManagementScreen() {
         contentContainerStyle={styles.categoriesContainer}
       />
 
+      {/* Demo Menu Banner */}
+      {hasDefaultMenu && (
+        <View style={{
+          backgroundColor: '#fef3c7',
+          marginHorizontal: 16,
+          marginBottom: 12,
+          borderRadius: 14,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: '#f59e0b',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={{ fontSize: 20, marginRight: 8 }}>🍽️</Text>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#92400e' }}>Sample Menu</Text>
+          </View>
+          <Text style={{ fontSize: 13, color: '#78350f', lineHeight: 18, marginBottom: 14 }}>
+            This is a demo menu to help you explore DineOpen. Adding your own items will automatically replace it.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity
+              onPress={handleUploadFile}
+              style={{
+                flex: 1,
+                backgroundColor: '#f59e0b',
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: 'center',
+                flexDirection: 'row',
+                justifyContent: 'center',
+                gap: 6,
+              }}
+            >
+              <Ionicons name="cloud-upload" size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Upload Menu</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleAdd}
+              style={{
+                flex: 1,
+                backgroundColor: '#fff',
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: 'center',
+                flexDirection: 'row',
+                justifyContent: 'center',
+                gap: 6,
+                borderWidth: 2,
+                borderColor: '#f59e0b',
+              }}
+            >
+              <Ionicons name="add" size={16} color="#92400e" />
+              <Text style={{ color: '#92400e', fontWeight: '600', fontSize: 13 }}>Add Item</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Menu Items */}
       <FlatList
         data={filteredItems}
@@ -758,6 +939,7 @@ export default function MenuManagementScreen() {
               onImageUpload={handleImageUpload}
               onImageDelete={handleImageDelete}
               uploadingImage={uploadingImage}
+              businessType={businessType}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>

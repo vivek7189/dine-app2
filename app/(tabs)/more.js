@@ -44,6 +44,14 @@ export default function MoreScreen() {
       title: 'Management',
       items: [
         {
+          title: 'Headquarters',
+          subtitle: 'Multi-restaurant overview & analytics',
+          icon: 'business',
+          color: '#6366f1',
+          route: '/(tabs)/headquarters',
+          roles: ['owner'],
+        },
+        {
           title: 'Menu Management',
           subtitle: 'Add, edit, and manage menu items',
           icon: 'fast-food',
