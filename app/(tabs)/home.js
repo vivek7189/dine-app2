@@ -13,8 +13,10 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import { getCached, setCache, clearCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import AppDrawer from '../../components/AppDrawer';
+import SyncIndicator from '../../components/SyncIndicator';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -43,6 +45,10 @@ export default function HomeScreen() {
 
   // Bar tabs (for bar-type businesses)
   const [openTabs, setOpenTabs] = useState([]);
+
+  // Multi-restaurant
+  const [restaurants, setRestaurants] = useState([]);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -93,8 +99,36 @@ export default function HomeScreen() {
       }
       setRestaurant(restaurantData);
 
+      // Fetch all user's restaurants for switcher
+      try {
+        const restResponse = await apiClient.getRestaurants();
+        const restList = restResponse?.restaurants || [];
+        if (restList.length > 0) {
+          setRestaurants(restList);
+        } else if (restaurantData) {
+          setRestaurants([restaurantData]);
+        }
+      } catch (e) {
+        // Fallback to current restaurant
+        if (restaurantData) setRestaurants([restaurantData]);
+      }
+
       if (restaurantId) {
-        await loadStats(restaurantId);
+        // Stale-while-revalidate: try cache first
+        const cached = await getCached('cache_home_stats_' + restaurantId);
+        if (cached?.data) {
+          const { todayStats: cs, tableStats: ts, todayOrders: co, openTabs: ct } = cached.data;
+          if (cs) setTodayStats(cs);
+          if (ts) setTableStats(ts);
+          if (co) setTodayOrders(co);
+          if (ct) setOpenTabs(ct);
+          setLoading(false);
+          // Fetch fresh in background
+          setSyncing(true);
+          loadStats(restaurantId).finally(() => setSyncing(false));
+        } else {
+          await loadStats(restaurantId);
+        }
       }
     } catch (error) {
       console.error('Error loading home data:', error);
@@ -129,22 +163,32 @@ export default function HomeScreen() {
       const pending = orders.filter(o => o.status === 'pending' || o.status === 'confirmed' || o.status === 'preparing');
       const revenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || o.total || 0), 0);
 
-      setTodayStats({
+      const newTodayStats = {
         totalOrders: orders.length,
         totalRevenue: revenue,
         avgOrderValue: completed.length > 0 ? Math.round(revenue / completed.length) : 0,
         pendingOrders: pending.length,
         completedOrders: completed.length,
-      });
+      };
+      setTodayStats(newTodayStats);
 
       const floors = floorsResponse.floors || (Array.isArray(floorsResponse) ? floorsResponse : []);
       const allTables = floors.flatMap(f => f.tables || []);
       const occupied = allTables.filter(t => t.status === 'occupied').length;
 
-      setTableStats({
+      const newTableStats = {
         total: allTables.length,
         occupied,
         available: allTables.length - occupied,
+      };
+      setTableStats(newTableStats);
+
+      // Save to cache
+      setCache('cache_home_stats_' + restaurantId, {
+        todayStats: newTodayStats,
+        tableStats: newTableStats,
+        todayOrders: orders.slice(0, 5),
+        openTabs: savedTabs,
       });
     } catch (error) {
       console.error('Error loading stats:', error);
@@ -163,6 +207,32 @@ export default function HomeScreen() {
   const handleLogout = async () => {
     await apiClient.clearToken();
     router.replace('/(auth)/login');
+  };
+
+  const handleSwitchRestaurant = async (newRestaurantId) => {
+    try {
+      // Clear all tab caches so new restaurant loads fresh
+      await clearCache('cache_');
+
+      // Update backend preference
+      await apiClient.updateUserPreferences({ defaultRestaurantId: newRestaurantId });
+
+      // Fetch fresh restaurant data
+      const res = await apiClient.getRestaurant(newRestaurantId);
+      const freshData = res?.restaurant || res;
+      const newRestaurant = freshData?.name ? { id: newRestaurantId, ...freshData } : null;
+
+      // Update stored user
+      const updatedUser = { ...user, restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant };
+      await apiClient.setUser(updatedUser);
+      setUser(updatedUser);
+      setRestaurant(newRestaurant || user?.restaurant);
+
+      // Reload stats for new restaurant
+      await loadStats(newRestaurantId);
+    } catch (error) {
+      console.error('Error switching restaurant:', error);
+    }
   };
 
   const role = user?.role?.toLowerCase() || '';
@@ -298,11 +368,20 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Restaurant Name */}
+        <SyncIndicator visible={syncing} />
+
+        {/* Restaurant Name — tap to open drawer for switching */}
         {hasRestaurant && (
-          <Text style={styles.restaurantName}>
-            {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
-          </Text>
+          <TouchableOpacity onPress={() => setDrawerVisible(true)} activeOpacity={0.7}>
+            <View style={styles.restaurantNameRow}>
+              <Text style={styles.restaurantName}>
+                {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
+              </Text>
+              {restaurants.length > 1 && (
+                <Ionicons name="swap-horizontal" size={14} color={Colors.textLight} />
+              )}
+            </View>
+          </TouchableOpacity>
         )}
 
         {/* First-time owner without restaurant */}
@@ -596,6 +675,9 @@ export default function HomeScreen() {
         onClose={() => setDrawerVisible(false)}
         user={user}
         onLogout={handleLogout}
+        restaurants={restaurants}
+        currentRestaurantId={getRestaurantId()}
+        onSwitchRestaurant={handleSwitchRestaurant}
       />
     </SafeAreaView>
   );
@@ -697,12 +779,17 @@ const styles = StyleSheet.create({
     color: '#8b5cf6',
     fontWeight: '600',
   },
-  restaurantName: {
-    ...Typography.caption,
-    color: Colors.textMedium,
+  restaurantNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: Spacing.md,
     marginLeft: 44,
     marginBottom: Spacing.md,
+  },
+  restaurantName: {
+    ...Typography.caption,
+    color: Colors.textMedium,
   },
   // Setup Card (first-time owner)
   setupCard: {

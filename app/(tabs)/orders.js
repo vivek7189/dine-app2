@@ -21,6 +21,8 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Pusher from 'pusher-js';
 import apiClient from '../../services/api';
+import { getCached, setCache } from '../../services/cacheManager';
+import SyncIndicator from '../../components/SyncIndicator';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 
 // Pusher configuration (same as web frontend)
@@ -34,6 +36,7 @@ export default function OrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
   const [user, setUser] = useState(null);
 
@@ -237,7 +240,22 @@ export default function OrdersScreen() {
       }
 
       setRestaurantId(rid);
-      await loadOrders(rid);
+
+      // Stale-while-revalidate: show cached data instantly, then refresh in background
+      const cachedOrders = await getCached('cache_orders_' + rid);
+      if (cachedOrders?.data) {
+        setOrders(cachedOrders.data);
+        setLoading(false);
+        // Background refresh with syncing indicator instead of loading spinner
+        setSyncing(true);
+        try {
+          await loadOrders(rid);
+        } finally {
+          setSyncing(false);
+        }
+      } else {
+        await loadOrders(rid);
+      }
     } catch (error) {
       console.error('Error loading orders:', error);
     } finally {
@@ -274,6 +292,9 @@ export default function OrdersScreen() {
       });
 
       setOrders(ordersList);
+      if (restaurantId) {
+        setCache('cache_orders_' + restaurantId, ordersList);
+      }
     } catch (error) {
       console.error('Error loading orders:', error);
       throw error;
@@ -310,6 +331,9 @@ export default function OrdersScreen() {
       });
 
       setOrders(ordersList);
+      if (rid) {
+        setCache('cache_orders_' + rid, ordersList);
+      }
     } catch (error) {
       console.error('Error loading orders in background:', error);
     } finally {
@@ -890,6 +914,8 @@ export default function OrdersScreen() {
           ))}
         </ScrollView>
       </View>
+
+      <SyncIndicator visible={syncing} />
 
       <FlatList
         data={orders}

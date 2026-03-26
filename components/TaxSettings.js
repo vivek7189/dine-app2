@@ -28,6 +28,32 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   const [newTaxName, setNewTaxName] = useState('');
   const [newTaxRate, setNewTaxRate] = useState('');
 
+  // Discount settings state
+  const [discountsEnabled, setDiscountsEnabled] = useState(false);
+  const [allowManualDiscount, setAllowManualDiscount] = useState(false);
+  const [discountRoles, setDiscountRoles] = useState(['owner', 'manager']);
+  const [maxPercentDiscount, setMaxPercentDiscount] = useState('');
+  const [maxFlatDiscount, setMaxFlatDiscount] = useState('');
+
+  const DISCOUNT_ROLE_OPTIONS = ['owner', 'manager', 'admin', 'cashier', 'waiter'];
+
+  const applyDiscountSettings = (ds) => {
+    if (!ds) return;
+    setDiscountsEnabled(ds.enabled || false);
+    setAllowManualDiscount(ds.allowManualDiscount || false);
+    setDiscountRoles(ds.manualDiscountRoles || ['owner', 'manager']);
+    setMaxPercentDiscount(ds.maxPercentDiscount != null ? String(ds.maxPercentDiscount) : '');
+    setMaxFlatDiscount(ds.maxFlatDiscount != null ? String(ds.maxFlatDiscount) : '');
+  };
+
+  const getDiscountSettings = () => ({
+    enabled: discountsEnabled,
+    allowManualDiscount,
+    manualDiscountRoles: discountRoles,
+    maxPercentDiscount: maxPercentDiscount ? Number(maxPercentDiscount) : null,
+    maxFlatDiscount: maxFlatDiscount ? Number(maxFlatDiscount) : null,
+  });
+
   // Load tax settings - first from cache, then fetch from API in background
   useEffect(() => {
     loadTaxSettings();
@@ -43,6 +69,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         const cachedSettings = JSON.parse(cached);
         setTaxEnabled(cachedSettings.enabled || false);
         setTaxes(cachedSettings.taxes || []);
+        applyDiscountSettings(cachedSettings.discountSettings);
         setLoading(false);
       }
 
@@ -63,6 +90,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         const settings = response.taxSettings;
         setTaxEnabled(settings.enabled || false);
         setTaxes(settings.taxes || []);
+        applyDiscountSettings(settings.discountSettings);
 
         // Cache the settings
         await AsyncStorage.setItem(
@@ -83,7 +111,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     }
   };
 
-  const saveTaxSettings = async (enabled, taxList) => {
+  const saveTaxSettings = async (enabled, taxList, discountOverride) => {
     if (!restaurantId) return;
 
     setSaving(true);
@@ -92,6 +120,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         enabled,
         taxes: taxList,
         defaultTaxRate: taxList.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
+        discountSettings: discountOverride || getDiscountSettings(),
       };
 
       await apiClient.updateTaxSettings(restaurantId, settings);
@@ -199,6 +228,59 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     await saveTaxSettings(taxEnabled, updatedTaxes);
   };
 
+  // Discount handlers with auto-save
+  const saveDiscountChange = (overrides = {}) => {
+    const ds = {
+      enabled: overrides.enabled !== undefined ? overrides.enabled : discountsEnabled,
+      allowManualDiscount: overrides.allowManualDiscount !== undefined ? overrides.allowManualDiscount : allowManualDiscount,
+      manualDiscountRoles: overrides.manualDiscountRoles || discountRoles,
+      maxPercentDiscount: overrides.maxPercentDiscount !== undefined
+        ? (overrides.maxPercentDiscount ? Number(overrides.maxPercentDiscount) : null)
+        : (maxPercentDiscount ? Number(maxPercentDiscount) : null),
+      maxFlatDiscount: overrides.maxFlatDiscount !== undefined
+        ? (overrides.maxFlatDiscount ? Number(overrides.maxFlatDiscount) : null)
+        : (maxFlatDiscount ? Number(maxFlatDiscount) : null),
+    };
+    saveTaxSettings(taxEnabled, taxes, ds);
+  };
+
+  const handleToggleDiscounts = (value) => {
+    setDiscountsEnabled(value);
+    saveDiscountChange({ enabled: value });
+  };
+
+  const handleToggleManualDiscount = (value) => {
+    setAllowManualDiscount(value);
+    saveDiscountChange({ allowManualDiscount: value });
+  };
+
+  const handleToggleDiscountRole = (role) => {
+    const updated = discountRoles.includes(role)
+      ? discountRoles.filter(r => r !== role)
+      : [...discountRoles, role];
+    setDiscountRoles(updated);
+    saveDiscountChange({ manualDiscountRoles: updated });
+  };
+
+  const handleMaxPercentChange = (value) => {
+    const cleaned = value.replace(/[^0-9]/g, '');
+    const clamped = cleaned ? String(Math.min(100, Math.max(1, Number(cleaned)))) : '';
+    setMaxPercentDiscount(clamped);
+  };
+
+  const handleMaxPercentBlur = () => {
+    saveDiscountChange({ maxPercentDiscount: maxPercentDiscount });
+  };
+
+  const handleMaxFlatChange = (value) => {
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    setMaxFlatDiscount(cleaned);
+  };
+
+  const handleMaxFlatBlur = () => {
+    saveDiscountChange({ maxFlatDiscount: maxFlatDiscount });
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -298,6 +380,112 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
           )}
         </View>
       )}
+
+      {/* Discount Settings Section */}
+      <View style={styles.discountSection}>
+        <View style={styles.discountHeader}>
+          <View style={styles.headerLeft}>
+            <Ionicons name="pricetag-outline" size={24} color={Colors.primary} />
+            <Text style={styles.headerTitle}>Discount Settings</Text>
+          </View>
+        </View>
+
+        <View style={styles.enableSection}>
+          <View style={styles.enableLeft}>
+            <Text style={styles.enableLabel}>Enable Discounts</Text>
+            <Text style={styles.enableHint}>
+              {discountsEnabled ? 'Discounts can be applied to orders' : 'Discounts are disabled'}
+            </Text>
+          </View>
+          <Switch
+            value={discountsEnabled}
+            onValueChange={handleToggleDiscounts}
+            trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
+            thumbColor={discountsEnabled ? Colors.primary : '#f4f4f5'}
+          />
+        </View>
+
+        {discountsEnabled && (
+          <View style={styles.discountBody}>
+            {/* Allow Manual Discount */}
+            <View style={styles.discountRow}>
+              <View style={styles.enableLeft}>
+                <Text style={styles.enableLabel}>Allow Manual Discount</Text>
+                <Text style={styles.enableHint}>
+                  Let staff apply discounts manually at checkout
+                </Text>
+              </View>
+              <Switch
+                value={allowManualDiscount}
+                onValueChange={handleToggleManualDiscount}
+                trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
+                thumbColor={allowManualDiscount ? Colors.primary : '#f4f4f5'}
+              />
+            </View>
+
+            {/* Role Pills */}
+            {allowManualDiscount && (
+              <View style={styles.discountRolesSection}>
+                <Text style={styles.discountRolesLabel}>Who can apply manual discounts?</Text>
+                <View style={styles.discountRolesRow}>
+                  {DISCOUNT_ROLE_OPTIONS.map((role) => {
+                    const selected = discountRoles.includes(role);
+                    return (
+                      <TouchableOpacity
+                        key={role}
+                        style={[
+                          styles.rolePill,
+                          selected ? styles.rolePillSelected : styles.rolePillUnselected,
+                        ]}
+                        onPress={() => handleToggleDiscountRole(role)}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.rolePillText,
+                            selected ? styles.rolePillTextSelected : styles.rolePillTextUnselected,
+                          ]}
+                        >
+                          {role.charAt(0).toUpperCase() + role.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* Max % Discount */}
+            <View style={styles.discountInputGroup}>
+              <Text style={styles.inputLabel}>Max % Discount</Text>
+              <TextInput
+                style={styles.discountInput}
+                placeholder="e.g., 50"
+                placeholderTextColor="#9ca3af"
+                keyboardType="number-pad"
+                value={maxPercentDiscount}
+                onChangeText={handleMaxPercentChange}
+                onBlur={handleMaxPercentBlur}
+                maxLength={3}
+              />
+            </View>
+
+            {/* Max Flat Discount */}
+            <View style={styles.discountInputGroup}>
+              <Text style={styles.inputLabel}>Max Flat Discount</Text>
+              <TextInput
+                style={styles.discountInput}
+                placeholder="No limit"
+                placeholderTextColor="#9ca3af"
+                keyboardType="decimal-pad"
+                value={maxFlatDiscount}
+                onChangeText={handleMaxFlatChange}
+                onBlur={handleMaxFlatBlur}
+              />
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* Add/Edit Tax Modal */}
       <Modal
@@ -602,5 +790,75 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Discount Settings styles
+  discountSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  discountHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  discountBody: {
+    padding: Spacing.md,
+  },
+  discountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  discountRolesSection: {
+    marginBottom: Spacing.md,
+  },
+  discountRolesLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textDark,
+    marginBottom: Spacing.sm,
+  },
+  discountRolesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  rolePill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  rolePillSelected: {
+    backgroundColor: '#1f2937',
+  },
+  rolePillUnselected: {
+    backgroundColor: '#f3f4f6',
+  },
+  rolePillText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  rolePillTextSelected: {
+    color: '#ffffff',
+  },
+  rolePillTextUnselected: {
+    color: '#6b7280',
+  },
+  discountInputGroup: {
+    marginBottom: Spacing.md,
+  },
+  discountInput: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: Colors.textDark,
   },
 });

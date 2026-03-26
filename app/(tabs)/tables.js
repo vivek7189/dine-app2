@@ -19,9 +19,11 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import AppDrawer from '../../components/AppDrawer';
+import SyncIndicator from '../../components/SyncIndicator';
 
 export default function TablesScreen() {
   const router = useRouter();
@@ -60,6 +62,7 @@ export default function TablesScreen() {
     bookingDate: '', bookingTime: '', notes: '',
   });
   const [savingBooking, setSavingBooking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
@@ -96,6 +99,12 @@ export default function TablesScreen() {
 
       const allTables = floorsData.flatMap(floor => floor.tables || []);
       setTables(allTables);
+
+      // Save to cache for stale-while-revalidate
+      const rid = restaurantIdRef.current;
+      if (rid) {
+        setCache('cache_floors_' + rid, { floors: floorsData, tables: allTables });
+      }
     } catch (error) {
       console.error('Error loading floors:', error);
       throw error;
@@ -144,7 +153,8 @@ export default function TablesScreen() {
   // Background refresh without blocking
   const refreshInBackground = useCallback(async (restaurantId) => {
     if (isRefreshingRef.current) return;
-    
+
+    setSyncing(true);
     try {
       isRefreshingRef.current = true;
       const response = await apiClient.getFloors(restaurantId);
@@ -171,11 +181,17 @@ export default function TablesScreen() {
 
       const allTables = floorsData.flatMap(floor => floor.tables || []);
       setTables(allTables);
+
+      // Save to cache for stale-while-revalidate
+      if (restaurantId) {
+        setCache('cache_floors_' + restaurantId, { floors: floorsData, tables: allTables });
+      }
     } catch (error) {
       console.error('Error refreshing in background:', error);
       // Don't show error to user, just log it
     } finally {
       isRefreshingRef.current = false;
+      setSyncing(false);
     }
   }, []);
 
@@ -231,6 +247,25 @@ export default function TablesScreen() {
       const restaurant = { id: restaurantId, ...userData.restaurant };
       setSelectedRestaurant(restaurant);
       restaurantIdRef.current = restaurantId;
+
+      // Stale-while-revalidate: try cache first
+      const cached = await getCached('cache_floors_' + restaurantId);
+      if (cached?.data?.floors) {
+        setFloors(cached.data.floors);
+        setTables(cached.data.tables || []);
+        setSelectedFloor(prev => {
+          if (!prev && cached.data.floors.length > 0) {
+            return cached.data.floors[0];
+          }
+          return prev;
+        });
+        setLoading(false);
+        // Fetch fresh data in background
+        setSyncing(true);
+        loadFloorsAndTables(restaurantId).finally(() => setSyncing(false));
+        return;
+      }
+
       await loadFloorsAndTables(restaurantId);
     } catch (error) {
       console.error('Error loading initial data:', error);
@@ -974,6 +1009,8 @@ export default function TablesScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      <SyncIndicator visible={syncing} />
 
       {/* Quick Stats - Icon + Count Only */}
       <View style={styles.quickStats}>

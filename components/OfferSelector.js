@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -26,11 +26,26 @@ function isOfferActiveNow(offer) {
   return true;
 }
 
+// Check if offer is within its valid date range
+function isDateValid(offer) {
+  const now = new Date();
+  if (offer.validFrom) {
+    const from = new Date(offer.validFrom);
+    if (now < from) return false;
+  }
+  if (offer.validUntil || offer.validTo) {
+    const until = new Date(offer.validUntil || offer.validTo);
+    if (now > until) return false;
+  }
+  return true;
+}
+
 // Calculate discount for an offer against cart items
 function calculateOfferDiscount(offer, cartItems, subtotal) {
   if (!offer || !offer.isActive) return 0;
 
   if (offer.minimumOrder && subtotal < offer.minimumOrder) return 0;
+  if (offer.minOrderValue && subtotal < offer.minOrderValue) return 0;
 
   // BOGO offers
   if (offer.promotionType === 'bogo' && offer.bogoConfig) {
@@ -50,7 +65,6 @@ function calculateOfferDiscount(offer, cartItems, subtotal) {
     const totalQty = eligibleItems.reduce((sum, i) => sum + i.quantity, 0);
     if (totalQty >= buyQty + getQty) {
       const freeItems = Math.floor(totalQty / (buyQty + getQty)) * getQty;
-      // Use cheapest item price for free items
       const prices = eligibleItems.map(i => i.price).sort((a, b) => a - b);
       let freeDiscount = 0;
       for (let i = 0; i < Math.min(freeItems, prices.length); i++) {
@@ -61,7 +75,7 @@ function calculateOfferDiscount(offer, cartItems, subtotal) {
     return 0;
   }
 
-  // Regular discount
+  // Regular discount — determine base
   let discountBase = subtotal;
 
   if (offer.scope === 'category' && offer.targetCategories?.length > 0) {
@@ -91,32 +105,86 @@ export default function OfferSelector({
   selectedOfferId = null,
   manualDiscount = '',
   manualDiscountType = 'flat',
+  customerInfo = null,
 }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showOffers, setShowOffers] = useState(false);
   const [localManualDiscount, setLocalManualDiscount] = useState(manualDiscount);
   const [localDiscountType, setLocalDiscountType] = useState(manualDiscountType);
+  const [autoApplied, setAutoApplied] = useState(false);
+  const [firstOrderWarning, setFirstOrderWarning] = useState('');
+  const wasManuallySelected = useRef(false);
 
   useEffect(() => {
     if (restaurantId) loadOffers();
   }, [restaurantId]);
 
+  // Re-fetch when customerInfo.isFirstOrder changes
+  useEffect(() => {
+    if (restaurantId && customerInfo !== null) {
+      loadOffers();
+    }
+  }, [customerInfo?.isFirstOrder]);
+
+  // First-order offer rejection
+  useEffect(() => {
+    if (customerInfo?.isFirstOrder === false && selectedOfferId) {
+      const selectedOffer = offers.find(o => (o.id || o._id) === selectedOfferId);
+      if (selectedOffer?.isFirstOrderOnly) {
+        if (onOfferSelected) onOfferSelected(null, 0, null);
+        setFirstOrderWarning('Offer removed — not a first-time customer');
+        setTimeout(() => setFirstOrderWarning(''), 5000);
+      }
+    }
+  }, [customerInfo?.isFirstOrder]);
+
   const loadOffers = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.getActiveOffers(restaurantId);
-      const activeOffers = (response.offers || response || [])
+      let response;
+      try {
+        response = await apiClient.getActiveOffersForPOS(restaurantId, customerInfo?.isFirstOrder);
+      } catch (e) {
+        // Fallback to public endpoint
+        response = await apiClient.getActiveOffers(restaurantId);
+      }
+
+      const allOffers = response.offers || response || [];
+      const activeOffers = allOffers
         .filter(o => o.isActive)
-        .filter(isOfferActiveNow);
+        .filter(isOfferActiveNow)
+        .filter(isDateValid)
+        .filter(o => {
+          // Min order value filter
+          if ((o.minimumOrder || o.minOrderValue) && subtotal < (o.minimumOrder || o.minOrderValue)) return false;
+          return true;
+        })
+        .filter(o => {
+          // First-order filter
+          if (o.isFirstOrderOnly && customerInfo?.isFirstOrder === false) return false;
+          return true;
+        });
+
       setOffers(activeOffers);
 
-      // Auto-apply first scheduled offer (happy hour)
-      const scheduledOffer = activeOffers.find(o => o.schedule?.type === 'recurring');
-      if (scheduledOffer && !selectedOfferId) {
-        const discount = calculateOfferDiscount(scheduledOffer, cartItems, subtotal);
-        if (discount > 0 && onOfferSelected) {
-          onOfferSelected(scheduledOffer.id || scheduledOffer._id, discount, scheduledOffer);
+      // Auto-apply best offer
+      if (!wasManuallySelected.current && activeOffers.length > 0) {
+        let bestOffer = null;
+        let bestDiscount = 0;
+
+        for (const offer of activeOffers) {
+          const discount = calculateOfferDiscount(offer, cartItems, subtotal);
+          if (discount > bestDiscount) {
+            bestDiscount = discount;
+            bestOffer = offer;
+          }
+        }
+
+        if (bestOffer && bestDiscount > 0 && !selectedOfferId) {
+          const offerId = bestOffer.id || bestOffer._id;
+          if (onOfferSelected) onOfferSelected(offerId, bestDiscount, bestOffer);
+          setAutoApplied(true);
         }
       }
     } catch (error) {
@@ -128,6 +196,9 @@ export default function OfferSelector({
 
   const handleSelectOffer = (offer) => {
     const offerId = offer.id || offer._id;
+    wasManuallySelected.current = true;
+    setAutoApplied(false);
+
     if (selectedOfferId === offerId) {
       // Deselect
       if (onOfferSelected) onOfferSelected(null, 0, null);
@@ -166,11 +237,19 @@ export default function OfferSelector({
 
   return (
     <View style={styles.container}>
+      {/* First-order warning */}
+      {firstOrderWarning !== '' && (
+        <View style={styles.warningBanner}>
+          <Ionicons name="alert-circle" size={14} color="#dc2626" />
+          <Text style={styles.warningText}>{firstOrderWarning}</Text>
+        </View>
+      )}
+
       {/* Offer Selection */}
       {offers.length > 0 && (
         <View style={styles.offerSection}>
           <TouchableOpacity
-            style={styles.offerToggle}
+            style={[styles.offerToggle, autoApplied && styles.offerToggleAutoApplied]}
             onPress={() => setShowOffers(!showOffers)}
           >
             <Ionicons name="pricetag-outline" size={16} color="#8b5cf6" />
@@ -179,6 +258,11 @@ export default function OfferSelector({
                 ? `${selectedOffer.name} (-₹${selectedOfferDiscount.toFixed(0)})`
                 : `${offers.length} offer${offers.length > 1 ? 's' : ''} available`}
             </Text>
+            {autoApplied && (
+              <View style={styles.autoAppliedBadge}>
+                <Text style={styles.autoAppliedText}>Auto</Text>
+              </View>
+            )}
             <Ionicons name={showOffers ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMedium} />
           </TouchableOpacity>
 
@@ -205,13 +289,14 @@ export default function OfferSelector({
                           : `₹${offer.discountValue} off`}
                         {offer.scope !== 'order' ? ` (${offer.scope})` : ''}
                         {offer.promotionType === 'bogo' ? ' BOGO' : ''}
-                        {offer.schedule?.type === 'recurring' ? ' (Happy Hour)' : ''}
+                        {offer.schedule?.type === 'recurring' ? ' ⏰' : ''}
+                        {offer.isFirstOrderOnly ? ' (1st order)' : ''}
                       </Text>
                     </View>
                     <View style={styles.offerItemRight}>
                       {discount > 0 && (
                         <Text style={[styles.offerDiscount, isSelected && styles.offerDiscountSelected]}>
-                          -₹{discount.toFixed(0)}
+                          saves ₹{discount.toFixed(0)}
                         </Text>
                       )}
                       {isSelected && (
@@ -259,7 +344,7 @@ export default function OfferSelector({
   );
 }
 
-// Export helper for use in parent
+// Export helpers for use in parent
 export { calculateOfferDiscount, isOfferActiveNow };
 
 const styles = StyleSheet.create({
@@ -267,6 +352,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginTop: 8,
     padding: 16,
+  },
+  // Warning
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fef2f2',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  warningText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#dc2626',
+    flex: 1,
   },
   // Offers
   offerSection: {
@@ -283,11 +386,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e9d5ff',
   },
+  offerToggleAutoApplied: {
+    borderColor: '#22c55e',
+    backgroundColor: '#f0fdf4',
+  },
   offerToggleText: {
     flex: 1,
     fontSize: 13,
     fontWeight: '600',
     color: '#6d28d9',
+  },
+  autoAppliedBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  autoAppliedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#16a34a',
   },
   offerList: {
     marginTop: 8,
@@ -328,7 +446,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   offerDiscount: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#10b981',
   },

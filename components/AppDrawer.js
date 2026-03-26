@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,35 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors } from '../constants/Theme';
 
-export default function AppDrawer({ visible, onClose, user, onLogout }) {
+const BUSINESS_TYPE_LABELS = {
+  bar: 'Bar',
+  cafe: 'Cafe',
+  bakery: 'Bakery',
+  hotel: 'Hotel',
+  restaurant: 'Restaurant',
+};
+
+export default function AppDrawer({
+  visible,
+  onClose,
+  user,
+  onLogout,
+  restaurants = [],
+  currentRestaurantId,
+  onSwitchRestaurant,
+}) {
   const router = useRouter();
+  const [switching, setSwitching] = useState(null); // restaurantId being switched to
+  const [expanded, setExpanded] = useState(false);
+
+  const hasMultiple = restaurants.length > 1;
+  const currentRestaurant = restaurants.find(r => (r.id || r._id) === currentRestaurantId) || restaurants[0];
 
   const menuItems = [
     {
@@ -71,6 +93,17 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
     }, 300);
   };
 
+  const handleSwitch = async (restaurantId) => {
+    if (restaurantId === currentRestaurantId || !onSwitchRestaurant) return;
+    setSwitching(restaurantId);
+    try {
+      await onSwitchRestaurant(restaurantId);
+      setExpanded(false);
+    } finally {
+      setSwitching(null);
+    }
+  };
+
   const shouldShowItem = (item) => {
     if (user?.role && item.restrictedRoles?.includes(user.role.toLowerCase())) return false;
     if (!item.requiresRole) return true;
@@ -110,6 +143,86 @@ export default function AppDrawer({ visible, onClose, user, onLogout }) {
 
           {/* Menu Items */}
           <ScrollView style={styles.menuContainer} showsVerticalScrollIndicator={false}>
+            {/* Restaurant Switcher */}
+            {restaurants.length > 0 && (
+              <View style={styles.menuSection}>
+                <Text style={styles.sectionTitle}>RESTAURANT</Text>
+
+                {/* Current restaurant */}
+                <TouchableOpacity
+                  style={styles.restaurantCard}
+                  onPress={() => hasMultiple && setExpanded(!expanded)}
+                  activeOpacity={hasMultiple ? 0.7 : 1}
+                >
+                  <View style={styles.restaurantIconContainer}>
+                    <Ionicons name="storefront" size={22} color={Colors.primary} />
+                  </View>
+                  <View style={styles.restaurantInfo}>
+                    <Text style={styles.restaurantName} numberOfLines={1}>
+                      {currentRestaurant?.name || 'My Restaurant'}
+                    </Text>
+                    <Text style={styles.restaurantType}>
+                      {BUSINESS_TYPE_LABELS[currentRestaurant?.businessType] || 'Restaurant'}
+                    </Text>
+                  </View>
+                  {hasMultiple && (
+                    <Ionicons
+                      name={expanded ? 'chevron-up' : 'chevron-down'}
+                      size={20}
+                      color={Colors.textLight}
+                    />
+                  )}
+                </TouchableOpacity>
+
+                {/* Expanded restaurant list */}
+                {hasMultiple && expanded && (
+                  <View style={styles.restaurantList}>
+                    {restaurants.map((rest) => {
+                      const restId = rest.id || rest._id;
+                      const isSelected = restId === currentRestaurantId;
+                      const isSwitching = switching === restId;
+                      return (
+                        <TouchableOpacity
+                          key={restId}
+                          style={[
+                            styles.restaurantOption,
+                            isSelected && styles.restaurantOptionSelected,
+                          ]}
+                          onPress={() => handleSwitch(restId)}
+                          activeOpacity={0.7}
+                          disabled={isSelected || !!switching}
+                        >
+                          <View style={[
+                            styles.restaurantOptionAccent,
+                            { backgroundColor: isSelected ? Colors.primary : '#e5e7eb' },
+                          ]} />
+                          <View style={styles.restaurantOptionInfo}>
+                            <Text
+                              style={[
+                                styles.restaurantOptionName,
+                                isSelected && styles.restaurantOptionNameSelected,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {rest.name}
+                            </Text>
+                            <Text style={styles.restaurantOptionType}>
+                              {BUSINESS_TYPE_LABELS[rest.businessType] || 'Restaurant'}
+                            </Text>
+                          </View>
+                          {isSwitching ? (
+                            <ActivityIndicator size="small" color={Colors.primary} />
+                          ) : isSelected ? (
+                            <Ionicons name="checkmark-circle" size={22} color={Colors.primary} />
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
+
             <View style={styles.menuSection}>
               <Text style={styles.sectionTitle}>NAVIGATION</Text>
               {menuItems.filter(shouldShowItem).map((item, index) => (
@@ -239,6 +352,75 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     letterSpacing: 0.5,
   },
+  // Restaurant switcher
+  restaurantCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  restaurantIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  restaurantInfo: {
+    flex: 1,
+  },
+  restaurantName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  restaurantType: {
+    fontSize: 12,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  restaurantList: {
+    marginHorizontal: 20,
+    marginTop: 4,
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+  },
+  restaurantOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingRight: 14,
+  },
+  restaurantOptionSelected: {
+    backgroundColor: '#f0f4ff',
+  },
+  restaurantOptionAccent: {
+    width: 3,
+    height: '100%',
+    marginRight: 12,
+  },
+  restaurantOptionInfo: {
+    flex: 1,
+  },
+  restaurantOptionName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textDark,
+  },
+  restaurantOptionNameSelected: {
+    color: Colors.primary,
+  },
+  restaurantOptionType: {
+    fontSize: 11,
+    color: Colors.textLight,
+    marginTop: 1,
+  },
+  // Menu items
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',

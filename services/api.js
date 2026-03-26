@@ -468,6 +468,32 @@ class ApiClient {
     });
   }
 
+  // Saved Carts (parked orders & templates — separate from orders, no side effects)
+  async getSavedCarts(restaurantId, type = null) {
+    const query = type ? `?type=${type}` : '';
+    return this.request(`/api/saved-carts/${restaurantId}${query}`);
+  }
+
+  async createSavedCart(cartData) {
+    return this.request('/api/saved-carts', {
+      method: 'POST',
+      data: cartData,
+    });
+  }
+
+  async updateSavedCart(cartId, updateData) {
+    return this.request(`/api/saved-carts/${cartId}`, {
+      method: 'PATCH',
+      data: updateData,
+    });
+  }
+
+  async deleteSavedCart(cartId) {
+    return this.request(`/api/saved-carts/${cartId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Get order by ID
   async getOrderById(restaurantId, orderId) {
     const response = await this.getOrders(restaurantId, { search: orderId, limit: 1 });
@@ -501,6 +527,14 @@ class ApiClient {
   // Get all restaurants for authenticated user
   async getRestaurants() {
     return this.request('/api/restaurants');
+  }
+
+  // Update user preferences (e.g. defaultRestaurantId)
+  async updateUserPreferences(preferences) {
+    return this.request('/api/user/preferences', {
+      method: 'PATCH',
+      data: preferences,
+    });
   }
 
   // Create a new restaurant
@@ -797,6 +831,12 @@ class ApiClient {
     return this.request(`/api/public/offers/${restaurantId}`);
   }
 
+  // Get active offers for POS (authenticated, full fields including scope/schedule/bogoConfig)
+  async getActiveOffersForPOS(restaurantId, isFirstOrder) {
+    const params = isFirstOrder !== undefined ? `?isFirstOrder=${isFirstOrder}` : '';
+    return this.request(`/api/offers/${restaurantId}/active${params}`);
+  }
+
   // Place public order (for customer self-ordering)
   async placePublicOrder(restaurantId, orderData) {
     return this.request(`/api/public/orders/${restaurantId}`, {
@@ -855,10 +895,10 @@ class ApiClient {
   }
 
   // Lookup customer by phone (for loyalty points)
-  async lookupCustomerByPhone(restaurantId, phone) {
+  async lookupCustomerByPhone(restaurantId, phone, countryCode) {
     return this.request('/api/public/customer/lookup', {
       method: 'POST',
-      data: { restaurantId, phone },
+      data: { restaurantId, phone, countryCode },
     });
   }
 
@@ -943,6 +983,11 @@ class ApiClient {
   async getCustomers(restaurantId, params = {}) {
     const queryString = new URLSearchParams(params).toString();
     return this.request(`/api/customers/${restaurantId}${queryString ? `?${queryString}` : ''}`);
+  }
+
+  // Get full customer detail by ID
+  async getCustomerDetail(customerId) {
+    return this.request(`/api/customers/detail/${customerId}`);
   }
 
   // Get customer loyalty history

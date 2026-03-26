@@ -15,7 +15,10 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import apiClient from '../../services/api';
+import { queueOrder, generateIdempotencyKey, getQueueCount } from '../../services/offlineQueue';
+import { syncPendingOrders, onSyncStatusChange } from '../../services/syncEngine';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -26,6 +29,9 @@ import WaiterCartModal from '../../components/WaiterCartModal';
 import CashierCartModal from '../../components/CashierCartModal';
 import CashierInvoiceModal from '../../components/CashierInvoiceModal';
 import KOTModal from '../../components/KOTModal';
+import { useToast } from '../../components/Toast';
+import { getCached, setCache } from '../../services/cacheManager';
+import SyncIndicator from '../../components/SyncIndicator';
 
 export default function MenuScreen() {
   const router = useRouter();
@@ -55,7 +61,16 @@ export default function MenuScreen() {
   const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  // Multi-tier pricing
+  const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
+  const [pricingRules, setPricingRules] = useState([]);
+  const [activePricingRuleId, setActivePricingRuleId] = useState(null);
+  const [autoSelectedRule, setAutoSelectedRule] = useState(false);
 
+  const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
   const HEADER_EXPANDED = 200;
   const HEADER_COLLAPSED = 92; // room for row1 + row2 chips (wrap)
@@ -64,6 +79,33 @@ export default function MenuScreen() {
   useEffect(() => {
     loadInitialData();
     loadImagePreference();
+  }, []);
+
+  // Network status monitoring + auto-sync
+  useEffect(() => {
+    const unsubNet = NetInfo.addEventListener(state => {
+      const online = !!state.isConnected;
+      setIsOnline(online);
+      // Auto-sync when coming back online
+      if (online) {
+        getQueueCount().then(setPendingSyncCount);
+        syncPendingOrders(apiClient);
+      }
+    });
+
+    const unsubSync = onSyncStatusChange((event) => {
+      if (['sync_complete', 'synced', 'queued', 'failed'].includes(event.type)) {
+        getQueueCount().then(setPendingSyncCount);
+      }
+    });
+
+    // Initial count
+    getQueueCount().then(setPendingSyncCount);
+
+    return () => {
+      unsubNet();
+      unsubSync();
+    };
   }, []);
 
   // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
@@ -184,6 +226,23 @@ export default function MenuScreen() {
     }
   }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
 
+  // Auto-select pricing rule based on table floor
+  useEffect(() => {
+    if (!multiPricingEnabled || pricingRules.length === 0) return;
+    const floorName = params.floorName || selectedTable?.floor || '';
+    if (floorName) {
+      const matched = pricingRules.find(r =>
+        (r.tableMappings || []).some(m => floorName.toLowerCase().includes(m.toLowerCase()))
+      );
+      if (matched) {
+        setActivePricingRuleId(matched.id);
+        setAutoSelectedRule(true);
+        return;
+      }
+    }
+    setAutoSelectedRule(false);
+  }, [selectedTable, params.floorName, multiPricingEnabled, pricingRules]);
+
   // Use useMemo instead of useEffect to prevent infinite loops
   const filteredItems = useMemo(() => {
     let filtered = [...menuItems];
@@ -250,7 +309,27 @@ export default function MenuScreen() {
       // Load tax settings - first from cache, then background refresh
       await loadTaxSettings(rid);
 
-      await loadMenu(rid);
+      // Load multi-pricing rules
+      try {
+        const pricingRes = await apiClient.getPricingSettings(rid);
+        const mp = pricingRes?.settings?.multiPricing;
+        if (mp?.enabled) {
+          setMultiPricingEnabled(true);
+          setPricingRules((mp.rules || []).filter(r => r.isActive));
+        }
+      } catch { /* ignore — backward compatible */ }
+
+      // Stale-while-revalidate: try menu cache first
+      const cached = await getCached('cache_menu_' + rid);
+      if (cached?.data && Array.isArray(cached.data) && cached.data.length > 0) {
+        applyMenuData(cached.data);
+        setLoading(false);
+        // Background refresh
+        setSyncing(true);
+        loadMenu(rid).catch(() => {}).finally(() => setSyncing(false));
+      } else {
+        await loadMenu(rid);
+      }
     } catch (error) {
       console.error('Error loading menu:', error);
       Alert.alert('Error', 'Failed to load menu. Please try again.');
@@ -311,25 +390,28 @@ export default function MenuScreen() {
     }
   };
 
+  const applyMenuData = (items) => {
+    setMenuItems(items);
+    const categorySet = new Set(['all-items']);
+    items.forEach(item => {
+      if (item.category) {
+        categorySet.add(item.category.toLowerCase());
+      }
+    });
+    const cats = Array.from(categorySet).map(cat => ({
+      id: cat,
+      name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1),
+    }));
+    setCategories(cats);
+  };
+
   const loadMenu = async (rid) => {
     try {
       const response = await apiClient.getMenu(rid);
       const items = response.menuItems || [];
-      setMenuItems(items);
-
-      // Generate categories
-      const categorySet = new Set(['all-items']);
-      items.forEach(item => {
-        if (item.category) {
-          categorySet.add(item.category.toLowerCase());
-        }
-      });
-
-      const cats = Array.from(categorySet).map(cat => ({
-        id: cat,
-        name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1),
-      }));
-      setCategories(cats);
+      applyMenuData(items);
+      // Save to cache
+      setCache('cache_menu_' + rid, items);
     } catch (error) {
       console.error('Error loading menu:', error);
       throw error;
@@ -337,7 +419,24 @@ export default function MenuScreen() {
   };
 
 
+  // Multi-tier pricing: resolve display price
+  const getItemDisplayPrice = useCallback((item) => {
+    if (!multiPricingEnabled || !activePricingRuleId) return item.price;
+    if (item.pricingRules && typeof item.pricingRules[activePricingRuleId] === 'number') {
+      return item.pricingRules[activePricingRuleId];
+    }
+    const rule = pricingRules.find(r => r.id === activePricingRuleId);
+    if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue) {
+      return Math.round(item.price * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
+    }
+    if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue) {
+      return Math.round((item.price + rule.defaultMarkupValue) * 100) / 100;
+    }
+    return item.price;
+  }, [multiPricingEnabled, activePricingRuleId, pricingRules]);
+
   const addToCart = (item) => {
+    const adjustedPrice = getItemDisplayPrice(item);
     const existingItem = cart.find(cartItem => cartItem.id === item.id);
 
     if (existingItem) {
@@ -350,7 +449,8 @@ export default function MenuScreen() {
       setCart([...cart, {
         id: item.id,
         name: item.name,
-        price: item.price,
+        price: adjustedPrice,
+        originalPrice: item.price,
         quantity: 1,
         menuItemId: item.id,
       }]);
@@ -436,8 +536,10 @@ export default function MenuScreen() {
         orderId = existingOrderId;
       } else {
         // Create new order
+        const idempotencyKey = generateIdempotencyKey();
         const orderData = {
           restaurantId,
+          idempotencyKey,
           tableNumber: tableNumber,
           items: cart.map(item => ({
             menuItemId: item.menuItemId || item.id,
@@ -453,19 +555,40 @@ export default function MenuScreen() {
             waiterName: user?.name || 'Waiter',
           },
           ...(customerPhone && { customerPhone }),
+          pricingRuleId: activePricingRuleId || null,
         };
 
-        response = await apiClient.createOrder(orderData);
+        // Check if offline — queue order locally
+        const netState = await NetInfo.fetch();
+        if (!netState.isConnected) {
+          await queueOrder(orderData);
+          setPendingSyncCount(await getQueueCount());
+          toast.warning('No internet. Order saved locally and will sync when online.');
+          setCart([]);
+          setShowCart(false);
+          setExistingOrderId(null);
+          setSendingOrder(false);
+          return;
+        }
+
+        try {
+          response = await apiClient.createOrder(orderData);
+        } catch (apiErr) {
+          // API failed — queue for offline sync
+          await queueOrder(orderData);
+          setPendingSyncCount(await getQueueCount());
+          toast.warning('Connection issue. Order saved and will sync when online.');
+          setCart([]);
+          setShowCart(false);
+          setExistingOrderId(null);
+          setSendingOrder(false);
+          return;
+        }
         orderId = response.order?.id;
       }
 
-      // Update table status to occupied in background (don't wait) — skip for bar tabs
-      if (tableId && restaurantId && !isBarTabMode) {
-        apiClient.updateTableStatus(tableId, 'occupied', orderId, restaurantId).catch(err => {
-          console.error('Error updating table status:', err);
-          // Don't block user, just log error
-        });
-      }
+      // Note: Table status update to 'occupied' is now handled by backend during POST /api/orders
+      // No separate updateTableStatus call needed
 
       // Prepare KOT data
       const orderNumber = response.order?.dailyOrderId || response.order?.orderNumber || orderId?.slice(-6);
@@ -493,7 +616,7 @@ export default function MenuScreen() {
       setExistingOrderId(null);
     } catch (error) {
       console.error('Error sending order:', error);
-      Alert.alert('Error', error.message || 'Failed to send order to kitchen. Please try again.');
+      toast.error(error.message || 'Failed to send order to kitchen. Please try again.');
     } finally {
       setSendingOrder(false);
     }
@@ -543,6 +666,7 @@ export default function MenuScreen() {
           offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+          customerId: discountData.customerId || null,
         });
 
         await apiClient.verifyPayment({
@@ -554,20 +678,16 @@ export default function MenuScreen() {
           paymentStatus: 'completed',
         }).catch(() => {}); // Don't block on payment verification
 
-        Alert.alert('Success', 'Tab settled!', [
-          {
-            text: 'OK',
-            onPress: () => {
-              setCart([]);
-              setShowCart(false);
-              setExistingOrderId(null);
-              router.back();
-            },
-          },
-        ]);
+        toast.success('Tab settled!');
+        setCart([]);
+        setShowCart(false);
+        setExistingOrderId(null);
+        router.back();
       } else {
+        const idempotencyKey = generateIdempotencyKey();
         const orderData = {
           restaurantId,
+          idempotencyKey,
           tableNumber: selectedTable?.name || params.tableNumber,
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
@@ -582,9 +702,36 @@ export default function MenuScreen() {
           offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+          customerId: discountData.customerId || null,
+          pricingRuleId: activePricingRuleId || null,
         };
 
-        const response = await apiClient.createOrder(orderData);
+        let response;
+        const netState = await NetInfo.fetch();
+        if (!netState.isConnected && !isBarTabMode) {
+          await queueOrder(orderData);
+          setPendingSyncCount(await getQueueCount());
+          toast.warning('No internet. Order saved locally and will sync when online.');
+          setCart([]);
+          setShowCart(false);
+          setSendingOrder(false);
+          return;
+        }
+
+        try {
+          response = await apiClient.createOrder(orderData);
+        } catch (apiErr) {
+          if (!isBarTabMode) {
+            await queueOrder(orderData);
+            setPendingSyncCount(await getQueueCount());
+            toast.warning('Connection issue. Order saved and will sync when online.');
+            setCart([]);
+            setShowCart(false);
+            setSendingOrder(false);
+            return;
+          }
+          throw apiErr;
+        }
 
         if (isBarTabMode) {
           // Verify payment for bar tab settle
@@ -597,32 +744,20 @@ export default function MenuScreen() {
             paymentStatus: 'completed',
           }).catch(() => {});
 
-          Alert.alert('Success', 'Tab settled!', [
-            {
-              text: 'OK',
-              onPress: () => {
-                setCart([]);
-                setShowCart(false);
-                router.back();
-              },
-            },
-          ]);
+          toast.success('Tab settled!');
+          setCart([]);
+          setShowCart(false);
+          router.back();
         } else {
-          Alert.alert('Success', 'Order placed successfully!', [
-            {
-              text: 'OK',
-              onPress: () => {
-                setCart([]);
-                setShowCart(false);
-                router.push('/(tabs)/orders');
-              },
-            },
-          ]);
+          toast.success('Order placed successfully!');
+          setCart([]);
+          setShowCart(false);
+          router.push('/(tabs)/orders');
         }
       }
     } catch (error) {
       console.error('Error placing order:', error);
-      Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
+      toast.error(error.message || 'Failed to place order. Please try again.');
     } finally {
       setSendingOrder(false);
     }
@@ -644,8 +779,10 @@ export default function MenuScreen() {
       const { taxAmount, taxRate, taxLabel } = calculateTax(discountedSubtotal);
       const grandTotal = discountedSubtotal + taxAmount;
 
+      const idempotencyKey = generateIdempotencyKey();
       const orderData = {
         restaurantId,
+        idempotencyKey,
         items: cart.map(item => ({
           menuItemId: item.menuItemId || item.id,
           name: item.name,
@@ -672,10 +809,24 @@ export default function MenuScreen() {
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         ...(customerMobile && { customerPhone: customerMobile }),
+        customerId: discountData.customerId || null,
         discountAmount: totalDiscount,
+        pricingRuleId: activePricingRuleId || null,
       };
 
-      const response = await apiClient.createOrder(orderData);
+      let response;
+      try {
+        response = await apiClient.createOrder(orderData);
+      } catch (apiErr) {
+        // Queue for offline sync on failure
+        await queueOrder(orderData);
+        setPendingSyncCount(await getQueueCount());
+        toast.warning('Connection issue. Order saved and will sync when online.');
+        setCart([]);
+        setShowCart(false);
+        setSendingOrder(false);
+        return;
+      }
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
       const latestUserData = await apiClient.getUser();
@@ -718,7 +869,7 @@ export default function MenuScreen() {
       setShowCart(false);
     } catch (error) {
       console.error('Error placing order:', error);
-      Alert.alert('Error', error.message || 'Failed to place order. Please try again.');
+      toast.error(error.message || 'Failed to place order. Please try again.');
     } finally {
       setSendingOrder(false);
     }
@@ -782,7 +933,7 @@ export default function MenuScreen() {
       router.back();
     } catch (error) {
       console.error('Error saving tab:', error);
-      Alert.alert('Error', error.message || 'Failed to save tab.');
+      toast.error(error.message || 'Failed to save tab.');
     } finally {
       setSendingOrder(false);
     }
@@ -875,7 +1026,7 @@ export default function MenuScreen() {
             )}
 
             <View style={styles.priceAddRow}>
-              <Text style={styles.menuItemPriceImage}>₹{item.price}</Text>
+              <Text style={styles.menuItemPriceImage}>₹{getItemDisplayPrice(item)}</Text>
               {quantity > 0 ? (
                 <View style={styles.quantityControlsImage}>
                   <TouchableOpacity
@@ -958,7 +1109,7 @@ export default function MenuScreen() {
 
         {/* Bottom Section */}
         <View style={styles.bottomSectionNoImage}>
-          <Text style={styles.menuItemPriceNoImage}>₹{item.price}</Text>
+          <Text style={styles.menuItemPriceNoImage}>₹{getItemDisplayPrice(item)}</Text>
           {quantity > 0 ? (
             <View style={styles.quantityControlsNoImage}>
               <TouchableOpacity
@@ -1069,6 +1220,13 @@ export default function MenuScreen() {
                 </TouchableOpacity>
               </View>
               <View style={styles.headerIcons}>
+                {/* Network status dot */}
+                <View style={[styles.networkDot, { backgroundColor: isOnline ? '#22c55e' : '#ef4444' }]} />
+                {pendingSyncCount > 0 && (
+                  <View style={styles.syncBadge}>
+                    <Text style={styles.syncBadgeText}>{pendingSyncCount}</Text>
+                  </View>
+                )}
                 <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
                   <Ionicons
                     name={showImages ? "image" : "image-outline"}
@@ -1215,6 +1373,59 @@ export default function MenuScreen() {
         )}
 
       </Animated.View>
+
+      {/* Multi-Tier Pricing Rule Selector */}
+      {multiPricingEnabled && pricingRules.length > 0 && (
+        <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6, gap: 6, flexWrap: 'wrap', backgroundColor: '#faf5ff', borderBottomWidth: 1, borderBottomColor: '#e9d5ff' }}>
+          <TouchableOpacity
+            onPress={() => { setActivePricingRuleId(null); setAutoSelectedRule(false); }}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+              backgroundColor: !activePricingRuleId ? '#7c3aed' : '#f3f4f6',
+              borderWidth: 1, borderColor: !activePricingRuleId ? '#7c3aed' : '#d1d5db',
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '500', color: !activePricingRuleId ? '#fff' : '#6b7280' }}>Base Price</Text>
+          </TouchableOpacity>
+          {pricingRules.map(rule => (
+            <TouchableOpacity
+              key={rule.id}
+              onPress={() => { if (!autoSelectedRule) setActivePricingRuleId(rule.id); }}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+                backgroundColor: activePricingRuleId === rule.id ? '#7c3aed' : '#f3f4f6',
+                borderWidth: 1, borderColor: activePricingRuleId === rule.id ? '#7c3aed' : '#d1d5db',
+                opacity: autoSelectedRule && activePricingRuleId !== rule.id ? 0.5 : 1,
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '500', color: activePricingRuleId === rule.id ? '#fff' : '#6b7280' }}>
+                {rule.name}{autoSelectedRule && activePricingRuleId === rule.id ? ' (auto)' : ''}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      <SyncIndicator visible={syncing} />
+
+      {/* Offline Sync Banner */}
+      {(!isOnline || pendingSyncCount > 0) && (
+        <View style={styles.syncBanner}>
+          <Ionicons
+            name={isOnline ? 'sync' : 'cloud-offline-outline'}
+            size={16}
+            color="#92400e"
+          />
+          <Text style={styles.syncBannerText}>
+            {!isOnline
+              ? "You're offline. Orders will sync when connected."
+              : `Syncing ${pendingSyncCount} pending order${pendingSyncCount > 1 ? 's' : ''}...`}
+          </Text>
+          {isOnline && pendingSyncCount > 0 && (
+            <ActivityIndicator size="small" color="#92400e" />
+          )}
+        </View>
+      )}
 
       {/* Categories section - only for table mode; default mode has categories inside header above */}
       {selectedTable && (
@@ -1391,6 +1602,7 @@ export default function MenuScreen() {
           sending={sendingOrder}
           taxSettings={taxSettings}
           restaurantId={restaurantId}
+          countryCode="IN"
         />
       ) : (
         <CartModal
@@ -1404,6 +1616,7 @@ export default function MenuScreen() {
           tableNumber={selectedTable?.name || params.tableNumber}
           restaurantId={restaurantId}
           sending={sendingOrder}
+          countryCode="IN"
         />
       )}
 
@@ -1445,6 +1658,7 @@ export default function MenuScreen() {
           setLastOrderData(null);
         }}
       />
+      <ToastView />
     </SafeAreaView>
   );
 }
@@ -1594,7 +1808,42 @@ const styles = StyleSheet.create({
   },
   headerIcons: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+  },
+  networkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 2,
+  },
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#fde68a',
+  },
+  syncBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400e',
+    flex: 1,
+  },
+  syncBadge: {
+    backgroundColor: '#f59e0b',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginRight: 2,
+  },
+  syncBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   iconBtn: {
     width: 44,

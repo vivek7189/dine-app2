@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
 import OfferSelector from './OfferSelector';
+import CustomerDetailModal from './CustomerDetailModal';
 
 export default function CashierCartModal({
   visible,
@@ -29,6 +30,7 @@ export default function CashierCartModal({
   sending,
   taxSettings = { enabled: false, rate: 0, taxes: [] },
   restaurantId,
+  countryCode = 'IN',
 }) {
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
@@ -46,6 +48,8 @@ export default function CashierCartModal({
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
+  const [showCustomerDetail, setShowCustomerDetail] = useState(false);
+  const [detailCustomerId, setDetailCustomerId] = useState(null);
 
   // Calculate totals
   const subtotal = total;
@@ -105,6 +109,7 @@ export default function CashierCartModal({
       redeemLoyaltyPoints: redeemPoints,
       selectedOfferId,
       selectedOfferName: selectedOffer?.name || null,
+      customerId: customerData?.id || customerData?._id || null,
     });
   };
 
@@ -206,9 +211,14 @@ export default function CashierCartModal({
               {restaurantId && (
                 <CustomerLookup
                   restaurantId={restaurantId}
+                  countryCode={countryCode}
                   onCustomerFound={handleCustomerFound}
                   onPhoneChange={(phone) => setCustomerMobile(phone)}
                   onRedeemChange={setRedeemPoints}
+                  onCustomerChipPress={(customer) => {
+                    setDetailCustomerId(customer?.id || customer?._id);
+                    setShowCustomerDetail(true);
+                  }}
                   redeemPoints={redeemPoints}
                   compact
                 />
@@ -225,6 +235,7 @@ export default function CashierCartModal({
                   selectedOfferId={selectedOfferId}
                   manualDiscount={manualDiscount}
                   manualDiscountType={manualDiscountType}
+                  customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
                 />
               )}
 
@@ -336,6 +347,12 @@ export default function CashierCartModal({
           </View>
         )}
       </View>
+      <CustomerDetailModal
+        visible={showCustomerDetail}
+        customerId={detailCustomerId}
+        restaurantId={restaurantId}
+        onClose={() => setShowCustomerDetail(false)}
+      />
     </Modal>
   );
 }

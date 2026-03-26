@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
 import OfferSelector from './OfferSelector';
+import CustomerDetailModal from './CustomerDetailModal';
 
 export default function CartModal({
   visible,
@@ -26,6 +27,7 @@ export default function CartModal({
   tableNumber,
   restaurantId,
   sending,
+  countryCode = 'IN',
 }) {
   const [orderType, setOrderType] = useState('dine-in');
   const [customerName, setCustomerName] = useState('');
@@ -39,6 +41,8 @@ export default function CartModal({
   const [selectedOfferId, setSelectedOfferId] = useState(null);
   const [offerDiscount, setOfferDiscount] = useState(0);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [showCustomerDetail, setShowCustomerDetail] = useState(false);
+  const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
 
@@ -85,6 +89,7 @@ export default function CartModal({
       selectedOfferId,
       selectedOfferName: selectedOffer?.name || null,
       customerPhone: customerMobile || customerData?.phone || '',
+      customerId: customerData?.id || customerData?._id || null,
     };
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData);
   };
@@ -217,13 +222,19 @@ export default function CartModal({
                   <View style={styles.sectionContainer}>
                     <CustomerLookup
                       restaurantId={restaurantId}
-                      onCustomerFound={(data) => {
-                        setCustomerData(data.customer);
-                        setLoyaltySettings(data.loyaltySettings);
-                        if (data.customer?.name) setCustomerName(data.customer.name);
+                      countryCode={countryCode}
+                      onCustomerFound={(customer, settings) => {
+                        setCustomerData(customer);
+                        setLoyaltySettings(settings);
+                        if (customer?.name) setCustomerName(customer.name);
+                        if (customer?.phone) setCustomerMobile(customer.phone);
                       }}
                       onPhoneChange={(phone) => setCustomerMobile(phone)}
                       onRedeemChange={(pts) => setRedeemPoints(pts)}
+                      onCustomerChipPress={(customer) => {
+                        setDetailCustomerId(customer?.id || customer?._id);
+                        setShowCustomerDetail(true);
+                      }}
                       redeemPoints={redeemPoints}
                       compact
                     />
@@ -241,6 +252,7 @@ export default function CartModal({
                     selectedOfferId={selectedOfferId}
                     manualDiscount={manualDiscount}
                     manualDiscountType={manualDiscountType}
+                    customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
                   />
                 )}
 
@@ -349,6 +361,12 @@ export default function CartModal({
           </ScrollView>
         </View>
       </View>
+      <CustomerDetailModal
+        visible={showCustomerDetail}
+        customerId={detailCustomerId}
+        restaurantId={restaurantId}
+        onClose={() => setShowCustomerDetail(false)}
+      />
     </Modal>
   );
 }
