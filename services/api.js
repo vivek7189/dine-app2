@@ -437,6 +437,14 @@ class ApiClient {
     return this.request(endpoint);
   }
 
+  // Get analytics for restaurant
+  async getAnalytics(restaurantId, period = 'today', options = {}) {
+    const params = new URLSearchParams({ period });
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+    return this.request(`/api/analytics/${restaurantId}?${params.toString()}`);
+  }
+
   // Create order
   async createOrder(orderData) {
     return this.request('/api/orders', {

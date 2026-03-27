@@ -45,7 +45,9 @@ export default function OrdersScreen() {
 
   // Filter states
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [analyticsStats, setAnalyticsStats] = useState(null);
 
   // Date filter states
   const [dateFilterMode, setDateFilterMode] = useState('today');
@@ -77,7 +79,7 @@ export default function OrdersScreen() {
     if (restaurantId) {
       loadOrders(restaurantId);
     }
-  }, [selectedStatus, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
+  }, [selectedStatus, selectedPaymentMethod, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
 
   // Background refresh when tab is focused
   useFocusEffect(
@@ -86,7 +88,7 @@ export default function OrdersScreen() {
         // Fetch latest data in background
         loadOrdersInBackground(restaurantId);
       }
-    }, [restaurantId, loading, selectedStatus, searchTerm, dateFilterMode, customStartDate, customEndDate])
+    }, [restaurantId, loading, selectedStatus, selectedPaymentMethod, searchTerm, dateFilterMode, customStartDate, customEndDate])
   );
 
   // Spinning animation effect
@@ -175,6 +177,14 @@ export default function OrdersScreen() {
     { value: '30days', label: '30 Days' },
     { value: 'all', label: 'All' },
     { value: 'custom', label: 'Custom' },
+  ];
+
+  const paymentMethodOptions = [
+    { value: 'all', label: 'All' },
+    { value: 'cash', label: 'Cash' },
+    { value: 'upi', label: 'UPI' },
+    { value: 'card', label: 'Card' },
+    { value: 'online', label: 'Online' },
   ];
 
   const formatShortDate = (date) => {
@@ -269,6 +279,7 @@ export default function OrdersScreen() {
       const filters = {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
+        paymentMethod: selectedPaymentMethod !== 'all' ? selectedPaymentMethod : undefined,
         search: searchTerm.trim() || undefined,
         ...dateRange,
       };
@@ -295,6 +306,19 @@ export default function OrdersScreen() {
       if (restaurantId) {
         setCache('cache_orders_' + restaurantId, ordersList);
       }
+
+      // Fetch analytics for summary cards (non-blocking)
+      try {
+        const analyticsOptions = {};
+        if (dateRange.startDate) analyticsOptions.startDate = dateRange.startDate;
+        if (dateRange.endDate) analyticsOptions.endDate = dateRange.endDate;
+        const analyticsResponse = await apiClient.getAnalytics(rid, dateRange.startDate ? 'custom' : 'today', analyticsOptions);
+        if (analyticsResponse?.success && analyticsResponse?.analytics) {
+          setAnalyticsStats(analyticsResponse.analytics);
+        }
+      } catch (analyticsErr) {
+        console.error('Analytics fetch error (non-blocking):', analyticsErr);
+      }
     } catch (error) {
       console.error('Error loading orders:', error);
       throw error;
@@ -309,6 +333,7 @@ export default function OrdersScreen() {
       const filters = {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
+        paymentMethod: selectedPaymentMethod !== 'all' ? selectedPaymentMethod : undefined,
         search: searchTerm.trim() || undefined,
         ...dateRange,
       };
@@ -704,12 +729,27 @@ export default function OrdersScreen() {
     );
   };
 
+  // Compute summary from analytics or orders
+  const summaryData = useMemo(() => {
+    const totalRevenue = analyticsStats?.totalRevenue || orders.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+    const totalOrders = analyticsStats?.totalOrders || orders.length;
+    const completedCount = analyticsStats?.completedOrders || orders.filter(o => o.status === 'completed').length;
+    const pb = analyticsStats?.paymentBreakdown || {};
+    return { totalRevenue, totalOrders, completedCount, paymentBreakdown: pb };
+  }, [analyticsStats, orders]);
+
+  // Check if any filter is active
+  const hasActiveFilters = selectedStatus !== 'all' || selectedPaymentMethod !== 'all' || searchTerm.trim() || dateFilterMode !== 'today';
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 3, borderColor: '#fee2e2', justifyContent: 'center', alignItems: 'center' }}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+          </View>
           <Text style={styles.loadingText}>Loading orders...</Text>
+          <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: -8 }}>Fetching your data</Text>
         </View>
       </SafeAreaView>
     );
@@ -717,24 +757,79 @@ export default function OrdersScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header with Filters */}
+      {/* Header */}
       <View style={styles.header}>
+        {/* Title Row */}
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>Orders</Text>
-          <TouchableOpacity onPress={onRefresh} disabled={refreshing || backgroundLoading} style={styles.refreshButton}>
-            <Animated.View style={{ transform: [{ rotate: (backgroundLoading || refreshing) ? spin : '0deg' }] }}>
-              <Ionicons
-                name="refresh"
-                size={22}
-                color={Colors.primary}
-              />
-            </Animated.View>
-          </TouchableOpacity>
+          <View>
+            <Text style={styles.headerTitle}>Orders</Text>
+            <Text style={styles.headerSubtitle}>{summaryData.totalOrders} orders {dateFilterMode === 'today' ? 'today' : dateFilterMode === 'yesterday' ? 'yesterday' : dateFilterMode === '7days' ? 'this week' : dateFilterMode === '30days' ? 'this month' : ''}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {hasActiveFilters && (
+              <TouchableOpacity
+                onPress={() => { setSelectedStatus('all'); setSelectedPaymentMethod('all'); setSearchTerm(''); setDateFilterMode('today'); }}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#fef2f2', borderRadius: 8 }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primary }}>Clear</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={onRefresh} disabled={refreshing || backgroundLoading} style={styles.refreshButton}>
+              <Animated.View style={{ transform: [{ rotate: (backgroundLoading || refreshing) ? spin : '0deg' }] }}>
+                <Ionicons name="refresh" size={22} color={Colors.primary} />
+              </Animated.View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Summary Stats Row */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, { backgroundColor: '#f0fdf4' }]}>
+            <View style={[styles.statIconBox, { backgroundColor: '#22c55e' }]}>
+              <Ionicons name="cash-outline" size={14} color="#fff" />
+            </View>
+            <View style={styles.statContent}>
+              <Text style={styles.statLabel}>Revenue</Text>
+              <Text style={[styles.statValue, { color: '#166534' }]}>{'\u20B9'}{summaryData.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+            </View>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: '#eff6ff' }]}>
+            <View style={[styles.statIconBox, { backgroundColor: '#3b82f6' }]}>
+              <Ionicons name="receipt-outline" size={14} color="#fff" />
+            </View>
+            <View style={styles.statContent}>
+              <Text style={styles.statLabel}>Orders</Text>
+              <Text style={[styles.statValue, { color: '#1e40af' }]}>{summaryData.totalOrders}</Text>
+            </View>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: '#faf5ff' }]}>
+            <View style={[styles.statIconBox, { backgroundColor: '#a855f7' }]}>
+              <Ionicons name="card-outline" size={14} color="#fff" />
+            </View>
+            <View style={styles.statContent}>
+              <Text style={styles.statLabel}>Payments</Text>
+              {Object.keys(summaryData.paymentBreakdown).length > 0 ? (
+                <View style={{ gap: 1 }}>
+                  {Object.entries(summaryData.paymentBreakdown).sort((a, b) => b[1].total - a[1].total).map(([method, data]) => {
+                    const colorMap = { cash: '#16a34a', upi: '#7c3aed', card: '#2563eb', online: '#0891b2' };
+                    return (
+                      <View key={method} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: colorMap[method] || '#6b7280', textTransform: 'capitalize' }}>{method}</Text>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#1f2937' }}>{'\u20B9'}{data.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })} <Text style={{ fontWeight: '400', color: '#9ca3af' }}>({data.count})</Text></Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={[styles.statValue, { color: '#6b21a8' }]}>--</Text>
+              )}
+            </View>
+          </View>
         </View>
 
         {/* Search Bar */}
         <View style={styles.searchContainer}>
-          <Ionicons name="search" size={18} color={Colors.textMedium} style={styles.searchIcon} />
+          <Ionicons name="search" size={16} color={Colors.textMedium} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search orders..."
@@ -749,44 +844,61 @@ export default function OrdersScreen() {
           )}
         </View>
 
-        {/* Date Filter Chips */}
+        {/* Combined Filters Row: Date + Status + Payment in one scrollable row */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={styles.dateFiltersContainer}
+          style={styles.filtersContainer}
           contentContainerStyle={styles.filtersContent}
         >
+          {/* Date filters */}
           {dateFilterOptions.map((option) => {
-            // Hide "All" for restricted roles if they shouldn't see unlimited
             const disabled = isRestrictedRole && option.value === 'all';
+            const isActive = dateFilterMode === option.value;
             return (
               <TouchableOpacity
-                key={option.value}
-                style={[
-                  styles.dateFilterChip,
-                  dateFilterMode === option.value && styles.dateFilterChipActive,
-                  disabled && styles.dateFilterChipDisabled,
-                ]}
-                onPress={() => {
-                  if (disabled) return;
-                  setDateFilterMode(option.value);
-                }}
+                key={`date-${option.value}`}
+                style={[styles.chipBase, isActive && styles.chipActiveRed, disabled && { opacity: 0.4 }]}
+                onPress={() => { if (!disabled) setDateFilterMode(option.value); }}
               >
                 {option.value === 'custom' && (
-                  <Ionicons
-                    name="calendar-outline"
-                    size={13}
-                    color={dateFilterMode === 'custom' ? '#fff' : Colors.textMedium}
-                    style={{ marginRight: 4 }}
-                  />
+                  <Ionicons name="calendar-outline" size={12} color={isActive ? '#fff' : '#6b7280'} style={{ marginRight: 3 }} />
                 )}
-                <Text style={[
-                  styles.dateFilterChipText,
-                  dateFilterMode === option.value && styles.dateFilterChipTextActive,
-                  disabled && styles.dateFilterChipTextDisabled,
-                ]}>
-                  {option.label}
-                </Text>
+                <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Separator */}
+          <View style={styles.chipSeparator} />
+
+          {/* Status filters */}
+          {statusOptions.map((option) => {
+            const isActive = selectedStatus === option.value;
+            return (
+              <TouchableOpacity
+                key={`status-${option.value}`}
+                style={[styles.chipBase, isActive && styles.chipActiveGray]}
+                onPress={() => setSelectedStatus(option.value)}
+              >
+                <Text style={[styles.chipText, isActive && { color: '#fff' }]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Separator */}
+          <View style={styles.chipSeparator} />
+
+          {/* Payment method filters */}
+          {paymentMethodOptions.map((option) => {
+            const isActive = selectedPaymentMethod === option.value;
+            return (
+              <TouchableOpacity
+                key={`pay-${option.value}`}
+                style={[styles.chipBase, isActive && styles.chipActivePurple]}
+                onPress={() => setSelectedPaymentMethod(option.value)}
+              >
+                <Text style={[styles.chipText, isActive && { color: '#fff' }]}>{option.label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -795,19 +907,13 @@ export default function OrdersScreen() {
         {/* Custom Date Range Picker */}
         {dateFilterMode === 'custom' && (
           <View style={styles.customDateRow}>
-            <TouchableOpacity
-              style={styles.datePickerButton}
-              onPress={() => setShowStartPicker(true)}
-            >
-              <Ionicons name="calendar" size={16} color={Colors.primary} />
+            <TouchableOpacity style={styles.datePickerButton} onPress={() => setShowStartPicker(true)}>
+              <Ionicons name="calendar" size={14} color={Colors.primary} />
               <Text style={styles.datePickerText}>{formatShortDate(customStartDate)}</Text>
             </TouchableOpacity>
             <Text style={styles.dateRangeSeparator}>to</Text>
-            <TouchableOpacity
-              style={styles.datePickerButton}
-              onPress={() => setShowEndPicker(true)}
-            >
-              <Ionicons name="calendar" size={16} color={Colors.primary} />
+            <TouchableOpacity style={styles.datePickerButton} onPress={() => setShowEndPicker(true)}>
+              <Ionicons name="calendar" size={14} color={Colors.primary} />
               <Text style={styles.datePickerText}>{formatShortDate(customEndDate)}</Text>
             </TouchableOpacity>
           </View>
@@ -888,31 +994,12 @@ export default function OrdersScreen() {
           )
         )}
 
-        {/* Status Filter Pills */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filtersContainer}
-          contentContainerStyle={styles.filtersContent}
-        >
-          {statusOptions.map((option) => (
-            <TouchableOpacity
-              key={option.value}
-              style={[
-                styles.filterPill,
-                selectedStatus === option.value && styles.filterPillActive,
-              ]}
-              onPress={() => setSelectedStatus(option.value)}
-            >
-              <Text style={[
-                styles.filterPillText,
-                selectedStatus === option.value && styles.filterPillTextActive
-              ]}>
-                {option.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Loading bar when fetching */}
+        {(backgroundLoading || syncing) && (
+          <View style={styles.loadingBar}>
+            <View style={styles.loadingBarInner} />
+          </View>
+        )}
       </View>
 
       <SyncIndicator visible={syncing} />
@@ -927,10 +1014,12 @@ export default function OrdersScreen() {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="receipt-outline" size={64} color={Colors.textLight} />
+            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#f3f4f6', justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="receipt-outline" size={36} color={Colors.textLight} />
+            </View>
             <Text style={styles.emptyText}>No orders found</Text>
             <Text style={styles.emptySubtext}>
-              {searchTerm || selectedStatus !== 'all' || dateFilterMode !== 'all'
+              {hasActiveFilters
                 ? 'Try adjusting your filters or date range'
                 : 'Orders will appear here once placed'}
             </Text>
@@ -948,89 +1037,145 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
   header: {
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-    paddingBottom: Spacing.sm,
+    borderBottomColor: '#f0f0f0',
+    paddingBottom: 6,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
-    color: Colors.textDark,
+    color: '#111827',
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontWeight: '500',
+    marginTop: 2,
   },
   refreshButton: {
-    padding: 4,
+    padding: 6,
+    borderRadius: 10,
+    backgroundColor: '#fef2f2',
   },
+  // Stats Row
+  statsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    gap: 8,
+    marginBottom: 8,
+  },
+  statCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderRadius: 12,
+    padding: 10,
+  },
+  statIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statContent: {
+    flex: 1,
+  },
+  statLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  // Search
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#f9fafb',
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: 12,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: '#e5e7eb',
+    height: 38,
   },
   searchIcon: {
-    marginRight: Spacing.xs,
+    marginRight: 6,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: Spacing.sm,
-    fontSize: 14,
+    fontSize: 13,
     color: Colors.textDark,
+    paddingVertical: 0,
   },
   clearSearchButton: {
     padding: 4,
   },
-  dateFiltersContainer: {
-    paddingBottom: 4,
-  },
-  dateFilterChip: {
+  // Unified chip styles
+  chipBase: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#f0f9ff',
-    marginRight: Spacing.xs,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
     borderWidth: 1,
-    borderColor: '#e0f2fe',
+    borderColor: '#e5e7eb',
   },
-  dateFilterChipActive: {
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
+  chipActiveRed: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
   },
-  dateFilterChipDisabled: {
-    opacity: 0.4,
+  chipActiveGray: {
+    backgroundColor: '#374151',
+    borderColor: '#374151',
   },
-  dateFilterChipText: {
-    fontSize: 12,
+  chipActivePurple: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#7c3aed',
+  },
+  chipText: {
+    fontSize: 11,
     fontWeight: '600',
-    color: '#3b82f6',
+    color: '#6b7280',
   },
-  dateFilterChipTextActive: {
+  chipTextActive: {
     color: '#fff',
   },
-  dateFilterChipTextDisabled: {
-    color: Colors.textLight,
+  chipSeparator: {
+    width: 1,
+    height: 20,
+    backgroundColor: '#d1d5db',
+    marginHorizontal: 4,
+    alignSelf: 'center',
   },
+  // Custom date
   customDateRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
     gap: 8,
   },
   datePickerButton: {
@@ -1038,20 +1183,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#f0f9ff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e0f2fe',
+    borderColor: '#fecaca',
   },
   datePickerText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textDark,
   },
   dateRangeSeparator: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMedium,
     fontWeight: '500',
   },
@@ -1083,48 +1228,42 @@ const styles = StyleSheet.create({
   pickerDoneText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#3b82f6',
+    color: Colors.primary,
   },
   filtersContainer: {
-    paddingBottom: Spacing.xs,
+    paddingBottom: 6,
   },
   filtersContent: {
-    paddingHorizontal: Spacing.md,
-    gap: Spacing.xs,
+    paddingHorizontal: 12,
+    gap: 6,
   },
-  filterPill: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#f3f4f6',
-    marginRight: Spacing.xs,
+  // Loading bar
+  loadingBar: {
+    height: 2,
+    backgroundColor: '#fee2e2',
+    overflow: 'hidden',
   },
-  filterPillActive: {
+  loadingBarInner: {
+    height: 2,
+    width: '40%',
     backgroundColor: Colors.primary,
-  },
-  filterPillText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.textMedium,
-  },
-  filterPillTextActive: {
-    color: '#fff',
+    borderRadius: 1,
   },
   list: {
-    padding: Spacing.md,
+    padding: 12,
   },
   orderCard: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: 16,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#f0f0f0',
   },
   orderHeader: {
     flexDirection: 'row',
