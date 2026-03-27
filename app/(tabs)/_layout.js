@@ -228,6 +228,14 @@ export default function TabsLayout() {
           href: null, // Always hidden from tab bar
         }}
       />
+
+      {/* Kitchen Display — accessed from More screen */}
+      <Tabs.Screen
+        name="kitchen"
+        options={{
+          href: null, // Always hidden from tab bar
+        }}
+      />
     </Tabs>
   );
 }

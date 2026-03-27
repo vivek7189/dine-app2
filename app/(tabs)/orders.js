@@ -60,6 +60,10 @@ export default function OrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
 
+  // Mark as Paid
+  const [markPaidOrderId, setMarkPaidOrderId] = useState(null);
+  const [markPaidSubmitting, setMarkPaidSubmitting] = useState(false);
+
   // Pusher reference
   const pusherRef = useRef(null);
   const channelRef = useRef(null);
@@ -389,6 +393,39 @@ export default function OrdersScreen() {
     );
   };
 
+  const executeMarkPaid = async (orderId) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    setMarkPaidSubmitting(true);
+    try {
+      const outstanding = order.outstandingAmount || 0;
+      const finalAmt = order.finalAmount || order.totalAmount || 0;
+      await apiClient.updateOrder(order.id, {
+        paidAmount: Math.round(finalAmt * 100) / 100,
+        outstandingAmount: 0,
+        paymentStatus: 'paid',
+      });
+      if (order.customerId) {
+        try {
+          await apiClient.settleCustomerCredit(order.customerId, {
+            amount: outstanding, paymentMethod: 'cash', orderId: order.id
+          });
+        } catch (e) { console.error('Customer credit settle error:', e); }
+      }
+      setOrders(prev => prev.map(o =>
+        o.id === order.id ? { ...o, paidAmount: finalAmt, outstandingAmount: 0, paymentStatus: 'paid' } : o
+      ));
+      setMarkPaidOrderId(null);
+      Alert.alert('Success', 'Order marked as fully paid');
+      // Refresh
+      if (restaurantId) loadOrders(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to mark as paid');
+    } finally {
+      setMarkPaidSubmitting(false);
+    }
+  };
+
   const openOrderDetail = (order) => {
     setSelectedOrder(order);
     setShowOrderDetail(true);
@@ -573,6 +610,20 @@ export default function OrdersScreen() {
           </View>
         </View>
 
+        {/* Payment badges */}
+        {(item.paymentStatus === 'partial' || item.outstandingAmount > 0) && (
+          <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 2, alignSelf: 'flex-start' }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: '#d97706' }}>
+              Partial {item.paidAmount ? `₹${item.paidAmount}` : ''}/₹{item.finalAmount || item.totalAmount}
+            </Text>
+          </View>
+        )}
+        {item.paymentMethod === 'split' && (
+          <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 2, alignSelf: 'flex-start' }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: '#2563eb' }}>Split</Text>
+          </View>
+        )}
+
         {/* Card footer */}
         <View style={styles.cardFooter}>
           <View style={styles.dateContainer}>
@@ -712,6 +763,84 @@ export default function OrdersScreen() {
                   </Text>
                 </View>
               )}
+
+              {/* Billing Details */}
+              {(selectedOrder.serviceChargeAmount > 0 || selectedOrder.tipAmount > 0 || selectedOrder.roundOffAmount ||
+                selectedOrder.splitPayments || selectedOrder.cashReceived || selectedOrder.compItems?.length > 0 ||
+                selectedOrder.paymentStatus === 'partial') && (
+                <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#f0f0f0' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 8 }}>Billing Details</Text>
+
+                  {selectedOrder.serviceChargeAmount > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#6b7280' }}>Service Charge ({selectedOrder.serviceChargeRate || 0}%)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>₹{selectedOrder.serviceChargeAmount}</Text>
+                    </View>
+                  )}
+
+                  {selectedOrder.tipAmount > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#ec4899' }}>Tip{selectedOrder.tipPercentage ? ` (${selectedOrder.tipPercentage}%)` : ''}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#ec4899' }}>₹{selectedOrder.tipAmount}</Text>
+                    </View>
+                  )}
+
+                  {selectedOrder.roundOffAmount != null && selectedOrder.roundOffAmount !== 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#6b7280' }}>Round-off</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>₹{selectedOrder.roundOffAmount}</Text>
+                    </View>
+                  )}
+
+                  {selectedOrder.splitPayments && (
+                    <View style={{ marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 2 }}>Split Payment:</Text>
+                      {selectedOrder.splitPayments.map((sp, i) => (
+                        <Text key={i} style={{ fontSize: 12, color: '#374151', marginLeft: 8 }}>
+                          {sp.method.charAt(0).toUpperCase() + sp.method.slice(1)}: ₹{sp.amount}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {selectedOrder.cashReceived > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#6b7280' }}>Cash Received</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>₹{selectedOrder.cashReceived}</Text>
+                    </View>
+                  )}
+                  {selectedOrder.changeReturned > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#6b7280' }}>Change Returned</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>₹{selectedOrder.changeReturned}</Text>
+                    </View>
+                  )}
+
+                  {selectedOrder.compItems?.length > 0 && (
+                    <View style={{ marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#14b8a6', marginBottom: 2 }}>Comp Items:</Text>
+                      {selectedOrder.compItems.map((ci, i) => (
+                        <Text key={i} style={{ fontSize: 12, color: '#374151', marginLeft: 8 }}>
+                          {ci.quantity}x {ci.name} - ₹{ci.amount} ({ci.reason})
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {(selectedOrder.paymentStatus === 'partial' || selectedOrder.outstandingAmount > 0) && (
+                    <View style={{ backgroundColor: '#fef3c7', padding: 8, borderRadius: 6, marginTop: 4 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ fontSize: 13, color: '#92400e' }}>Paid</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#059669' }}>₹{selectedOrder.paidAmount || 0}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
+                        <Text style={{ fontSize: 13, color: '#92400e' }}>Outstanding</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>₹{selectedOrder.outstandingAmount || 0}</Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
             </ScrollView>
 
             {/* Modal Footer */}
@@ -722,6 +851,27 @@ export default function OrdersScreen() {
               >
                 <Text style={styles.closeModalButtonText}>Close</Text>
               </TouchableOpacity>
+              {(selectedOrder.paymentStatus === 'partial' || selectedOrder.outstandingAmount > 0) && selectedOrder.status === 'completed' && (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#f59e0b', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}
+                  onPress={() => {
+                    Alert.alert(
+                      'Mark as Paid',
+                      `Mark outstanding ₹${selectedOrder.outstandingAmount || 0} as paid?`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Mark Paid', onPress: () => executeMarkPaid(selectedOrder.id) },
+                      ]
+                    );
+                  }}
+                  disabled={markPaidSubmitting}
+                >
+                  <Ionicons name="wallet-outline" size={18} color="#fff" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                    {markPaidSubmitting ? 'Processing...' : 'Mark as Fully Paid'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>

@@ -31,6 +31,7 @@ const DEFAULT_PAGE_ACCESS = {
   inventory: false,
   kot: false,
   admin: false,
+  completeBill: false,
 };
 
 const PAGE_ACCESS_OPTIONS = [
@@ -42,6 +43,7 @@ const PAGE_ACCESS_OPTIONS = [
   { key: 'inventory', label: 'Inventory', icon: 'cube-outline' },
   { key: 'kot', label: 'KOT / Kitchen', icon: 'flame-outline' },
   { key: 'admin', label: 'Admin', icon: 'settings-outline' },
+  { key: 'completeBill', label: 'Complete Bill', icon: 'checkmark-circle-outline' },
 ];
 
 export default function StaffManagement({ restaurantId }) {

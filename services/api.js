@@ -470,9 +470,43 @@ class ApiClient {
   }
 
   // Delete order (soft delete - sets status to 'deleted')
-  async deleteOrder(orderId) {
+  async deleteOrder(orderId, reason) {
     return this.request(`/api/orders/${orderId}`, {
       method: 'DELETE',
+      data: reason ? { reason } : undefined,
+    });
+  }
+
+  // KOT (Kitchen Order Ticket) endpoints
+  async getKotOrders(restaurantId) {
+    return this.request(`/api/kot/${restaurantId}`);
+  }
+
+  async startCooking(orderId) {
+    return this.request(`/api/kot/${orderId}/status`, {
+      method: 'PATCH',
+      data: { status: 'preparing', cookingStartTime: new Date().toISOString() },
+    });
+  }
+
+  async markReady(orderId) {
+    return this.request(`/api/kot/${orderId}/status`, {
+      method: 'PATCH',
+      data: { status: 'ready', cookingEndTime: new Date().toISOString() },
+    });
+  }
+
+  async completeOrder(orderId) {
+    return this.request(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      data: { status: 'completed' },
+    });
+  }
+
+  async cancelKotOrder(orderId, reason = '') {
+    return this.request(`/api/orders/${orderId}/cancel`, {
+      method: 'PATCH',
+      data: { reason },
     });
   }
 
@@ -1207,6 +1241,106 @@ class ApiClient {
     });
   }
 
+  // ==================== INVENTORY EXTENDED ====================
+
+  async deleteInventoryItem(restaurantId, itemId) {
+    return this.request(`/api/inventory/${restaurantId}/${itemId}`, { method: 'DELETE' });
+  }
+
+  async getInventoryCategories(restaurantId) {
+    return this.request(`/api/inventory/${restaurantId}/categories`);
+  }
+
+  // ==================== SUPPLIERS ====================
+
+  async getSuppliers(restaurantId) {
+    return this.request(`/api/suppliers/${restaurantId}`);
+  }
+
+  async createSupplier(restaurantId, data) {
+    return this.request(`/api/suppliers/${restaurantId}`, { method: 'POST', data });
+  }
+
+  async deleteSupplier(restaurantId, supplierId) {
+    return this.request(`/api/suppliers/${restaurantId}/${supplierId}`, { method: 'DELETE' });
+  }
+
+  async getAllSuppliersPerformance(restaurantId) {
+    return this.request(`/api/suppliers/${restaurantId}/performance`);
+  }
+
+  // ==================== RECIPES EXTENDED ====================
+
+  async createRecipe(restaurantId, data) {
+    return this.request(`/api/recipes/${restaurantId}`, { method: 'POST', data });
+  }
+
+  async updateRecipe(restaurantId, recipeId, data) {
+    return this.request(`/api/recipes/${restaurantId}/${recipeId}`, { method: 'PATCH', data });
+  }
+
+  async deleteRecipe(restaurantId, recipeId) {
+    return this.request(`/api/recipes/${restaurantId}/${recipeId}`, { method: 'DELETE' });
+  }
+
+  async generateRecipeSteps(restaurantId, data) {
+    return this.request(`/api/recipes/${restaurantId}/generate-steps`, { method: 'POST', data });
+  }
+
+  // ==================== PURCHASE ORDERS ====================
+
+  async getPurchaseOrders(restaurantId) {
+    return this.request(`/api/purchase-orders/${restaurantId}`);
+  }
+
+  async createPurchaseOrder(restaurantId, data) {
+    return this.request(`/api/purchase-orders/${restaurantId}`, { method: 'POST', data });
+  }
+
+  async updatePurchaseOrder(restaurantId, orderId, data) {
+    return this.request(`/api/purchase-orders/${restaurantId}/${orderId}`, { method: 'PATCH', data });
+  }
+
+  async emailPurchaseOrder(restaurantId, orderId, data) {
+    return this.request(`/api/purchase-orders/${restaurantId}/${orderId}/email`, { method: 'POST', data });
+  }
+
+  // ==================== AI INSIGHTS ====================
+
+  async getAIReorderSuggestions(restaurantId) {
+    return this.request(`/api/ai/reorder-suggestions/${restaurantId}`);
+  }
+
+  async getAIWastePrediction(restaurantId) {
+    return this.request(`/api/ai/waste-prediction/${restaurantId}`);
+  }
+
+  async getAIWasteSummary(restaurantId) {
+    return this.request(`/api/ai/waste-summary/${restaurantId}`);
+  }
+
+  // ==================== SCM (READ-ONLY) ====================
+
+  async getPurchaseRequisitions(restaurantId) {
+    return this.request(`/api/purchase-requisitions/${restaurantId}`);
+  }
+
+  async getGRNs(restaurantId) {
+    return this.request(`/api/grn/${restaurantId}`);
+  }
+
+  async getSupplierInvoices(restaurantId) {
+    return this.request(`/api/supplier-invoices/${restaurantId}`);
+  }
+
+  async getSupplierReturns(restaurantId) {
+    return this.request(`/api/supplier-returns/${restaurantId}`);
+  }
+
+  async getStockTransfers(restaurantId) {
+    return this.request(`/api/stock-transfers/${restaurantId}`);
+  }
+
   // ==================== PRINT SETTINGS ====================
 
   async getPrintSettings(restaurantId) {
@@ -1246,6 +1380,62 @@ class ApiClient {
       method: 'PUT',
       data: settings,
     });
+  }
+
+  // ==================== BILLING SETTINGS ====================
+
+  async getBillingSettings(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}/billing-settings`);
+  }
+
+  async updateBillingSettings(restaurantId, settings) {
+    return this.request(`/api/restaurants/${restaurantId}/billing-settings`, {
+      method: 'PUT',
+      data: settings,
+    });
+  }
+
+  async validateManagerPin(restaurantId, pin) {
+    return this.request('/api/billing/validate-manager-pin', {
+      method: 'POST',
+      data: { restaurantId, pin },
+    });
+  }
+
+  async processRefund(orderId, data) {
+    return this.request(`/api/orders/${orderId}/refund`, {
+      method: 'POST',
+      data: data,
+    });
+  }
+
+  async recordPartialPayment(orderId, data) {
+    return this.request(`/api/orders/${orderId}/partial-payment`, {
+      method: 'POST',
+      data: data,
+    });
+  }
+
+  async compVoidItems(orderId, data) {
+    return this.request(`/api/orders/${orderId}/comp-void`, {
+      method: 'POST',
+      data: data,
+    });
+  }
+
+  async getCustomerCreditHistory(customerId) {
+    return this.request(`/api/customers/${customerId}/credit-history`);
+  }
+
+  async settleCustomerCredit(customerId, data) {
+    return this.request(`/api/customers/${customerId}/settle-credit`, {
+      method: 'POST',
+      data: data,
+    });
+  }
+
+  async getStaffTips(userId) {
+    return this.request(`/api/staff/${userId}/tips`);
   }
 
   // ==================== PAYMENTS ====================

@@ -58,11 +58,13 @@ export default function MenuScreen() {
   const [sendingOrder, setSendingOrder] = useState(false);
   const [isWaiter, setIsWaiter] = useState(false);
   const [isCashier, setIsCashier] = useState(false);
+  const [canCompleteBill, setCanCompleteBill] = useState(false);
   const [showImages, setShowImages] = useState(true);
   const [existingOrderId, setExistingOrderId] = useState(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
   const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
+  const [billingSettings, setBillingSettings] = useState({});
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
@@ -157,6 +159,14 @@ export default function MenuScreen() {
           }
         } catch (e) {
           console.log('API fetch error (using cached):', e);
+        }
+
+        // Load billing settings
+        try {
+          const bRes = await apiClient.getBillingSettings(restaurantId);
+          if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
+        } catch (e) {
+          console.log('Billing settings fetch error:', e);
         }
       };
 
@@ -297,6 +307,8 @@ export default function MenuScreen() {
       setIsWaiter(userRole === 'waiter' || userRole === 'employee');
       // Check if user is cashier/sales (counter sales mode - no table required)
       setIsCashier(userRole === 'cashier' || userRole === 'sales');
+      // Check if staff has "Complete Bill" permission granted by owner
+      setCanCompleteBill(userData.pageAccess?.completeBill === true);
 
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {
@@ -692,8 +704,42 @@ export default function MenuScreen() {
       const subtotal = getCartTotal();
       const totalDiscount = discountData.totalDiscount || 0;
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
-      const { taxAmount } = calculateTax(discountedSubtotal);
-      const grandTotal = discountedSubtotal + taxAmount;
+      const serviceCharge = discountData.serviceChargeAmount || 0;
+      const taxableAmount = discountedSubtotal + serviceCharge;
+      const { taxAmount } = calculateTax(taxableAmount);
+      const afterTax = taxableAmount + taxAmount;
+      const withTip = afterTax + (discountData.tipAmount || 0);
+      let roundOff = 0;
+      if (billingSettings.roundOffEnabled) {
+        const roundTo = billingSettings.roundOffTo || 1;
+        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+        roundOff = Math.round(roundOff * 100) / 100;
+      }
+      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
+
+      // Build billing fields object
+      const billingFields = {};
+      if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
+      if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
+      if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
+      if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
+      if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
+      if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
+      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      if (discountData.compItems) billingFields.compItems = discountData.compItems;
+      if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
+      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.splitPayments) billingFields.paymentMethod = 'split';
+
+      // Partial payment
+      let partialFields = {};
+      if (discountData.partialPayAmount) {
+        partialFields = {
+          paidAmount: parseFloat(discountData.partialPayAmount),
+          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
+          paymentStatus: 'partial',
+        };
+      }
 
       const items = cart.map(item => ({
         menuItemId: item.menuItemId || item.id,
@@ -707,8 +753,8 @@ export default function MenuScreen() {
         await apiClient.updateOrder(existingOrderId, {
           items,
           status: 'completed',
-          paymentStatus: 'paid',
-          paymentMethod: paymentMethod,
+          paymentStatus: partialFields.paymentStatus || 'paid',
+          paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
           discountAmount: totalDiscount,
           taxAmount: taxAmount,
@@ -719,11 +765,13 @@ export default function MenuScreen() {
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
+          ...billingFields,
+          ...partialFields,
         });
 
         await apiClient.verifyPayment({
           orderId: existingOrderId,
-          paymentMethod,
+          paymentMethod: billingFields.paymentMethod || paymentMethod,
           amount: grandTotal,
           userId: user?.id,
           restaurantId,
@@ -743,7 +791,7 @@ export default function MenuScreen() {
           tableNumber: selectedTable?.name || params.tableNumber,
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
-          paymentMethod: paymentMethod,
+          paymentMethod: billingFields.paymentMethod || paymentMethod,
           status: isBarTabMode ? 'completed' : 'confirmed',
           staffInfo: {
             waiterId: user?.id,
@@ -756,6 +804,9 @@ export default function MenuScreen() {
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
           pricingRuleId: activePricingRuleId || null,
+          finalAmount: grandTotal,
+          ...billingFields,
+          ...partialFields,
         };
 
         let response;
@@ -828,8 +879,41 @@ export default function MenuScreen() {
       const subtotal = getCartTotal();
       const totalDiscount = discountData.totalDiscount || 0;
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
-      const { taxAmount, taxRate, taxLabel } = calculateTax(discountedSubtotal);
-      const grandTotal = discountedSubtotal + taxAmount;
+      const serviceCharge = discountData.serviceChargeAmount || 0;
+      const taxableAmount = discountedSubtotal + serviceCharge;
+      const { taxAmount, taxRate, taxLabel } = calculateTax(taxableAmount);
+      const afterTax = taxableAmount + taxAmount;
+      const withTip = afterTax + (discountData.tipAmount || 0);
+      let roundOff = 0;
+      if (billingSettings.roundOffEnabled) {
+        const roundTo = billingSettings.roundOffTo || 1;
+        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+        roundOff = Math.round(roundOff * 100) / 100;
+      }
+      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
+
+      // Build billing fields
+      const billingFields = {};
+      if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
+      if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
+      if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
+      if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
+      if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
+      if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
+      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      if (discountData.compItems) billingFields.compItems = discountData.compItems;
+      if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
+      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.splitPayments) billingFields.paymentMethod = 'split';
+
+      let partialFields = {};
+      if (discountData.partialPayAmount) {
+        partialFields = {
+          paidAmount: parseFloat(discountData.partialPayAmount),
+          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
+          paymentStatus: 'partial',
+        };
+      }
 
       const idempotencyKey = generateIdempotencyKey();
       const orderData = {
@@ -842,7 +926,7 @@ export default function MenuScreen() {
           quantity: item.quantity,
         })),
         orderType: orderType,
-        paymentMethod: paymentMethod,
+        paymentMethod: billingFields.paymentMethod || paymentMethod,
         status: 'completed', // Counter sales are completed immediately
         staffInfo: {
           waiterId: user?.id,
@@ -856,6 +940,7 @@ export default function MenuScreen() {
         tax: taxAmount,
         taxRate: taxRate,
         total: grandTotal,
+        finalAmount: grandTotal,
         // Discount/loyalty data
         ...(discountData.selectedOfferId && { offerIds: [discountData.selectedOfferId] }),
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
@@ -864,6 +949,8 @@ export default function MenuScreen() {
         customerId: discountData.customerId || null,
         discountAmount: totalDiscount,
         pricingRuleId: activePricingRuleId || null,
+        ...billingFields,
+        ...partialFields,
       };
 
       let response;
@@ -905,10 +992,188 @@ export default function MenuScreen() {
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
         orderType: orderType,
-        paymentMethod: paymentMethod,
+        paymentMethod: billingFields.paymentMethod || paymentMethod,
         timestamp: new Date(),
         staffName: user?.name || 'Cashier',
         // Discount fields for invoice
+        offerDiscount: discountData.offerDiscount || 0,
+        offerName: discountData.selectedOfferName || null,
+        manualDiscount: discountData.manualDiscountAmount || 0,
+        loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        // Billing fields for invoice
+        serviceChargeAmount: serviceCharge || 0,
+        serviceChargeRate: discountData.serviceChargeRate || 0,
+        tipAmount: discountData.tipAmount || 0,
+        roundOffAmount: roundOff || 0,
+        cashReceived: discountData.cashReceived || null,
+        changeReturned: discountData.changeReturned || null,
+        splitPayments: discountData.splitPayments || null,
+      };
+
+      setLastOrderData(invoiceData);
+      setShowInvoiceModal(true);
+      setCart([]);
+      setShowCart(false);
+    } catch (error) {
+      console.error('Error placing order:', error);
+      toast.error(error.message || 'Failed to place order. Please try again.');
+    } finally {
+      setSendingOrder(false);
+    }
+  };
+
+  // Admin/Manager - Complete Bill immediately (like cashier flow but for any role)
+  const handleCompleteBill = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}) => {
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to cart before completing bill.');
+      return;
+    }
+
+    setSendingOrder(true);
+
+    try {
+      const subtotal = getCartTotal();
+      const totalDiscount = discountData.totalDiscount || 0;
+      const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+      const serviceCharge = discountData.serviceChargeAmount || 0;
+      const taxableAmount = discountedSubtotal + serviceCharge;
+      const { taxAmount, taxRate, taxLabel } = calculateTax(taxableAmount);
+      const afterTax = taxableAmount + taxAmount;
+      const withTip = afterTax + (discountData.tipAmount || 0);
+      let roundOff = 0;
+      if (billingSettings.roundOffEnabled) {
+        const roundTo = billingSettings.roundOffTo || 1;
+        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+        roundOff = Math.round(roundOff * 100) / 100;
+      }
+      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
+
+      // Build billing fields
+      const billingFields = {};
+      if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
+      if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
+      if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
+      if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
+      if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
+      if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
+      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      if (discountData.compItems) billingFields.compItems = discountData.compItems;
+      if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
+      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.splitPayments) billingFields.paymentMethod = 'split';
+
+      let partialFields = {};
+      if (discountData.partialPayAmount) {
+        partialFields = {
+          paidAmount: parseFloat(discountData.partialPayAmount),
+          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
+          paymentStatus: 'partial',
+        };
+      }
+
+      const idempotencyKey = generateIdempotencyKey();
+      const tableNum = selectedTable?.name || params.tableNumber;
+      const orderData = {
+        restaurantId,
+        idempotencyKey,
+        ...(tableNum && { tableNumber: tableNum }),
+        items: cart.map(item => ({
+          menuItemId: item.menuItemId || item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+        })),
+        orderType,
+        paymentMethod: billingFields.paymentMethod || paymentMethod,
+        status: 'completed',
+        paymentStatus: partialFields.paymentStatus || 'paid',
+        staffInfo: {
+          waiterId: user?.id,
+          waiterName: user?.name || 'Manager',
+        },
+        customerInfo: {
+          name: customerName || 'Walk-in Customer',
+          mobile: customerMobile || '',
+        },
+        ...(customerMobile && { customerPhone: customerMobile }),
+        subtotal,
+        tax: taxAmount,
+        taxRate,
+        total: grandTotal,
+        finalAmount: grandTotal,
+        completedAt: new Date().toISOString(),
+        ...(discountData.selectedOfferId && { offerIds: [discountData.selectedOfferId] }),
+        ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
+        ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
+        customerId: discountData.customerId || null,
+        discountAmount: totalDiscount,
+        pricingRuleId: activePricingRuleId || null,
+        ...billingFields,
+        ...partialFields,
+      };
+
+      let response;
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+        await queueOrder(orderData);
+        setPendingSyncCount(await getQueueCount());
+        toast.warning('No internet. Order saved locally and will sync when online.');
+        setCart([]);
+        setShowCart(false);
+        setSendingOrder(false);
+        return;
+      }
+
+      try {
+        response = await apiClient.createOrder(orderData);
+      } catch (apiErr) {
+        await queueOrder(orderData);
+        setPendingSyncCount(await getQueueCount());
+        toast.warning('Connection issue. Order saved and will sync when online.');
+        setCart([]);
+        setShowCart(false);
+        setSendingOrder(false);
+        return;
+      }
+
+      // Verify payment
+      await apiClient.verifyPayment({
+        orderId: response.order?.id,
+        paymentMethod,
+        amount: grandTotal,
+        userId: user?.id,
+        restaurantId,
+        paymentStatus: 'completed',
+      }).catch(() => {});
+
+      // Fetch latest user data for invoice settings
+      const latestUserData = await apiClient.getUser();
+      const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
+
+      // Prepare invoice data
+      const invoiceData = {
+        orderId: response.order?.id,
+        orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+        restaurantName,
+        restaurantInfo: latestRestaurantInfo,
+        items: cart.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.price * item.quantity,
+        })),
+        subtotal,
+        tax: taxAmount,
+        taxRate,
+        taxLabel,
+        taxEnabled: taxSettings.enabled,
+        grandTotal,
+        customerName: customerName || 'Walk-in Customer',
+        customerMobile: customerMobile || '',
+        orderType,
+        paymentMethod,
+        timestamp: new Date(),
+        staffName: user?.name || 'Manager',
         offerDiscount: discountData.offerDiscount || 0,
         offerName: discountData.selectedOfferName || null,
         manualDiscount: discountData.manualDiscountAmount || 0,
@@ -920,8 +1185,8 @@ export default function MenuScreen() {
       setCart([]);
       setShowCart(false);
     } catch (error) {
-      console.error('Error placing order:', error);
-      toast.error(error.message || 'Failed to place order. Please try again.');
+      console.error('Error completing bill:', error);
+      toast.error(error.message || 'Failed to complete bill. Please try again.');
     } finally {
       setSendingOrder(false);
     }
@@ -1555,8 +1820,8 @@ export default function MenuScreen() {
         </View>
       )}
 
-      {/* Bottom Order Button - For Waiters */}
-      {!isBarTabMode && isWaiter && cart.length > 0 && (
+      {/* Bottom Order Button - For Waiters (without Complete Bill access) */}
+      {!isBarTabMode && isWaiter && !canCompleteBill && cart.length > 0 && (
         <View style={styles.bottomOrderBar}>
           <View style={styles.orderSummary}>
             <Text style={styles.orderItemsCount}>{cart.length} items</Text>
@@ -1577,6 +1842,20 @@ export default function MenuScreen() {
             )}
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* Cart FAB - For Waiters with Complete Bill access */}
+      {!isBarTabMode && isWaiter && canCompleteBill && cart.length > 0 && (
+        <TouchableOpacity
+          style={styles.cartFAB}
+          onPress={() => setShowCart(true)}
+        >
+          <Ionicons name="cart" size={24} color="#fff" />
+          <View style={styles.cartFABBadge}>
+            <Text style={styles.cartFABBadgeText}>{cart.length}</Text>
+          </View>
+          <Text style={styles.cartFABText}>₹{getCartTotal().toFixed(2)}</Text>
+        </TouchableOpacity>
       )}
 
       {/* Bottom Order Button - For Cashier/Sales (Counter Sales) */}
@@ -1632,7 +1911,7 @@ export default function MenuScreen() {
       /> */}
 
       {/* Cart Modal - Permission Based */}
-      {isWaiter ? (
+      {isWaiter && !canCompleteBill ? (
         <WaiterCartModal
           visible={showCart}
           onClose={() => setShowCart(false)}
@@ -1661,6 +1940,7 @@ export default function MenuScreen() {
           onOrderTypeChange={handleOrderTypeChange}
           multiPricingEnabled={multiPricingEnabled}
           activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
+          billingSettings={billingSettings}
         />
       ) : (
         <CartModal
@@ -1670,6 +1950,7 @@ export default function MenuScreen() {
           onUpdateQuantity={updateCartQuantity}
           onRemoveItem={removeFromCart}
           onPlaceOrder={handlePlaceOrder}
+          onCompleteBill={handleCompleteBill}
           total={getCartTotal()}
           tableNumber={selectedTable?.name || params.tableNumber}
           restaurantId={restaurantId}
@@ -1679,6 +1960,7 @@ export default function MenuScreen() {
           hasTable={!!selectedTable?.name || !!params.tableNumber}
           multiPricingEnabled={multiPricingEnabled}
           activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
+          billingSettings={billingSettings}
         />
       )}
 

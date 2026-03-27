@@ -77,6 +77,12 @@ export default function CustomersScreen() {
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [loyaltyHistory, setLoyaltyHistory] = useState([]);
   const [loadingLoyalty, setLoadingLoyalty] = useState(false);
+  const [creditHistory, setCreditHistory] = useState([]);
+  const [loadingCredit, setLoadingCredit] = useState(false);
+  const [showSettleModal, setShowSettleModal] = useState(false);
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleMethod, setSettleMethod] = useState('cash');
+  const [settlingCredit, setSettlingCredit] = useState(false);
 
   // ── Offers state ────────────────────────────────────
   const [offers, setOffers] = useState([]);
@@ -363,6 +369,12 @@ export default function CustomersScreen() {
     if (customer.loyaltyPoints > 0) {
       loadLoyaltyHistory(customer.id);
     }
+    // Load credit history
+    setLoadingCredit(true);
+    apiClient.getCustomerCreditHistory(customer.id || customer._id)
+      .then(res => setCreditHistory(res.creditHistory || res || []))
+      .catch(() => setCreditHistory([]))
+      .finally(() => setLoadingCredit(false));
   };
 
   const openOrderHistory = (customer) => {
@@ -456,6 +468,11 @@ export default function CustomersScreen() {
                 </>
               )}
             </View>
+            {(item.outstandingBalance > 0) && (
+              <View style={{ backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>{formatCurrency(item.outstandingBalance)} due</Text>
+              </View>
+            )}
           </View>
 
           {/* Actions */}
@@ -1361,6 +1378,56 @@ export default function CustomersScreen() {
                 ))
               )}
             </View>
+
+            {/* Outstanding Balance */}
+            {selectedCustomer?.outstandingBalance > 0 && (
+              <View style={{ backgroundColor: '#fef2f2', padding: 16, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: '#fecaca' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#991b1b' }}>Outstanding Balance</Text>
+                    <Text style={{ fontSize: 24, fontWeight: '800', color: '#dc2626' }}>{formatCurrency(selectedCustomer.outstandingBalance)}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#dc2626', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }}
+                    onPress={() => {
+                      setSettleAmount(String(selectedCustomer.outstandingBalance));
+                      setSettleMethod('cash');
+                      setShowSettleModal(true);
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Settle</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Credit History */}
+            {creditHistory.length > 0 && (
+              <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 8 }}>Credit History</Text>
+                {creditHistory.map((entry, i) => (
+                  <View key={i} style={{ backgroundColor: '#fff', padding: 12, borderRadius: 8, marginBottom: 6, borderWidth: 1, borderColor: '#f0f0f0' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>#{entry.orderNumber}</Text>
+                      <Text style={{ fontSize: 12, color: '#6b7280' }}>{new Date(entry.date).toLocaleDateString()}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                      <Text style={{ fontSize: 12, color: '#6b7280' }}>Total: {formatCurrency(entry.totalAmount)}</Text>
+                      <Text style={{ fontSize: 12, color: '#059669' }}>Paid: {formatCurrency(entry.paidAmount)}</Text>
+                      {entry.outstandingAmount > 0 && (
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>Due: {formatCurrency(entry.outstandingAmount)}</Text>
+                      )}
+                    </View>
+                    {entry.settledAt && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                        <Ionicons name="checkmark-circle" size={14} color="#059669" />
+                        <Text style={{ fontSize: 11, color: '#059669' }}>Settled {new Date(entry.settledAt).toLocaleDateString()}</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -1683,6 +1750,78 @@ export default function CustomersScreen() {
       {renderCustomerFormModal()}
       {renderProfileModal()}
       {renderOrderHistoryModal()}
+
+      {/* Settle Credit Modal */}
+      <Modal visible={showSettleModal} transparent animationType="fade" onRequestClose={() => setShowSettleModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 360 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#374151', marginBottom: 16 }}>Settle Credit</Text>
+
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 }}>Amount</Text>
+            <TextInput
+              style={{ backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: '#374151', marginBottom: 12 }}
+              keyboardType="numeric"
+              value={settleAmount}
+              onChangeText={setSettleAmount}
+              placeholder="Amount"
+              placeholderTextColor="#9ca3af"
+            />
+
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 }}>Payment Method</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+              {['cash', 'upi', 'card'].map(m => (
+                <TouchableOpacity
+                  key={m}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: settleMethod === m ? '#059669' : '#f3f4f6', alignItems: 'center' }}
+                  onPress={() => setSettleMethod(m)}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: settleMethod === m ? '#fff' : '#374151' }}>
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: '#f3f4f6', alignItems: 'center' }}
+                onPress={() => setShowSettleModal(false)}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: '#059669', alignItems: 'center' }}
+                onPress={async () => {
+                  setSettlingCredit(true);
+                  try {
+                    await apiClient.settleCustomerCredit(selectedCustomer.id || selectedCustomer._id, {
+                      amount: parseFloat(settleAmount),
+                      paymentMethod: settleMethod,
+                    });
+                    Alert.alert('Success', 'Credit settled successfully');
+                    setShowSettleModal(false);
+                    // Refresh customer data
+                    if (restaurantId) loadCustomers(restaurantId);
+                    // Reload credit history
+                    apiClient.getCustomerCreditHistory(selectedCustomer.id || selectedCustomer._id)
+                      .then(res => setCreditHistory(res.creditHistory || res || []))
+                      .catch(() => {});
+                  } catch (e) {
+                    Alert.alert('Error', e.message || 'Failed to settle credit');
+                  } finally {
+                    setSettlingCredit(false);
+                  }
+                }}
+                disabled={settlingCredit}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                  {settlingCredit ? 'Settling...' : 'Settle'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

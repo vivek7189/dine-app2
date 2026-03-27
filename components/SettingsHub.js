@@ -20,6 +20,7 @@ import PrintSettings from './PrintSettings';
 import ZonePricingSettings from './ZonePricingSettings';
 import CurrencySettings from './CurrencySettings';
 import OrderManagementSettings from './OrderManagementSettings';
+import BillingSettings from './BillingSettings';
 import MultiTierPricingSettings from './MultiTierPricingSettings';
 
 const SETTINGS_CATEGORIES = [
@@ -84,6 +85,13 @@ const SETTINGS_CATEGORIES = [
     title: 'Order Management',
     subtitle: 'Numbering, auto-accept, prep time',
     icon: 'receipt-outline',
+    roles: ['owner', 'admin'],
+  },
+  {
+    key: 'billing',
+    title: 'Billing Settings',
+    subtitle: 'Service charge, tips, split pay & more',
+    icon: 'card-outline',
     roles: ['owner', 'admin'],
   },
 ];
@@ -155,6 +163,10 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
           <ScrollView contentContainerStyle={styles.scrollPadding}>
             <OrderManagementSettings restaurantId={restaurantId} />
           </ScrollView>
+        );
+      case 'billing':
+        return (
+          <BillingSettings restaurantId={restaurantId} />
         );
       default:
         return null;

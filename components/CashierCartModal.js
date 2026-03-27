@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
   StatusBar,
+  LayoutAnimation,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,7 @@ import { Colors, Spacing } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
 import OfferSelector from './OfferSelector';
 import CustomerDetailModal from './CustomerDetailModal';
+import apiClient from '../services/api';
 
 export default function CashierCartModal({
   visible,
@@ -34,6 +36,7 @@ export default function CashierCartModal({
   onOrderTypeChange,
   multiPricingEnabled = false,
   activePricingRuleName,
+  billingSettings = {},
 }) {
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
@@ -53,6 +56,33 @@ export default function CashierCartModal({
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
+
+  // Billing state
+  const [activeBillingPanel, setActiveBillingPanel] = useState(null);
+  const [serviceChargeAmount, setServiceChargeAmount] = useState(0);
+  const [cashReceived, setCashReceived] = useState('');
+  const [changeAmount, setChangeAmount] = useState(0);
+  const [splitPayments, setSplitPayments] = useState([]);
+  const [tipAmount, setTipAmount] = useState(0);
+  const [tipPercentage, setTipPercentage] = useState(null);
+  const [partialPayAmount, setPartialPayAmount] = useState('');
+  const [selectedCompItems, setSelectedCompItems] = useState([]);
+  const [selectedVoidItems, setSelectedVoidItems] = useState([]);
+  const [compReason, setCompReason] = useState('');
+  const [voidReason, setVoidReason] = useState('');
+  const [billingManagerPin, setBillingManagerPin] = useState('');
+
+  // Reset billing state when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setActiveBillingPanel(null);
+      setCashReceived(''); setChangeAmount(0);
+      setSplitPayments([]); setTipAmount(0); setTipPercentage(null);
+      setPartialPayAmount(''); setSelectedCompItems([]); setSelectedVoidItems([]);
+      setCompReason(''); setVoidReason(''); setBillingManagerPin('');
+      setServiceChargeAmount(0);
+    }
+  }, [visible]);
 
   // Calculate totals
   const subtotal = total;
@@ -74,10 +104,24 @@ export default function CashierCartModal({
     return Math.round(redeemPoints * redemptionRate * 100) / 100;
   })();
 
-  const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount;
+  // Comp items reduce subtotal
+  const compAmount = selectedCompItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + compAmount;
   const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+
+  // Auto-calculate service charge
+  const calcServiceCharge = billingSettings.serviceChargeEnabled
+    ? Math.round((discountedSubtotal * (billingSettings.serviceChargeRate || 0) / 100) * 100) / 100
+    : 0;
+
+  // Update service charge when discountedSubtotal changes
+  useEffect(() => {
+    setServiceChargeAmount(calcServiceCharge);
+  }, [calcServiceCharge]);
+
   const taxAmount = discountedSubtotal * (taxRate / 100);
-  const grandTotal = discountedSubtotal + taxAmount;
+  // Display total includes service charge and tip (tax is shown separately)
+  const displayTotal = discountedSubtotal + taxAmount + calcServiceCharge + tipAmount;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handleCustomerFound = useCallback((customer, settings) => {
@@ -102,18 +146,36 @@ export default function CashierCartModal({
     setManualDiscountType(type);
   }, []);
 
+  const buildDiscountData = () => ({
+    offerDiscount,
+    manualDiscountAmount,
+    loyaltyDiscount,
+    totalDiscount,
+    redeemLoyaltyPoints: redeemPoints,
+    selectedOfferId,
+    selectedOfferName: selectedOffer?.name || null,
+    customerId: customerData?.id || customerData?._id || null,
+    // Billing fields
+    serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
+    serviceChargeAmount: calcServiceCharge || null,
+    tipAmount: tipAmount || null,
+    tipPercentage: tipPercentage || null,
+    cashReceived: cashReceived ? parseFloat(cashReceived) : null,
+    changeReturned: changeAmount > 0 ? changeAmount : null,
+    splitPayments: splitPayments.length > 0 ? splitPayments : null,
+    partialPayAmount: partialPayAmount ? parseFloat(partialPayAmount) : null,
+    compItems: selectedCompItems.length > 0 ? selectedCompItems.map(item => ({
+      menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
+      amount: item.price * item.quantity, reason: compReason,
+    })) : null,
+    voidItems: selectedVoidItems.length > 0 ? selectedVoidItems.map(item => ({
+      menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
+      amount: item.price * item.quantity, reason: voidReason,
+    })) : null,
+  });
+
   const handlePlaceOrder = () => {
-    // Pass all discount/loyalty data to parent
-    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, {
-      offerDiscount,
-      manualDiscountAmount,
-      loyaltyDiscount,
-      totalDiscount,
-      redeemLoyaltyPoints: redeemPoints,
-      selectedOfferId,
-      selectedOfferName: selectedOffer?.name || null,
-      customerId: customerData?.id || customerData?._id || null,
-    });
+    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
   };
 
   const renderCartItem = ({ item }) => (
@@ -247,6 +309,335 @@ export default function CashierCartModal({
                 />
               )}
 
+              {/* Billing Toolbar */}
+              {(() => {
+                const billingButtons = [];
+                if (billingSettings.serviceChargeEnabled) billingButtons.push({ key: 'service', icon: 'add-circle-outline', label: 'SC', color: '#059669' });
+                if (billingSettings.roundOffEnabled) billingButtons.push({ key: 'roundoff', icon: 'refresh-outline', label: 'Round', color: '#7c3aed' });
+                if (billingSettings.cashTenderingEnabled) billingButtons.push({ key: 'cash', icon: 'cash-outline', label: 'Cash', color: '#d97706' });
+                if (billingSettings.splitPaymentEnabled) billingButtons.push({ key: 'split', icon: 'git-branch-outline', label: 'Split', color: '#2563eb' });
+                if (billingSettings.tipsEnabled) billingButtons.push({ key: 'tip', icon: 'heart-outline', label: 'Tip', color: '#ec4899' });
+                if (billingSettings.partialPaymentEnabled) billingButtons.push({ key: 'partial', icon: 'wallet-outline', label: 'Khata', color: '#f59e0b' });
+                if (billingSettings.compVoidEnabled) {
+                  billingButtons.push({ key: 'comp', icon: 'gift-outline', label: 'Comp', color: '#14b8a6' });
+                  billingButtons.push({ key: 'void', icon: 'close-circle-outline', label: 'Void', color: '#ef4444' });
+                }
+
+                if (billingButtons.length === 0) return null;
+
+                return (
+                  <View style={styles.billingSection}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.billingToolbar}>
+                      {billingButtons.map((btn) => {
+                        const isActive = activeBillingPanel === btn.key ||
+                          (btn.key === 'service' && calcServiceCharge > 0) ||
+                          (btn.key === 'tip' && tipAmount > 0) ||
+                          (btn.key === 'split' && splitPayments.length > 0) ||
+                          (btn.key === 'cash' && cashReceived) ||
+                          (btn.key === 'partial' && partialPayAmount) ||
+                          (btn.key === 'comp' && selectedCompItems.length > 0) ||
+                          (btn.key === 'void' && selectedVoidItems.length > 0);
+                        return (
+                          <TouchableOpacity
+                            key={btn.key}
+                            style={[styles.billingIconBtn, isActive && { backgroundColor: btn.color }]}
+                            onPress={() => {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                              setActiveBillingPanel(activeBillingPanel === btn.key ? null : btn.key);
+                            }}
+                          >
+                            <Ionicons name={btn.icon} size={16} color={isActive ? '#fff' : btn.color} />
+                            <Text style={[styles.billingIconLabel, isActive && { color: '#fff' }]}>{btn.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+
+                    {/* Cash Tendering Panel */}
+                    {activeBillingPanel === 'cash' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Cash Tendering</Text>
+                        <TextInput
+                          style={styles.panelInput}
+                          placeholder="Cash Received"
+                          placeholderTextColor="#9ca3af"
+                          keyboardType="numeric"
+                          value={cashReceived}
+                          onChangeText={(v) => {
+                            setCashReceived(v);
+                            const received = parseFloat(v) || 0;
+                            setChangeAmount(Math.max(0, Math.round((received - displayTotal) * 100) / 100));
+                          }}
+                        />
+                        <View style={styles.denomRow}>
+                          {(billingSettings.denominations || [100, 200, 500, 2000]).map((d) => (
+                            <TouchableOpacity
+                              key={d}
+                              style={styles.denomBtn}
+                              onPress={() => {
+                                setCashReceived(String(d));
+                                setChangeAmount(Math.max(0, Math.round((d - displayTotal) * 100) / 100));
+                              }}
+                            >
+                              <Text style={styles.denomBtnText}>{d >= 1000 ? `${d/1000}K` : `₹${d}`}</Text>
+                            </TouchableOpacity>
+                          ))}
+                          <TouchableOpacity
+                            style={[styles.denomBtn, { backgroundColor: '#059669' }]}
+                            onPress={() => {
+                              setCashReceived(String(Math.ceil(displayTotal)));
+                              setChangeAmount(0);
+                            }}
+                          >
+                            <Text style={[styles.denomBtnText, { color: '#fff' }]}>Exact</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {parseFloat(cashReceived) > 0 && (
+                          <View style={styles.changeRow}>
+                            <Text style={styles.changeLabel}>Change to Return:</Text>
+                            <Text style={styles.changeValue}>₹{changeAmount.toFixed(2)}</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Split Payment Panel */}
+                    {activeBillingPanel === 'split' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Split Payment</Text>
+                        {splitPayments.map((sp, idx) => (
+                          <View key={idx} style={styles.splitRow}>
+                            <View style={styles.splitMethodBtns}>
+                              {['cash', 'upi', 'card'].map((m) => (
+                                <TouchableOpacity
+                                  key={m}
+                                  style={[styles.splitMethodBtn, sp.method === m && styles.splitMethodBtnActive]}
+                                  onPress={() => {
+                                    const updated = [...splitPayments];
+                                    updated[idx] = { ...sp, method: m };
+                                    setSplitPayments(updated);
+                                  }}
+                                >
+                                  <Text style={[styles.splitMethodText, sp.method === m && { color: '#fff' }]}>
+                                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                            <TextInput
+                              style={styles.splitAmountInput}
+                              placeholder="₹ Amount"
+                              placeholderTextColor="#9ca3af"
+                              keyboardType="numeric"
+                              value={sp.amount ? String(sp.amount) : ''}
+                              onChangeText={(v) => {
+                                const updated = [...splitPayments];
+                                updated[idx] = { ...sp, amount: parseFloat(v) || 0 };
+                                setSplitPayments(updated);
+                              }}
+                            />
+                            <TouchableOpacity onPress={() => setSplitPayments(splitPayments.filter((_, i) => i !== idx))}>
+                              <Ionicons name="close-circle" size={22} color="#ef4444" />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                        <TouchableOpacity
+                          style={styles.addSplitBtn}
+                          onPress={() => setSplitPayments([...splitPayments, { method: 'cash', amount: 0 }])}
+                        >
+                          <Ionicons name="add" size={16} color="#2563eb" />
+                          <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>Add Payment</Text>
+                        </TouchableOpacity>
+                        {splitPayments.length > 0 && (
+                          <View style={styles.changeRow}>
+                            <Text style={styles.changeLabel}>Remaining:</Text>
+                            <Text style={[styles.changeValue, {
+                              color: (displayTotal - splitPayments.reduce((s, p) => s + (p.amount || 0), 0)) > 0.01 ? '#ef4444' : '#059669'
+                            }]}>
+                              ₹{Math.max(0, displayTotal - splitPayments.reduce((s, p) => s + (p.amount || 0), 0)).toFixed(2)}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Tip Panel */}
+                    {activeBillingPanel === 'tip' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Add Tip</Text>
+                        <View style={styles.denomRow}>
+                          {(billingSettings.tipPresets || [5, 10, 15, 20]).map((pct) => (
+                            <TouchableOpacity
+                              key={pct}
+                              style={[styles.denomBtn, tipPercentage === pct && { backgroundColor: '#ec4899' }]}
+                              onPress={() => {
+                                setTipPercentage(pct);
+                                setTipAmount(Math.round(discountedSubtotal * pct / 100 * 100) / 100);
+                              }}
+                            >
+                              <Text style={[styles.denomBtnText, tipPercentage === pct && { color: '#fff' }]}>{pct}%</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                        <TextInput
+                          style={[styles.panelInput, { marginTop: 8 }]}
+                          placeholder="Custom tip amount"
+                          placeholderTextColor="#9ca3af"
+                          keyboardType="numeric"
+                          value={tipAmount ? String(tipAmount) : ''}
+                          onChangeText={(v) => {
+                            setTipPercentage(null);
+                            setTipAmount(parseFloat(v) || 0);
+                          }}
+                        />
+                        {tipAmount > 0 && (
+                          <View style={styles.changeRow}>
+                            <Text style={styles.changeLabel}>Tip:</Text>
+                            <Text style={[styles.changeValue, { color: '#ec4899' }]}>₹{tipAmount.toFixed(2)}</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Partial Payment Panel */}
+                    {activeBillingPanel === 'partial' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Partial Payment (Khata)</Text>
+                        {customerData?.outstandingBalance > 0 && (
+                          <View style={[styles.changeRow, { marginBottom: 8, backgroundColor: '#fef2f2', padding: 8, borderRadius: 6 }]}>
+                            <Text style={{ fontSize: 12, color: '#dc2626' }}>Existing Balance:</Text>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>₹{customerData.outstandingBalance}</Text>
+                          </View>
+                        )}
+                        <TextInput
+                          style={styles.panelInput}
+                          placeholder="Amount paying now"
+                          placeholderTextColor="#9ca3af"
+                          keyboardType="numeric"
+                          value={partialPayAmount}
+                          onChangeText={setPartialPayAmount}
+                        />
+                        {partialPayAmount && (
+                          <View style={styles.changeRow}>
+                            <Text style={styles.changeLabel}>Outstanding after:</Text>
+                            <Text style={[styles.changeValue, { color: '#f59e0b' }]}>
+                              ₹{Math.max(0, displayTotal - (parseFloat(partialPayAmount) || 0)).toFixed(2)}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* Comp Panel */}
+                    {activeBillingPanel === 'comp' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Comp Items</Text>
+                        {cart.map((item) => {
+                          const isSelected = selectedCompItems.some(c => c.id === item.id);
+                          return (
+                            <TouchableOpacity
+                              key={item.id}
+                              style={[styles.compItemRow, isSelected && { backgroundColor: '#ecfdf5' }]}
+                              onPress={() => {
+                                if (isSelected) {
+                                  setSelectedCompItems(selectedCompItems.filter(c => c.id !== item.id));
+                                } else {
+                                  setSelectedCompItems([...selectedCompItems, item]);
+                                }
+                              }}
+                            >
+                              <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#14b8a6' : '#9ca3af'} />
+                              <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        <TextInput
+                          style={[styles.panelInput, { marginTop: 8 }]}
+                          placeholder="Reason for comp"
+                          placeholderTextColor="#9ca3af"
+                          value={compReason}
+                          onChangeText={setCompReason}
+                        />
+                        {billingSettings.compVoidRequiresPin && (
+                          <TextInput
+                            style={[styles.panelInput, { marginTop: 6 }]}
+                            placeholder="Manager PIN"
+                            placeholderTextColor="#9ca3af"
+                            secureTextEntry
+                            keyboardType="number-pad"
+                            value={billingManagerPin}
+                            onChangeText={setBillingManagerPin}
+                            maxLength={6}
+                          />
+                        )}
+                      </View>
+                    )}
+
+                    {/* Void Panel */}
+                    {activeBillingPanel === 'void' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>Void Items</Text>
+                        {cart.map((item) => {
+                          const isSelected = selectedVoidItems.some(v => v.id === item.id);
+                          return (
+                            <TouchableOpacity
+                              key={item.id}
+                              style={[styles.compItemRow, isSelected && { backgroundColor: '#fef2f2' }]}
+                              onPress={() => {
+                                if (isSelected) {
+                                  setSelectedVoidItems(selectedVoidItems.filter(v => v.id !== item.id));
+                                } else {
+                                  setSelectedVoidItems([...selectedVoidItems, item]);
+                                }
+                              }}
+                            >
+                              <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#ef4444' : '#9ca3af'} />
+                              <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        <TextInput
+                          style={[styles.panelInput, { marginTop: 8 }]}
+                          placeholder="Reason for void"
+                          placeholderTextColor="#9ca3af"
+                          value={voidReason}
+                          onChangeText={setVoidReason}
+                        />
+                        {billingSettings.compVoidRequiresPin && (
+                          <TextInput
+                            style={[styles.panelInput, { marginTop: 6 }]}
+                            placeholder="Manager PIN"
+                            placeholderTextColor="#9ca3af"
+                            secureTextEntry
+                            keyboardType="number-pad"
+                            value={billingManagerPin}
+                            onChangeText={setBillingManagerPin}
+                            maxLength={6}
+                          />
+                        )}
+                      </View>
+                    )}
+
+                    {/* Service Charge Info (read-only) */}
+                    {activeBillingPanel === 'service' && (
+                      <View style={styles.billingPanel}>
+                        <Text style={styles.panelTitle}>{billingSettings.serviceChargeLabel || 'Service Charge'}</Text>
+                        <View style={styles.changeRow}>
+                          <Text style={styles.changeLabel}>Rate:</Text>
+                          <Text style={styles.changeValue}>{billingSettings.serviceChargeRate || 0}%</Text>
+                        </View>
+                        <View style={styles.changeRow}>
+                          <Text style={styles.changeLabel}>Amount:</Text>
+                          <Text style={[styles.changeValue, { color: '#059669' }]}>₹{calcServiceCharge.toFixed(2)}</Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })()}
+
               {/* Bill Summary */}
               <View style={styles.billSection}>
                 <View style={styles.billRow}>
@@ -277,6 +668,20 @@ export default function CashierCartModal({
                   </View>
                 )}
 
+                {compAmount > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={[styles.billLabelGreen, { color: '#14b8a6' }]}>Comp Items</Text>
+                    <Text style={[styles.billValueGreen, { color: '#14b8a6' }]}>-₹{compAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+
+                {calcServiceCharge > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>{billingSettings.serviceChargeLabel || 'Service Charge'} ({billingSettings.serviceChargeRate}%)</Text>
+                    <Text style={styles.billValue}>₹{calcServiceCharge.toFixed(2)}</Text>
+                  </View>
+                )}
+
                 {taxSettings.enabled && taxRate > 0 && (
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Tax ({taxRate}%)</Text>
@@ -284,9 +689,16 @@ export default function CashierCartModal({
                   </View>
                 )}
 
+                {tipAmount > 0 && (
+                  <View style={styles.billRow}>
+                    <Text style={[styles.billLabel, { color: '#ec4899' }]}>Tip{tipPercentage ? ` (${tipPercentage}%)` : ''}</Text>
+                    <Text style={[styles.billValue, { color: '#ec4899' }]}>₹{tipAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+
                 <View style={styles.billTotalRow}>
                   <Text style={styles.billTotalLabel}>Total</Text>
-                  <Text style={styles.billTotalValue}>₹{grandTotal.toFixed(2)}</Text>
+                  <Text style={styles.billTotalValue}>₹{displayTotal.toFixed(2)}</Text>
                 </View>
 
                 {totalDiscount > 0 && (
@@ -307,30 +719,32 @@ export default function CashierCartModal({
                 </View>
               )}
 
-              {/* Payment Method - Compact Pills */}
-              <View style={styles.paymentSection}>
-                <Text style={styles.paymentLabel}>Payment</Text>
-                <View style={styles.paymentPills}>
-                  <TouchableOpacity
-                    style={[styles.paymentPill, paymentMethod === 'cash' && styles.paymentPillActive]}
-                    onPress={() => setPaymentMethod('cash')}
-                  >
-                    <Text style={[styles.paymentPillText, paymentMethod === 'cash' && styles.paymentPillTextActive]}>Cash</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.paymentPill, paymentMethod === 'upi' && styles.paymentPillActive]}
-                    onPress={() => setPaymentMethod('upi')}
-                  >
-                    <Text style={[styles.paymentPillText, paymentMethod === 'upi' && styles.paymentPillTextActive]}>UPI</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.paymentPill, paymentMethod === 'card' && styles.paymentPillActive]}
-                    onPress={() => setPaymentMethod('card')}
-                  >
-                    <Text style={[styles.paymentPillText, paymentMethod === 'card' && styles.paymentPillTextActive]}>Card</Text>
-                  </TouchableOpacity>
+              {/* Payment Method - Compact Pills (hidden when split payment active) */}
+              {splitPayments.length === 0 && (
+                <View style={styles.paymentSection}>
+                  <Text style={styles.paymentLabel}>Payment</Text>
+                  <View style={styles.paymentPills}>
+                    <TouchableOpacity
+                      style={[styles.paymentPill, paymentMethod === 'cash' && styles.paymentPillActive]}
+                      onPress={() => setPaymentMethod('cash')}
+                    >
+                      <Text style={[styles.paymentPillText, paymentMethod === 'cash' && styles.paymentPillTextActive]}>Cash</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.paymentPill, paymentMethod === 'upi' && styles.paymentPillActive]}
+                      onPress={() => setPaymentMethod('upi')}
+                    >
+                      <Text style={[styles.paymentPillText, paymentMethod === 'upi' && styles.paymentPillTextActive]}>UPI</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.paymentPill, paymentMethod === 'card' && styles.paymentPillActive]}
+                      onPress={() => setPaymentMethod('card')}
+                    >
+                      <Text style={[styles.paymentPillText, paymentMethod === 'card' && styles.paymentPillTextActive]}>Card</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
+              )}
             </>
           )}
         </ScrollView>
@@ -348,7 +762,7 @@ export default function CashierCartModal({
               ) : (
                 <>
                   <Text style={styles.completeButtonText}>Complete Billing</Text>
-                  <Text style={styles.completeButtonAmount}>₹{grandTotal.toFixed(2)}</Text>
+                  <Text style={styles.completeButtonAmount}>₹{displayTotal.toFixed(2)}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -633,5 +1047,136 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#9ca3af',
+  },
+  // Billing toolbar & panels
+  billingSection: {
+    backgroundColor: '#fff',
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  billingToolbar: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  billingIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+  },
+  billingIconLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  billingPanel: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  panelTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 8,
+  },
+  panelInput: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: '#1f2937',
+  },
+  denomRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  denomBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    backgroundColor: '#e5e7eb',
+  },
+  denomBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  changeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  changeLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  changeValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  splitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  splitMethodBtns: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  splitMethodBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 4,
+    backgroundColor: '#e5e7eb',
+  },
+  splitMethodBtnActive: {
+    backgroundColor: '#2563eb',
+  },
+  splitMethodText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  splitAmountInput: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 13,
+    color: '#1f2937',
+  },
+  addSplitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+  },
+  compItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 6,
   },
 });

@@ -83,6 +83,14 @@ export default function MoreScreen() {
           route: '/(tabs)/inventory',
           roles: ['owner', 'manager', 'admin'],
         },
+        {
+          title: 'Kitchen Display',
+          subtitle: 'Live kitchen orders & KOT tracking',
+          icon: 'flame',
+          color: '#ef4444',
+          route: '/(tabs)/kitchen',
+          roles: ['owner', 'manager', 'admin', 'waiter', 'employee'],
+        },
       ],
     },
     {

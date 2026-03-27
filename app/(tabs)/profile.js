@@ -27,6 +27,10 @@ export default function ProfileScreen() {
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   const [passwordChangeError, setPasswordChangeError] = useState('');
 
+  // Tip earnings
+  const [tipData, setTipData] = useState(null);
+  const [billingSettings, setBillingSettings] = useState({});
+
   useEffect(() => {
     loadUserData();
   }, []);
@@ -41,6 +45,23 @@ export default function ProfileScreen() {
 
       setUser(userData);
       setRestaurant(userData.restaurant);
+
+      // Load billing settings to check if tips enabled
+      const rid = userData?.restaurantId || userData?.restaurant?.id;
+      if (rid) {
+        apiClient.getBillingSettings(rid)
+          .then(res => {
+            const bs = res?.billingSettings || res || {};
+            setBillingSettings(bs);
+            // Load tip data if tips enabled
+            if (bs.tipsEnabled && userData?.id) {
+              apiClient.getStaffTips(userData.id)
+                .then(tipRes => setTipData(tipRes))
+                .catch(() => setTipData(null));
+            }
+          })
+          .catch(() => setBillingSettings({}));
+      }
     } catch (error) {
       console.error('Error loading user data:', error);
     }
@@ -318,6 +339,39 @@ export default function ProfileScreen() {
                       )}
                     </TouchableOpacity>
                   </View>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Tip Earnings */}
+        {billingSettings.tipsEnabled && tipData && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Tip Earnings</Text>
+            <View style={styles.infoCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 12 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#059669' }}>₹{tipData.totalTips || tipData.tipEarnings || 0}</Text>
+                  <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 2 }}>Total Tips</Text>
+                </View>
+                <View style={{ width: 1, backgroundColor: '#e5e7eb' }} />
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#ec4899' }}>₹{tipData.thisMonthTips || 0}</Text>
+                  <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 2 }}>This Month</Text>
+                </View>
+              </View>
+              {tipData.tipHistory && tipData.tipHistory.length > 0 && (
+                <View style={{ borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingTop: 10 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark, marginBottom: 6 }}>Recent Tips</Text>
+                  {tipData.tipHistory.slice(0, 5).map((tip, i) => (
+                    <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                      <Text style={{ fontSize: 12, color: Colors.textMedium }}>
+                        #{tip.orderNumber} - {new Date(tip.date).toLocaleDateString()}
+                      </Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#059669' }}>₹{tip.amount}</Text>
+                    </View>
+                  ))}
                 </View>
               )}
             </View>
