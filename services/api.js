@@ -1135,6 +1135,70 @@ class ApiClient {
     return this.request(`/api/owner/inventory${qs ? `?${qs}` : ''}`);
   }
 
+  // ==================== INVENTORY MANAGEMENT ====================
+
+  async getInventoryItems(restaurantId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/api/inventory/${restaurantId}${qs ? `?${qs}` : ''}`);
+  }
+
+  async getInventoryDashboard(restaurantId) {
+    return this.request(`/api/inventory/${restaurantId}/dashboard`);
+  }
+
+  async getInventoryTransactions(restaurantId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/api/inventory/${restaurantId}/transactions${qs ? `?${qs}` : ''}`);
+  }
+
+  async getInventoryUsageSummary(restaurantId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/api/inventory/${restaurantId}/usage-summary${qs ? `?${qs}` : ''}`);
+  }
+
+  async getRecipes(restaurantId) {
+    return this.request(`/api/recipes/${restaurantId}`);
+  }
+
+  async createInventoryItem(restaurantId, itemData) {
+    return this.request(`/api/inventory/${restaurantId}`, { method: 'POST', data: itemData });
+  }
+
+  async updateInventoryItem(restaurantId, itemId, updateData) {
+    return this.request(`/api/inventory/${restaurantId}/${itemId}`, { method: 'PATCH', data: updateData });
+  }
+
+  // Quick Order Logger
+  async parseQuickOrderText(restaurantId, text) {
+    return this.request(`/api/inventory/${restaurantId}/quick-order`, {
+      method: 'POST',
+      data: { mode: 'parse', subMode: 'text', text },
+    });
+  }
+
+  async parseQuickOrderImage(restaurantId, imageUri, mimeType = 'image/jpeg') {
+    const formData = new FormData();
+    formData.append('mode', 'parse');
+    formData.append('subMode', 'image');
+    formData.append('image', {
+      uri: imageUri,
+      name: 'order_photo.jpg',
+      type: mimeType,
+    });
+    return this.request(`/api/inventory/${restaurantId}/quick-order`, {
+      method: 'POST',
+      data: formData,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  }
+
+  async confirmQuickOrder(restaurantId, items, source, notes = '') {
+    return this.request(`/api/inventory/${restaurantId}/quick-order`, {
+      method: 'POST',
+      data: { mode: 'confirm', items, source, notes },
+    });
+  }
+
   // ==================== PRINT SETTINGS ====================
 
   async getPrintSettings(restaurantId) {

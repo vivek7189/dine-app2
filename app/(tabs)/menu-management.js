@@ -42,6 +42,8 @@ export default function MenuManagementScreen() {
   const [actionLoading, setActionLoading] = useState(null); // Track which item action is loading
   const [businessType, setBusinessType] = useState('restaurant');
   const [hasDefaultMenu, setHasDefaultMenu] = useState(false);
+  const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
+  const [activePricingRules, setActivePricingRules] = useState([]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -71,6 +73,7 @@ export default function MenuManagementScreen() {
     // Ice cream fields
     servingSize: '',
     scoopOptions: '',
+    pricingRules: {},
   });
 
   useEffect(() => {
@@ -124,6 +127,17 @@ export default function MenuManagementScreen() {
       setRestaurantId(rid);
       setBusinessType(userData.restaurant?.businessType || 'restaurant');
       setHasDefaultMenu(!!userData.restaurant?.hasDefaultMenu);
+
+      // Load multi-tier pricing rules
+      try {
+        const pricingRes = await apiClient.getPricingSettings(rid);
+        const mp = pricingRes?.settings?.multiPricing;
+        if (mp?.enabled) {
+          setMultiPricingEnabled(true);
+          setActivePricingRules((mp.rules || []).filter(r => r.isActive));
+        }
+      } catch { /* backward compatible */ }
+
       await loadMenu(rid);
     } catch (error) {
       console.error('Error loading menu:', error);
@@ -290,6 +304,7 @@ export default function MenuManagementScreen() {
       expiryDate: '',
       servingSize: '',
       scoopOptions: '',
+      pricingRules: {},
     });
     setEditingItem(null);
   };
@@ -324,6 +339,7 @@ export default function MenuManagementScreen() {
       expiryDate: item.expiryDate || '',
       servingSize: item.servingSize || '',
       scoopOptions: item.scoopOptions?.toString() || '',
+      pricingRules: item.pricingRules || {},
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -502,6 +518,16 @@ export default function MenuManagementScreen() {
       if (businessType === 'ice_cream') {
         if (formData.servingSize) itemData.servingSize = formData.servingSize;
         if (formData.scoopOptions) itemData.scoopOptions = parseInt(formData.scoopOptions);
+      }
+
+      // Multi-tier pricing rules (per-item)
+      if (multiPricingEnabled && formData.pricingRules) {
+        const cleaned = {};
+        Object.entries(formData.pricingRules).forEach(([ruleId, val]) => {
+          const parsed = parseFloat(val);
+          if (!isNaN(parsed) && parsed >= 0) cleaned[ruleId] = parsed;
+        });
+        if (Object.keys(cleaned).length > 0) itemData.pricingRules = cleaned;
       }
 
       if (editingItem) {
@@ -768,6 +794,8 @@ export default function MenuManagementScreen() {
                 onImageDelete={handleImageDelete}
                 uploadingImage={uploadingImage}
                 businessType={businessType}
+                multiPricingEnabled={multiPricingEnabled}
+                activePricingRules={activePricingRules}
               />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
@@ -940,6 +968,8 @@ export default function MenuManagementScreen() {
               onImageDelete={handleImageDelete}
               uploadingImage={uploadingImage}
               businessType={businessType}
+              multiPricingEnabled={multiPricingEnabled}
+              activePricingRules={activePricingRules}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>

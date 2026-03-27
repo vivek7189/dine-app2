@@ -31,6 +31,9 @@ export default function CashierCartModal({
   taxSettings = { enabled: false, rate: 0, taxes: [] },
   restaurantId,
   countryCode = 'IN',
+  onOrderTypeChange,
+  multiPricingEnabled = false,
+  activePricingRuleName,
 }) {
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
@@ -168,23 +171,28 @@ export default function CashierCartModal({
           <View style={styles.orderTypeSection}>
             <TouchableOpacity
               style={[styles.orderTypeTab, orderType === 'counter' && styles.orderTypeTabActive]}
-              onPress={() => setOrderType('counter')}
+              onPress={() => { setOrderType('counter'); onOrderTypeChange?.('counter'); }}
             >
               <Text style={[styles.orderTypeText, orderType === 'counter' && styles.orderTypeTextActive]}>Counter</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.orderTypeTab, orderType === 'takeaway' && styles.orderTypeTabActive]}
-              onPress={() => setOrderType('takeaway')}
+              onPress={() => { setOrderType('takeaway'); onOrderTypeChange?.('takeaway'); }}
             >
               <Text style={[styles.orderTypeText, orderType === 'takeaway' && styles.orderTypeTextActive]}>Takeaway</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.orderTypeTab, orderType === 'delivery' && styles.orderTypeTabActive]}
-              onPress={() => setOrderType('delivery')}
+              onPress={() => { setOrderType('delivery'); onOrderTypeChange?.('delivery'); }}
             >
               <Text style={[styles.orderTypeText, orderType === 'delivery' && styles.orderTypeTextActive]}>Delivery</Text>
             </TouchableOpacity>
           </View>
+          {multiPricingEnabled && activePricingRuleName && (
+            <View style={{ backgroundColor: '#ede9fe', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginLeft: 16, marginTop: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#7c3aed' }}>Zone: {activePricingRuleName}</Text>
+            </View>
+          )}
         </SafeAreaView>
 
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>

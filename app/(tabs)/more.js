@@ -75,6 +75,14 @@ export default function MoreScreen() {
           route: '/(tabs)/customers',
           roles: ['owner', 'manager', 'admin'],
         },
+        {
+          title: 'Inventory',
+          subtitle: 'Stock levels, usage & recipes',
+          icon: 'cube',
+          color: '#059669',
+          route: '/(tabs)/inventory',
+          roles: ['owner', 'manager', 'admin'],
+        },
       ],
     },
     {

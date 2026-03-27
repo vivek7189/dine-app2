@@ -33,6 +33,10 @@ import { useToast } from '../../components/Toast';
 import { getCached, setCache } from '../../services/cacheManager';
 import SyncIndicator from '../../components/SyncIndicator';
 
+const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
+const DELIVERY_NAMES = ['delivery'];
+const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+
 export default function MenuScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -232,7 +236,7 @@ export default function MenuScreen() {
     const floorName = params.floorName || selectedTable?.floor || '';
     if (floorName) {
       const matched = pricingRules.find(r =>
-        (r.tableMappings || []).some(m => floorName.toLowerCase().includes(m.toLowerCase()))
+        (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
       );
       if (matched) {
         setActivePricingRuleId(matched.id);
@@ -434,6 +438,54 @@ export default function MenuScreen() {
     }
     return item.price;
   }, [multiPricingEnabled, activePricingRuleId, pricingRules]);
+
+  // Handle order type change from CartModal/CashierCartModal → auto-select pricing rule
+  const handleOrderTypeChange = useCallback((newType) => {
+    if (!multiPricingEnabled) return;
+    const t = (newType || '').toLowerCase();
+    if (TAKEAWAY_NAMES.includes(t)) {
+      const rule = pricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
+      if (rule) { setActivePricingRuleId(rule.id); setAutoSelectedRule(true); }
+    } else if (DELIVERY_NAMES.includes(t)) {
+      const rule = pricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
+      if (rule) { setActivePricingRuleId(rule.id); setAutoSelectedRule(true); }
+    } else {
+      // Dine-in/counter: restore floor-based auto-selection or clear
+      setAutoSelectedRule(false);
+      const floorName = params.floorName || selectedTable?.floor || '';
+      if (floorName) {
+        const matched = pricingRules.find(r =>
+          (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
+        );
+        if (matched) { setActivePricingRuleId(matched.id); setAutoSelectedRule(true); return; }
+      }
+      setActivePricingRuleId(null);
+    }
+  }, [multiPricingEnabled, pricingRules, params.floorName, selectedTable]);
+
+  // Re-price cart when active pricing rule changes
+  useEffect(() => {
+    if (!multiPricingEnabled || cart.length === 0) return;
+    setCart(prev => prev.map(item => {
+      const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+      const basePrice = item.originalPrice ?? menuItem?.price ?? item.price;
+      let newPrice = basePrice;
+      if (activePricingRuleId) {
+        const perItem = menuItem?.pricingRules?.[activePricingRuleId];
+        const parsed = perItem != null ? Number(perItem) : NaN;
+        if (!isNaN(parsed) && parsed >= 0) {
+          newPrice = parsed;
+        } else {
+          const rule = pricingRules.find(r => r.id === activePricingRuleId);
+          if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue)
+            newPrice = Math.round(basePrice * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
+          else if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue)
+            newPrice = Math.round((basePrice + rule.defaultMarkupValue) * 100) / 100;
+        }
+      }
+      return { ...item, price: newPrice, originalPrice: basePrice };
+    }));
+  }, [activePricingRuleId, multiPricingEnabled]);
 
   const addToCart = (item) => {
     const adjustedPrice = getItemDisplayPrice(item);
@@ -1387,7 +1439,10 @@ export default function MenuScreen() {
           >
             <Text style={{ fontSize: 12, fontWeight: '500', color: !activePricingRuleId ? '#fff' : '#6b7280' }}>Base Price</Text>
           </TouchableOpacity>
-          {pricingRules.map(rule => (
+          {pricingRules.filter(r => {
+            const n = (r.name || '').toLowerCase().trim();
+            return !TAKEAWAY_NAMES.includes(n) && !DELIVERY_NAMES.includes(n) && !DINEIN_NAMES.includes(n);
+          }).map(rule => (
             <TouchableOpacity
               key={rule.id}
               onPress={() => { if (!autoSelectedRule) setActivePricingRuleId(rule.id); }}
@@ -1603,6 +1658,9 @@ export default function MenuScreen() {
           taxSettings={taxSettings}
           restaurantId={restaurantId}
           countryCode="IN"
+          onOrderTypeChange={handleOrderTypeChange}
+          multiPricingEnabled={multiPricingEnabled}
+          activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
         />
       ) : (
         <CartModal
@@ -1617,6 +1675,10 @@ export default function MenuScreen() {
           restaurantId={restaurantId}
           sending={sendingOrder}
           countryCode="IN"
+          onOrderTypeChange={handleOrderTypeChange}
+          hasTable={!!selectedTable?.name || !!params.tableNumber}
+          multiPricingEnabled={multiPricingEnabled}
+          activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
         />
       )}
 

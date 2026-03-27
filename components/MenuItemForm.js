@@ -21,6 +21,10 @@ const BOTTLE_SIZES = ['30ml', '60ml', '90ml', '180ml', '375ml', '500ml', '750ml'
 const BAKERY_UNITS = ['piece', 'kg', 'gram', 'dozen', 'box', 'slice', 'pack'];
 const SERVING_SIZES = ['scoop', 'cup', 'cone', 'sundae', 'shake', 'tub', 'stick'];
 
+const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
+const DELIVERY_NAMES = ['delivery'];
+const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+
 export default function MenuItemForm({
   formData,
   setFormData,
@@ -30,6 +34,8 @@ export default function MenuItemForm({
   onImageDelete,
   uploadingImage = false,
   businessType = 'restaurant',
+  multiPricingEnabled = false,
+  activePricingRules = [],
 }) {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSpiritPicker, setShowSpiritPicker] = useState(false);
@@ -269,6 +275,79 @@ export default function MenuItemForm({
           >
             <Text style={styles.categoryDoneText}>Done</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Per-Rule Pricing (Multi-Tier) */}
+      {multiPricingEnabled && activePricingRules.length > 0 && (
+        <View style={styles.pricingRulesSection}>
+          <Text style={styles.pricingRulesTitle}>Zone / Channel Prices</Text>
+          <Text style={styles.pricingRulesHint}>Leave blank to use base price + default markup</Text>
+          {(() => {
+            const zoneRules = activePricingRules.filter(r => {
+              const n = (r.name || '').toLowerCase().trim();
+              return !TAKEAWAY_NAMES.includes(n) && !DELIVERY_NAMES.includes(n) && !DINEIN_NAMES.includes(n);
+            });
+            const takeawayRule = activePricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
+            const deliveryRule = activePricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
+            return (
+              <>
+                {zoneRules.length > 0 && (
+                  <View style={styles.pricingGroup}>
+                    <Text style={styles.pricingGroupLabel}>Dine-In Zones</Text>
+                    {zoneRules.map(rule => (
+                      <View key={rule.id} style={styles.pricingRuleRow}>
+                        <Text style={styles.pricingRuleName}>{rule.name}</Text>
+                        <TextInput
+                          style={styles.pricingRuleInput}
+                          placeholder={formData.price || 'Base'}
+                          placeholderTextColor={Colors.textLight}
+                          keyboardType="numeric"
+                          value={formData.pricingRules?.[rule.id]?.toString() || ''}
+                          onChangeText={(text) => setFormData({
+                            ...formData,
+                            pricingRules: { ...(formData.pricingRules || {}), [rule.id]: text }
+                          })}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {takeawayRule && (
+                  <View style={styles.pricingRuleRow}>
+                    <Text style={styles.pricingRuleName}>Takeaway</Text>
+                    <TextInput
+                      style={styles.pricingRuleInput}
+                      placeholder={formData.price || 'Base'}
+                      placeholderTextColor={Colors.textLight}
+                      keyboardType="numeric"
+                      value={formData.pricingRules?.[takeawayRule.id]?.toString() || ''}
+                      onChangeText={(text) => setFormData({
+                        ...formData,
+                        pricingRules: { ...(formData.pricingRules || {}), [takeawayRule.id]: text }
+                      })}
+                    />
+                  </View>
+                )}
+                {deliveryRule && (
+                  <View style={styles.pricingRuleRow}>
+                    <Text style={styles.pricingRuleName}>Delivery</Text>
+                    <TextInput
+                      style={styles.pricingRuleInput}
+                      placeholder={formData.price || 'Base'}
+                      placeholderTextColor={Colors.textLight}
+                      keyboardType="numeric"
+                      value={formData.pricingRules?.[deliveryRule.id]?.toString() || ''}
+                      onChangeText={(text) => setFormData({
+                        ...formData,
+                        pricingRules: { ...(formData.pricingRules || {}), [deliveryRule.id]: text }
+                      })}
+                    />
+                  </View>
+                )}
+              </>
+            );
+          })()}
         </View>
       )}
 
@@ -762,6 +841,58 @@ const styles = StyleSheet.create({
   form: {
     flex: 1,
     padding: Spacing.lg,
+  },
+  pricingRulesSection: {
+    marginBottom: Spacing.md,
+    backgroundColor: '#faf5ff',
+    borderRadius: 10,
+    padding: Spacing.sm,
+  },
+  pricingRulesTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#7c3aed',
+    marginBottom: 2,
+  },
+  pricingRulesHint: {
+    fontSize: 11,
+    color: Colors.textMedium,
+    marginBottom: 8,
+  },
+  pricingGroup: {
+    marginBottom: 6,
+  },
+  pricingGroupLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textMedium,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  pricingRuleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  pricingRuleName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: Colors.textDark,
+    flex: 1,
+  },
+  pricingRuleInput: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    fontSize: 14,
+    color: Colors.textDark,
+    width: 90,
+    textAlign: 'center',
   },
   row: {
     flexDirection: 'row',

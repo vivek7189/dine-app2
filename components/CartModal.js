@@ -28,6 +28,10 @@ export default function CartModal({
   restaurantId,
   sending,
   countryCode = 'IN',
+  onOrderTypeChange,
+  hasTable = false,
+  multiPricingEnabled = false,
+  activePricingRuleName,
 }) {
   const [orderType, setOrderType] = useState('dine-in');
   const [customerName, setCustomerName] = useState('');
@@ -158,29 +162,36 @@ export default function CartModal({
             <View style={styles.orderTypeTabs}>
               <TouchableOpacity
                 style={[styles.orderTypeTab, orderType === 'dine-in' && styles.orderTypeTabActive]}
-                onPress={() => setOrderType('dine-in')}
+                onPress={() => { setOrderType('dine-in'); onOrderTypeChange?.('dine-in'); }}
               >
                 <Text style={[styles.orderTypeTabText, orderType === 'dine-in' && styles.orderTypeTabTextActive]}>
                   DINE IN
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.orderTypeTab, orderType === 'takeaway' && styles.orderTypeTabActive]}
-                onPress={() => setOrderType('takeaway')}
+                style={[styles.orderTypeTab, orderType === 'takeaway' && styles.orderTypeTabActive, hasTable && { opacity: 0.4 }]}
+                onPress={() => { if (hasTable) return; setOrderType('takeaway'); onOrderTypeChange?.('takeaway'); }}
+                disabled={hasTable}
               >
                 <Text style={[styles.orderTypeTabText, orderType === 'takeaway' && styles.orderTypeTabTextActive]}>
                   TAKEAWAY
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.orderTypeTab, orderType === 'delivery' && styles.orderTypeTabActive]}
-                onPress={() => setOrderType('delivery')}
+                style={[styles.orderTypeTab, orderType === 'delivery' && styles.orderTypeTabActive, hasTable && { opacity: 0.4 }]}
+                onPress={() => { if (hasTable) return; setOrderType('delivery'); onOrderTypeChange?.('delivery'); }}
+                disabled={hasTable}
               >
                 <Text style={[styles.orderTypeTabText, orderType === 'delivery' && styles.orderTypeTabTextActive]}>
                   DELIVERY
                 </Text>
               </TouchableOpacity>
             </View>
+            {multiPricingEnabled && activePricingRuleName && (
+              <View style={{ backgroundColor: '#ede9fe', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginTop: 6 }}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: '#7c3aed' }}>Zone: {activePricingRuleName}</Text>
+              </View>
+            )}
           </View>
 
           <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>

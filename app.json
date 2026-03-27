@@ -2,15 +2,25 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "1.1.5",
+    "version": "1.2.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.dineopen.waiter",
+      "icon": "./assets/icon.png",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to microphone for voice order taking.",
@@ -19,7 +29,11 @@
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 11,
+      "versionCode": 12,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#DC4A3A"
+      },
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.INTERNET"

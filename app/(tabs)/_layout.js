@@ -213,6 +213,14 @@ export default function TabsLayout() {
         }}
       />
 
+      {/* Inventory — accessed from More screen */}
+      <Tabs.Screen
+        name="inventory"
+        options={{
+          href: null,
+        }}
+      />
+
       {/* Headquarters — accessed from Home/More screen (owner only) */}
       <Tabs.Screen
         name="headquarters"

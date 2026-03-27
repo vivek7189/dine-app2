@@ -20,6 +20,7 @@ import PrintSettings from './PrintSettings';
 import ZonePricingSettings from './ZonePricingSettings';
 import CurrencySettings from './CurrencySettings';
 import OrderManagementSettings from './OrderManagementSettings';
+import MultiTierPricingSettings from './MultiTierPricingSettings';
 
 const SETTINGS_CATEGORIES = [
   {
@@ -62,6 +63,13 @@ const SETTINGS_CATEGORIES = [
     title: 'Zone Pricing',
     subtitle: 'Zone-based pricing surcharges',
     icon: 'layers-outline',
+    roles: ['owner', 'admin'],
+  },
+  {
+    key: 'multiPricing',
+    title: 'Multi-Tier Pricing',
+    subtitle: 'Zone & channel pricing',
+    icon: 'pricetags-outline',
     roles: ['owner', 'admin'],
   },
   {
@@ -128,6 +136,12 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
         return (
           <ScrollView contentContainerStyle={styles.scrollPadding}>
             <ZonePricingSettings restaurantId={restaurantId} />
+          </ScrollView>
+        );
+      case 'multiPricing':
+        return (
+          <ScrollView contentContainerStyle={styles.scrollPadding}>
+            <MultiTierPricingSettings restaurantId={restaurantId} />
           </ScrollView>
         );
       case 'currency':
