@@ -97,8 +97,8 @@ export default function CartModal({
   // Calculate loyalty discount
   const loyaltyDiscount = (() => {
     if (!redeemPoints || !loyaltySettings) return 0;
-    const rate = loyaltySettings.redemptionRate || 100;
-    return Math.round((redeemPoints / rate) * 100) / 100;
+    const redemptionRate = loyaltySettings.redemptionValue || 0.1;
+    return Math.round(redeemPoints * redemptionRate * 100) / 100;
   })();
 
   // Comp items reduce subtotal
@@ -148,6 +148,7 @@ export default function CartModal({
     cashReceived: cashReceived ? parseFloat(cashReceived) : null,
     changeReturned: changeAmount > 0 ? changeAmount : null,
     splitPayments: splitPayments.length > 0 ? splitPayments : null,
+    paymentMethod: splitPayments.length > 0 ? 'split' : paymentMethod,
     partialPayAmount: partialPayAmount ? parseFloat(partialPayAmount) : null,
     compItems: selectedCompItems.length > 0 ? selectedCompItems.map(item => ({
       menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
@@ -646,6 +647,20 @@ export default function CartModal({
                               maxLength={6}
                             />
                           )}
+                        </View>
+                      )}
+
+                      {/* Round-off Info (read-only) */}
+                      {activeBillingPanel === 'roundoff' && (
+                        <View style={styles.billingPanel}>
+                          <Text style={styles.panelTitle}>Round-off</Text>
+                          <Text style={{ fontSize: 13, color: Colors.textMedium, marginBottom: 8 }}>
+                            Bills will be automatically rounded to the nearest ₹{billingSettings.roundOffTo || 1}.
+                          </Text>
+                          <View style={styles.changeRow}>
+                            <Text style={styles.changeLabel}>Round to:</Text>
+                            <Text style={styles.changeValue}>₹{billingSettings.roundOffTo || 1}</Text>
+                          </View>
                         </View>
                       )}
 

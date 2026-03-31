@@ -30,16 +30,7 @@ android {`;
   content = content.replace('android {', keystoreLoader);
 }
 
-// Replace signingConfigs to add release config using keystoreProperties (no hardcoded secrets)
-const oldSigningConfigs = `    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-    }`;
-
+// The new signingConfigs + buildTypes block (with release signing)
 const newSigningConfigs = `    signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -69,24 +60,20 @@ const newSigningConfigs = `    signingConfigs {
         }
     }`;
 
-// Try to replace existing signingConfigs block
-if (content.includes(oldSigningConfigs)) {
-  content = content.replace(oldSigningConfigs, newSigningConfigs);
+// Step 1: Remove ALL existing buildTypes blocks (Expo generates one that overrides ours)
+// Use a greedy regex that matches buildTypes { ... } accounting for nested braces
+content = content.replace(/    buildTypes\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
+
+// Step 2: Replace existing signingConfigs block with our new one (includes buildTypes)
+const signingConfigsRegex = /    signingConfigs\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/;
+if (signingConfigsRegex.test(content)) {
+  content = content.replace(signingConfigsRegex, newSigningConfigs);
 } else {
-  // If the structure is different, try a more flexible replacement
-  const signingConfigsRegex = /signingConfigs\s*\{[\s\S]*?\n    \}/;
-  const buildTypesRegex = /buildTypes\s*\{[\s\S]*?\n    \}/;
-
-  // Remove existing buildTypes if present (we'll add it in newSigningConfigs)
-  if (buildTypesRegex.test(content)) {
-    content = content.replace(buildTypesRegex, '');
-  }
-
-  // Replace signingConfigs
-  if (signingConfigsRegex.test(content)) {
-    content = content.replace(signingConfigsRegex, newSigningConfigs);
-  }
+  console.log('⚠️  Could not find signingConfigs block to replace');
 }
+
+// Clean up any double blank lines left from removals
+content = content.replace(/\n{3,}/g, '\n\n');
 
 fs.writeFileSync(buildGradlePath, content);
 console.log('✅ Restored release signing config in build.gradle (using keystore.properties)');

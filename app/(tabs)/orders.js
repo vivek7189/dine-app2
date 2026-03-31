@@ -64,6 +64,13 @@ export default function OrdersScreen() {
   const [markPaidOrderId, setMarkPaidOrderId] = useState(null);
   const [markPaidSubmitting, setMarkPaidSubmitting] = useState(false);
 
+  // Refund
+  const [showRefundPanel, setShowRefundPanel] = useState(false);
+  const [refundType, setRefundType] = useState('full');
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
+
   // Pusher reference
   const pusherRef = useRef(null);
   const channelRef = useRef(null);
@@ -426,9 +433,45 @@ export default function OrdersScreen() {
     }
   };
 
+  const executeRefund = async () => {
+    if (!selectedOrder) return;
+    const orderTotal = selectedOrder.finalAmount || selectedOrder.totalAmount || 0;
+    const amount = refundType === 'full' ? orderTotal : (parseFloat(refundAmount) || 0);
+    if (amount <= 0) {
+      Alert.alert('Error', 'Please enter a valid refund amount');
+      return;
+    }
+    if (amount > orderTotal) {
+      Alert.alert('Error', 'Refund amount cannot exceed the order total');
+      return;
+    }
+    setRefundSubmitting(true);
+    try {
+      await apiClient.processRefund(selectedOrder.id, {
+        type: refundType,
+        amount,
+        reason: refundReason || 'Refund requested',
+      });
+      setOrders(prev => prev.map(o =>
+        o.id === selectedOrder.id ? { ...o, refundAmount: amount, refundStatus: refundType === 'full' ? 'refunded' : 'partial_refund' } : o
+      ));
+      setShowRefundPanel(false);
+      setRefundType('full');
+      setRefundAmount('');
+      setRefundReason('');
+      Alert.alert('Success', `₹${amount.toFixed(2)} refunded successfully`);
+      if (restaurantId) loadOrders(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to process refund');
+    } finally {
+      setRefundSubmitting(false);
+    }
+  };
+
   const openOrderDetail = (order) => {
     setSelectedOrder(order);
     setShowOrderDetail(true);
+    setShowRefundPanel(false);
   };
 
   const getOrderDate = (date) => {
@@ -871,6 +914,68 @@ export default function OrdersScreen() {
                     {markPaidSubmitting ? 'Processing...' : 'Mark as Fully Paid'}
                   </Text>
                 </TouchableOpacity>
+              )}
+              {selectedOrder.status === 'completed' && selectedOrder.paymentStatus !== 'partial' && !selectedOrder.refundStatus && (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#ef4444', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}
+                  onPress={() => setShowRefundPanel(!showRefundPanel)}
+                >
+                  <Ionicons name="return-down-back-outline" size={18} color="#fff" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Refund</Text>
+                </TouchableOpacity>
+              )}
+              {selectedOrder.refundStatus && (
+                <View style={{ backgroundColor: '#fef2f2', padding: 10, borderRadius: 8, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#ef4444" />
+                  <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '600' }}>
+                    {selectedOrder.refundStatus === 'refunded' ? 'Fully Refunded' : 'Partially Refunded'} — ₹{selectedOrder.refundAmount || 0}
+                  </Text>
+                </View>
+              )}
+              {showRefundPanel && (
+                <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, padding: 12, marginTop: 8 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#dc2626', marginBottom: 8 }}>Process Refund</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: 8, borderRadius: 6, backgroundColor: refundType === 'full' ? '#ef4444' : '#f3f4f6', alignItems: 'center' }}
+                      onPress={() => setRefundType('full')}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: refundType === 'full' ? '#fff' : '#6b7280' }}>Full Refund</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: 8, borderRadius: 6, backgroundColor: refundType === 'partial' ? '#ef4444' : '#f3f4f6', alignItems: 'center' }}
+                      onPress={() => setRefundType('partial')}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: refundType === 'partial' ? '#fff' : '#6b7280' }}>Partial</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {refundType === 'partial' && (
+                    <TextInput
+                      style={{ backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, marginBottom: 8 }}
+                      placeholder="Refund amount"
+                      placeholderTextColor="#9ca3af"
+                      keyboardType="numeric"
+                      value={refundAmount}
+                      onChangeText={setRefundAmount}
+                    />
+                  )}
+                  <TextInput
+                    style={{ backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, marginBottom: 8 }}
+                    placeholder="Reason for refund"
+                    placeholderTextColor="#9ca3af"
+                    value={refundReason}
+                    onChangeText={setRefundReason}
+                  />
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#dc2626', paddingVertical: 10, borderRadius: 8, alignItems: 'center', opacity: refundSubmitting ? 0.6 : 1 }}
+                    onPress={executeRefund}
+                    disabled={refundSubmitting}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                      {refundSubmitting ? 'Processing...' : `Refund ₹${refundType === 'full' ? (selectedOrder.finalAmount || selectedOrder.totalAmount || 0) : (parseFloat(refundAmount) || 0)}`}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           </View>

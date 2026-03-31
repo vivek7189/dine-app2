@@ -335,6 +335,12 @@ export default function MenuScreen() {
         }
       } catch { /* ignore — backward compatible */ }
 
+      // Load billing settings
+      try {
+        const bRes = await apiClient.getBillingSettings(rid);
+        if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
+      } catch { /* ignore */ }
+
       // Stale-while-revalidate: try menu cache first
       const cached = await getCached('cache_menu_' + rid);
       if (cached?.data && Array.isArray(cached.data) && cached.data.length > 0) {
@@ -638,15 +644,19 @@ export default function MenuScreen() {
         try {
           response = await apiClient.createOrder(orderData);
         } catch (apiErr) {
-          // API failed — queue for offline sync
-          await queueOrder(orderData);
-          setPendingSyncCount(await getQueueCount());
-          toast.warning('Connection issue. Order saved and will sync when online.');
-          setCart([]);
-          setShowCart(false);
-          setExistingOrderId(null);
-          setSendingOrder(false);
-          return;
+          // Only queue for network errors, not API errors
+          const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
+          if (isNetworkError) {
+            await queueOrder(orderData);
+            setPendingSyncCount(await getQueueCount());
+            toast.warning('Connection issue. Order saved and will sync when online.');
+            setCart([]);
+            setShowCart(false);
+            setExistingOrderId(null);
+            setSendingOrder(false);
+            return;
+          }
+          throw apiErr;
         }
         orderId = response.order?.id;
       }
@@ -825,13 +835,17 @@ export default function MenuScreen() {
           response = await apiClient.createOrder(orderData);
         } catch (apiErr) {
           if (!isBarTabMode) {
-            await queueOrder(orderData);
-            setPendingSyncCount(await getQueueCount());
-            toast.warning('Connection issue. Order saved and will sync when online.');
-            setCart([]);
-            setShowCart(false);
-            setSendingOrder(false);
-            return;
+            // Only queue for network errors, not API errors
+            const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
+            if (isNetworkError) {
+              await queueOrder(orderData);
+              setPendingSyncCount(await getQueueCount());
+              toast.warning('Connection issue. Order saved and will sync when online.');
+              setCart([]);
+              setShowCart(false);
+              setSendingOrder(false);
+              return;
+            }
           }
           throw apiErr;
         }
@@ -855,7 +869,20 @@ export default function MenuScreen() {
           toast.success('Order placed successfully!');
           setCart([]);
           setShowCart(false);
-          router.push('/(tabs)/orders');
+          // Navigate back to tables with optimistic update if came from table view
+          if (selectedTable || params.tableId) {
+            router.replace({
+              pathname: '/(tabs)/tables',
+              params: {
+                tableId: selectedTable?.id || params.tableId,
+                orderId: response.order?.id,
+                tableStatus: 'occupied',
+                tableNumber: selectedTable?.name || params.tableNumber,
+              },
+            });
+          } else {
+            router.push('/(tabs)/orders');
+          }
         }
       }
     } catch (error) {
@@ -957,14 +984,18 @@ export default function MenuScreen() {
       try {
         response = await apiClient.createOrder(orderData);
       } catch (apiErr) {
-        // Queue for offline sync on failure
-        await queueOrder(orderData);
-        setPendingSyncCount(await getQueueCount());
-        toast.warning('Connection issue. Order saved and will sync when online.');
-        setCart([]);
-        setShowCart(false);
-        setSendingOrder(false);
-        return;
+        // Only queue for network errors, not API errors
+        const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
+        if (isNetworkError) {
+          await queueOrder(orderData);
+          setPendingSyncCount(await getQueueCount());
+          toast.warning('Connection issue. Order saved and will sync when online.');
+          setCart([]);
+          setShowCart(false);
+          setSendingOrder(false);
+          return;
+        }
+        throw apiErr;
       }
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
@@ -1127,19 +1158,25 @@ export default function MenuScreen() {
       try {
         response = await apiClient.createOrder(orderData);
       } catch (apiErr) {
-        await queueOrder(orderData);
-        setPendingSyncCount(await getQueueCount());
-        toast.warning('Connection issue. Order saved and will sync when online.');
-        setCart([]);
-        setShowCart(false);
-        setSendingOrder(false);
-        return;
+        // Check if it's a real network error or an API error
+        const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
+        if (isNetworkError) {
+          await queueOrder(orderData);
+          setPendingSyncCount(await getQueueCount());
+          toast.warning('Connection issue. Order saved and will sync when online.');
+          setCart([]);
+          setShowCart(false);
+          setSendingOrder(false);
+          return;
+        }
+        // Real API error — throw to show error toast
+        throw apiErr;
       }
 
       // Verify payment
       await apiClient.verifyPayment({
         orderId: response.order?.id,
-        paymentMethod,
+        paymentMethod: billingFields.paymentMethod || paymentMethod,
         amount: grandTotal,
         userId: user?.id,
         restaurantId,
@@ -1171,13 +1208,20 @@ export default function MenuScreen() {
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
         orderType,
-        paymentMethod,
+        paymentMethod: billingFields.paymentMethod || paymentMethod,
         timestamp: new Date(),
         staffName: user?.name || 'Manager',
         offerDiscount: discountData.offerDiscount || 0,
         offerName: discountData.selectedOfferName || null,
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        serviceChargeAmount: serviceCharge || 0,
+        serviceChargeRate: discountData.serviceChargeRate || null,
+        roundOffAmount: roundOff || 0,
+        tipAmount: discountData.tipAmount || 0,
+        cashReceived: discountData.cashReceived || null,
+        changeReturned: discountData.changeReturned || null,
+        splitPayments: discountData.splitPayments || null,
       };
 
       setLastOrderData(invoiceData);
@@ -1995,6 +2039,17 @@ export default function MenuScreen() {
         onClose={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);
+          // Navigate back to tables if came from table view (Complete Bill flow)
+          if (selectedTable || params.tableId) {
+            router.replace({
+              pathname: '/(tabs)/tables',
+              params: {
+                tableId: selectedTable?.id || params.tableId,
+                tableStatus: 'available',
+                tableNumber: selectedTable?.name || params.tableNumber,
+              },
+            });
+          }
         }}
         invoiceData={lastOrderData}
         onNewOrder={() => {

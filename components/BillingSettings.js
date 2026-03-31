@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -44,6 +44,8 @@ export default function BillingSettings({ restaurantId }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   useEffect(() => {
     loadSettings();
@@ -147,7 +149,7 @@ export default function BillingSettings({ restaurantId }) {
                   const num = parseFloat(v) || 0;
                   setSettings(s => ({ ...s, serviceChargeRate: num }));
                 }}
-                onBlur={() => saveSettings(settings)}
+                onBlur={() => saveSettings(settingsRef.current)}
                 placeholder="10"
                 placeholderTextColor="#9ca3af"
               />
@@ -158,7 +160,7 @@ export default function BillingSettings({ restaurantId }) {
                 style={[styles.smallInput, { flex: 1 }]}
                 value={settings.serviceChargeLabel || ''}
                 onChangeText={(v) => setSettings(s => ({ ...s, serviceChargeLabel: v }))}
-                onBlur={() => saveSettings(settings)}
+                onBlur={() => saveSettings(settingsRef.current)}
                 placeholder="Service Charge"
                 placeholderTextColor="#9ca3af"
               />
@@ -367,7 +369,7 @@ export default function BillingSettings({ restaurantId }) {
                   keyboardType="number-pad"
                   value={settings.managerPin || ''}
                   onChangeText={(v) => setSettings(s => ({ ...s, managerPin: v }))}
-                  onBlur={() => saveSettings(settings)}
+                  onBlur={() => saveSettings(settingsRef.current)}
                   placeholder="Enter PIN"
                   placeholderTextColor="#9ca3af"
                   maxLength={6}
