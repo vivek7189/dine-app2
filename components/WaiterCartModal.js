@@ -25,6 +25,8 @@ export default function WaiterCartModal({
   sending,
 }) {
   const [customerPhone, setCustomerPhone] = useState('');
+  const [specialInstructions, setSpecialInstructions] = useState('');
+  const [showKitchenNotes, setShowKitchenNotes] = useState(false);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const renderCartItem = ({ item }) => (
@@ -75,13 +77,25 @@ export default function WaiterCartModal({
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerTop}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.title}>Order Summary</Text>
-                {tableNumber && (
-                  <Text style={styles.subtitle}>Table: {tableNumber}</Text>
-                )}
-                <Text style={styles.itemCount}>{itemCount} item(s)</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <Text style={styles.itemCount}>{itemCount} item(s)</Text>
+                  {tableNumber && (
+                    <>
+                      <View style={{ width: 3, height: 3, borderRadius: 1.5, backgroundColor: Colors.textLight }} />
+                      <Ionicons name="restaurant" size={12} color={Colors.textMedium} />
+                      <Text style={styles.subtitle}>Table {tableNumber}</Text>
+                    </>
+                  )}
+                </View>
               </View>
+              <TouchableOpacity
+                style={[styles.notesToggle, showKitchenNotes && styles.notesToggleActive]}
+                onPress={() => setShowKitchenNotes(!showKitchenNotes)}
+              >
+                <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? '#d97706' : Colors.textLight} />
+              </TouchableOpacity>
               <TouchableOpacity onPress={onClose} disabled={sending}>
                 <Ionicons name="close" size={24} color={Colors.textDark} />
               </TouchableOpacity>
@@ -119,6 +133,26 @@ export default function WaiterCartModal({
                   />
                 </View>
 
+                {/* Kitchen Notes — collapsible */}
+                {showKitchenNotes && (
+                  <View style={styles.kitchenNotesBar}>
+                    <Ionicons name="document-text" size={14} color="#d97706" />
+                    <TextInput
+                      style={styles.kitchenNotesInput}
+                      placeholder="Kitchen notes: No onions, extra spicy..."
+                      placeholderTextColor="#9ca3af"
+                      value={specialInstructions}
+                      onChangeText={setSpecialInstructions}
+                      autoFocus
+                    />
+                    {specialInstructions ? (
+                      <TouchableOpacity onPress={() => setSpecialInstructions('')}>
+                        <Ionicons name="close-circle" size={18} color="#9ca3af" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
+
                 {/* Total */}
                 <View style={styles.totalContainer}>
                   <Text style={styles.totalLabel}>Total Amount</Text>
@@ -133,7 +167,7 @@ export default function WaiterCartModal({
             <View style={styles.footer}>
               <TouchableOpacity
                 style={[styles.sendButton, sending && styles.sendButtonDisabled]}
-                onPress={() => onSendToKitchen(customerPhone)}
+                onPress={() => onSendToKitchen(customerPhone, specialInstructions.trim() || null)}
                 disabled={sending}
               >
                 {sending ? (
@@ -263,6 +297,38 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: Typography.caption.fontSize,
     color: Colors.textLight,
+  },
+  notesToggle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.backgroundLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  notesToggleActive: {
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+  },
+  kitchenNotesBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#fffbeb',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+  },
+  kitchenNotesInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400e',
+    padding: 0,
   },
   phoneContainer: {
     flexDirection: 'row',

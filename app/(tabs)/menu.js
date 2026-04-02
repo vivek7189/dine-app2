@@ -10,6 +10,8 @@ import {
   Alert,
   Image,
   Animated,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -32,10 +34,14 @@ import KOTModal from '../../components/KOTModal';
 import { useToast } from '../../components/Toast';
 import { getCached, setCache } from '../../services/cacheManager';
 import SyncIndicator from '../../components/SyncIndicator';
+import Pusher from 'pusher-js/react-native';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
 const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+
+const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+const PUSHER_CLUSTER = 'ap2';
 
 export default function MenuScreen() {
   const router = useRouter();
@@ -78,6 +84,8 @@ export default function MenuScreen() {
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const menuFlatListRef = useRef(null);
+  const [showCategorySheet, setShowCategorySheet] = useState(false);
   const HEADER_EXPANDED = 200;
   const HEADER_COLLAPSED = 92; // room for row1 + row2 chips (wrap)
   const SCROLL_THRESHOLD = 100;
@@ -113,6 +121,34 @@ export default function MenuScreen() {
       unsubSync();
     };
   }, []);
+
+  // Pusher real-time menu updates
+  useEffect(() => {
+    if (!restaurantId) return;
+
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channelName = `restaurant-${restaurantId}`;
+    const channel = pusher.subscribe(channelName);
+
+    let debounceTimer = null;
+    const debouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        apiClient.invalidateCache(`/api/menus/${restaurantId}`);
+        loadMenu(restaurantId);
+      }, 1000);
+    };
+
+    channel.bind('menu-updated', debouncedRefresh);
+    channel.bind('menu-item-created', debouncedRefresh);
+    channel.bind('menu-item-deleted', debouncedRefresh);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channel.unbind_all();
+      pusher.unsubscribe(channelName);
+    };
+  }, [restaurantId]);
 
   // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
   useFocusEffect(
@@ -164,7 +200,7 @@ export default function MenuScreen() {
         // Load billing settings
         try {
           const bRes = await apiClient.getBillingSettings(restaurantId);
-          if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
+          if (bRes) setBillingSettings(bRes.settings || bRes.billingSettings || {});
         } catch (e) {
           console.log('Billing settings fetch error:', e);
         }
@@ -1603,10 +1639,17 @@ export default function MenuScreen() {
           </>
         ) : (
           <>
-            {/* Default Menu Mode - Expanded: cool header with accent */}
+            {/* Default Menu Mode - Expanded: clean modern header */}
             <Animated.View style={[styles.headerTop, styles.headerTopAccent, { opacity: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
               <View style={styles.headerTitleSection}>
-                <Text style={styles.headerTitle}>Menu</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={styles.headerTitle}>Menu</Text>
+                  {menuItems.length > 0 && (
+                    <View style={styles.itemCountBadge}>
+                      <Text style={styles.itemCountText}>{menuItems.length}</Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.headerSubtitle}>{restaurantName}</Text>
               </View>
               <View style={styles.headerIcons}>
@@ -1615,12 +1658,12 @@ export default function MenuScreen() {
                   onPress={() => router.push('/(tabs)/menu-management')}
                   accessibilityLabel="Manage menu"
                 >
-                  <Ionicons name="create-outline" size={22} color="#6b7280" />
+                  <Ionicons name="create-outline" size={20} color="#6b7280" />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
                   <Ionicons
                     name={showImages ? "image" : "image-outline"}
-                    size={22}
+                    size={20}
                     color="#6b7280"
                   />
                 </TouchableOpacity>
@@ -1807,6 +1850,7 @@ export default function MenuScreen() {
 
       {/* Menu Items - 2 Column Grid */}
       <FlatList
+        ref={menuFlatListRef}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: false }
@@ -1829,118 +1873,84 @@ export default function MenuScreen() {
         }
       />
 
-      {/* Bottom Bar - Bar Tab Mode (Save Tab / Settle) */}
-      {isBarTabMode && cart.length > 0 && (
-        <View style={styles.bottomOrderBar}>
-          <View style={styles.orderSummary}>
-            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
-            <Text style={styles.orderTotal}>₹{getGrandTotal().toFixed(2)}</Text>
-            {taxSettings.enabled && taxSettings.rate > 0 && (
-              <Text style={styles.gstNote}>incl. {taxSettings.rate}% tax</Text>
-            )}
+      {/* Unified Bottom Checkout Bar - all roles */}
+      {cart.length > 0 && (
+        <View style={styles.checkoutBar}>
+          <View style={styles.checkoutBarLeft}>
+            <View style={styles.checkoutBadge}>
+              <Text style={styles.checkoutBadgeText}>{cart.length}</Text>
+            </View>
+            <View>
+              <Text style={styles.checkoutTotal}>
+                ₹{(isBarTabMode || isCashier ? getGrandTotal() : getCartTotal()).toFixed(2)}
+              </Text>
+              {taxSettings.enabled && taxSettings.rate > 0 && (isBarTabMode || isCashier) && (
+                <Text style={styles.checkoutTaxNote}>incl. {taxSettings.rate}% tax</Text>
+              )}
+            </View>
           </View>
-          <TouchableOpacity
-            style={[styles.orderButton, { backgroundColor: '#6b7280' }, sendingOrder && styles.orderButtonDisabled]}
-            onPress={handleSaveTab}
-            disabled={sendingOrder}
-          >
-            {sendingOrder ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
+          <View style={styles.checkoutBarRight}>
+            {isBarTabMode ? (
               <>
-                <Ionicons name="save-outline" size={18} color="#fff" />
-                <Text style={styles.orderButtonText}>Save Tab</Text>
+                <TouchableOpacity
+                  style={[styles.checkoutBtn, styles.checkoutBtnSecondary, sendingOrder && styles.orderButtonDisabled]}
+                  onPress={handleSaveTab}
+                  disabled={sendingOrder}
+                >
+                  {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
+                    <>
+                      <Ionicons name="save-outline" size={16} color="#fff" />
+                      <Text style={styles.checkoutBtnText}>Save Tab</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.checkoutBtn, styles.checkoutBtnGreen, sendingOrder && styles.orderButtonDisabled]}
+                  onPress={() => setShowCart(true)}
+                  disabled={sendingOrder}
+                >
+                  <Ionicons name="checkmark-circle" size={16} color="#fff" />
+                  <Text style={styles.checkoutBtnText}>Settle</Text>
+                </TouchableOpacity>
               </>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.orderButton, styles.placeOrderBtn, sendingOrder && styles.orderButtonDisabled]}
-            onPress={() => setShowCart(true)}
-            disabled={sendingOrder}
-          >
-            <Ionicons name="checkmark-circle" size={18} color="#fff" />
-            <Text style={styles.orderButtonText}>Settle</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Bottom Order Button - For Waiters (without Complete Bill access) */}
-      {!isBarTabMode && isWaiter && !canCompleteBill && cart.length > 0 && (
-        <View style={styles.bottomOrderBar}>
-          <View style={styles.orderSummary}>
-            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
-            <Text style={styles.orderTotal}>₹{getCartTotal().toFixed(2)}</Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.orderButton, sendingOrder && styles.orderButtonDisabled]}
-            onPress={handleSendToKitchen}
-            disabled={sendingOrder}
-          >
-            {sendingOrder ? (
-              <ActivityIndicator size="small" color="#fff" />
+            ) : isWaiter && !canCompleteBill ? (
+              <TouchableOpacity
+                style={[styles.checkoutBtn, styles.checkoutBtnPrimary, sendingOrder && styles.orderButtonDisabled]}
+                onPress={handleSendToKitchen}
+                disabled={sendingOrder}
+              >
+                {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
+                  <>
+                    <Ionicons name="send" size={16} color="#fff" />
+                    <Text style={styles.checkoutBtnText}>Send to Kitchen</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : isCashier ? (
+              <TouchableOpacity
+                style={[styles.checkoutBtn, styles.checkoutBtnGreen, sendingOrder && styles.orderButtonDisabled]}
+                onPress={() => setShowCart(true)}
+                disabled={sendingOrder}
+              >
+                {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
+                  <>
+                    <Ionicons name="receipt" size={16} color="#fff" />
+                    <Text style={styles.checkoutBtnText}>Place Order</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             ) : (
-              <>
-                <Ionicons name="send" size={18} color="#fff" />
-                <Text style={styles.orderButtonText}>Send to Kitchen</Text>
-              </>
+              <TouchableOpacity
+                style={[styles.checkoutBtn, styles.checkoutBtnPrimary]}
+                onPress={() => setShowCart(true)}
+              >
+                <Ionicons name="cart" size={16} color="#fff" />
+                <Text style={styles.checkoutBtnText}>View Cart</Text>
+                <Ionicons name="chevron-forward" size={16} color="#fff" />
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          </View>
         </View>
-      )}
-
-      {/* Cart FAB - For Waiters with Complete Bill access */}
-      {!isBarTabMode && isWaiter && canCompleteBill && cart.length > 0 && (
-        <TouchableOpacity
-          style={styles.cartFAB}
-          onPress={() => setShowCart(true)}
-        >
-          <Ionicons name="cart" size={24} color="#fff" />
-          <View style={styles.cartFABBadge}>
-            <Text style={styles.cartFABBadgeText}>{cart.length}</Text>
-          </View>
-          <Text style={styles.cartFABText}>₹{getCartTotal().toFixed(2)}</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Bottom Order Button - For Cashier/Sales (Counter Sales) */}
-      {!isBarTabMode && isCashier && cart.length > 0 && (
-        <View style={styles.bottomOrderBar}>
-          <View style={styles.orderSummary}>
-            <Text style={styles.orderItemsCount}>{cart.length} items</Text>
-            <Text style={styles.orderTotal}>₹{getGrandTotal().toFixed(2)}</Text>
-            {taxSettings.enabled && taxSettings.rate > 0 && (
-              <Text style={styles.gstNote}>incl. {taxSettings.rate}% tax</Text>
-            )}
-          </View>
-          <TouchableOpacity
-            style={[styles.orderButton, styles.placeOrderBtn, sendingOrder && styles.orderButtonDisabled]}
-            onPress={() => setShowCart(true)}
-            disabled={sendingOrder}
-          >
-            {sendingOrder ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="receipt" size={18} color="#fff" />
-                <Text style={styles.orderButtonText}>Place Order</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Cart FAB - For Admin/Manager (not for cashier) */}
-      {!isBarTabMode && !isWaiter && !isCashier && cart.length > 0 && (
-        <TouchableOpacity
-          style={styles.cartFAB}
-          onPress={() => setShowCart(true)}
-        >
-          <Ionicons name="cart" size={24} color="#fff" />
-          <View style={styles.cartFABBadge}>
-            <Text style={styles.cartFABBadgeText}>{cart.length}</Text>
-          </View>
-          <Text style={styles.cartFABText}>₹{getCartTotal().toFixed(2)}</Text>
-        </TouchableOpacity>
       )}
 
       {/* Voice Order Modal - Disabled */}
@@ -1985,6 +1995,10 @@ export default function MenuScreen() {
           multiPricingEnabled={multiPricingEnabled}
           activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
           billingSettings={billingSettings}
+          pricingRules={pricingRules}
+          activePricingRuleId={activePricingRuleId}
+          setActivePricingRuleId={setActivePricingRuleId}
+          autoSelectedRule={autoSelectedRule}
         />
       ) : (
         <CartModal
@@ -2005,6 +2019,11 @@ export default function MenuScreen() {
           multiPricingEnabled={multiPricingEnabled}
           activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
           billingSettings={billingSettings}
+          taxSettings={taxSettings}
+          pricingRules={pricingRules}
+          activePricingRuleId={activePricingRuleId}
+          setActivePricingRuleId={setActivePricingRuleId}
+          autoSelectedRule={autoSelectedRule}
         />
       )}
 
@@ -2057,6 +2076,61 @@ export default function MenuScreen() {
           setLastOrderData(null);
         }}
       />
+      {/* Floating Category FAB - bottom left */}
+      {categories.length > 1 && (
+        <TouchableOpacity
+          style={styles.categoryFAB}
+          onPress={() => setShowCategorySheet(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="grid-outline" size={22} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      {/* Category Bottom Sheet */}
+      <Modal
+        visible={showCategorySheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCategorySheet(false)}
+      >
+        <TouchableOpacity
+          style={styles.categorySheetOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCategorySheet(false)}
+        >
+          <View style={styles.categorySheetContainer}>
+            <View style={styles.categorySheetHandle} />
+            <Text style={styles.categorySheetTitle}>Categories</Text>
+            <ScrollView style={styles.categorySheetScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.categorySheetGrid}>
+                {categories.map((cat) => {
+                  const isSelected = selectedCategory === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.categorySheetItem, isSelected && styles.categorySheetItemSelected]}
+                      onPress={() => {
+                        setSelectedCategory(cat.id);
+                        setShowCategorySheet(false);
+                        // Scroll to top when category changes
+                        setTimeout(() => {
+                          menuFlatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+                        }, 100);
+                      }}
+                    >
+                      <Text style={[styles.categorySheetItemText, isSelected && styles.categorySheetItemTextSelected]} numberOfLines={2}>
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <ToastView />
     </SafeAreaView>
   );
@@ -2124,6 +2198,7 @@ const styles = StyleSheet.create({
     color: '#1f2937',
     padding: 0,
     minWidth: 0,
+    letterSpacing: 0,
   },
   compactManageBtn: {
     padding: 6,
@@ -2149,10 +2224,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   headerTopAccent: {
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
-    marginLeft: 12,
-    paddingLeft: 4,
+    paddingHorizontal: 16,
   },
   backButton: {
     width: 44,
@@ -2194,8 +2266,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
     color: '#1f2937',
     letterSpacing: -0.5,
   },
@@ -2204,6 +2276,19 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginTop: 2,
     fontWeight: '500',
+  },
+  itemCountBadge: {
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  itemCountText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   headerIcons: {
     flexDirection: 'row',
@@ -2245,12 +2330,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#f9fafb',
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
   },
   // Separate Clean Search Bar
   searchContainer: {
@@ -2272,6 +2364,7 @@ const styles = StyleSheet.create({
     color: '#1f2937',
     padding: 0,
     fontWeight: '500',
+    letterSpacing: 0,
   },
   // Clean Category Pills
   categoriesSection: {
@@ -2752,5 +2845,165 @@ const styles = StyleSheet.create({
     fontSize: Typography.body.fontSize,
     color: Colors.textMedium,
     textAlign: 'center',
+  },
+  // Category FAB
+  categoryFAB: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#1f2937',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 50,
+  },
+  // Category Bottom Sheet
+  categorySheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  categorySheetContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    maxHeight: '60%',
+  },
+  categorySheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#d1d5db',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  categorySheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 16,
+  },
+  categorySheetScroll: {
+    flex: 1,
+  },
+  categorySheetGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  categorySheetItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    minWidth: '30%',
+    alignItems: 'center',
+  },
+  categorySheetItemSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  categorySheetItemText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
+  },
+  categorySheetItemTextSelected: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  // Unified Checkout Bar
+  checkoutBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 28,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 10,
+    zIndex: 40,
+  },
+  checkoutBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  checkoutBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#fef2f2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  checkoutBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  checkoutTotal: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1f2937',
+    letterSpacing: -0.3,
+  },
+  checkoutTaxNote: {
+    fontSize: 10,
+    color: '#9ca3af',
+    marginTop: 1,
+  },
+  checkoutBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 6,
+  },
+  checkoutBtnPrimary: {
+    backgroundColor: Colors.primary,
+  },
+  checkoutBtnSecondary: {
+    backgroundColor: '#6b7280',
+  },
+  checkoutBtnGreen: {
+    backgroundColor: '#10b981',
+  },
+  checkoutBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

@@ -9,15 +9,17 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  LayoutAnimation,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import { Colors, Spacing } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
 import OfferSelector from './OfferSelector';
 import CustomerDetailModal from './CustomerDetailModal';
-import apiClient from '../services/api';
+import useBillingCalculation from '../hooks/useBillingCalculation';
+import BillingSummaryBar from './billing/BillingSummaryBar';
+import BillingToolbar from './billing/BillingToolbar';
+import BillingPanels from './billing/BillingPanels';
+import PricingRuleSelector from './billing/PricingRuleSelector';
 
 export default function CartModal({
   visible,
@@ -37,11 +39,18 @@ export default function CartModal({
   multiPricingEnabled = false,
   activePricingRuleName,
   billingSettings = {},
+  taxSettings = {},
+  pricingRules = [],
+  activePricingRuleId,
+  setActivePricingRuleId,
+  autoSelectedRule = false,
 }) {
   const [orderType, setOrderType] = useState('dine-in');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [specialInstructions, setSpecialInstructions] = useState('');
+  const [showKitchenNotes, setShowKitchenNotes] = useState(false);
 
   // Discount / Loyalty state
   const [customerData, setCustomerData] = useState(null);
@@ -57,7 +66,6 @@ export default function CartModal({
 
   // Billing state
   const [activeBillingPanel, setActiveBillingPanel] = useState(null);
-  const [serviceChargeAmount, setServiceChargeAmount] = useState(0);
   const [cashReceived, setCashReceived] = useState('');
   const [changeAmount, setChangeAmount] = useState(0);
   const [splitPayments, setSplitPayments] = useState([]);
@@ -78,7 +86,7 @@ export default function CartModal({
       setSplitPayments([]); setTipAmount(0); setTipPercentage(null);
       setPartialPayAmount(''); setSelectedCompItems([]); setSelectedVoidItems([]);
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
-      setServiceChargeAmount(0);
+      setSpecialInstructions(''); setShowKitchenNotes(false);
     }
   }, [visible]);
 
@@ -103,21 +111,18 @@ export default function CartModal({
 
   // Comp items reduce subtotal
   const compAmount = selectedCompItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + compAmount;
-  const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
 
-  // Auto-calculate service charge
-  const calcServiceCharge = billingSettings.serviceChargeEnabled
-    ? Math.round((discountedSubtotal * (billingSettings.serviceChargeRate || 0) / 100) * 100) / 100
-    : 0;
-
-  // Update service charge when discountedSubtotal changes
-  useEffect(() => {
-    setServiceChargeAmount(calcServiceCharge);
-  }, [calcServiceCharge]);
-
-  // Display total (pre-tax, shown in CartModal — tax added in menu.js)
-  const displayTotal = discountedSubtotal + calcServiceCharge + tipAmount;
+  // Use shared billing calculation hook
+  const billing = useBillingCalculation({
+    subtotal,
+    offerDiscount,
+    manualDiscountAmount,
+    loyaltyDiscount,
+    compAmount,
+    taxSettings,
+    billingSettings,
+    tipAmount,
+  });
 
   const handleOfferSelected = (offerId, discount, offer) => {
     setSelectedOfferId(offerId);
@@ -134,15 +139,19 @@ export default function CartModal({
     offerDiscount,
     manualDiscountAmount,
     loyaltyDiscount,
-    totalDiscount,
+    totalDiscount: billing.totalDiscount,
     redeemLoyaltyPoints: redeemPoints,
     selectedOfferId,
     selectedOfferName: selectedOffer?.name || null,
     customerPhone: customerMobile || customerData?.phone || '',
     customerId: customerData?.id || customerData?._id || null,
-    // Billing fields
     serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
-    serviceChargeAmount: calcServiceCharge || null,
+    serviceChargeAmount: billing.serviceChargeAmount || null,
+    serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
+    taxBreakdown: billing.taxBreakdown.length > 0 ? billing.taxBreakdown : null,
+    totalTax: billing.totalTax || null,
+    roundOffAmount: billing.roundOffAmount || null,
+    grandTotal: billing.grandTotal,
     tipAmount: tipAmount || null,
     tipPercentage: tipPercentage || null,
     cashReceived: cashReceived ? parseFloat(cashReceived) : null,
@@ -150,6 +159,7 @@ export default function CartModal({
     splitPayments: splitPayments.length > 0 ? splitPayments : null,
     paymentMethod: splitPayments.length > 0 ? 'split' : paymentMethod,
     partialPayAmount: partialPayAmount ? parseFloat(partialPayAmount) : null,
+    specialInstructions: specialInstructions.trim() || null,
     compItems: selectedCompItems.length > 0 ? selectedCompItems.map(item => ({
       menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
       amount: item.price * item.quantity, reason: compReason,
@@ -170,42 +180,39 @@ export default function CartModal({
     }
   };
 
+  const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
+
   const renderCartItem = ({ item }) => (
     <View style={styles.cartItem}>
-      <View style={styles.cartItemHeader}>
-        <Text style={styles.cartItemName}>{item.name}</Text>
-        <TouchableOpacity
-          style={styles.removeIconButton}
-          onPress={() => onRemoveItem(item.id)}
-          disabled={sending}
-        >
-          <Ionicons name="close" size={18} color={Colors.error} />
-        </TouchableOpacity>
+      <View style={styles.cartItemLeft}>
+        <Text style={styles.cartItemName} numberOfLines={1}>{item.name}</Text>
       </View>
-
-      <View style={styles.cartItemFooter}>
-        <View style={styles.cartItemPricing}>
-          <Text style={styles.cartItemSubtotal}>Subtotal: ₹{item.price * item.quantity}</Text>
-          <Text style={styles.cartItemPrice}>₹{item.price}</Text>
-        </View>
-
+      <View style={styles.cartItemRight}>
         <View style={styles.quantityControls}>
           <TouchableOpacity
-            style={styles.quantityButton}
+            style={styles.qtyBtn}
             onPress={() => onUpdateQuantity(item.id, item.quantity - 1)}
             disabled={sending}
           >
-            <Ionicons name="remove" size={16} color={Colors.textDark} />
+            <Ionicons name="remove" size={14} color={Colors.textDark} />
           </TouchableOpacity>
-          <Text style={styles.quantityText}>{item.quantity}</Text>
+          <Text style={styles.qtyText}>{item.quantity}</Text>
           <TouchableOpacity
-            style={styles.quantityButton}
+            style={[styles.qtyBtn, styles.qtyBtnAdd]}
             onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
             disabled={sending}
           >
-            <Ionicons name="add" size={16} color={Colors.primary} />
+            <Ionicons name="add" size={14} color="#fff" />
           </TouchableOpacity>
         </View>
+        <Text style={styles.cartItemPrice}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+        <TouchableOpacity
+          onPress={() => onRemoveItem(item.id)}
+          disabled={sending}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="trash-outline" size={16} color="#ef4444" />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -221,66 +228,81 @@ export default function CartModal({
         <View style={styles.modalContent}>
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton} disabled={sending}>
-              <Ionicons name="close" size={24} color="#fff" />
-            </TouchableOpacity>
-            <View style={styles.headerTitle}>
-              <Ionicons name="cart" size={24} color="#fff" style={styles.headerIcon} />
-              <View>
+            <View style={styles.headerRow}>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn} disabled={sending}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+              <View style={styles.headerInfo}>
                 <Text style={styles.title}>Order Summary</Text>
-                <Text style={styles.itemCountText}>{itemCount} items</Text>
+                <View style={styles.headerMeta}>
+                  <Text style={styles.itemCountText}>{itemCount} items</Text>
+                  {tableNumber && orderType === 'dine-in' && (
+                    <>
+                      <View style={styles.headerDot} />
+                      <Ionicons name="restaurant" size={12} color="rgba(255,255,255,0.8)" />
+                      <Text style={styles.tableBadgeText}>Table {tableNumber}</Text>
+                    </>
+                  )}
+                </View>
               </View>
+              {/* Kitchen Notes toggle */}
+              <TouchableOpacity
+                style={[styles.headerActionBtn, showKitchenNotes && styles.headerActionBtnActive]}
+                onPress={() => setShowKitchenNotes(!showKitchenNotes)}
+              >
+                <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? Colors.primary : '#fff'} />
+              </TouchableOpacity>
             </View>
             <View style={styles.orderTypeTabs}>
-              <TouchableOpacity
-                style={[styles.orderTypeTab, orderType === 'dine-in' && styles.orderTypeTabActive]}
-                onPress={() => { setOrderType('dine-in'); onOrderTypeChange?.('dine-in'); }}
-              >
-                <Text style={[styles.orderTypeTabText, orderType === 'dine-in' && styles.orderTypeTabTextActive]}>
-                  DINE IN
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.orderTypeTab, orderType === 'takeaway' && styles.orderTypeTabActive, hasTable && { opacity: 0.4 }]}
-                onPress={() => { if (hasTable) return; setOrderType('takeaway'); onOrderTypeChange?.('takeaway'); }}
-                disabled={hasTable}
-              >
-                <Text style={[styles.orderTypeTabText, orderType === 'takeaway' && styles.orderTypeTabTextActive]}>
-                  TAKEAWAY
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.orderTypeTab, orderType === 'delivery' && styles.orderTypeTabActive, hasTable && { opacity: 0.4 }]}
-                onPress={() => { if (hasTable) return; setOrderType('delivery'); onOrderTypeChange?.('delivery'); }}
-                disabled={hasTable}
-              >
-                <Text style={[styles.orderTypeTabText, orderType === 'delivery' && styles.orderTypeTabTextActive]}>
-                  DELIVERY
-                </Text>
-              </TouchableOpacity>
+              {[
+                { key: 'dine-in', label: 'DINE IN', icon: 'restaurant-outline' },
+                { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
+                { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
+              ].map((t) => (
+                <TouchableOpacity
+                  key={t.key}
+                  style={[styles.orderTypeTab, orderType === t.key && styles.orderTypeTabActive, hasTable && t.key !== 'dine-in' && { opacity: 0.4 }]}
+                  onPress={() => { if (hasTable && t.key !== 'dine-in') return; setOrderType(t.key); onOrderTypeChange?.(t.key); }}
+                  disabled={hasTable && t.key !== 'dine-in'}
+                >
+                  <Ionicons name={t.icon} size={14} color={orderType === t.key ? Colors.primary : '#fff'} />
+                  <Text style={[styles.orderTypeTabText, orderType === t.key && styles.orderTypeTabTextActive]}>
+                    {t.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            {multiPricingEnabled && activePricingRuleName && (
-              <View style={{ backgroundColor: '#ede9fe', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginTop: 6 }}>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#7c3aed' }}>Zone: {activePricingRuleName}</Text>
-              </View>
-            )}
           </View>
 
           <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {/* Serving Table */}
-            {tableNumber && orderType === 'dine-in' && (
-              <View style={styles.servingTable}>
-                <View style={styles.servingTableLeft}>
-                  <View style={styles.tableIcon}>
-                    <Ionicons name="restaurant" size={20} color={Colors.primary} />
-                  </View>
-                  <View>
-                    <Text style={styles.servingLabel}>SERVING</Text>
-                    <Text style={styles.servingTable}>Table {tableNumber}</Text>
-                  </View>
-                </View>
+            {/* Kitchen Notes — collapsible */}
+            {showKitchenNotes && (
+              <View style={styles.kitchenNotesBar}>
+                <Ionicons name="document-text" size={14} color="#d97706" />
+                <TextInput
+                  style={styles.kitchenNotesInput}
+                  placeholder="Kitchen notes: No onions, extra spicy..."
+                  placeholderTextColor="#9ca3af"
+                  value={specialInstructions}
+                  onChangeText={setSpecialInstructions}
+                  autoFocus
+                />
+                {specialInstructions ? (
+                  <TouchableOpacity onPress={() => setSpecialInstructions('')}>
+                    <Ionicons name="close-circle" size={18} color="#9ca3af" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
             )}
+
+            {/* Pricing Rule Selector */}
+            <PricingRuleSelector
+              pricingRules={pricingRules}
+              activePricingRuleId={activePricingRuleId}
+              setActivePricingRuleId={setActivePricingRuleId}
+              autoSelectedRule={autoSelectedRule}
+              multiPricingEnabled={multiPricingEnabled}
+            />
 
             {/* Cart Items */}
             {cart.length === 0 ? (
@@ -339,487 +361,136 @@ export default function CartModal({
                   />
                 )}
 
-                {/* Billing Toolbar */}
-                {(() => {
-                  const billingButtons = [];
-                  if (billingSettings.serviceChargeEnabled) billingButtons.push({ key: 'service', icon: 'add-circle-outline', label: 'SC', color: '#059669' });
-                  if (billingSettings.roundOffEnabled) billingButtons.push({ key: 'roundoff', icon: 'refresh-outline', label: 'Round', color: '#7c3aed' });
-                  if (billingSettings.cashTenderingEnabled) billingButtons.push({ key: 'cash', icon: 'cash-outline', label: 'Cash', color: '#d97706' });
-                  if (billingSettings.splitPaymentEnabled) billingButtons.push({ key: 'split', icon: 'git-branch-outline', label: 'Split', color: '#2563eb' });
-                  if (billingSettings.tipsEnabled) billingButtons.push({ key: 'tip', icon: 'heart-outline', label: 'Tip', color: '#ec4899' });
-                  if (billingSettings.partialPaymentEnabled) billingButtons.push({ key: 'partial', icon: 'wallet-outline', label: 'Khata', color: '#f59e0b' });
-                  if (billingSettings.compVoidEnabled) {
-                    billingButtons.push({ key: 'comp', icon: 'gift-outline', label: 'Comp', color: '#14b8a6' });
-                    billingButtons.push({ key: 'void', icon: 'close-circle-outline', label: 'Void', color: '#ef4444' });
-                  }
-
-                  if (billingButtons.length === 0) return null;
-
-                  return (
-                    <View style={styles.billingSection}>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.billingToolbar}>
-                        {billingButtons.map((btn) => {
-                          const isActive = activeBillingPanel === btn.key ||
-                            (btn.key === 'service' && calcServiceCharge > 0) ||
-                            (btn.key === 'tip' && tipAmount > 0) ||
-                            (btn.key === 'split' && splitPayments.length > 0) ||
-                            (btn.key === 'cash' && cashReceived) ||
-                            (btn.key === 'partial' && partialPayAmount) ||
-                            (btn.key === 'comp' && selectedCompItems.length > 0) ||
-                            (btn.key === 'void' && selectedVoidItems.length > 0);
-                          return (
-                            <TouchableOpacity
-                              key={btn.key}
-                              style={[styles.billingIconBtn, isActive && { backgroundColor: btn.color }]}
-                              onPress={() => {
-                                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                                setActiveBillingPanel(activeBillingPanel === btn.key ? null : btn.key);
-                              }}
-                            >
-                              <Ionicons name={btn.icon} size={16} color={isActive ? '#fff' : btn.color} />
-                              <Text style={[styles.billingIconLabel, isActive && { color: '#fff' }]}>{btn.label}</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-
-                      {/* Cash Tendering Panel */}
-                      {activeBillingPanel === 'cash' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Cash Tendering</Text>
-                          <TextInput
-                            style={styles.panelInput}
-                            placeholder="Cash Received"
-                            placeholderTextColor="#9ca3af"
-                            keyboardType="numeric"
-                            value={cashReceived}
-                            onChangeText={(v) => {
-                              setCashReceived(v);
-                              const received = parseFloat(v) || 0;
-                              setChangeAmount(Math.max(0, Math.round((received - displayTotal) * 100) / 100));
-                            }}
-                          />
-                          <View style={styles.denomRow}>
-                            {(billingSettings.denominations || [100, 200, 500, 2000]).map((d) => (
-                              <TouchableOpacity
-                                key={d}
-                                style={styles.denomBtn}
-                                onPress={() => {
-                                  setCashReceived(String(d));
-                                  setChangeAmount(Math.max(0, Math.round((d - displayTotal) * 100) / 100));
-                                }}
-                              >
-                                <Text style={styles.denomBtnText}>{d >= 1000 ? `${d/1000}K` : `₹${d}`}</Text>
-                              </TouchableOpacity>
-                            ))}
-                            <TouchableOpacity
-                              style={[styles.denomBtn, { backgroundColor: '#059669' }]}
-                              onPress={() => {
-                                setCashReceived(String(Math.ceil(displayTotal)));
-                                setChangeAmount(0);
-                              }}
-                            >
-                              <Text style={[styles.denomBtnText, { color: '#fff' }]}>Exact</Text>
-                            </TouchableOpacity>
-                          </View>
-                          {parseFloat(cashReceived) > 0 && (
-                            <View style={styles.changeRow}>
-                              <Text style={styles.changeLabel}>Change to Return:</Text>
-                              <Text style={styles.changeValue}>₹{changeAmount.toFixed(2)}</Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-
-                      {/* Split Payment Panel */}
-                      {activeBillingPanel === 'split' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Split Payment</Text>
-                          {splitPayments.map((sp, idx) => (
-                            <View key={idx} style={styles.splitRow}>
-                              <View style={styles.splitMethodBtns}>
-                                {['cash', 'upi', 'card'].map((m) => (
-                                  <TouchableOpacity
-                                    key={m}
-                                    style={[styles.splitMethodBtn, sp.method === m && styles.splitMethodBtnActive]}
-                                    onPress={() => {
-                                      const updated = [...splitPayments];
-                                      updated[idx] = { ...sp, method: m };
-                                      setSplitPayments(updated);
-                                    }}
-                                  >
-                                    <Text style={[styles.splitMethodText, sp.method === m && { color: '#fff' }]}>
-                                      {m.charAt(0).toUpperCase() + m.slice(1)}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                              <TextInput
-                                style={styles.splitAmountInput}
-                                placeholder="₹ Amount"
-                                placeholderTextColor="#9ca3af"
-                                keyboardType="numeric"
-                                value={sp.amount ? String(sp.amount) : ''}
-                                onChangeText={(v) => {
-                                  const updated = [...splitPayments];
-                                  updated[idx] = { ...sp, amount: parseFloat(v) || 0 };
-                                  setSplitPayments(updated);
-                                }}
-                              />
-                              <TouchableOpacity onPress={() => setSplitPayments(splitPayments.filter((_, i) => i !== idx))}>
-                                <Ionicons name="close-circle" size={22} color="#ef4444" />
-                              </TouchableOpacity>
-                            </View>
-                          ))}
-                          <TouchableOpacity
-                            style={styles.addSplitBtn}
-                            onPress={() => setSplitPayments([...splitPayments, { method: 'cash', amount: 0 }])}
-                          >
-                            <Ionicons name="add" size={16} color="#2563eb" />
-                            <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>Add Payment</Text>
-                          </TouchableOpacity>
-                          {splitPayments.length > 0 && (
-                            <View style={styles.changeRow}>
-                              <Text style={styles.changeLabel}>Remaining:</Text>
-                              <Text style={[styles.changeValue, {
-                                color: (displayTotal - splitPayments.reduce((s, p) => s + (p.amount || 0), 0)) > 0.01 ? '#ef4444' : '#059669'
-                              }]}>
-                                ₹{Math.max(0, displayTotal - splitPayments.reduce((s, p) => s + (p.amount || 0), 0)).toFixed(2)}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-
-                      {/* Tip Panel */}
-                      {activeBillingPanel === 'tip' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Add Tip</Text>
-                          <View style={styles.denomRow}>
-                            {(billingSettings.tipPresets || [5, 10, 15, 20]).map((pct) => (
-                              <TouchableOpacity
-                                key={pct}
-                                style={[styles.denomBtn, tipPercentage === pct && { backgroundColor: '#ec4899' }]}
-                                onPress={() => {
-                                  setTipPercentage(pct);
-                                  setTipAmount(Math.round(discountedSubtotal * pct / 100 * 100) / 100);
-                                }}
-                              >
-                                <Text style={[styles.denomBtnText, tipPercentage === pct && { color: '#fff' }]}>{pct}%</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                          <TextInput
-                            style={[styles.panelInput, { marginTop: 8 }]}
-                            placeholder="Custom tip amount"
-                            placeholderTextColor="#9ca3af"
-                            keyboardType="numeric"
-                            value={tipAmount ? String(tipAmount) : ''}
-                            onChangeText={(v) => {
-                              setTipPercentage(null);
-                              setTipAmount(parseFloat(v) || 0);
-                            }}
-                          />
-                          {tipAmount > 0 && (
-                            <View style={styles.changeRow}>
-                              <Text style={styles.changeLabel}>Tip:</Text>
-                              <Text style={[styles.changeValue, { color: '#ec4899' }]}>₹{tipAmount.toFixed(2)}</Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-
-                      {/* Partial Payment Panel */}
-                      {activeBillingPanel === 'partial' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Partial Payment (Khata)</Text>
-                          {customerData?.outstandingBalance > 0 && (
-                            <View style={[styles.changeRow, { marginBottom: 8, backgroundColor: '#fef2f2', padding: 8, borderRadius: 6 }]}>
-                              <Text style={{ fontSize: 12, color: '#dc2626' }}>Existing Balance:</Text>
-                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>₹{customerData.outstandingBalance}</Text>
-                            </View>
-                          )}
-                          <TextInput
-                            style={styles.panelInput}
-                            placeholder="Amount paying now"
-                            placeholderTextColor="#9ca3af"
-                            keyboardType="numeric"
-                            value={partialPayAmount}
-                            onChangeText={setPartialPayAmount}
-                          />
-                          {partialPayAmount && (
-                            <View style={styles.changeRow}>
-                              <Text style={styles.changeLabel}>Outstanding after:</Text>
-                              <Text style={[styles.changeValue, { color: '#f59e0b' }]}>
-                                ₹{Math.max(0, displayTotal - (parseFloat(partialPayAmount) || 0)).toFixed(2)}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-
-                      {/* Comp Panel */}
-                      {activeBillingPanel === 'comp' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Comp Items</Text>
-                          {cart.map((item) => {
-                            const isSelected = selectedCompItems.some(c => c.id === item.id);
-                            return (
-                              <TouchableOpacity
-                                key={item.id}
-                                style={[styles.compItemRow, isSelected && { backgroundColor: '#ecfdf5' }]}
-                                onPress={() => {
-                                  if (isSelected) {
-                                    setSelectedCompItems(selectedCompItems.filter(c => c.id !== item.id));
-                                  } else {
-                                    setSelectedCompItems([...selectedCompItems, item]);
-                                  }
-                                }}
-                              >
-                                <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#14b8a6' : '#9ca3af'} />
-                                <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                          <TextInput
-                            style={[styles.panelInput, { marginTop: 8 }]}
-                            placeholder="Reason for comp"
-                            placeholderTextColor="#9ca3af"
-                            value={compReason}
-                            onChangeText={setCompReason}
-                          />
-                          {billingSettings.compVoidRequiresPin && (
-                            <TextInput
-                              style={[styles.panelInput, { marginTop: 6 }]}
-                              placeholder="Manager PIN"
-                              placeholderTextColor="#9ca3af"
-                              secureTextEntry
-                              keyboardType="number-pad"
-                              value={billingManagerPin}
-                              onChangeText={setBillingManagerPin}
-                              maxLength={6}
-                            />
-                          )}
-                        </View>
-                      )}
-
-                      {/* Void Panel */}
-                      {activeBillingPanel === 'void' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Void Items</Text>
-                          {cart.map((item) => {
-                            const isSelected = selectedVoidItems.some(v => v.id === item.id);
-                            return (
-                              <TouchableOpacity
-                                key={item.id}
-                                style={[styles.compItemRow, isSelected && { backgroundColor: '#fef2f2' }]}
-                                onPress={() => {
-                                  if (isSelected) {
-                                    setSelectedVoidItems(selectedVoidItems.filter(v => v.id !== item.id));
-                                  } else {
-                                    setSelectedVoidItems([...selectedVoidItems, item]);
-                                  }
-                                }}
-                              >
-                                <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#ef4444' : '#9ca3af'} />
-                                <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                          <TextInput
-                            style={[styles.panelInput, { marginTop: 8 }]}
-                            placeholder="Reason for void"
-                            placeholderTextColor="#9ca3af"
-                            value={voidReason}
-                            onChangeText={setVoidReason}
-                          />
-                          {billingSettings.compVoidRequiresPin && (
-                            <TextInput
-                              style={[styles.panelInput, { marginTop: 6 }]}
-                              placeholder="Manager PIN"
-                              placeholderTextColor="#9ca3af"
-                              secureTextEntry
-                              keyboardType="number-pad"
-                              value={billingManagerPin}
-                              onChangeText={setBillingManagerPin}
-                              maxLength={6}
-                            />
-                          )}
-                        </View>
-                      )}
-
-                      {/* Round-off Info (read-only) */}
-                      {activeBillingPanel === 'roundoff' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>Round-off</Text>
-                          <Text style={{ fontSize: 13, color: Colors.textMedium, marginBottom: 8 }}>
-                            Bills will be automatically rounded to the nearest ₹{billingSettings.roundOffTo || 1}.
-                          </Text>
-                          <View style={styles.changeRow}>
-                            <Text style={styles.changeLabel}>Round to:</Text>
-                            <Text style={styles.changeValue}>₹{billingSettings.roundOffTo || 1}</Text>
-                          </View>
-                        </View>
-                      )}
-
-                      {/* Service Charge Info (read-only) */}
-                      {activeBillingPanel === 'service' && (
-                        <View style={styles.billingPanel}>
-                          <Text style={styles.panelTitle}>{billingSettings.serviceChargeLabel || 'Service Charge'}</Text>
-                          <View style={styles.changeRow}>
-                            <Text style={styles.changeLabel}>Rate:</Text>
-                            <Text style={styles.changeValue}>{billingSettings.serviceChargeRate || 0}%</Text>
-                          </View>
-                          <View style={styles.changeRow}>
-                            <Text style={styles.changeLabel}>Amount:</Text>
-                            <Text style={[styles.changeValue, { color: '#059669' }]}>₹{calcServiceCharge.toFixed(2)}</Text>
-                          </View>
-                        </View>
-                      )}
-                    </View>
-                  );
-                })()}
-
-                {/* Pricing Summary */}
-                <View style={styles.pricingSummary}>
-                  <View style={styles.pricingRow}>
-                    <Text style={styles.pricingLabel}>Subtotal:</Text>
-                    <Text style={styles.pricingValue}>₹{subtotal.toFixed(2)}</Text>
-                  </View>
-                  {offerDiscount > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>
-                        {selectedOffer?.name || 'Offer Discount'}:
-                      </Text>
-                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{offerDiscount.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {manualDiscountAmount > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>Manual Discount:</Text>
-                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{manualDiscountAmount.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {loyaltyDiscount > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={[styles.pricingLabel, { color: '#10b981' }]}>Loyalty Points:</Text>
-                      <Text style={[styles.pricingValue, { color: '#10b981' }]}>-₹{loyaltyDiscount.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {compAmount > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={[styles.pricingLabel, { color: '#14b8a6' }]}>Comp Items:</Text>
-                      <Text style={[styles.pricingValue, { color: '#14b8a6' }]}>-₹{compAmount.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {calcServiceCharge > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={styles.pricingLabel}>{billingSettings.serviceChargeLabel || 'Service Charge'} ({billingSettings.serviceChargeRate}%):</Text>
-                      <Text style={styles.pricingValue}>₹{calcServiceCharge.toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {tipAmount > 0 && (
-                    <View style={styles.pricingRow}>
-                      <Text style={[styles.pricingLabel, { color: '#ec4899' }]}>Tip{tipPercentage ? ` (${tipPercentage}%)` : ''}:</Text>
-                      <Text style={[styles.pricingValue, { color: '#ec4899' }]}>₹{tipAmount.toFixed(2)}</Text>
-                    </View>
-                  )}
+                {/* Billing Toolbar + Panels */}
+                <View style={styles.billingSection}>
+                  <BillingToolbar
+                    billingSettings={billingSettings}
+                    activeBillingPanel={activeBillingPanel}
+                    setActiveBillingPanel={setActiveBillingPanel}
+                    serviceChargeAmount={billing.serviceChargeAmount}
+                    tipAmount={tipAmount}
+                    splitPayments={splitPayments}
+                    cashReceived={cashReceived}
+                    partialPayAmount={partialPayAmount}
+                    selectedCompItems={selectedCompItems}
+                    selectedVoidItems={selectedVoidItems}
+                  />
+                  <BillingPanels
+                    activeBillingPanel={activeBillingPanel}
+                    billingSettings={billingSettings}
+                    grandTotal={billing.grandTotal}
+                    discountedSubtotal={billing.discountedSubtotal}
+                    cart={cart}
+                    cashReceived={cashReceived}
+                    setCashReceived={setCashReceived}
+                    changeAmount={changeAmount}
+                    setChangeAmount={setChangeAmount}
+                    splitPayments={splitPayments}
+                    setSplitPayments={setSplitPayments}
+                    tipAmount={tipAmount}
+                    setTipAmount={setTipAmount}
+                    tipPercentage={tipPercentage}
+                    setTipPercentage={setTipPercentage}
+                    partialPayAmount={partialPayAmount}
+                    setPartialPayAmount={setPartialPayAmount}
+                    customerData={customerData}
+                    selectedCompItems={selectedCompItems}
+                    setSelectedCompItems={setSelectedCompItems}
+                    selectedVoidItems={selectedVoidItems}
+                    setSelectedVoidItems={setSelectedVoidItems}
+                    compReason={compReason}
+                    setCompReason={setCompReason}
+                    voidReason={voidReason}
+                    setVoidReason={setVoidReason}
+                    billingManagerPin={billingManagerPin}
+                    setBillingManagerPin={setBillingManagerPin}
+                    serviceChargeAmount={billing.serviceChargeAmount}
+                    roundOffAmount={billing.roundOffAmount}
+                  />
                 </View>
 
-                {/* Total */}
-                <View style={styles.totalBox}>
-                  <Text style={styles.totalLabel}>Total</Text>
-                  <Text style={styles.totalAmount}>₹{displayTotal.toFixed(2)}</Text>
-                </View>
-                {totalDiscount > 0 && (
-                  <Text style={styles.savingsText}>You save ₹{totalDiscount.toFixed(0)}</Text>
+                {/* Billing Summary Bar */}
+                <BillingSummaryBar
+                  subtotal={subtotal}
+                  totalDiscount={billing.totalDiscount}
+                  discountedSubtotal={billing.discountedSubtotal}
+                  serviceChargeAmount={billing.serviceChargeAmount}
+                  serviceChargeLabel={billingSettings.serviceChargeLabel || 'Service Charge'}
+                  serviceChargeRate={billing.serviceChargeRate}
+                  taxBreakdown={billing.taxBreakdown}
+                  totalTax={billing.totalTax}
+                  tipAmount={tipAmount}
+                  tipPercentage={tipPercentage}
+                  roundOffAmount={billing.roundOffAmount}
+                  grandTotal={billing.grandTotal}
+                />
+                {billing.totalDiscount > 0 && (
+                  <Text style={styles.savingsText}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
                 )}
-
-                {/* Customer Details */}
-                <View style={styles.customerDetails}>
-                  <Text style={styles.sectionTitle}>Customer Name</Text>
-                  <View style={styles.inputRow}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Customer Name"
-                      placeholderTextColor={Colors.textLight}
-                      value={customerName}
-                      onChangeText={setCustomerName}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Mobile Number"
-                      placeholderTextColor={Colors.textLight}
-                      keyboardType="phone-pad"
-                      value={customerMobile}
-                      onChangeText={setCustomerMobile}
-                    />
-                  </View>
-                </View>
 
                 {/* Payment Method — hidden when split payment active */}
                 {splitPayments.length === 0 && (
-                  <View style={styles.paymentMethods}>
-                    <View style={styles.paymentHeader}>
-                      <Ionicons name="card-outline" size={20} color={Colors.textDark} />
-                      <Text style={styles.sectionTitle}>Payment Method</Text>
-                    </View>
-                    <View style={styles.paymentButtons}>
-                      {['cash', 'upi', 'card'].map((method) => (
-                        <TouchableOpacity
-                          key={method}
-                          style={[styles.paymentButton, paymentMethod === method && styles.paymentButtonActive]}
-                          onPress={() => setPaymentMethod(method)}
-                        >
-                          <Text style={[styles.paymentButtonText, paymentMethod === method && styles.paymentButtonTextActive]}>
-                            {method.charAt(0).toUpperCase() + method.slice(1)}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                  <View style={styles.paymentRow}>
+                    <Ionicons name="card-outline" size={14} color="#6b7280" />
+                    <Text style={styles.paymentLabel}>Pay</Text>
+                    {['cash', 'upi', 'card'].map((method) => (
+                      <TouchableOpacity
+                        key={method}
+                        style={[styles.paymentPill, paymentMethod === method && styles.paymentPillActive]}
+                        onPress={() => setPaymentMethod(method)}
+                      >
+                        <Ionicons name={paymentIcons[method]} size={14} color={paymentMethod === method ? '#fff' : '#6b7280'} />
+                        <Text style={[styles.paymentPillText, paymentMethod === method && styles.paymentPillTextActive]}>
+                          {method.charAt(0).toUpperCase() + method.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 )}
 
-                {/* Action Buttons */}
-                <View style={styles.actionButtons}>
-                  <View style={styles.dualButtonRow}>
-                    <TouchableOpacity
-                      style={[styles.placeOrderButton, styles.kitchenButton, sending && { opacity: 0.6 }]}
-                      onPress={handlePlaceOrder}
-                      disabled={sending}
-                    >
-                      {sending ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <>
-                          <Ionicons name="flame-outline" size={18} color="#fff" />
-                          <Text style={styles.placeOrderButtonText}>Place Order</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    {onCompleteBill && (
-                      <TouchableOpacity
-                        style={[styles.placeOrderButton, styles.completeBillButton, sending && { opacity: 0.6 }]}
-                        onPress={handleCompleteBill}
-                        disabled={sending}
-                      >
-                        {sending ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <>
-                            <Ionicons name="checkmark-circle" size={18} color="#fff" />
-                            <Text style={styles.placeOrderButtonText}>Complete Bill</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
+                {/* Spacer for sticky bottom buttons */}
+                <View style={{ height: 80 }} />
               </>
             )}
           </ScrollView>
+
+          {/* Sticky Bottom Action Buttons */}
+          {cart.length > 0 && (
+            <View style={styles.stickyBottom}>
+              <View style={styles.dualButtonRow}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.kitchenBtn, sending && { opacity: 0.6 }]}
+                  onPress={handlePlaceOrder}
+                  disabled={sending}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="flame-outline" size={18} color="#fff" />
+                      <Text style={styles.actionBtnText}>Place Order</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                {onCompleteBill && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.billBtn, sending && { opacity: 0.6 }]}
+                    onPress={handleCompleteBill}
+                    disabled={sending}
+                  >
+                    {sending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                        <Text style={styles.actionBtnText}>Complete Bill</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </View>
       </View>
       <CustomerDetailModal
@@ -844,52 +515,91 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     maxHeight: '95%',
   },
+  // Header
   header: {
     backgroundColor: Colors.primary,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
   },
-  closeButton: {
-    width: 32,
-    height: 32,
-    alignItems: 'flex-start',
-  },
-  headerTitle: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.md,
+    gap: 10,
+    marginBottom: 10,
   },
-  headerIcon: {
-    marginRight: Spacing.sm,
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerInfo: {
+    flex: 1,
   },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#fff',
   },
+  headerMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   itemCountText: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: 'rgba(255,255,255,0.85)',
+  },
+  headerDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    marginHorizontal: 2,
+  },
+  tableBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  headerActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerActionBtnActive: {
+    backgroundColor: '#fff',
   },
   orderTypeTabs: {
     flexDirection: 'row',
-    gap: Spacing.sm,
+    gap: 6,
   },
   orderTypeTab: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   orderTypeTabActive: {
     backgroundColor: '#fff',
+    borderColor: '#fff',
   },
   orderTypeTabText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#fff',
   },
@@ -899,233 +609,168 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 20,
   },
-  servingTable: {
+  // Kitchen Notes
+  kitchenNotesBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fef7f0',
-    padding: Spacing.md,
-    marginHorizontal: Spacing.md,
-    marginTop: Spacing.md,
+    gap: 8,
+    marginHorizontal: 12,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#fffbeb',
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fbbf24',
   },
-  servingTableLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
+  kitchenNotesInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400e',
+    padding: 0,
   },
-  tableIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  servingLabel: {
-    fontSize: 10,
-    color: Colors.primary,
-    fontWeight: '600',
-  },
+  // Cart Items
   cartList: {
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: 12,
   },
   cartItem: {
-    backgroundColor: '#fff',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  cartItemHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: Spacing.sm,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  cartItemLeft: {
+    flex: 1,
+    marginRight: 8,
   },
   cartItemName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
-    color: Colors.textDark,
-    flex: 1,
+    color: '#1f2937',
   },
-  removeIconButton: {
-    padding: 2,
-  },
-  cartItemFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cartItemPricing: {
+  cartItemRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  cartItemSubtotal: {
-    fontSize: 12,
-    color: Colors.textMedium,
-  },
-  cartItemPrice: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.primary,
+    gap: 10,
   },
   quantityControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    overflow: 'hidden',
   },
-  quantityButton: {
+  qtyBtn: {
     width: 28,
     height: 28,
-    borderRadius: 14,
-    backgroundColor: '#f5f5f5',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  quantityText: {
-    fontSize: 15,
+  qtyBtnAdd: {
+    backgroundColor: Colors.primary,
+  },
+  qtyText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: Colors.textDark,
-    minWidth: 20,
+    color: '#1f2937',
+    minWidth: 22,
     textAlign: 'center',
   },
-  sectionContainer: {
-    paddingHorizontal: Spacing.md,
-    marginTop: Spacing.sm,
-  },
-  pricingSummary: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    gap: Spacing.sm,
-  },
-  pricingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  pricingLabel: {
+  cartItemPrice: {
     fontSize: 14,
-    color: Colors.textMedium,
-  },
-  pricingValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
-  },
-  totalBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.primary,
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
-    padding: Spacing.md,
-    borderRadius: 8,
-  },
-  totalLabel: {
-    fontSize: 18,
     fontWeight: '700',
-    color: '#fff',
+    color: Colors.primary,
+    minWidth: 48,
+    textAlign: 'right',
   },
-  totalAmount: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#fff',
+  // Sections
+  sectionContainer: {
+    paddingHorizontal: 12,
+    marginTop: 6,
+  },
+  billingSection: {
+    paddingHorizontal: 12,
+    marginTop: 6,
   },
   savingsText: {
     textAlign: 'center',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#10b981',
-    marginTop: 6,
+    marginTop: 4,
   },
-  customerDetails: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: Spacing.sm,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 6,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    fontSize: 14,
-    color: Colors.textDark,
-    backgroundColor: '#fff',
-  },
-  paymentMethods: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-  },
-  paymentHeader: {
+  // Payment
+  paymentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingTop: 10,
   },
-  paymentButtons: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  paymentButton: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    backgroundColor: '#fff',
-    alignItems: 'center',
-  },
-  paymentButtonActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  paymentButtonText: {
-    fontSize: 13,
+  paymentLabel: {
+    fontSize: 12,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#6b7280',
+    marginRight: 2,
   },
-  paymentButtonTextActive: {
+  paymentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+  },
+  paymentPillActive: {
+    backgroundColor: Colors.primary,
+  },
+  paymentPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  paymentPillTextActive: {
     color: '#fff',
   },
-  actionButtons: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-    paddingBottom: Spacing.lg,
+  // Sticky bottom
+  stickyBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 8,
   },
   dualButtonRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
-  placeOrderButton: {
+  actionBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 14,
+    paddingVertical: 13,
     borderRadius: 10,
   },
-  kitchenButton: {
+  kitchenBtn: {
     backgroundColor: '#374151',
   },
-  completeBillButton: {
+  billBtn: {
     backgroundColor: '#10b981',
   },
-  placeOrderButtonText: {
+  actionBtnText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',
@@ -1133,140 +778,11 @@ const styles = StyleSheet.create({
   emptyCart: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.xxl,
-    gap: Spacing.md,
+    paddingVertical: 48,
+    gap: 12,
   },
   emptyText: {
     fontSize: 14,
     color: Colors.textMedium,
-  },
-  // Billing toolbar & panels
-  billingSection: {
-    paddingHorizontal: Spacing.md,
-    marginTop: Spacing.sm,
-  },
-  billingToolbar: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingVertical: 4,
-  },
-  billingIconBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-  },
-  billingIconLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#6b7280',
-  },
-  billingPanel: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  panelTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: 8,
-  },
-  panelInput: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 14,
-    color: Colors.textDark,
-  },
-  denomRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 4,
-  },
-  denomBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 6,
-    backgroundColor: '#e5e7eb',
-  },
-  denomBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  changeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  changeLabel: {
-    fontSize: 13,
-    color: Colors.textMedium,
-  },
-  changeValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  splitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  splitMethodBtns: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  splitMethodBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 4,
-    backgroundColor: '#e5e7eb',
-  },
-  splitMethodBtnActive: {
-    backgroundColor: '#2563eb',
-  },
-  splitMethodText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  splitAmountInput: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: Colors.textDark,
-  },
-  addSplitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 8,
-  },
-  compItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    borderRadius: 6,
   },
 });

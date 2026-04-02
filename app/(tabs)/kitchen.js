@@ -352,7 +352,7 @@ export default function KitchenScreen() {
     .sort((a, b) => {
       const aT = new Date(a.kotTime || a.createdAt || a.timestamp).getTime();
       const bT = new Date(b.kotTime || b.createdAt || b.timestamp).getTime();
-      return selectedTab === 'done' ? bT - aT : aT - bT;
+      return bT - aT; // Newest first on all tabs
     });
 
   const tabCounts = {};

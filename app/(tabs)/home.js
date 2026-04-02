@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
 import { getCached, setCache, clearCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -19,6 +20,8 @@ import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+const PUSHER_CLUSTER = 'ap2';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -27,6 +30,11 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  // Daily summary
+  const [dailySummary, setDailySummary] = useState(null);
+  const [showDailySummary, setShowDailySummary] = useState(false);
+  const [dailySummaryLoading, setDailySummaryLoading] = useState(false);
 
   // Stats
   const [todayOrders, setTodayOrders] = useState([]);
@@ -49,6 +57,7 @@ export default function HomeScreen() {
   // Multi-restaurant
   const [restaurants, setRestaurants] = useState([]);
   const [syncing, setSyncing] = useState(false);
+  const loadStatsRef = useRef(null);
 
   useEffect(() => {
     loadInitialData();
@@ -65,6 +74,38 @@ export default function HomeScreen() {
   const getRestaurantId = () => {
     return user?.restaurantId || user?.restaurant?.id || restaurant?.id;
   };
+
+  // Keep loadStats ref current for Pusher handler
+  useEffect(() => { loadStatsRef.current = loadStats; });
+
+  // Pusher: real-time updates when orders change on other devices
+  useEffect(() => {
+    const rid = getRestaurantId();
+    if (!rid) return;
+
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channel = pusher.subscribe(`restaurant-${rid}`);
+
+    let debounceTimer = null;
+    const handleEvent = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadStatsRef.current?.(rid);
+      }, 1000);
+    };
+
+    channel.bind('order-created', handleEvent);
+    channel.bind('order-updated', handleEvent);
+    channel.bind('order-completed', handleEvent);
+    channel.bind('order-deleted', handleEvent);
+    channel.bind('table-status-updated', handleEvent);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channel.unbind_all();
+      pusher.unsubscribe(`restaurant-${rid}`);
+    };
+  }, [user, restaurant]);
 
   const businessType = restaurant?.businessType || user?.restaurant?.businessType || 'restaurant';
   const isBarType = businessType === 'bar';
@@ -203,6 +244,25 @@ export default function HomeScreen() {
     }
     setRefreshing(false);
   };
+
+  const fetchDailySummary = useCallback(async () => {
+    const restaurantId = getRestaurantId();
+    if (!restaurantId) return;
+    setDailySummaryLoading(true);
+    try {
+      const res = await apiClient.getDailySummary(restaurantId, { period: 'today' });
+      if (res?.success) setDailySummary(res.summary);
+    } catch (err) {
+      console.error('Daily summary error:', err);
+    } finally {
+      setDailySummaryLoading(false);
+    }
+  }, [user, restaurant]);
+
+  const toggleDailySummary = useCallback(() => {
+    if (!showDailySummary && !dailySummary) fetchDailySummary();
+    setShowDailySummary(prev => !prev);
+  }, [showDailySummary, dailySummary, fetchDailySummary]);
 
   const handleLogout = async () => {
     await apiClient.clearToken();
@@ -546,6 +606,126 @@ export default function HomeScreen() {
               )}
             </View>
           </>
+        )}
+
+        {/* Today's Sales Summary — collapsible item-wise breakdown */}
+        {(isOwnerOrManager || isCashier) && hasRestaurant && todayStats.totalOrders > 0 && (
+          <View style={summaryStyles.container}>
+            <TouchableOpacity
+              style={summaryStyles.header}
+              onPress={toggleDailySummary}
+              activeOpacity={0.7}
+            >
+              <View style={summaryStyles.headerLeft}>
+                <View style={summaryStyles.headerIcon}>
+                  <Ionicons name="analytics-outline" size={18} color="#fff" />
+                </View>
+                <View>
+                  <Text style={summaryStyles.headerTitle}>Today&apos;s Sales Summary</Text>
+                  {dailySummary && (
+                    <Text style={summaryStyles.headerSubtitle}>
+                      {dailySummary.items?.length || 0} items sold
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <View style={summaryStyles.headerRight}>
+                {dailySummary && (
+                  <Text style={summaryStyles.headerAmount}>
+                    {formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}
+                  </Text>
+                )}
+                <Ionicons
+                  name={showDailySummary ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={Colors.textMedium}
+                />
+              </View>
+            </TouchableOpacity>
+
+            {showDailySummary && (
+              <View style={summaryStyles.body}>
+                {dailySummaryLoading ? (
+                  <ActivityIndicator size="small" color={Colors.primary} style={{ paddingVertical: 20 }} />
+                ) : dailySummary && dailySummary.items?.length > 0 ? (
+                  <>
+                    {/* Summary stats row */}
+                    <View style={summaryStyles.statsRow}>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Revenue</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#10b981' }]}>
+                          {formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}
+                        </Text>
+                      </View>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Orders</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#3b82f6' }]}>
+                          {dailySummary.totalOrders}
+                        </Text>
+                      </View>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Items</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#8b5cf6' }]}>
+                          {dailySummary.items.length}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Table header */}
+                    <View style={summaryStyles.tableHeader}>
+                      <Text style={[summaryStyles.tableHeaderText, { flex: 1 }]}>Item</Text>
+                      <Text style={[summaryStyles.tableHeaderText, { width: 50, textAlign: 'center' }]}>Qty</Text>
+                      <Text style={[summaryStyles.tableHeaderText, { width: 80, textAlign: 'right' }]}>Amount</Text>
+                    </View>
+
+                    {/* Item rows */}
+                    {[...dailySummary.items]
+                      .sort((a, b) => b.quantity - a.quantity)
+                      .map((item, idx) => (
+                        <View
+                          key={item.originalKey || item.name}
+                          style={[summaryStyles.itemRow, idx % 2 === 0 && summaryStyles.itemRowAlt]}
+                        >
+                          <Text style={summaryStyles.itemName} numberOfLines={1}>{item.name}</Text>
+                          <View style={summaryStyles.qtyBadge}>
+                            <Text style={summaryStyles.qtyText}>{item.quantity}</Text>
+                          </View>
+                          <Text style={summaryStyles.itemAmount}>{formatCurrency(item.revenue)}</Text>
+                        </View>
+                      ))}
+
+                    {/* Total row */}
+                    <View style={summaryStyles.totalRow}>
+                      <Text style={summaryStyles.totalLabel}>Total</Text>
+                      <View style={summaryStyles.qtyBadge}>
+                        <Text style={summaryStyles.qtyText}>
+                          {dailySummary.items.reduce((s, i) => s + i.quantity, 0)}
+                        </Text>
+                      </View>
+                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#10b981' }]}>
+                        {formatCurrency(dailySummary.items.reduce((s, i) => s + i.revenue, 0))}
+                      </Text>
+                    </View>
+
+                    {/* Order type breakdown */}
+                    {dailySummary.ordersByType && Object.keys(dailySummary.ordersByType).length > 0 && (
+                      <View style={summaryStyles.orderTypeRow}>
+                        {Object.entries(dailySummary.ordersByType).map(([type, count]) => (
+                          <View key={type} style={summaryStyles.orderTypePill}>
+                            <Text style={summaryStyles.orderTypeText}>
+                              {type.replace(/_/g, ' ')}: {count}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </>
+                ) : (
+                  <Text style={summaryStyles.emptyText}>No sales data for today yet</Text>
+                )}
+              </View>
+            )}
+          </View>
         )}
 
         {/* Open Bar Tabs (bar-type only) */}
@@ -1111,5 +1291,180 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textMedium,
     fontWeight: '500',
+  },
+});
+
+const summaryStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.large,
+    overflow: 'hidden',
+    ...Shadows.small,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#fffbeb',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f59e0b',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: Colors.textMedium,
+    marginTop: 1,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#10b981',
+  },
+  body: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statPill: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  statPillLabel: {
+    fontSize: 10,
+    color: Colors.textLight,
+    fontWeight: '500',
+    textTransform: 'uppercase',
+  },
+  statPillValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  tableHeaderText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.textLight,
+    textTransform: 'uppercase',
+  },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#f3f4f6',
+  },
+  itemRowAlt: {
+    backgroundColor: '#fafafa',
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    color: Colors.textDark,
+  },
+  qtyBadge: {
+    width: 50,
+    alignItems: 'center',
+  },
+  qtyText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3b82f6',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    overflow: 'hidden',
+    textAlign: 'center',
+  },
+  itemAmount: {
+    width: 80,
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textDark,
+    textAlign: 'right',
+  },
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 2,
+    borderTopColor: '#e5e7eb',
+    marginTop: 4,
+  },
+  totalLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textDark,
+  },
+  orderTypeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  orderTypePill: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  orderTypeText: {
+    fontSize: 11,
+    color: Colors.textMedium,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  emptyText: {
+    textAlign: 'center',
+    paddingVertical: 20,
+    color: Colors.textLight,
+    fontSize: 13,
   },
 });

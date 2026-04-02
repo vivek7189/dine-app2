@@ -11,6 +11,45 @@ class ApiClient {
     this.baseURL = API_BASE_URL;
     this.isRefreshing = false;
     this.refreshQueue = [];
+    // In-memory cache for GET requests
+    this._cache = new Map();
+    this._inflight = new Map();
+  }
+
+  // Cached GET — returns cached data if fresh, deduplicates concurrent requests
+  async cachedGet(endpoint, ttlMs = 5 * 60 * 1000) {
+    const cached = this._cache.get(endpoint);
+    if (cached && (Date.now() - cached.timestamp < ttlMs)) {
+      return cached.data;
+    }
+    // Dedup concurrent requests to same endpoint
+    if (this._inflight.has(endpoint)) {
+      return this._inflight.get(endpoint);
+    }
+    const promise = this.request(endpoint).then(data => {
+      this._cache.set(endpoint, { data, timestamp: Date.now() });
+      this._inflight.delete(endpoint);
+      return data;
+    }).catch(err => {
+      this._inflight.delete(endpoint);
+      throw err;
+    });
+    this._inflight.set(endpoint, promise);
+    return promise;
+  }
+
+  // Invalidate cache entries matching a prefix
+  invalidateCache(prefix) {
+    for (const key of this._cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this._cache.delete(key);
+      }
+    }
+  }
+
+  // Clear all cached data
+  clearAllCache() {
+    this._cache.clear();
   }
 
   // Process queued requests after token refresh
@@ -352,13 +391,12 @@ class ApiClient {
 
   // Get menu items
   async getMenu(restaurantId) {
-    return this.request(`/api/menus/${restaurantId}`);
+    return this.cachedGet(`/api/menus/${restaurantId}`, 5 * 60 * 1000); // 5 min
   }
 
   // Get floors and tables
   async getFloors(restaurantId) {
-    // Use the floors endpoint which returns floors with nested tables
-    return this.request(`/api/floors/${restaurantId}`);
+    return this.cachedGet(`/api/floors/${restaurantId}`, 5 * 60 * 1000); // 5 min
   }
 
   // Create a new floor
@@ -415,7 +453,7 @@ class ApiClient {
 
   // Get tables (alternative endpoint)
   async getTables(restaurantId) {
-    return this.request(`/api/tables/${restaurantId}`);
+    return this.cachedGet(`/api/tables/${restaurantId}`, 2 * 60 * 1000); // 2 min
   }
 
   // Update table status
@@ -423,11 +461,14 @@ class ApiClient {
     const body = { status };
     if (orderId) body.orderId = orderId;
     if (restaurantId) body.restaurantId = restaurantId;
-    
-    return this.request(`/api/tables/${tableId}/status`, {
+
+    const result = await this.request(`/api/tables/${tableId}/status`, {
       method: 'PATCH',
       data: body,
     });
+    this.invalidateCache('/api/tables/');
+    this.invalidateCache('/api/floors/');
+    return result;
   }
 
   // Get orders
@@ -443,6 +484,16 @@ class ApiClient {
     if (options.startDate) params.append('startDate', options.startDate);
     if (options.endDate) params.append('endDate', options.endDate);
     return this.request(`/api/analytics/${restaurantId}?${params.toString()}`);
+  }
+
+  async getDailySummary(restaurantId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.date) params.append('date', options.date);
+    if (options.period) params.append('period', options.period);
+    if (options.startDate) params.append('startDate', options.startDate);
+    if (options.endDate) params.append('endDate', options.endDate);
+    const qs = params.toString();
+    return this.request(`/api/analytics/${restaurantId}/daily-summary${qs ? '?' + qs : ''}`);
   }
 
   // Create order
@@ -555,20 +606,22 @@ class ApiClient {
 
   // Get restaurant details
   async getRestaurant(restaurantId) {
-    return this.request(`/api/restaurants/${restaurantId}`);
+    return this.cachedGet(`/api/restaurants/${restaurantId}`, 10 * 60 * 1000); // 10 min
   }
 
   // Update restaurant details (business info, legal name, GSTIN, etc.)
   async updateRestaurant(restaurantId, data) {
-    return this.request(`/api/restaurants/${restaurantId}`, {
+    const result = await this.request(`/api/restaurants/${restaurantId}`, {
       method: 'PATCH',
       data,
     });
+    this.invalidateCache(`/api/restaurants`);
+    return result;
   }
 
   // Get all restaurants for authenticated user
   async getRestaurants() {
-    return this.request('/api/restaurants');
+    return this.cachedGet('/api/restaurants', 10 * 60 * 1000); // 10 min
   }
 
   // Update user preferences (e.g. defaultRestaurantId)
@@ -596,23 +649,29 @@ class ApiClient {
 
   // Menu Management
   async createMenuItem(restaurantId, itemData) {
-    return this.request(`/api/menus/${restaurantId}`, {
+    const result = await this.request(`/api/menus/${restaurantId}`, {
       method: 'POST',
       data: itemData,
     });
+    this.invalidateCache(`/api/menus/${restaurantId}`);
+    return result;
   }
 
   async updateMenuItem(itemId, itemData) {
-    return this.request(`/api/menus/item/${itemId}`, {
+    const result = await this.request(`/api/menus/item/${itemId}`, {
       method: 'PATCH',
       data: itemData,
     });
+    this.invalidateCache('/api/menus/');
+    return result;
   }
 
   async deleteMenuItem(itemId) {
-    return this.request(`/api/menus/item/${itemId}`, {
+    const result = await this.request(`/api/menus/item/${itemId}`, {
       method: 'DELETE',
     });
+    this.invalidateCache('/api/menus/');
+    return result;
   }
 
   // Bulk menu upload (image/PDF/CSV/doc) - AI extraction, same as web
@@ -948,15 +1007,17 @@ class ApiClient {
 
   // Get tax settings for a restaurant
   async getTaxSettings(restaurantId) {
-    return this.request(`/api/admin/tax/${restaurantId}`);
+    return this.cachedGet(`/api/admin/tax/${restaurantId}`, 10 * 60 * 1000); // 10 min
   }
 
   // Update tax settings for a restaurant
   async updateTaxSettings(restaurantId, taxSettings) {
-    return this.request(`/api/admin/tax/${restaurantId}`, {
+    const result = await this.request(`/api/admin/tax/${restaurantId}`, {
       method: 'PUT',
       data: { taxSettings },
     });
+    this.invalidateCache(`/api/admin/tax/`);
+    return result;
   }
 
   // ==================== PRICING SETTINGS ====================
@@ -1385,14 +1446,16 @@ class ApiClient {
   // ==================== BILLING SETTINGS ====================
 
   async getBillingSettings(restaurantId) {
-    return this.request(`/api/restaurants/${restaurantId}/billing-settings`);
+    return this.cachedGet(`/api/restaurants/${restaurantId}/billing-settings`, 10 * 60 * 1000); // 10 min
   }
 
   async updateBillingSettings(restaurantId, settings) {
-    return this.request(`/api/restaurants/${restaurantId}/billing-settings`, {
+    const result = await this.request(`/api/restaurants/${restaurantId}/billing-settings`, {
       method: 'PUT',
       data: settings,
     });
+    this.invalidateCache(`/api/restaurants/${restaurantId}/billing-settings`);
+    return result;
   }
 
   async validateManagerPin(restaurantId, pin) {

@@ -15,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.dineopen.waiter</string>
+	<string>com.dineopen.pos</string>
 	<key>PROJECT_ID</key>
 	<string>ascendant-idea-443107-f8</string>
 	<key>STORAGE_BUCKET</key>

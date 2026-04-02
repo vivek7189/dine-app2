@@ -56,6 +56,17 @@ export default function OrdersScreen() {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
+  // Tab view: 'orders' or 'summary'
+  const [activeView, setActiveView] = useState('orders');
+
+  // Sales Summary state
+  const [saleSummaryData, setSaleSummaryData] = useState(null);
+  const [saleSummaryLoading, setSaleSummaryLoading] = useState(false);
+  const [summaryPeriod, setSummaryPeriod] = useState('today');
+  const [summarySearch, setSummarySearch] = useState('');
+  const [summarySortBy, setSummarySortBy] = useState('quantity');
+  const [summarySortDir, setSummarySortDir] = useState('desc');
+
   // Order detail modal
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
@@ -993,6 +1004,69 @@ export default function OrdersScreen() {
     return { totalRevenue, totalOrders, completedCount, paymentBreakdown: pb };
   }, [analyticsStats, orders]);
 
+  // Sales Summary fetching
+  const fetchSaleSummary = useCallback(async (period) => {
+    if (!restaurantId) return;
+    const p = period || summaryPeriod;
+    setSaleSummaryLoading(true);
+    try {
+      const options = {};
+      if (p !== 'custom') options.period = p;
+      const res = await apiClient.getDailySummary(restaurantId, options);
+      if (res?.success) setSaleSummaryData(res.summary);
+    } catch (err) {
+      console.error('Summary fetch error:', err);
+    } finally {
+      setSaleSummaryLoading(false);
+    }
+  }, [restaurantId, summaryPeriod]);
+
+  const handleSummaryPeriodChange = useCallback((period) => {
+    setSummaryPeriod(period);
+    setSaleSummaryData(null);
+    fetchSaleSummary(period);
+  }, [fetchSaleSummary]);
+
+  // Auto-fetch when switching to summary view
+  useEffect(() => {
+    if (activeView === 'summary' && restaurantId && !saleSummaryData && !saleSummaryLoading) {
+      fetchSaleSummary();
+    }
+  }, [activeView, restaurantId]);
+
+  const getFilteredSummaryItems = useCallback(() => {
+    if (!saleSummaryData?.items) return [];
+    let items = [...saleSummaryData.items];
+    if (summarySearch) {
+      const term = summarySearch.toLowerCase();
+      items = items.filter(i => i.name.toLowerCase().includes(term));
+    }
+    items.sort((a, b) => {
+      let cmp = 0;
+      if (summarySortBy === 'quantity') cmp = a.quantity - b.quantity;
+      else if (summarySortBy === 'revenue') cmp = a.revenue - b.revenue;
+      else cmp = a.name.localeCompare(b.name);
+      return summarySortDir === 'desc' ? -cmp : cmp;
+    });
+    return items;
+  }, [saleSummaryData, summarySearch, summarySortBy, summarySortDir]);
+
+  const toggleSummarySort = (field) => {
+    if (summarySortBy === field) {
+      setSummarySortDir(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSummarySortBy(field);
+      setSummarySortDir('desc');
+    }
+  };
+
+  const summaryPeriods = [
+    { key: 'today', label: 'Today' },
+    { key: 'yesterday', label: 'Yesterday' },
+    { key: '7d', label: '7 Days' },
+    { key: '30d', label: '30 Days' },
+  ];
+
   // Check if any filter is active
   const hasActiveFilters = selectedStatus !== 'all' || selectedPaymentMethod !== 'all' || searchTerm.trim() || dateFilterMode !== 'today';
 
@@ -1014,14 +1088,19 @@ export default function OrdersScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        {/* Title Row */}
+        {/* Title Row with Tab Toggle */}
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerTitle}>Orders</Text>
-            <Text style={styles.headerSubtitle}>{summaryData.totalOrders} orders {dateFilterMode === 'today' ? 'today' : dateFilterMode === 'yesterday' ? 'yesterday' : dateFilterMode === '7days' ? 'this week' : dateFilterMode === '30days' ? 'this month' : ''}</Text>
+            <Text style={styles.headerTitle}>{activeView === 'orders' ? 'Orders' : 'Sales Summary'}</Text>
+            {activeView === 'orders' && (
+              <Text style={styles.headerSubtitle}>{summaryData.totalOrders} orders {dateFilterMode === 'today' ? 'today' : dateFilterMode === 'yesterday' ? 'yesterday' : dateFilterMode === '7days' ? 'this week' : dateFilterMode === '30days' ? 'this month' : ''}</Text>
+            )}
+            {activeView === 'summary' && (
+              <Text style={styles.headerSubtitle}>{summaryPeriod === 'today' ? "Today's" : summaryPeriod === 'yesterday' ? "Yesterday's" : summaryPeriod === '7d' ? 'Last 7 days' : 'Last 30 days'} performance</Text>
+            )}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {hasActiveFilters && (
+            {activeView === 'orders' && hasActiveFilters && (
               <TouchableOpacity
                 onPress={() => { setSelectedStatus('all'); setSelectedPaymentMethod('all'); setSearchTerm(''); setDateFilterMode('today'); }}
                 style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#fef2f2', borderRadius: 8 }}
@@ -1029,7 +1108,7 @@ export default function OrdersScreen() {
                 <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.primary }}>Clear</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={onRefresh} disabled={refreshing || backgroundLoading} style={styles.refreshButton}>
+            <TouchableOpacity onPress={activeView === 'orders' ? onRefresh : () => fetchSaleSummary()} disabled={refreshing || backgroundLoading || saleSummaryLoading} style={styles.refreshButton}>
               <Animated.View style={{ transform: [{ rotate: (backgroundLoading || refreshing) ? spin : '0deg' }] }}>
                 <Ionicons name="refresh" size={22} color={Colors.primary} />
               </Animated.View>
@@ -1037,6 +1116,40 @@ export default function OrdersScreen() {
           </View>
         </View>
 
+        {/* Tab Toggle */}
+        <View style={styles.tabToggleContainer}>
+          <TouchableOpacity
+            style={[styles.tabToggleButton, activeView === 'orders' && styles.tabToggleActive]}
+            onPress={() => setActiveView('orders')}
+          >
+            <Ionicons name="receipt-outline" size={14} color={activeView === 'orders' ? '#fff' : '#6b7280'} />
+            <Text style={[styles.tabToggleText, activeView === 'orders' && styles.tabToggleTextActive]}>Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabToggleButton, activeView === 'summary' && styles.tabToggleActive]}
+            onPress={() => setActiveView('summary')}
+          >
+            <Ionicons name="bar-chart-outline" size={14} color={activeView === 'summary' ? '#fff' : '#6b7280'} />
+            <Text style={[styles.tabToggleText, activeView === 'summary' && styles.tabToggleTextActive]}>Sales Summary</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Summary Period Filters (when in summary view) */}
+        {activeView === 'summary' && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingBottom: 6 }} contentContainerStyle={{ paddingHorizontal: 12, gap: 6 }}>
+            {summaryPeriods.map(p => (
+              <TouchableOpacity
+                key={p.key}
+                style={[styles.chipBase, summaryPeriod === p.key && styles.chipActiveRed]}
+                onPress={() => handleSummaryPeriodChange(p.key)}
+              >
+                <Text style={[styles.chipText, summaryPeriod === p.key && styles.chipTextActive]}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {activeView === 'orders' && (<>
         {/* Summary Stats Row */}
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { backgroundColor: '#f0fdf4' }]}>
@@ -1255,33 +1368,247 @@ export default function OrdersScreen() {
             <View style={styles.loadingBarInner} />
           </View>
         )}
+        </>)}
       </View>
 
       <SyncIndicator visible={syncing} />
 
-      <FlatList
-        data={orders}
-        renderItem={renderOrder}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#f3f4f6', justifyContent: 'center', alignItems: 'center' }}>
-              <Ionicons name="receipt-outline" size={36} color={Colors.textLight} />
+      {/* ========== ORDERS VIEW ========== */}
+      {activeView === 'orders' && (
+        <FlatList
+          data={orders}
+          renderItem={renderOrder}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#f3f4f6', justifyContent: 'center', alignItems: 'center' }}>
+                <Ionicons name="receipt-outline" size={36} color={Colors.textLight} />
+              </View>
+              <Text style={styles.emptyText}>No orders found</Text>
+              <Text style={styles.emptySubtext}>
+                {hasActiveFilters
+                  ? 'Try adjusting your filters or date range'
+                  : 'Orders will appear here once placed'}
+              </Text>
             </View>
-            <Text style={styles.emptyText}>No orders found</Text>
-            <Text style={styles.emptySubtext}>
-              {hasActiveFilters
-                ? 'Try adjusting your filters or date range'
-                : 'Orders will appear here once placed'}
-            </Text>
-          </View>
-        }
-        showsVerticalScrollIndicator={false}
-      />
+          }
+          showsVerticalScrollIndicator={false}
+        />
+      )}
+
+      {/* ========== SALES SUMMARY VIEW ========== */}
+      {activeView === 'summary' && (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }} showsVerticalScrollIndicator={false}>
+          {saleSummaryLoading ? (
+            <View style={{ justifyContent: 'center', alignItems: 'center', paddingVertical: 60 }}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={{ fontSize: 13, color: '#9ca3af', marginTop: 12 }}>Loading summary...</Text>
+            </View>
+          ) : saleSummaryData ? (
+            <View>
+              {/* KPI Cards */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                <View style={[summaryStyles.kpiCard, { backgroundColor: '#f0fdf4' }]}>
+                  <View style={[summaryStyles.kpiIcon, { backgroundColor: '#22c55e' }]}>
+                    <Ionicons name="cash-outline" size={14} color="#fff" />
+                  </View>
+                  <Text style={summaryStyles.kpiLabel}>Revenue</Text>
+                  <Text style={[summaryStyles.kpiValue, { color: '#166534' }]}>
+                    {'\u20B9'}{(saleSummaryData.totalRevenueWithTax || saleSummaryData.totalRevenue || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  </Text>
+                </View>
+                <View style={[summaryStyles.kpiCard, { backgroundColor: '#eff6ff' }]}>
+                  <View style={[summaryStyles.kpiIcon, { backgroundColor: '#3b82f6' }]}>
+                    <Ionicons name="receipt-outline" size={14} color="#fff" />
+                  </View>
+                  <Text style={summaryStyles.kpiLabel}>Orders</Text>
+                  <Text style={[summaryStyles.kpiValue, { color: '#1e40af' }]}>{saleSummaryData.totalOrders || 0}</Text>
+                  {saleSummaryData.avgOrderValue > 0 && (
+                    <Text style={summaryStyles.kpiSub}>avg: {'\u20B9'}{Math.round(saleSummaryData.avgOrderValue)}</Text>
+                  )}
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                <View style={[summaryStyles.kpiCard, { backgroundColor: '#faf5ff' }]}>
+                  <View style={[summaryStyles.kpiIcon, { backgroundColor: '#a855f7' }]}>
+                    <Ionicons name="pricetag-outline" size={14} color="#fff" />
+                  </View>
+                  <Text style={summaryStyles.kpiLabel}>Items Sold</Text>
+                  <Text style={[summaryStyles.kpiValue, { color: '#6b21a8' }]}>
+                    {saleSummaryData.items?.reduce((s, i) => s + i.quantity, 0) || 0}
+                  </Text>
+                  <Text style={summaryStyles.kpiSub}>{saleSummaryData.items?.length || 0} unique</Text>
+                </View>
+                <View style={[summaryStyles.kpiCard, { backgroundColor: '#fff7ed' }]}>
+                  <View style={[summaryStyles.kpiIcon, { backgroundColor: '#f59e0b' }]}>
+                    <Ionicons name="people-outline" size={14} color="#fff" />
+                  </View>
+                  <Text style={summaryStyles.kpiLabel}>Customers</Text>
+                  <Text style={[summaryStyles.kpiValue, { color: '#92400e' }]}>{saleSummaryData.uniqueCustomers || 0}</Text>
+                </View>
+              </View>
+
+              {/* Daily Revenue Trend (multi-day) */}
+              {saleSummaryData.dailyRevenue && saleSummaryData.dailyRevenue.length > 1 && (
+                <View style={summaryStyles.sectionCard}>
+                  <Text style={summaryStyles.sectionTitle}>Daily Revenue Trend</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 100 }}>
+                    {(() => {
+                      const maxRev = Math.max(...saleSummaryData.dailyRevenue.map(d => d.revenue), 1);
+                      return saleSummaryData.dailyRevenue.map((day, idx) => {
+                        const height = Math.max((day.revenue / maxRev) * 100, 4);
+                        const d = new Date(day.date + 'T12:00:00');
+                        const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+                        return (
+                          <View key={idx} style={{ flex: 1, alignItems: 'center' }}>
+                            <Text style={{ fontSize: 8, color: '#9ca3af', marginBottom: 2 }}>{'\u20B9'}{Math.round(day.revenue)}</Text>
+                            <View style={{ width: '80%', height: `${height}%`, backgroundColor: Colors.primary, borderTopLeftRadius: 4, borderTopRightRadius: 4, minHeight: 4 }} />
+                            <Text style={{ fontSize: 8, color: '#9ca3af', marginTop: 2 }}>{label}</Text>
+                          </View>
+                        );
+                      });
+                    })()}
+                  </View>
+                </View>
+              )}
+
+              {/* Order Types */}
+              {saleSummaryData.ordersByType && Object.keys(saleSummaryData.ordersByType).length > 0 && (
+                <View style={summaryStyles.sectionCard}>
+                  <Text style={summaryStyles.sectionTitle}>Order Types</Text>
+                  {(() => {
+                    const typeTotal = Object.values(saleSummaryData.ordersByType).reduce((s, v) => s + v, 0);
+                    const typeColors = { dine_in: '#3b82f6', delivery: '#22c55e', takeaway: '#f59e0b', customer_self_order: '#a855f7' };
+                    return Object.entries(saleSummaryData.ordersByType).sort((a, b) => b[1] - a[1]).map(([type, count]) => {
+                      const pct = typeTotal > 0 ? Math.round((count / typeTotal) * 100) : 0;
+                      const color = typeColors[type] || '#6b7280';
+                      return (
+                        <View key={type} style={{ marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>{type.replace(/_/g, ' ')}</Text>
+                            <Text style={{ fontSize: 12, color: '#6b7280' }}>{count} ({pct}%)</Text>
+                          </View>
+                          <View style={{ height: 6, backgroundColor: '#f3f4f6', borderRadius: 3, overflow: 'hidden' }}>
+                            <View style={{ height: 6, borderRadius: 3, backgroundColor: color, width: `${Math.min(pct, 100)}%` }} />
+                          </View>
+                        </View>
+                      );
+                    });
+                  })()}
+                </View>
+              )}
+
+              {/* Busiest Hours */}
+              {saleSummaryData.hourlyBreakdown && Object.keys(saleSummaryData.hourlyBreakdown).length > 0 && (
+                <View style={summaryStyles.sectionCard}>
+                  <Text style={summaryStyles.sectionTitle}>Busiest Hours</Text>
+                  {Object.entries(saleSummaryData.hourlyBreakdown).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([hour, count]) => {
+                    const h = parseInt(hour);
+                    const label = h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`;
+                    const maxH = Math.max(...Object.values(saleSummaryData.hourlyBreakdown));
+                    const pct = maxH > 0 ? Math.round((count / maxH) * 100) : 0;
+                    return (
+                      <View key={hour} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <Text style={{ fontSize: 11, color: '#6b7280', width: 42, textAlign: 'right', fontVariant: ['tabular-nums'] }}>{label}</Text>
+                        <View style={{ flex: 1, height: 8, backgroundColor: '#f3f4f6', borderRadius: 4, overflow: 'hidden' }}>
+                          <View style={{ height: 8, borderRadius: 4, backgroundColor: '#f97316', width: `${pct}%` }} />
+                        </View>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#374151', width: 24 }}>{count}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Item-wise Sales */}
+              <View style={summaryStyles.sectionCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={summaryStyles.sectionTitle}>Item-wise Sales</Text>
+                  <Text style={{ fontSize: 11, color: '#9ca3af' }}>{saleSummaryData.items?.length || 0} items</Text>
+                </View>
+                {/* Search */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 10, height: 34, marginBottom: 10 }}>
+                  <Ionicons name="search" size={14} color="#9ca3af" style={{ marginRight: 6 }} />
+                  <TextInput
+                    style={{ flex: 1, fontSize: 12, color: '#374151', paddingVertical: 0 }}
+                    placeholder="Search items..."
+                    placeholderTextColor="#9ca3af"
+                    value={summarySearch}
+                    onChangeText={setSummarySearch}
+                  />
+                  {summarySearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setSummarySearch('')}>
+                      <Ionicons name="close-circle" size={16} color="#9ca3af" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {/* Sort buttons */}
+                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+                  {[{ key: 'quantity', label: 'Qty' }, { key: 'revenue', label: 'Revenue' }, { key: 'name', label: 'Name' }].map(s => (
+                    <TouchableOpacity
+                      key={s.key}
+                      style={[styles.chipBase, { paddingHorizontal: 8, paddingVertical: 4 }, summarySortBy === s.key && { backgroundColor: '#374151', borderColor: '#374151' }]}
+                      onPress={() => toggleSummarySort(s.key)}
+                    >
+                      <Text style={[styles.chipText, { fontSize: 10 }, summarySortBy === s.key && { color: '#fff' }]}>{s.label}</Text>
+                      {summarySortBy === s.key && (
+                        <Ionicons name={summarySortDir === 'desc' ? 'arrow-down' : 'arrow-up'} size={10} color="#fff" style={{ marginLeft: 2 }} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {/* Items list */}
+                {(() => {
+                  const items = getFilteredSummaryItems();
+                  const totalRev = items.reduce((s, i) => s + i.revenue, 0);
+                  return items.length > 0 ? items.map((item, idx) => {
+                    const revPct = totalRev > 0 ? ((item.revenue / totalRev) * 100) : 0;
+                    const isTop3 = idx < 3 && summarySortBy === 'quantity' && summarySortDir === 'desc';
+                    return (
+                      <View key={item.originalKey || item.name} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: idx < items.length - 1 ? 1 : 0, borderBottomColor: '#f3f4f6' }}>
+                        <View style={{ width: 24 }}>
+                          {isTop3 ? (
+                            <View style={{ backgroundColor: idx === 0 ? '#fef3c7' : idx === 1 ? '#f3f4f6' : '#fff7ed', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4, alignItems: 'center' }}>
+                              <Text style={{ fontSize: 9, fontWeight: '700', color: idx === 0 ? '#92400e' : idx === 1 ? '#6b7280' : '#c2410c' }}>
+                                {idx === 0 ? '1st' : idx === 1 ? '2nd' : '3rd'}
+                              </Text>
+                            </View>
+                          ) : (
+                            <Text style={{ fontSize: 10, color: '#9ca3af', textAlign: 'center' }}>{idx + 1}</Text>
+                          )}
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 13, fontWeight: '500', color: '#374151', marginLeft: 6 }} numberOfLines={1}>{item.name}</Text>
+                        <View style={{ backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 10 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563eb' }}>{item.quantity}</Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end', minWidth: 70 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>{'\u20B9'}{item.revenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+                          <Text style={{ fontSize: 9, color: '#9ca3af' }}>{revPct.toFixed(1)}%</Text>
+                        </View>
+                      </View>
+                    );
+                  }) : (
+                    <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                      <Ionicons name="basket-outline" size={32} color="#d1d5db" />
+                      <Text style={{ fontSize: 13, color: '#9ca3af', marginTop: 8 }}>No items found</Text>
+                    </View>
+                  );
+                })()}
+              </View>
+            </View>
+          ) : (
+            <View style={{ justifyContent: 'center', alignItems: 'center', paddingVertical: 60 }}>
+              <Ionicons name="bar-chart-outline" size={48} color="#d1d5db" />
+              <Text style={{ fontSize: 15, fontWeight: '600', color: '#6b7280', marginTop: 12 }}>No summary data</Text>
+              <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>Pull to refresh or change period</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* Order Detail Modal */}
       {renderOrderDetailModal()}
@@ -1838,5 +2165,86 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+  // Tab Toggle
+  tabToggleContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 10,
+    padding: 3,
+  },
+  tabToggleButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  tabToggleActive: {
+    backgroundColor: Colors.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  tabToggleTextActive: {
+    color: '#fff',
+  },
+});
+
+const summaryStyles = StyleSheet.create({
+  kpiCard: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  kpiIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  kpiValue: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  kpiSub: {
+    fontSize: 10,
+    color: '#9ca3af',
+    marginTop: 1,
+  },
+  sectionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 10,
   },
 });

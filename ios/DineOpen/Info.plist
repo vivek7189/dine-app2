@@ -28,7 +28,7 @@
         <key>CFBundleURLSchemes</key>
         <array>
           <string>dineopen</string>
-          <string>com.dineopen.waiter</string>
+          <string>com.dineopen.pos</string>
         </array>
       </dict>
       <dict>

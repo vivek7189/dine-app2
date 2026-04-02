@@ -18,12 +18,16 @@ import {
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
 import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
+
+const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+const PUSHER_CLUSTER = 'ap2';
 
 export default function TablesScreen() {
   const router = useRouter();
@@ -275,6 +279,33 @@ export default function TablesScreen() {
     }
   };
 
+
+  // Pusher: real-time table status updates when orders change on other devices
+  useEffect(() => {
+    const rid = restaurantIdRef.current;
+    if (!rid) return;
+
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channel = pusher.subscribe(`restaurant-${rid}`);
+
+    let debounceTimer = null;
+    const handleEvent = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        refreshInBackground(rid);
+      }, 1000);
+    };
+
+    channel.bind('table-status-updated', handleEvent);
+    channel.bind('order-created', handleEvent);
+    channel.bind('order-completed', handleEvent);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channel.unbind_all();
+      pusher.unsubscribe(`restaurant-${rid}`);
+    };
+  }, [selectedRestaurant?.id, refreshInBackground]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
