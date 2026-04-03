@@ -386,7 +386,7 @@ export function ViewRecipeModal({ visible, onClose, recipe, inventoryItems, getI
 // ── 5. Quick Stock Adjustment ────────────────────────
 export function QuickStockModal({
   visible, onClose, inventoryItems, quickStockAdjustments, setQuickStockAdjustments,
-  onSave, saving,
+  onSave, saving, batchInfo = {}, setBatchInfo,
 }) {
   const [search, setSearch] = useState('');
   const filtered = inventoryItems.filter(i =>
@@ -395,8 +395,19 @@ export function QuickStockModal({
 
   const getAdj = (id) => quickStockAdjustments[id] || 0;
   const setAdj = (id, val) => setQuickStockAdjustments(prev => ({ ...prev, [id]: val }));
+  const getBatch = (id) => batchInfo[id] || {};
+  const updateBatch = (id, field, value) => {
+    setBatchInfo?.(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
+  };
 
   const totalChanges = Object.values(quickStockAdjustments).filter(v => v !== 0).length;
+
+  const computeExpiry = (mfgDate, expiryDays) => {
+    if (!mfgDate || !expiryDays) return null;
+    const d = new Date(mfgDate);
+    d.setDate(d.getDate() + parseInt(expiryDays));
+    return d.toLocaleDateString();
+  };
 
   return (
     <ModalWrapper visible={visible} onClose={onClose} title="Quick Stock Update">
@@ -417,23 +428,57 @@ export function QuickStockModal({
           const id = item._id || item.id;
           const adj = getAdj(id);
           const newStock = Math.max(0, (Number(item.currentStock) || 0) + adj);
+          const batch = getBatch(id);
+          const expiryLabel = computeExpiry(batch.mfgDate, batch.expiryDays);
           return (
-            <View style={styles.qsRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.qsName}>{item.name}</Text>
-                <Text style={styles.qsSub}>Current: {item.currentStock || 0} {item.unit}{adj !== 0 ? ` → ${newStock}` : ''}</Text>
+            <View style={[styles.qsRow, { flexDirection: 'column', alignItems: 'stretch' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.qsName}>{item.name}</Text>
+                  <Text style={styles.qsSub}>Current: {item.currentStock || 0} {item.unit}{adj !== 0 ? ` → ${newStock}` : ''}</Text>
+                </View>
+                <View style={styles.qsControls}>
+                  <TouchableOpacity style={styles.qsBtn} onPress={() => setAdj(id, adj - 1)}>
+                    <Ionicons name="remove" size={18} color="#ef4444" />
+                  </TouchableOpacity>
+                  <Text style={[styles.qsAdj, adj !== 0 && { color: adj > 0 ? '#10b981' : '#ef4444', fontWeight: '800' }]}>
+                    {adj > 0 ? `+${adj}` : adj}
+                  </Text>
+                  <TouchableOpacity style={styles.qsBtn} onPress={() => setAdj(id, adj + 1)}>
+                    <Ionicons name="add" size={18} color="#10b981" />
+                  </TouchableOpacity>
+                </View>
               </View>
-              <View style={styles.qsControls}>
-                <TouchableOpacity style={styles.qsBtn} onPress={() => setAdj(id, adj - 1)}>
-                  <Ionicons name="remove" size={18} color="#ef4444" />
-                </TouchableOpacity>
-                <Text style={[styles.qsAdj, adj !== 0 && { color: adj > 0 ? '#10b981' : '#ef4444', fontWeight: '800' }]}>
-                  {adj > 0 ? `+${adj}` : adj}
-                </Text>
-                <TouchableOpacity style={styles.qsBtn} onPress={() => setAdj(id, adj + 1)}>
-                  <Ionicons name="add" size={18} color="#10b981" />
-                </TouchableOpacity>
-              </View>
+              {adj > 0 && (
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: Colors.textLight, textTransform: 'uppercase' }}>Mfg Date</Text>
+                    <TextInput
+                      style={[styles.input, { height: 32, fontSize: 12, marginTop: 2, paddingHorizontal: 8 }]}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#d1d5db"
+                      value={batch.mfgDate || ''}
+                      onChangeText={v => updateBatch(id, 'mfgDate', v)}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: Colors.textLight, textTransform: 'uppercase' }}>Expiry Days</Text>
+                    <TextInput
+                      style={[styles.input, { height: 32, fontSize: 12, marginTop: 2, paddingHorizontal: 8 }]}
+                      placeholder="e.g. 30"
+                      placeholderTextColor="#d1d5db"
+                      keyboardType="numeric"
+                      value={batch.expiryDays || ''}
+                      onChangeText={v => updateBatch(id, 'expiryDays', v)}
+                    />
+                  </View>
+                  {expiryLabel && (
+                    <View style={{ justifyContent: 'flex-end', paddingBottom: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '600' }}>Exp: {expiryLabel}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           );
         }}
@@ -759,6 +804,236 @@ export function QuickOrderModal({
           )}
         </TouchableOpacity>
         <View style={{ height: 30 }} />
+      </ScrollView>
+    </ModalWrapper>
+  );
+}
+
+// ── Log Waste Modal ─────────────────────────────────
+export function LogWasteModal({
+  visible, onClose, inventoryItems, wasteFormData, setWasteFormData, onSave, saving,
+}) {
+  const [search, setSearch] = useState('');
+  const selectedItem = inventoryItems.find(i => (i.id || i._id) === wasteFormData.itemId);
+  const filtered = search
+    ? inventoryItems.filter(i => i.name?.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
+    : [];
+  const reasons = ['spillage', 'expired', 'damaged', 'leftover', 'shrinkage', 'other'];
+
+  return (
+    <ModalWrapper visible={visible} onClose={onClose} title="Log Waste">
+      <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.label}>Item *</Text>
+        {selectedItem ? (
+          <TouchableOpacity
+            style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+            onPress={() => { setWasteFormData(p => ({ ...p, itemId: '' })); setSearch(''); }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>{selectedItem.name}</Text>
+            <Ionicons name="close-circle" size={18} color={Colors.textLight} />
+          </TouchableOpacity>
+        ) : (
+          <View>
+            <TextInput
+              style={styles.input}
+              placeholder="Search items..."
+              placeholderTextColor={Colors.textLight}
+              value={search}
+              onChangeText={setSearch}
+            />
+            {filtered.length > 0 && (
+              <View style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', marginTop: 2, maxHeight: 200 }}>
+                {filtered.map(item => (
+                  <TouchableOpacity
+                    key={item.id || item._id}
+                    style={{ padding: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                    onPress={() => {
+                      setWasteFormData(p => ({ ...p, itemId: item.id || item._id }));
+                      setSearch('');
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, color: Colors.textDark }}>{item.name}</Text>
+                    <Text style={{ fontSize: 11, color: Colors.textLight }}>{item.currentStock} {item.unit} in stock</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
+        <Text style={styles.label}>Quantity *</Text>
+        <TextInput
+          style={styles.input}
+          placeholder={selectedItem ? `in ${selectedItem.unit}` : 'Enter quantity'}
+          placeholderTextColor={Colors.textLight}
+          keyboardType="numeric"
+          value={wasteFormData.quantity}
+          onChangeText={v => setWasteFormData(p => ({ ...p, quantity: v }))}
+        />
+
+        <Text style={styles.label}>Reason</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          {reasons.map(r => (
+            <TouchableOpacity
+              key={r}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+                backgroundColor: wasteFormData.reason === r ? '#059669' : '#f1f5f9',
+              }}
+              onPress={() => setWasteFormData(p => ({ ...p, reason: r }))}
+            >
+              <Text style={{
+                fontSize: 12, fontWeight: '600',
+                color: wasteFormData.reason === r ? '#fff' : Colors.textMedium,
+              }}>
+                {r.charAt(0).toUpperCase() + r.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={styles.label}>Notes</Text>
+        <TextInput
+          style={[styles.input, { height: 60, textAlignVertical: 'top' }]}
+          placeholder="Optional notes..."
+          placeholderTextColor={Colors.textLight}
+          multiline
+          value={wasteFormData.notes}
+          onChangeText={v => setWasteFormData(p => ({ ...p, notes: v }))}
+        />
+
+        <TouchableOpacity
+          style={[styles.saveBtn, { marginTop: Spacing.lg, marginBottom: Spacing.md, backgroundColor: '#ef4444' }]}
+          onPress={onSave}
+          disabled={saving}
+        >
+          {saving ? <ActivityIndicator size="small" color="#fff" /> : (
+            <>
+              <Ionicons name="trash" size={16} color="#fff" />
+              <Text style={styles.saveBtnText}>Log Waste</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </ModalWrapper>
+  );
+}
+
+// ── AI Leftover Modal ───────────────────────────────
+export function AILeftoverModal({
+  visible, onClose, leftoverText, setLeftoverText,
+  leftoverAnalysis, analyzingLeftovers, confirmingLeftovers,
+  onAnalyze, onConfirm,
+}) {
+  const [itemDecisions, setItemDecisions] = useState({});
+  const items = leftoverAnalysis?.items || [];
+  const wasteCount = Object.values(itemDecisions).filter(d => d === 'waste').length;
+
+  const handleConfirm = () => {
+    const wasteItems = items
+      .filter((_, idx) => itemDecisions[idx] === 'waste')
+      .map(item => ({
+        name: item.name, quantity: item.quantity, unit: item.unit,
+        recipeName: item.recipeName, recipeId: item.recipeId,
+        estimatedServings: item.estimatedServings,
+        ingredients: item.ingredients, totalWasteValue: item.totalWasteValue,
+      }));
+    onConfirm(wasteItems);
+    setItemDecisions({});
+  };
+
+  return (
+    <ModalWrapper visible={visible} onClose={() => { onClose(); setItemDecisions({}); }} title="AI Leftover Analysis">
+      <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+        {items.length === 0 ? (
+          <View>
+            <Text style={[styles.label, { marginTop: Spacing.sm }]}>
+              Describe what food is left over
+            </Text>
+            <TextInput
+              style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+              placeholder="e.g., 1kg paneer butter masala, 500ml dal, 3 rotis..."
+              placeholderTextColor={Colors.textLight}
+              multiline
+              value={leftoverText}
+              onChangeText={setLeftoverText}
+            />
+            <TouchableOpacity
+              style={[styles.saveBtn, {
+                marginTop: Spacing.md,
+                backgroundColor: (!leftoverText?.trim() || analyzingLeftovers) ? '#d1d5db' : '#059669',
+              }]}
+              onPress={onAnalyze}
+              disabled={analyzingLeftovers || !leftoverText?.trim()}
+            >
+              {analyzingLeftovers ? <ActivityIndicator size="small" color="#fff" /> : (
+                <>
+                  <Ionicons name="sparkles" size={16} color="#fff" />
+                  <Text style={styles.saveBtnText}>Analyze with AI</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View>
+            {items.map((item, idx) => {
+              const decision = itemDecisions[idx];
+              return (
+                <View key={idx} style={{
+                  padding: 12, borderRadius: 12, marginTop: 8,
+                  borderWidth: 1.5,
+                  borderColor: decision === 'waste' ? '#fecaca' : decision === 'carry' ? '#bbf7d0' : '#e2e8f0',
+                  backgroundColor: decision === 'waste' ? '#fef2f2' : decision === 'carry' ? '#f0fdf4' : '#fff',
+                }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textDark }}>{item.name}</Text>
+                  <Text style={{ fontSize: 12, color: Colors.textLight, marginTop: 2 }}>
+                    {item.quantity} {item.unit} · {item.recipeName || 'AI estimated'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                        backgroundColor: decision === 'waste' ? '#ef4444' : '#fef2f2',
+                      }}
+                      onPress={() => setItemDecisions(p => ({ ...p, [idx]: decision === 'waste' ? undefined : 'waste' }))}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: decision === 'waste' ? '#fff' : '#ef4444' }}>
+                        {decision === 'waste' ? 'Marked Waste' : 'Mark Waste'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                        backgroundColor: decision === 'carry' ? '#16a34a' : '#f0fdf4',
+                      }}
+                      onPress={() => setItemDecisions(p => ({ ...p, [idx]: decision === 'carry' ? undefined : 'carry' }))}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: decision === 'carry' ? '#fff' : '#16a34a' }}>
+                        {decision === 'carry' ? 'Carrying' : 'Carry Forward'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[styles.saveBtn, {
+                marginTop: Spacing.lg, marginBottom: Spacing.md,
+                backgroundColor: (wasteCount === 0 || confirmingLeftovers) ? '#d1d5db' : '#ef4444',
+              }]}
+              onPress={handleConfirm}
+              disabled={wasteCount === 0 || confirmingLeftovers}
+            >
+              {confirmingLeftovers ? <ActivityIndicator size="small" color="#fff" /> : (
+                <>
+                  <Ionicons name="trash" size={16} color="#fff" />
+                  <Text style={styles.saveBtnText}>Confirm & Deduct ({wasteCount})</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </ModalWrapper>
   );

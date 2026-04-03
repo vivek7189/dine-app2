@@ -97,6 +97,14 @@ export default function StockTab({
               <Text style={[styles.metaValue, { color: '#ef4444' }]}>-{usage}</Text>
             </View>
           )}
+          {Number(item.wastedQty) > 0 && (
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>Wasted</Text>
+              <Text style={[styles.metaValue, { color: '#ea580c' }]}>
+                {item.wastedQty} {item.unit}
+              </Text>
+            </View>
+          )}
           {Number(item.costPerUnit) > 0 && (
             <View style={styles.metaItem}>
               <Text style={styles.metaLabel}>Cost</Text>
@@ -117,7 +125,12 @@ export default function StockTab({
   return (
     <View style={styles.container}>
       {/* Compact stats */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.statsRow}
+        contentContainerStyle={styles.statsRowContent}
+      >
         <View style={[styles.statChip, { backgroundColor: '#eff6ff' }]}>
           <Text style={[styles.statNum, { color: '#3b82f6' }]}>{totalItems}</Text>
           <Text style={styles.statChipLabel}>Items</Text>
@@ -156,7 +169,12 @@ export default function StockTab({
       </View>
 
       {/* Category filter chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipRow}
+        contentContainerStyle={styles.chipRowContent}
+      >
         <TouchableOpacity
           style={[styles.chip, selectedCategory === 'all' && styles.chipActive]}
           onPress={() => setSelectedCategory('all')}
@@ -175,7 +193,12 @@ export default function StockTab({
       </ScrollView>
 
       {/* Sort chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.sortRow}
+        contentContainerStyle={styles.chipRowContent}
+      >
         {SORT_OPTIONS.map(opt => (
           <TouchableOpacity
             key={opt.key}
@@ -216,20 +239,23 @@ export default function StockTab({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  statsRow: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, maxHeight: 56 },
+  statsRow: { flexShrink: 0, paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, marginBottom: Spacing.sm },
+  statsRowContent: { alignItems: 'center', paddingRight: Spacing.md },
   statChip: {
     flexDirection: 'row', alignItems: 'center', borderRadius: 20,
-    paddingHorizontal: 12, paddingVertical: 6, marginRight: Spacing.xs,
+    paddingHorizontal: 12, paddingVertical: 8, marginRight: Spacing.xs,
   },
   statNum: { fontSize: 14, fontWeight: '800', marginRight: 4 },
   statChipLabel: { fontSize: 12, color: Colors.textLight },
-  searchRow: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
+  searchRow: { flexShrink: 0, paddingHorizontal: Spacing.md, paddingTop: Spacing.xs },
   searchBox: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9',
     borderRadius: BorderRadius.large, paddingHorizontal: 12, height: 40,
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.textDark, marginLeft: 8 },
-  chipRow: { paddingHorizontal: Spacing.md, marginTop: Spacing.xs, maxHeight: 38 },
+  chipRow: { flexShrink: 0, paddingHorizontal: Spacing.md, marginTop: Spacing.sm, marginBottom: Spacing.xs },
+  chipRowContent: { alignItems: 'center', paddingRight: Spacing.md },
+  sortRow: { flexShrink: 0, paddingHorizontal: Spacing.md, marginTop: Spacing.xs, marginBottom: Spacing.sm },
   chip: {
     borderRadius: 16, borderWidth: 1, borderColor: Colors.borderLight,
     paddingHorizontal: 14, paddingVertical: 6, marginRight: 6, backgroundColor: '#fff',

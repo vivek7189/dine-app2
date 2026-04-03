@@ -144,7 +144,7 @@ export default function RecipesTab({
 
       {/* Category filter */}
       {recipeCats.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
           <TouchableOpacity
             style={[styles.chip, filterCat === 'all' && styles.chipActive]}
             onPress={() => setFilterCat('all')}
@@ -186,7 +186,7 @@ export default function RecipesTab({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   headerRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: Spacing.md, paddingTop: Spacing.sm,
   },
   headerCount: { fontSize: 15, fontWeight: '700', color: Colors.textDark },
@@ -196,12 +196,13 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', marginLeft: 4 },
   searchBox: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9',
+    flexShrink: 0, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9',
     borderRadius: BorderRadius.large, paddingHorizontal: 12, height: 40,
     marginHorizontal: Spacing.md, marginTop: Spacing.sm,
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.textDark, marginLeft: 8 },
-  chipRow: { paddingHorizontal: Spacing.md, marginTop: Spacing.xs, maxHeight: 38 },
+  chipRow: { flexShrink: 0, paddingHorizontal: Spacing.md, marginTop: Spacing.sm, marginBottom: Spacing.xs },
+  chipRowContent: { alignItems: 'center', paddingRight: Spacing.md },
   chip: {
     borderRadius: 16, borderWidth: 1, borderColor: Colors.borderLight,
     paddingHorizontal: 14, paddingVertical: 6, marginRight: 6, backgroundColor: '#fff',

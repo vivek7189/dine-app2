@@ -9,7 +9,7 @@ export default function DashboardTab({
   getStockStatus, getStockColor, getStockPercent,
   getOrderStatusColor,
   openAddItem, setShowQuickStockModal, setActiveTab,
-  onQuickAction,
+  onQuickAction, onLogWaste,
 }) {
   const recentPOs = (purchaseOrders || []).slice(0, 5);
   const expiringCount = inventoryItems.filter(i => {
@@ -73,11 +73,11 @@ export default function DashboardTab({
           </View>
           <Text style={styles.quickLabel}>View Stock</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.quickBtn} onPress={() => setActiveTab('insights')}>
-          <View style={[styles.quickIcon, { backgroundColor: '#fdf2f8' }]}>
-            <Ionicons name="sparkles" size={24} color="#ec4899" />
+        <TouchableOpacity style={styles.quickBtn} onPress={onLogWaste}>
+          <View style={[styles.quickIcon, { backgroundColor: '#fef2f2' }]}>
+            <Ionicons name="trash" size={24} color="#ef4444" />
           </View>
-          <Text style={styles.quickLabel}>AI Insights</Text>
+          <Text style={styles.quickLabel}>Log Waste</Text>
         </TouchableOpacity>
       </View>
 

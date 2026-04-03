@@ -194,7 +194,7 @@ export default function ProcurementTab({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  subTabRow: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, maxHeight: 44 },
+  subTabRow: { flexShrink: 0, paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, marginBottom: Spacing.xs },
   subTab: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     borderRadius: 20, borderWidth: 1, borderColor: Colors.borderLight,

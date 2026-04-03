@@ -158,7 +158,7 @@ export default function MoreScreen() {
           text: 'Logout',
           style: 'destructive',
           onPress: async () => {
-            await apiClient.clearToken();
+            await apiClient.logout();
             router.replace('/(auth)/login');
           },
         },

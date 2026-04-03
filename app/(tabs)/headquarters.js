@@ -27,7 +27,11 @@ const ROLE_FILTERS = ['All', 'Manager', 'Waiter', 'Cashier', 'Chef'];
 const STATUS_FILTERS = ['All', 'Active', 'Inactive'];
 const STOCK_FILTERS = ['All', 'Normal', 'Low', 'Out'];
 
-export default function HeadquartersScreen() {
+export function HeadquartersContent({ embedded = false, drawerToggle }) {
+  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} />;
+}
+
+export default function HeadquartersScreen({ embedded = false, drawerToggle }) {
   const router = useRouter();
 
   // Auth/loading
@@ -37,7 +41,7 @@ export default function HeadquartersScreen() {
 
   // Tab & filter state
   const [activeTab, setActiveTab] = useState('overview');
-  const [datePreset, setDatePreset] = useState('7d');
+  const [datePreset, setDatePreset] = useState(embedded ? 'today' : '7d');
   const [selectedRestaurants, setSelectedRestaurants] = useState([]);
   const [showRestaurantFilter, setShowRestaurantFilter] = useState(false);
 
@@ -96,7 +100,7 @@ export default function HeadquartersScreen() {
     try {
       const userData = await apiClient.getUser();
       if (!userData) { router.replace('/(auth)/login'); return; }
-      if (userData.role !== 'owner') {
+      if (!embedded && userData.role !== 'owner') {
         Alert.alert('Access Denied', 'Headquarters is available for restaurant owners only.');
         router.back();
         return;
@@ -295,8 +299,8 @@ export default function HeadquartersScreen() {
   const renderHeader = () => (
     <View style={styles.header}>
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.textDark} />
+        <TouchableOpacity onPress={embedded && drawerToggle ? drawerToggle : () => router.back()} style={styles.backBtn}>
+          <Ionicons name={embedded ? "menu" : "arrow-back"} size={22} color={Colors.textDark} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>{getHeadline()}</Text>

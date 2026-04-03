@@ -75,6 +75,19 @@ export default function useInventoryData() {
   const [wastePredictions, setWastePredictions] = useState([]);
   const [wasteSummary, setWasteSummary] = useState(null);
 
+  // Waste tracking
+  const [wasteEntries, setWasteEntries] = useState([]);
+  const [wasteExpiryAlerts, setWasteExpiryAlerts] = useState(null);
+  const [wastePeriod, setWastePeriod] = useState('7d');
+  const [wasteReason, setWasteReason] = useState('all');
+  const [showLogWasteModal, setShowLogWasteModal] = useState(false);
+  const [showAILeftoverModal, setShowAILeftoverModal] = useState(false);
+  const [leftoverText, setLeftoverText] = useState('');
+  const [leftoverAnalysis, setLeftoverAnalysis] = useState(null);
+  const [analyzingLeftovers, setAnalyzingLeftovers] = useState(false);
+  const [confirmingLeftovers, setConfirmingLeftovers] = useState(false);
+  const [wasteFormData, setWasteFormData] = useState({ itemId: '', quantity: '', reason: 'spillage', notes: '' });
+
   // Modals
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showAddSupplierModal, setShowAddSupplierModal] = useState(false);
@@ -113,6 +126,7 @@ export default function useInventoryData() {
 
   // Quick stock
   const [quickStockAdjustments, setQuickStockAdjustments] = useState({});
+  const [quickStockBatchInfo, setQuickStockBatchInfo] = useState({});
 
   // ── Stock helpers ────────────────────────────────
   const getStockStatus = (item) => {
@@ -264,6 +278,109 @@ export default function useInventoryData() {
     }
   };
 
+  // ── Waste management ────────────────────────────
+  const loadWasteData = async () => {
+    const rid = restaurantId;
+    if (!rid) return;
+    try {
+      const params = { period: wastePeriod };
+      if (wasteReason && wasteReason !== 'all') params.reason = wasteReason;
+      const [entriesRes, summaryRes, alertsRes] = await Promise.allSettled([
+        apiClient.getWasteEntries(rid, params),
+        apiClient.getWasteSummary(rid),
+        apiClient.getExpiryAlerts(rid, 7),
+      ]);
+      setWasteEntries(entriesRes.status === 'fulfilled' ? (entriesRes.value.entries || []) : []);
+      setWasteSummary(summaryRes.status === 'fulfilled' ? summaryRes.value : null);
+      setWasteExpiryAlerts(alertsRes.status === 'fulfilled' ? alertsRes.value : null);
+    } catch (e) {
+      console.error('Load waste data error:', e);
+    }
+  };
+
+  const handleCreateWasteEntry = async () => {
+    const rid = restaurantId;
+    if (!rid || !wasteFormData.itemId || !wasteFormData.quantity) {
+      Alert.alert('Error', 'Select an item and enter quantity');
+      return;
+    }
+    const item = inventoryItems.find(i => (i.id || i._id) === wasteFormData.itemId);
+    if (!item) { Alert.alert('Error', 'Item not found'); return; }
+    setSaving(true);
+    try {
+      await apiClient.createWasteEntry(rid, {
+        itemId: wasteFormData.itemId,
+        itemName: item.name,
+        quantity: Number(wasteFormData.quantity),
+        unit: item.unit,
+        reason: wasteFormData.reason,
+        notes: wasteFormData.notes,
+        source: 'MANUAL',
+        costPerUnit: item.costPerUnit || 0,
+      });
+      setShowLogWasteModal(false);
+      setWasteFormData({ itemId: '', quantity: '', reason: 'spillage', notes: '' });
+      Alert.alert('Success', 'Waste logged successfully');
+      await loadWasteData();
+      await loadCoreData(rid);
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Failed to log waste');
+    } finally { setSaving(false); }
+  };
+
+  const handleMarkExpiredWaste = async (batchId) => {
+    const rid = restaurantId;
+    if (!rid || !batchId) return;
+    try {
+      const res = await apiClient.markExpiredWaste(rid, batchId);
+      Alert.alert('Done', `Marked ${res.itemName || 'item'} as expired waste`);
+      await loadWasteData();
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Failed to mark expired waste');
+    }
+  };
+
+  const handleDismissExpired = (batchId) => {
+    if (!wasteExpiryAlerts) return;
+    setWasteExpiryAlerts({
+      ...wasteExpiryAlerts,
+      expired: (wasteExpiryAlerts.expired || []).filter(b => b.id !== batchId),
+    });
+  };
+
+  const handleAnalyzeLeftovers = async () => {
+    const rid = restaurantId;
+    if (!rid || !leftoverText.trim()) {
+      Alert.alert('Error', 'Describe what food is left over');
+      return;
+    }
+    setAnalyzingLeftovers(true);
+    setLeftoverAnalysis(null);
+    try {
+      const res = await apiClient.analyzeLeftovers(rid, leftoverText);
+      setLeftoverAnalysis(res);
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Failed to analyze leftovers');
+    } finally { setAnalyzingLeftovers(false); }
+  };
+
+  const handleConfirmLeftoverWaste = async (wasteItems) => {
+    const rid = restaurantId;
+    if (!rid || !wasteItems?.length) return;
+    setConfirmingLeftovers(true);
+    try {
+      await apiClient.confirmLeftoverWaste(rid, wasteItems);
+      Alert.alert('Success', `Logged waste for ${wasteItems.length} leftover item(s)`);
+      setShowAILeftoverModal(false);
+      setLeftoverText('');
+      setLeftoverAnalysis(null);
+      await loadWasteData();
+      await loadCoreData(rid);
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Failed to confirm leftover waste');
+    } finally { setConfirmingLeftovers(false); }
+  };
+
   const refreshData = async () => {
     if (!restaurantId) return;
     switch (activeTab) {
@@ -283,6 +400,9 @@ export default function useInventoryData() {
       case 'insights':
         await loadSCMData();
         break;
+      case 'waste':
+        await loadWasteData();
+        break;
     }
   };
 
@@ -298,11 +418,17 @@ export default function useInventoryData() {
     if (activeTab === 'usage') loadUsageData();
     if (activeTab === 'stock') loadTodayUsage(restaurantId);
     if (activeTab === 'procurement' || activeTab === 'insights') loadSCMData();
+    if (activeTab === 'waste') loadWasteData();
   }, [activeTab, restaurantId]);
 
   useEffect(() => {
     if (activeTab === 'procurement' && restaurantId) loadSCMData();
   }, [procurementSubTab]);
+
+  // Reload waste data when filters change
+  useEffect(() => {
+    if (activeTab === 'waste' && restaurantId) loadWasteData();
+  }, [wastePeriod, wasteReason]);
 
   // ── CRUD: Inventory Items ────────────────────────
   const handleAddItem = async () => {
@@ -650,10 +776,15 @@ export default function useInventoryData() {
         const item = inventoryItems.find(i => (i.id || i._id) === itemId);
         if (!item) return null;
         const newStock = Math.max(0, (Number(item.currentStock) || 0) + adjustment);
-        return apiClient.updateInventoryItem(restaurantId, itemId, { currentStock: newStock });
+        const batch = quickStockBatchInfo[itemId] || {};
+        const payload = { currentStock: newStock };
+        if (adjustment > 0 && batch.mfgDate) payload.mfgDate = batch.mfgDate;
+        if (adjustment > 0 && batch.expiryDays) payload.expiryDays = parseInt(batch.expiryDays);
+        return apiClient.updateInventoryItem(restaurantId, itemId, payload);
       }));
       setShowQuickStockModal(false);
       setQuickStockAdjustments({});
+      setQuickStockBatchInfo({});
       await loadCoreData(restaurantId);
       Alert.alert('Success', `${adjustments.length} item(s) updated.`);
     } catch (error) {
@@ -792,6 +923,13 @@ export default function useInventoryData() {
     grns, requisitions, invoices, supplierReturns, stockTransfers, supplierPerformance,
     // AI
     aiReorderSuggestions, wastePredictions, wasteSummary,
+    // Waste
+    wasteEntries, wasteExpiryAlerts, wastePeriod, setWastePeriod, wasteReason, setWasteReason,
+    showLogWasteModal, setShowLogWasteModal, showAILeftoverModal, setShowAILeftoverModal,
+    wasteFormData, setWasteFormData, leftoverText, setLeftoverText,
+    leftoverAnalysis, analyzingLeftovers, confirmingLeftovers,
+    loadWasteData, handleCreateWasteEntry, handleMarkExpiredWaste, handleDismissExpired,
+    handleAnalyzeLeftovers, handleConfirmLeftoverWaste,
     // Modals
     showAddItemModal, setShowAddItemModal, showAddSupplierModal, setShowAddSupplierModal,
     showAddPOModal, setShowAddPOModal, showAddRecipeModal, setShowAddRecipeModal,
@@ -811,6 +949,7 @@ export default function useInventoryData() {
     quickMenuSearch, setQuickMenuSearch,
     // Quick stock
     quickStockAdjustments, setQuickStockAdjustments,
+    quickStockBatchInfo, setQuickStockBatchInfo,
     // Handlers
     loadCoreData, loadUsageData, refreshData, onRefresh,
     handleAddItem, handleUpdateItem, handleDeleteItem, handleEditItem, openAddItem,

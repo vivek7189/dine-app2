@@ -20,6 +20,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Pusher from 'pusher-js';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import apiClient from '../../services/api';
 import { getCached, setCache } from '../../services/cacheManager';
 import SyncIndicator from '../../components/SyncIndicator';
@@ -71,6 +73,9 @@ export default function OrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
 
+  // Expanded orders for items view in cards
+  const [expandedOrders, setExpandedOrders] = useState(new Set());
+
   // Mark as Paid
   const [markPaidOrderId, setMarkPaidOrderId] = useState(null);
   const [markPaidSubmitting, setMarkPaidSubmitting] = useState(false);
@@ -103,13 +108,22 @@ export default function OrdersScreen() {
     }
   }, [selectedStatus, selectedPaymentMethod, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
 
-  // Background refresh when tab is focused
+  // Re-check restaurant ID and refresh when tab is focused
   useFocusEffect(
     useCallback(() => {
-      if (restaurantId && !loading) {
-        // Fetch latest data in background
-        loadOrdersInBackground(restaurantId);
-      }
+      const checkAndRefresh = async () => {
+        const userData = await apiClient.getUser();
+        const rid = userData?.restaurantId || userData?.restaurant?.id;
+        if (rid && rid !== restaurantId) {
+          // Restaurant was switched on another screen — update and reload
+          setUser(userData);
+          setRestaurantId(rid);
+          // The useEffect on restaurantId will trigger loadOrders
+        } else if (restaurantId && !loading) {
+          loadOrdersInBackground(restaurantId);
+        }
+      };
+      checkAndRefresh();
     }, [restaurantId, loading, selectedStatus, selectedPaymentMethod, searchTerm, dateFilterMode, customStartDate, customEndDate])
   );
 
@@ -274,7 +288,8 @@ export default function OrdersScreen() {
       setRestaurantId(rid);
 
       // Stale-while-revalidate: show cached data instantly, then refresh in background
-      const cachedOrders = await getCached('cache_orders_' + rid);
+      const cacheKey = `cache_orders_${rid}_${dateFilterMode}`;
+      const cachedOrders = await getCached(cacheKey);
       if (cachedOrders?.data) {
         setOrders(cachedOrders.data);
         setLoading(false);
@@ -326,7 +341,7 @@ export default function OrdersScreen() {
 
       setOrders(ordersList);
       if (restaurantId) {
-        setCache('cache_orders_' + restaurantId, ordersList);
+        setCache(`cache_orders_${restaurantId}_${dateFilterMode}`, ordersList);
       }
 
       // Fetch analytics for summary cards (non-blocking)
@@ -379,7 +394,7 @@ export default function OrdersScreen() {
 
       setOrders(ordersList);
       if (rid) {
-        setCache('cache_orders_' + rid, ordersList);
+        setCache(`cache_orders_${rid}_${dateFilterMode}`, ordersList);
       }
     } catch (error) {
       console.error('Error loading orders in background:', error);
@@ -404,6 +419,172 @@ export default function OrdersScreen() {
               Alert.alert('Success', 'Order deleted. View it under "Deleted" filter.');
             } catch (error) {
               Alert.alert('Error', error.message || 'Failed to delete order');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const toggleOrderExpand = (orderId) => {
+    setExpandedOrders(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const handleMarkCompleted = async (orderId) => {
+    Alert.alert(
+      'Complete Order',
+      'Mark this order as billing completed?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Complete',
+          onPress: async () => {
+            try {
+              await apiClient.updateOrderStatus(orderId, 'completed', restaurantId);
+              if (restaurantId) loadOrdersInBackground(restaurantId);
+            } catch (error) {
+              Alert.alert('Error', 'Failed to mark order as completed.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handlePrintBill = (order) => {
+    const orderDate = getOrderDate(order.createdAt);
+    const dateStr = orderDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    const timeStr = orderDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const subtotal = order.subtotal || order.totalAmount || 0;
+    const taxAmt = order.taxAmount || order.tax || 0;
+    const total = order.finalAmount || order.totalAmount || subtotal + taxAmt;
+    const customerName = order.customerName || order.customerDisplay?.name || 'Walk-in Customer';
+
+    const itemsHTML = (order.items || []).map(item => `
+      <tr>
+        <td style="padding: 6px 0; border-bottom: 1px dashed #ddd;">${item.name}</td>
+        <td style="padding: 6px 0; border-bottom: 1px dashed #ddd; text-align: center;">${item.quantity}</td>
+        <td style="padding: 6px 0; border-bottom: 1px dashed #ddd; text-align: right;">₹${(item.price || 0).toFixed(2)}</td>
+        <td style="padding: 6px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 600;">₹${((item.price || 0) * (item.quantity || 1)).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+              font-family: 'Courier New', monospace;
+              padding: 20px;
+              max-width: 400px;
+              margin: 0 auto;
+              background: #fff;
+            }
+            .receipt { border: 2px dashed #333; padding: 20px; }
+            .header { text-align: center; padding-bottom: 15px; border-bottom: 2px dashed #333; margin-bottom: 15px; }
+            .restaurant-name { font-size: 22px; font-weight: bold; margin-bottom: 5px; }
+            .invoice-info { font-size: 12px; color: #666; }
+            .customer-info { font-size: 12px; color: #444; margin-bottom: 10px; text-align: center; }
+            .items-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 15px; }
+            .items-table th { text-align: left; padding: 8px 0; border-bottom: 2px solid #333; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+            .items-table th:nth-child(2), .items-table th:nth-child(3), .items-table th:nth-child(4) { text-align: right; }
+            .items-table th:nth-child(2) { text-align: center; }
+            .totals { border-top: 2px dashed #333; padding-top: 15px; margin-top: 15px; }
+            .total-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+            .grand-total { border-top: 2px solid #333; margin-top: 10px; padding-top: 10px; font-size: 18px; font-weight: bold; }
+            .footer { text-align: center; margin-top: 20px; padding-top: 15px; border-top: 2px dashed #333; font-size: 12px; color: #666; }
+            .footer .thanks { font-size: 14px; font-weight: bold; color: #333; margin-bottom: 5px; }
+          </style>
+        </head>
+        <body>
+          <div class="receipt">
+            <div class="header">
+              <div class="restaurant-name">${user?.restaurantName || user?.restaurant?.name || 'Restaurant'}</div>
+              <div class="invoice-info">
+                Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}<br>
+                ${dateStr} at ${timeStr}
+              </div>
+            </div>
+
+            <div class="customer-info">
+              Customer: ${customerName}
+              ${order.tableNumber ? ` | Table: ${order.tableNumber}` : ''}
+              ${order.orderType ? ` | ${(order.orderType || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}
+            </div>
+
+            <table class="items-table">
+              <thead>
+                <tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
+              </thead>
+              <tbody>${itemsHTML}</tbody>
+            </table>
+
+            <div class="totals">
+              <div class="total-row"><span>Subtotal</span><span>₹${subtotal.toFixed(2)}</span></div>
+              ${(order.discountAmount || 0) > 0 ? `<div class="total-row" style="color:#10b981;"><span>${order.appliedOffer?.name || 'Discount'}</span><span>-₹${order.discountAmount.toFixed(2)}</span></div>` : ''}
+              ${(order.manualDiscount || 0) > 0 ? `<div class="total-row" style="color:#10b981;"><span>Manual Discount</span><span>-₹${order.manualDiscount.toFixed(2)}</span></div>` : ''}
+              ${(order.loyaltyDiscount || 0) > 0 ? `<div class="total-row" style="color:#10b981;"><span>Loyalty Points</span><span>-₹${order.loyaltyDiscount.toFixed(2)}</span></div>` : ''}
+              ${(order.serviceChargeAmount || 0) > 0 ? `<div class="total-row"><span>Service Charge${order.serviceChargeRate ? ` (${order.serviceChargeRate}%)` : ''}</span><span>₹${order.serviceChargeAmount.toFixed(2)}</span></div>` : ''}
+              ${order.taxBreakdown && order.taxBreakdown.length > 0
+                ? order.taxBreakdown.map(t => `<div class="total-row"><span>${t.name || 'Tax'} (${t.rate}%)</span><span>₹${(t.amount || 0).toFixed(2)}</span></div>`).join('')
+                : taxAmt > 0 ? `<div class="total-row"><span>Tax</span><span>₹${taxAmt.toFixed(2)}</span></div>` : ''}
+              ${(order.tipAmount || 0) > 0 ? `<div class="total-row" style="color:#d97706;"><span>Tip</span><span>₹${order.tipAmount.toFixed(2)}</span></div>` : ''}
+              ${order.roundOffAmount != null && order.roundOffAmount !== 0 ? `<div class="total-row" style="color:#9ca3af;"><span>Round-off</span><span>${order.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(order.roundOffAmount).toFixed(2)}</span></div>` : ''}
+              <div class="total-row grand-total"><span>TOTAL</span><span>₹${total.toFixed(2)}</span></div>
+              ${order.paymentMethod ? `<div class="total-row" style="margin-top:8px;"><span>Payment</span><span>${order.paymentMethod.toUpperCase()}</span></div>` : ''}
+            </div>
+
+            <div class="footer">
+              <div class="thanks">Thank you for your visit!</div>
+              ${order.staffInfo?.name ? `<div>Served by: ${order.staffInfo.name}</div>` : ''}
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    Alert.alert(
+      'Print Bill',
+      `Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Print',
+          onPress: async () => {
+            try {
+              await Print.printAsync({ html });
+            } catch (e) {
+              console.error('Print error:', e);
+              Alert.alert('Error', 'Failed to print bill.');
+            }
+          },
+        },
+        {
+          text: 'Share PDF',
+          onPress: async () => {
+            try {
+              const { uri } = await Print.printToFileAsync({ html });
+              if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(uri, {
+                  mimeType: 'application/pdf',
+                  dialogTitle: `Bill #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+                  UTI: 'com.adobe.pdf',
+                });
+              } else {
+                Alert.alert('Error', 'Sharing is not available on this device.');
+              }
+            } catch (e) {
+              console.error('Share PDF error:', e);
+              Alert.alert('Error', 'Failed to generate PDF.');
             }
           },
         },
@@ -584,108 +765,177 @@ export default function OrdersScreen() {
   };
 
   const renderOrder = ({ item }) => {
-    const statusColor = getStatusColor(item.status);
+    const status = item.status?.toLowerCase() || 'pending';
+    const statusColor = (() => {
+      switch (status) {
+        case 'kitchen': case 'preparing': case 'confirmed': return '#3b82f6';
+        case 'billing_completed': case 'completed': case 'ready': return '#10b981';
+        case 'pending': return '#f59e0b';
+        case 'cancelled': return '#ef4444';
+        case 'deleted': return '#6b7280';
+        default: return '#6b7280';
+      }
+    })();
     const itemCount = item.items?.length || 0;
     const { date, time } = formatDate(item.createdAt);
-    // Use finalAmount (includes tax) if available, fallback to totalAmount
     const totalAmount = item.finalAmount || item.totalAmount || 0;
+    const subtotal = item.subtotal || item.totalAmount || 0;
+    const taxAmt = item.taxAmount || item.tax || 0;
+    const isToday = (() => {
+      try {
+        const d = getOrderDate(item.createdAt);
+        const now = new Date();
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      } catch { return false; }
+    })();
+    const isExpanded = expandedOrders.has(item.id);
+    const customerName = item.customerName || item.customerDisplay?.name || 'Walk-in Customer';
+    const orderType = (item.orderType || 'dine-in').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const staffLabel = item.staffInfo?.name || item.source || null;
+
+    // Build tax summary text
+    const taxSummaryText = (() => {
+      const parts = [`₹${subtotal.toFixed(2)}`];
+      if (item.taxBreakdown && item.taxBreakdown.length > 0) {
+        item.taxBreakdown.forEach(t => parts.push(`${t.name || 'Tax'} ${t.rate}%`));
+      } else if (taxAmt > 0) {
+        parts.push(`Tax ₹${taxAmt.toFixed(2)}`);
+      }
+      if (item.roundOffAmount != null && item.roundOffAmount !== 0) {
+        parts.push(`Round ${item.roundOffAmount > 0 ? '+' : ''}₹${item.roundOffAmount.toFixed(2)}`);
+      }
+      return parts.length > 1 ? parts.join(' + ') : null;
+    })();
 
     return (
-      <TouchableOpacity
-        style={styles.orderCard}
-        onPress={() => openOrderDetail(item)}
-        activeOpacity={0.7}
-      >
-        {/* Order Header */}
+      <View style={styles.orderCard}>
+        {/* Header Row: Order number, status badge, staff chip */}
         <View style={styles.orderHeader}>
-          <View style={styles.orderInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
             <Text style={styles.orderNumber}>
               #{item.dailyOrderId ?? (item.id ? item.id.slice(-6).toUpperCase() : '—')}
             </Text>
-            {item.tableNumber && (
-              <View style={styles.tableBadge}>
-                <Ionicons name="restaurant" size={12} color={Colors.primary} />
-                <Text style={styles.tableNumber}>{item.tableNumber}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.headerRight}>
-            <View style={[styles.statusBadge, { backgroundColor: `${statusColor}15` }]}>
+            <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
                 {getStatusDisplay(item)}
               </Text>
             </View>
-            {item.status !== 'deleted' && (
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleDeleteOrder(item);
-                }}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="trash-outline" size={18} color="#ef4444" />
-              </TouchableOpacity>
+            {staffLabel && (
+              <View style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                <Text style={{ fontSize: 9, fontWeight: '600', color: '#9ca3af' }}>{staffLabel}</Text>
+              </View>
             )}
           </View>
         </View>
 
-        {/* Order Details Grid */}
-        <View style={styles.orderDetailsGrid}>
-          <View style={styles.orderDetailItem}>
-            <View style={[styles.detailIcon, { backgroundColor: '#fef2f2' }]}>
-              <Ionicons name="receipt-outline" size={16} color={Colors.primary} />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Items</Text>
-              <Text style={styles.detailValue}>{itemCount}</Text>
-            </View>
-          </View>
+        {/* Time row */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+          <Ionicons name="time-outline" size={13} color="#9ca3af" />
+          <Text style={{ fontSize: 12, color: '#6b7280', fontWeight: '500' }}>{time}</Text>
+        </View>
 
-          <View style={styles.orderDetailItem}>
-            <View style={[styles.detailIcon, { backgroundColor: '#eff6ff' }]}>
-              <Ionicons name="time-outline" size={16} color="#3b82f6" />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Time</Text>
-              <Text style={styles.detailValue}>{time}</Text>
-            </View>
+        {/* Amount section + Payment info */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: '#111827' }}>₹{totalAmount.toFixed(2)}</Text>
+            {item.paymentMethod && (
+              <Text style={{ fontSize: 11, color: '#6b7280', fontWeight: '500', marginTop: 2 }}>{item.paymentMethod.toUpperCase()}</Text>
+            )}
+            {taxSummaryText && (
+              <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }} numberOfLines={1}>{taxSummaryText}</Text>
+            )}
           </View>
+          {(item.paymentStatus === 'partial' || item.outstandingAmount > 0) && (
+            <View style={{ backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#dc2626' }}>PARTIAL Due: ₹{(item.outstandingAmount || 0).toFixed(2)}</Text>
+            </View>
+          )}
+        </View>
 
-          <View style={styles.orderDetailItem}>
-            <View style={[styles.detailIcon, { backgroundColor: '#f0fdf4' }]}>
-              <Ionicons name="cash-outline" size={16} color="#10b981" />
-            </View>
-            <View style={styles.detailContent}>
-              <Text style={styles.detailLabel}>Amount</Text>
-              <Text style={styles.detailValue}>₹{totalAmount.toFixed(2)}</Text>
-            </View>
+        {/* Customer / Table / Type row */}
+        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Ionicons name="person-outline" size={12} color="#9ca3af" />
+            <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }} numberOfLines={1}>{customerName}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Ionicons name="restaurant-outline" size={12} color="#9ca3af" />
+            <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }}>{item.tableNumber ? `Table ${item.tableNumber}` : 'N/A'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Ionicons name="bag-handle-outline" size={12} color="#9ca3af" />
+            <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }}>{orderType}</Text>
           </View>
         </View>
 
-        {/* Payment badges */}
-        {(item.paymentStatus === 'partial' || item.outstandingAmount > 0) && (
-          <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 2, alignSelf: 'flex-start' }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: '#d97706' }}>
-              Partial {item.paidAmount ? `₹${item.paidAmount}` : ''}/₹{item.finalAmount || item.totalAmount}
-            </Text>
+        {/* Expandable items section */}
+        <TouchableOpacity
+          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}
+          onPress={() => toggleOrderExpand(item.id)}
+          activeOpacity={0.7}
+        >
+          <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>{itemCount} Item{itemCount !== 1 ? 's' : ''}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: '#3b82f6' }}>{isExpanded ? 'Hide' : 'View'}</Text>
+            <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#3b82f6" />
           </View>
-        )}
-        {item.paymentMethod === 'split' && (
-          <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 2, alignSelf: 'flex-start' }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: '#2563eb' }}>Split</Text>
+        </TouchableOpacity>
+        {isExpanded && item.items && item.items.length > 0 && (
+          <View style={{ paddingTop: 4, paddingBottom: 4 }}>
+            {item.items.map((orderItem, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                <Text style={{ fontSize: 12, color: '#374151' }}>{orderItem.quantity}x {orderItem.name}</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>₹{((orderItem.price || 0) * (orderItem.quantity || 1)).toFixed(2)}</Text>
+              </View>
+            ))}
           </View>
         )}
 
-        {/* Card footer */}
-        <View style={styles.cardFooter}>
-          <View style={styles.dateContainer}>
-            <Ionicons name="calendar-outline" size={14} color={Colors.textMedium} />
-            <Text style={styles.dateText}>{date}</Text>
-          </View>
+        {/* Footer action buttons */}
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+          {status !== 'completed' && status !== 'billing_completed' && status !== 'cancelled' && status !== 'deleted' && (
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#ecfdf5', paddingVertical: 8, borderRadius: 8 }}
+              onPress={() => handleMarkCompleted(item.id)}
+            >
+              <Ionicons name="checkmark-circle" size={15} color="#059669" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#059669' }}>Complete</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#eff6ff', paddingVertical: 8, borderRadius: 8 }}
+            onPress={() => openOrderDetail(item)}
+          >
+            <Ionicons name="eye-outline" size={15} color="#2563eb" />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563eb' }}>View</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#fff7ed', paddingVertical: 8, borderRadius: 8 }}
+            onPress={() => handlePrintBill(item)}
+          >
+            <Ionicons name="print-outline" size={15} color="#d97706" />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706' }}>Print</Text>
+          </TouchableOpacity>
+          {status !== 'deleted' && (
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#fef2f2', paddingVertical: 8, borderRadius: 8 }}
+              onPress={() => handleDeleteOrder(item)}
+            >
+              <Ionicons name="trash-outline" size={15} color="#dc2626" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>Delete</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      </TouchableOpacity>
+
+        {/* Date footer - only if not today */}
+        {!isToday && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+            <Ionicons name="calendar-outline" size={12} color="#9ca3af" />
+            <Text style={{ fontSize: 11, color: '#9ca3af', fontWeight: '500' }}>{date}</Text>
+          </View>
+        )}
+      </View>
     );
   };
 
@@ -751,6 +1001,38 @@ export default function OrdersScreen() {
               )}
             </View>
 
+            {/* Customer & Order Info */}
+            <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 10, gap: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#9ca3af' }}>Customer</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>{selectedOrder.customerName || selectedOrder.customerDisplay?.name || 'Walk-in'}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#9ca3af' }}>Table</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>{selectedOrder.tableNumber || 'N/A'}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#9ca3af' }}>Type</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>{(selectedOrder.orderType || 'dine-in').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</Text>
+              </View>
+            </View>
+
+            {/* Payment Method & Special Instructions */}
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8, gap: 6 }}>
+              {selectedOrder.paymentMethod && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="card-outline" size={14} color="#6b7280" />
+                  <Text style={{ fontSize: 12, color: '#6b7280' }}>Payment: <Text style={{ fontWeight: '600', color: '#374151' }}>{selectedOrder.paymentMethod.toUpperCase()}</Text></Text>
+                </View>
+              )}
+              {selectedOrder.specialInstructions && (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Ionicons name="document-text-outline" size={14} color="#d97706" />
+                  <Text style={{ fontSize: 12, color: '#92400e', fontStyle: 'italic', flex: 1 }}>{selectedOrder.specialInstructions}</Text>
+                </View>
+              )}
+            </View>
+
             {/* Items List */}
             <ScrollView style={styles.itemsScrollView} showsVerticalScrollIndicator={false}>
               <Text style={styles.itemsSectionTitle}>Items</Text>
@@ -796,12 +1078,20 @@ export default function OrdersScreen() {
                     <Text style={[styles.summaryValue, { color: '#10b981' }]}>-₹{loyaltyDiscountAmt.toFixed(2)}</Text>
                   </View>
                 )}
-                {tax > 0 && (
+                {/* Tax breakdown */}
+                {selectedOrder.taxBreakdown && selectedOrder.taxBreakdown.length > 0 ? (
+                  selectedOrder.taxBreakdown.map((t, i) => (
+                    <View key={i} style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>{t.name || 'Tax'} ({t.rate}%)</Text>
+                      <Text style={styles.summaryValue}>₹{(t.amount || 0).toFixed(2)}</Text>
+                    </View>
+                  ))
+                ) : tax > 0 ? (
                   <View style={styles.summaryRow}>
                     <Text style={styles.summaryLabel}>Tax</Text>
                     <Text style={styles.summaryValue}>₹{tax.toFixed(2)}</Text>
                   </View>
-                )}
+                ) : null}
                 <View style={[styles.summaryRow, styles.totalRow]}>
                   <Text style={styles.totalLabel}>Total</Text>
                   <Text style={styles.totalValue}>₹{total.toFixed(2)}</Text>
@@ -905,6 +1195,27 @@ export default function OrdersScreen() {
               >
                 <Text style={styles.closeModalButtonText}>Close</Text>
               </TouchableOpacity>
+
+              {/* Print Bill */}
+              <TouchableOpacity
+                style={{ backgroundColor: '#f59e0b', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}
+                onPress={() => { setShowOrderDetail(false); handlePrintBill(selectedOrder); }}
+              >
+                <Ionicons name="print-outline" size={18} color="#fff" />
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Print Bill</Text>
+              </TouchableOpacity>
+
+              {/* Complete — only if not completed/cancelled/deleted */}
+              {selectedOrder.status !== 'completed' && selectedOrder.status !== 'billing_completed' && selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'deleted' && (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#059669', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}
+                  onPress={() => { setShowOrderDetail(false); handleMarkCompleted(selectedOrder.id); }}
+                >
+                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Mark Complete</Text>
+                </TouchableOpacity>
+              )}
+
               {(selectedOrder.paymentStatus === 'partial' || selectedOrder.outstandingAmount > 0) && selectedOrder.status === 'completed' && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#f59e0b', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}

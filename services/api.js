@@ -154,6 +154,24 @@ class ApiClient {
     }
   }
 
+  // Full logout: clear auth + all caches (in-memory + AsyncStorage)
+  async logout() {
+    // Clear in-memory API cache
+    this.clearAllCache();
+    // Clear auth tokens
+    await this.clearToken();
+    // Clear all AsyncStorage cache entries (cache_floors_*, cache_* etc.)
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const cacheKeys = allKeys.filter(k => k.startsWith('cache_'));
+      if (cacheKeys.length > 0) {
+        await AsyncStorage.multiRemove(cacheKeys);
+      }
+    } catch (e) {
+      console.warn('Cache clear on logout failed:', e.message);
+    }
+  }
+
   // Check if user is authenticated
   async isAuthenticated() {
     const token = await this.getToken();
@@ -181,7 +199,7 @@ class ApiClient {
       if (error.response) {
         // Staff/employee deactivated: show friendly notice, clear auth, then redirect to login
         if (error.response.status === 401 && error.response.data?.inactive === true) {
-          await this.clearToken();
+          await this.logout();
           const message = error.response.data?.message || 'Your account has been deactivated. Please contact your manager.';
           Alert.alert(
             'Account deactivated',
@@ -206,7 +224,7 @@ class ApiClient {
                 // Retry with new token
                 return this.request(endpoint, options, true);
               } catch (refreshError) {
-                await this.clearToken();
+                await this.logout();
                 Alert.alert(
                   'Session Expired',
                   'Your session has expired. Please login again.',
@@ -233,7 +251,7 @@ class ApiClient {
               this.rejectQueue(refreshError);
 
               console.log('❌ Token refresh failed - logging out');
-              await this.clearToken();
+              await this.logout();
               Alert.alert(
                 'Session Expired',
                 'Your session has expired. Please login again.',
@@ -498,34 +516,47 @@ class ApiClient {
 
   // Create order
   async createOrder(orderData) {
-    return this.request('/api/orders', {
+    const result = await this.request('/api/orders', {
       method: 'POST',
       data: orderData,
     });
+    // Invalidate floors/tables cache so table status refreshes immediately
+    this.invalidateCache('/api/floors/');
+    this.invalidateCache('/api/tables/');
+    return result;
   }
 
   // Update order
   async updateOrder(orderId, orderData) {
-    return this.request(`/api/orders/${orderId}`, {
+    const result = await this.request(`/api/orders/${orderId}`, {
       method: 'PATCH',
       data: orderData,
     });
+    this.invalidateCache('/api/floors/');
+    this.invalidateCache('/api/tables/');
+    return result;
   }
 
   // Update order status
   async updateOrderStatus(orderId, status, restaurantId) {
-    return this.request(`/api/orders/${orderId}/status`, {
+    const result = await this.request(`/api/orders/${orderId}/status`, {
       method: 'PATCH',
       data: { status, restaurantId },
     });
+    this.invalidateCache('/api/floors/');
+    this.invalidateCache('/api/tables/');
+    return result;
   }
 
   // Delete order (soft delete - sets status to 'deleted')
   async deleteOrder(orderId, reason) {
-    return this.request(`/api/orders/${orderId}`, {
+    const result = await this.request(`/api/orders/${orderId}`, {
       method: 'DELETE',
       data: reason ? { reason } : undefined,
     });
+    this.invalidateCache('/api/floors/');
+    this.invalidateCache('/api/tables/');
+    return result;
   }
 
   // KOT (Kitchen Order Ticket) endpoints
@@ -1378,6 +1409,36 @@ class ApiClient {
 
   async getAIWasteSummary(restaurantId) {
     return this.request(`/api/ai/waste-summary/${restaurantId}`);
+  }
+
+  // Waste Management
+  async getWasteEntries(restaurantId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/api/inventory/${restaurantId}/waste-entries${qs ? `?${qs}` : ''}`);
+  }
+
+  async getWasteSummary(restaurantId) {
+    return this.request(`/api/inventory/${restaurantId}/waste-summary`);
+  }
+
+  async getExpiryAlerts(restaurantId, days = 7) {
+    return this.request(`/api/inventory/${restaurantId}/expiry-alerts?days=${days}`);
+  }
+
+  async createWasteEntry(restaurantId, data) {
+    return this.request(`/api/inventory/${restaurantId}/waste-entries`, { method: 'POST', data });
+  }
+
+  async markExpiredWaste(restaurantId, batchId) {
+    return this.request(`/api/inventory/${restaurantId}/mark-expired-waste`, { method: 'POST', data: { batchId } });
+  }
+
+  async analyzeLeftovers(restaurantId, text) {
+    return this.request(`/api/inventory/${restaurantId}/analyze-leftovers`, { method: 'POST', data: { text } });
+  }
+
+  async confirmLeftoverWaste(restaurantId, items) {
+    return this.request(`/api/inventory/${restaurantId}/confirm-leftover-waste`, { method: 'POST', data: { items } });
   }
 
   // ==================== SCM (READ-ONLY) ====================

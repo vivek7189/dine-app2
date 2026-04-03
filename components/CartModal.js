@@ -9,7 +9,10 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
+  StatusBar,
+  Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
@@ -87,6 +90,7 @@ export default function CartModal({
       setPartialPayAmount(''); setSelectedCompItems([]); setSelectedVoidItems([]);
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
       setSpecialInstructions(''); setShowKitchenNotes(false);
+      setActiveAction(null);
     }
   }, [visible]);
 
@@ -170,12 +174,17 @@ export default function CartModal({
     })) : null,
   });
 
+  const insets = useSafeAreaInsets();
+  const [activeAction, setActiveAction] = useState(null); // 'place' | 'complete'
+
   const handlePlaceOrder = () => {
+    setActiveAction('place');
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
   };
 
   const handleCompleteBill = () => {
     if (onCompleteBill) {
+      setActiveAction('complete');
       onCompleteBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
     }
   };
@@ -220,12 +229,11 @@ export default function CartModal({
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
       onRequestClose={onClose}
+      statusBarTranslucent
     >
-      <View style={styles.overlay}>
-        <View style={styles.modalContent}>
+      <View style={[styles.modalContent, { paddingTop: insets.top }]}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerRow}>
@@ -456,14 +464,14 @@ export default function CartModal({
 
           {/* Sticky Bottom Action Buttons */}
           {cart.length > 0 && (
-            <View style={styles.stickyBottom}>
+            <View style={[styles.stickyBottom, { paddingBottom: Math.max(insets.bottom, 10) }]}>
               <View style={styles.dualButtonRow}>
                 <TouchableOpacity
                   style={[styles.actionBtn, styles.kitchenBtn, sending && { opacity: 0.6 }]}
                   onPress={handlePlaceOrder}
                   disabled={sending}
                 >
-                  {sending ? (
+                  {sending && activeAction === 'place' ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <>
@@ -478,7 +486,7 @@ export default function CartModal({
                     onPress={handleCompleteBill}
                     disabled={sending}
                   >
-                    {sending ? (
+                    {sending && activeAction === 'complete' ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
@@ -491,7 +499,6 @@ export default function CartModal({
               </View>
             </View>
           )}
-        </View>
       </View>
       <CustomerDetailModal
         visible={showCustomerDetail}
@@ -504,22 +511,13 @@ export default function CartModal({
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
   modalContent: {
+    flex: 1,
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '95%',
   },
   // Header
   header: {
     backgroundColor: Colors.primary,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
     paddingTop: 14,
     paddingHorizontal: 14,
     paddingBottom: 10,
@@ -765,10 +763,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   kitchenBtn: {
-    backgroundColor: '#374151',
+    backgroundColor: '#1e40af',
   },
   billBtn: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#059669',
   },
   actionBtnText: {
     fontSize: 14,

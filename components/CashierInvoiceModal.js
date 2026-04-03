@@ -65,11 +65,17 @@ ${itemsList}
 Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.offerDiscount > 0 ? `
 Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : ''}${invoiceData.manualDiscount > 0 ? `
 Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
-Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
-${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : ''}
+Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
+Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : ''}${invoiceData.tipAmount > 0 ? `
+Tip:             ₹${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
+Round-off:       ${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}` : ''}
 ================================
 GRAND TOTAL:     ₹${invoiceData.grandTotal.toFixed(2)}
-================================
+================================${invoiceData.cashReceived > 0 ? `
+Cash Received:   ₹${invoiceData.cashReceived.toFixed(2)}${invoiceData.changeReturned > 0 ? `
+Change:          ₹${invoiceData.changeReturned.toFixed(2)}` : ''}` : ''}
+Payment: ${(invoiceData.paymentMethod || 'cash').toUpperCase()}
 
 Thank you for your visit!
     `.trim();
@@ -248,16 +254,58 @@ Thank you for your visit!
                 <span>-₹${invoiceData.loyaltyDiscount.toFixed(2)}</span>
               </div>
               ` : ''}
+              ${invoiceData.serviceChargeAmount > 0 ? `
+              <div class="total-row" style="color: #7c3aed;">
+                <span>Service Charge${invoiceData.serviceChargeRate ? ` (${invoiceData.serviceChargeRate}%)` : ''}</span>
+                <span>₹${invoiceData.serviceChargeAmount.toFixed(2)}</span>
+              </div>
+              ` : ''}
               ${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
               <div class="total-row">
                 <span>${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</span>
                 <span>₹${invoiceData.tax.toFixed(2)}</span>
               </div>
               ` : ''}
+              ${invoiceData.tipAmount > 0 ? `
+              <div class="total-row" style="color: #d97706;">
+                <span>Tip</span>
+                <span>₹${invoiceData.tipAmount.toFixed(2)}</span>
+              </div>
+              ` : ''}
+              ${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
+              <div class="total-row" style="color: #9ca3af;">
+                <span>Round-off</span>
+                <span>${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}</span>
+              </div>
+              ` : ''}
               <div class="total-row grand-total">
                 <span>TOTAL</span>
                 <span>₹${invoiceData.grandTotal.toFixed(2)}</span>
               </div>
+              ${invoiceData.cashReceived > 0 ? `
+              <div style="border-top: 1px dashed #ccc; margin-top: 8px; padding-top: 8px;">
+                <div class="total-row">
+                  <span>Cash Received</span>
+                  <span>₹${invoiceData.cashReceived.toFixed(2)}</span>
+                </div>
+                ${invoiceData.changeReturned > 0 ? `
+                <div class="total-row" style="color: #3b82f6;">
+                  <span>Change</span>
+                  <span>₹${invoiceData.changeReturned.toFixed(2)}</span>
+                </div>
+                ` : ''}
+              </div>
+              ` : ''}
+              ${invoiceData.splitPayments && invoiceData.splitPayments.length > 0 ? `
+              <div style="border-top: 1px dashed #ccc; margin-top: 8px; padding-top: 8px;">
+                ${invoiceData.splitPayments.map(sp => `
+                <div class="total-row">
+                  <span>${(sp.method || sp.paymentMethod || '').toUpperCase()}</span>
+                  <span>₹${(sp.amount || 0).toFixed(2)}</span>
+                </div>
+                `).join('')}
+              </div>
+              ` : ''}
             </div>
 
             <div class="footer">
@@ -427,10 +475,32 @@ Thank you for your visit!
                     <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.loyaltyDiscount.toFixed(2)}</Text>
                   </View>
                 )}
+                {invoiceData.serviceChargeAmount > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#7c3aed' }]}>
+                      Service Charge{invoiceData.serviceChargeRate ? ` (${invoiceData.serviceChargeRate}%)` : ''}
+                    </Text>
+                    <Text style={[styles.totalValue, { color: '#7c3aed' }]}>₹{invoiceData.serviceChargeAmount.toFixed(2)}</Text>
+                  </View>
+                )}
                 {invoiceData.taxEnabled && invoiceData.tax > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>{invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</Text>
                     <Text style={styles.totalValue}>₹{invoiceData.tax.toFixed(2)}</Text>
+                  </View>
+                )}
+                {invoiceData.tipAmount > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>
+                    <Text style={[styles.totalValue, { color: '#d97706' }]}>₹{invoiceData.tipAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={[styles.totalLabel, { color: '#9ca3af' }]}>Round-off</Text>
+                    <Text style={[styles.totalValue, { color: '#9ca3af' }]}>
+                      {invoiceData.roundOffAmount > 0 ? '+' : '-'}₹{Math.abs(invoiceData.roundOffAmount).toFixed(2)}
+                    </Text>
                   </View>
                 )}
               </View>
@@ -440,6 +510,41 @@ Thank you for your visit!
                 <Text style={styles.grandTotalLabel}>TOTAL</Text>
                 <Text style={styles.grandTotalValue}>₹{invoiceData.grandTotal.toFixed(2)}</Text>
               </View>
+
+              {/* Payment Info */}
+              {(invoiceData.paymentMethod || invoiceData.cashReceived || invoiceData.splitPayments) && (
+                <View style={styles.paymentInfoSection}>
+                  <View style={styles.dashedSeparator} />
+                  <Text style={styles.paymentInfoTitle}>Payment</Text>
+                  {invoiceData.splitPayments && invoiceData.splitPayments.length > 0 ? (
+                    invoiceData.splitPayments.map((sp, i) => (
+                      <View key={i} style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>{(sp.method || sp.paymentMethod || '').toUpperCase()}</Text>
+                        <Text style={styles.totalValue}>₹{(sp.amount || 0).toFixed(2)}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <View style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>Method</Text>
+                      <Text style={[styles.totalValue, { textTransform: 'uppercase' }]}>{invoiceData.paymentMethod}</Text>
+                    </View>
+                  )}
+                  {invoiceData.cashReceived > 0 && (
+                    <>
+                      <View style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>Cash Received</Text>
+                        <Text style={styles.totalValue}>₹{invoiceData.cashReceived.toFixed(2)}</Text>
+                      </View>
+                      {invoiceData.changeReturned > 0 && (
+                        <View style={styles.totalRow}>
+                          <Text style={[styles.totalLabel, { color: '#3b82f6' }]}>Change</Text>
+                          <Text style={[styles.totalValue, { color: '#3b82f6' }]}>₹{invoiceData.changeReturned.toFixed(2)}</Text>
+                        </View>
+                      )}
+                    </>
+                  )}
+                </View>
+              )}
 
               {/* Dashed separator */}
               <View style={styles.dashedSeparator} />
@@ -664,6 +769,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     marginTop: Spacing.sm,
+  },
+  paymentInfoSection: {
+    paddingTop: 2,
+  },
+  paymentInfoTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#666',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 4,
   },
   grandTotalLabel: {
     fontSize: 16,

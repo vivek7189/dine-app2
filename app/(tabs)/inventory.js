@@ -18,9 +18,11 @@ import RecipesTab from '../../components/inventory/RecipesTab';
 import UsageTab from '../../components/inventory/UsageTab';
 import ProcurementTab from '../../components/inventory/ProcurementTab';
 import InsightsTab from '../../components/inventory/InsightsTab';
+import WasteTab from '../../components/inventory/WasteTab';
 import {
   AddEditItemModal, AddSupplierModal, AddEditRecipeModal,
   ViewRecipeModal, QuickStockModal, AddPurchaseOrderModal, QuickOrderModal,
+  LogWasteModal, AILeftoverModal,
 } from '../../components/inventory/InventoryModals';
 
 const TABS = [
@@ -30,6 +32,7 @@ const TABS = [
   { key: 'usage', label: 'Usage', icon: 'time' },
   { key: 'procurement', label: 'Procurement', icon: 'cart' },
   { key: 'insights', label: 'AI Insights', icon: 'sparkles' },
+  { key: 'waste', label: 'Waste', icon: 'trash' },
 ];
 
 export default function InventoryScreen() {
@@ -43,9 +46,18 @@ export default function InventoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (inv.restaurantId && !inv.loading) {
-        inv.refreshData();
-      }
+      const checkAndRefresh = async () => {
+        const userData = await apiClient.getUser();
+        const rid = userData?.restaurantId || userData?.restaurant?.id;
+        if (rid && rid !== inv.restaurantId) {
+          // Restaurant was switched on another screen — reload
+          inv.setRestaurantId(rid);
+          await inv.loadCoreData(rid);
+        } else if (inv.restaurantId && !inv.loading) {
+          inv.refreshData();
+        }
+      };
+      checkAndRefresh();
     }, [inv.restaurantId, inv.loading, inv.activeTab])
   );
 
@@ -109,6 +121,7 @@ export default function InventoryScreen() {
             getStockPercent={inv.getStockPercent} getOrderStatusColor={inv.getOrderStatusColor}
             openAddItem={inv.openAddItem} setShowQuickStockModal={inv.setShowQuickStockModal}
             setActiveTab={inv.setActiveTab}
+            onLogWaste={() => inv.setShowLogWasteModal(true)}
           />
         );
       case 'stock':
@@ -173,6 +186,24 @@ export default function InventoryScreen() {
             totalValue={inv.totalValue} getStockStatus={inv.getStockStatus}
           />
         );
+      case 'waste':
+        return (
+          <WasteTab
+            wasteEntries={inv.wasteEntries}
+            wasteSummary={inv.wasteSummary}
+            expiryAlerts={inv.wasteExpiryAlerts}
+            wastePeriod={inv.wastePeriod}
+            setWastePeriod={inv.setWastePeriod}
+            wasteReason={inv.wasteReason}
+            setWasteReason={inv.setWasteReason}
+            loading={inv.saving}
+            onLogWaste={() => inv.setShowLogWasteModal(true)}
+            onAILeftover={() => inv.setShowAILeftoverModal(true)}
+            onRefresh={inv.loadWasteData}
+            onMarkExpiredWaste={inv.handleMarkExpiredWaste}
+            onDismissExpired={inv.handleDismissExpired}
+          />
+        );
       default: return null;
     }
   };
@@ -222,7 +253,7 @@ export default function InventoryScreen() {
 
       {/* Content with pull-to-refresh */}
       <View style={styles.content}>
-        {inv.activeTab === 'stock' || inv.activeTab === 'recipes' ? (
+        {inv.activeTab === 'stock' || inv.activeTab === 'recipes' || inv.activeTab === 'waste' ? (
           // FlatList tabs handle their own scroll
           renderTabContent()
         ) : (
@@ -290,10 +321,12 @@ export default function InventoryScreen() {
 
       <QuickStockModal
         visible={inv.showQuickStockModal}
-        onClose={() => inv.setShowQuickStockModal(false)}
+        onClose={() => { inv.setShowQuickStockModal(false); inv.setQuickStockBatchInfo({}); }}
         inventoryItems={inv.inventoryItems}
         quickStockAdjustments={inv.quickStockAdjustments}
         setQuickStockAdjustments={inv.setQuickStockAdjustments}
+        batchInfo={inv.quickStockBatchInfo}
+        setBatchInfo={inv.setQuickStockBatchInfo}
         onSave={inv.handleQuickStockUpdate}
         saving={inv.saving}
       />
@@ -310,6 +343,28 @@ export default function InventoryScreen() {
         updatePOItem={inv.updatePOItem}
         onSave={inv.handleAddPurchaseOrder}
         saving={inv.saving}
+      />
+
+      <LogWasteModal
+        visible={inv.showLogWasteModal}
+        onClose={() => inv.setShowLogWasteModal(false)}
+        inventoryItems={inv.inventoryItems}
+        wasteFormData={inv.wasteFormData}
+        setWasteFormData={inv.setWasteFormData}
+        onSave={inv.handleCreateWasteEntry}
+        saving={inv.saving}
+      />
+
+      <AILeftoverModal
+        visible={inv.showAILeftoverModal}
+        onClose={() => { inv.setShowAILeftoverModal(false); inv.setLeftoverAnalysis?.(null); }}
+        leftoverText={inv.leftoverText}
+        setLeftoverText={inv.setLeftoverText}
+        leftoverAnalysis={inv.leftoverAnalysis}
+        analyzingLeftovers={inv.analyzingLeftovers}
+        confirmingLeftovers={inv.confirmingLeftovers}
+        onAnalyze={inv.handleAnalyzeLeftovers}
+        onConfirm={inv.handleConfirmLeftoverWaste}
       />
 
       <QuickOrderModal

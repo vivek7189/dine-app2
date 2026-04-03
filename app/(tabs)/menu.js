@@ -330,7 +330,6 @@ export default function MenuScreen() {
 
   const loadInitialData = async () => {
     try {
-      setLoading(true);
       const userData = await apiClient.getUser();
       if (!userData) {
         router.replace('/(auth)/login');
@@ -338,12 +337,9 @@ export default function MenuScreen() {
       }
 
       setUser(userData);
-      // Check if user is waiter (not owner/manager)
       const userRole = userData.role?.toLowerCase();
       setIsWaiter(userRole === 'waiter' || userRole === 'employee');
-      // Check if user is cashier/sales (counter sales mode - no table required)
       setIsCashier(userRole === 'cashier' || userRole === 'sales');
-      // Check if staff has "Complete Bill" permission granted by owner
       setCanCompleteBill(userData.pageAccess?.completeBill === true);
 
       const rid = userData.restaurantId || userData.restaurant?.id;
@@ -354,43 +350,42 @@ export default function MenuScreen() {
 
       setRestaurantId(rid);
       setRestaurantName(userData.restaurant?.name || 'Restaurant');
-      // Store businessType for type-specific display on menu cards
       const bType = userData.restaurant?.businessType || 'restaurant';
       setBusinessType(bType);
 
-      // Load tax settings - first from cache, then background refresh
-      await loadTaxSettings(rid);
-
-      // Load multi-pricing rules
-      try {
-        const pricingRes = await apiClient.getPricingSettings(rid);
-        const mp = pricingRes?.settings?.multiPricing;
-        if (mp?.enabled) {
-          setMultiPricingEnabled(true);
-          setPricingRules((mp.rules || []).filter(r => r.isActive));
-        }
-      } catch { /* ignore — backward compatible */ }
-
-      // Load billing settings
-      try {
-        const bRes = await apiClient.getBillingSettings(rid);
-        if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
-      } catch { /* ignore */ }
-
-      // Stale-while-revalidate: try menu cache first
+      // Show cached menu IMMEDIATELY — don't wait for settings
       const cached = await getCached('cache_menu_' + rid);
       if (cached?.data && Array.isArray(cached.data) && cached.data.length > 0) {
         applyMenuData(cached.data);
         setLoading(false);
-        // Background refresh
-        setSyncing(true);
-        loadMenu(rid).catch(() => {}).finally(() => setSyncing(false));
-      } else {
-        await loadMenu(rid);
       }
+
+      // Load settings + fresh menu in parallel (background)
+      setSyncing(true);
+      await Promise.allSettled([
+        loadTaxSettings(rid),
+        (async () => {
+          try {
+            const pricingRes = await apiClient.getPricingSettings(rid);
+            const mp = pricingRes?.settings?.multiPricing;
+            if (mp?.enabled) {
+              setMultiPricingEnabled(true);
+              setPricingRules((mp.rules || []).filter(r => r.isActive));
+            }
+          } catch { /* ignore */ }
+        })(),
+        (async () => {
+          try {
+            const bRes = await apiClient.getBillingSettings(rid);
+            if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
+          } catch { /* ignore */ }
+        })(),
+        loadMenu(rid),
+      ]);
+      setSyncing(false);
     } catch (error) {
       console.error('Error loading menu:', error);
-      Alert.alert('Error', 'Failed to load menu. Please try again.');
+      if (loading) Alert.alert('Error', 'Failed to load menu. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -739,7 +734,7 @@ export default function MenuScreen() {
       return;
     }
 
-    if (!selectedTable && !params.tableNumber) {
+    if (!existingOrderId && !selectedTable && !params.tableNumber) {
       Alert.alert('Select Table', 'Please select a table first.');
       return;
     }
@@ -829,6 +824,42 @@ export default function MenuScreen() {
         setShowCart(false);
         setExistingOrderId(null);
         router.back();
+      } else if (existingOrderId) {
+        // Update existing order (adding items to occupied table)
+        const updateData = {
+          items,
+          status: 'confirmed',
+          paymentMethod: billingFields.paymentMethod || paymentMethod,
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          ...(customerMobile && { customerPhone: customerMobile }),
+          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          manualDiscount: discountData.manualDiscountAmount || 0,
+          redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+          customerId: discountData.customerId || null,
+          finalAmount: grandTotal,
+          ...billingFields,
+          ...partialFields,
+        };
+
+        await apiClient.updateOrder(existingOrderId, updateData);
+
+        toast.success('Order updated successfully!');
+        setCart([]);
+        setShowCart(false);
+        setExistingOrderId(null);
+        if (selectedTable || params.tableId) {
+          router.replace({
+            pathname: '/(tabs)/tables',
+            params: {
+              tableId: selectedTable?.id || params.tableId,
+              orderId: existingOrderId,
+              tableStatus: 'occupied',
+              tableNumber: selectedTable?.name || params.tableNumber,
+            },
+          });
+        } else {
+          router.push('/(tabs)/orders');
+        }
       } else {
         const idempotencyKey = generateIdempotencyKey();
         const orderData = {
@@ -871,7 +902,6 @@ export default function MenuScreen() {
           response = await apiClient.createOrder(orderData);
         } catch (apiErr) {
           if (!isBarTabMode) {
-            // Only queue for network errors, not API errors
             const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
             if (isNetworkError) {
               await queueOrder(orderData);
@@ -887,7 +917,6 @@ export default function MenuScreen() {
         }
 
         if (isBarTabMode) {
-          // Verify payment for bar tab settle
           await apiClient.verifyPayment({
             orderId: response.order?.id,
             paymentMethod,
@@ -905,7 +934,6 @@ export default function MenuScreen() {
           toast.success('Order placed successfully!');
           setCart([]);
           setShowCart(false);
-          // Navigate back to tables with optimistic update if came from table view
           if (selectedTable || params.tableId) {
             router.replace({
               pathname: '/(tabs)/tables',
@@ -1180,38 +1208,48 @@ export default function MenuScreen() {
       };
 
       let response;
-      const netState = await NetInfo.fetch();
-      if (!netState.isConnected) {
-        await queueOrder(orderData);
-        setPendingSyncCount(await getQueueCount());
-        toast.warning('No internet. Order saved locally and will sync when online.');
-        setCart([]);
-        setShowCart(false);
-        setSendingOrder(false);
-        return;
-      }
+      let completedOrderId;
 
-      try {
-        response = await apiClient.createOrder(orderData);
-      } catch (apiErr) {
-        // Check if it's a real network error or an API error
-        const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
-        if (isNetworkError) {
+      if (existingOrderId) {
+        // Update existing order to completed (billing an occupied table's order)
+        response = await apiClient.updateOrder(existingOrderId, {
+          ...orderData,
+          tableNumber: undefined, // Don't send tableNumber to avoid validation
+        });
+        completedOrderId = existingOrderId;
+      } else {
+        const netState = await NetInfo.fetch();
+        if (!netState.isConnected) {
           await queueOrder(orderData);
           setPendingSyncCount(await getQueueCount());
-          toast.warning('Connection issue. Order saved and will sync when online.');
+          toast.warning('No internet. Order saved locally and will sync when online.');
           setCart([]);
           setShowCart(false);
           setSendingOrder(false);
           return;
         }
-        // Real API error — throw to show error toast
-        throw apiErr;
+
+        try {
+          response = await apiClient.createOrder(orderData);
+        } catch (apiErr) {
+          const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
+          if (isNetworkError) {
+            await queueOrder(orderData);
+            setPendingSyncCount(await getQueueCount());
+            toast.warning('Connection issue. Order saved and will sync when online.');
+            setCart([]);
+            setShowCart(false);
+            setSendingOrder(false);
+            return;
+          }
+          throw apiErr;
+        }
+        completedOrderId = response.order?.id;
       }
 
       // Verify payment
       await apiClient.verifyPayment({
-        orderId: response.order?.id,
+        orderId: completedOrderId,
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         amount: grandTotal,
         userId: user?.id,
@@ -1225,8 +1263,8 @@ export default function MenuScreen() {
 
       // Prepare invoice data
       const invoiceData = {
-        orderId: response.order?.id,
-        orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+        orderId: completedOrderId,
+        orderNumber: response?.order?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
         restaurantName,
         restaurantInfo: latestRestaurantInfo,
         items: cart.map(item => ({
@@ -1264,6 +1302,7 @@ export default function MenuScreen() {
       setShowInvoiceModal(true);
       setCart([]);
       setShowCart(false);
+      setExistingOrderId(null);
     } catch (error) {
       console.error('Error completing bill:', error);
       toast.error(error.message || 'Failed to complete bill. Please try again.');

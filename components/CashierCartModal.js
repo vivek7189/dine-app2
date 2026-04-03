@@ -703,7 +703,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
   },
   completeButton: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#059669',
     borderRadius: 12,
     paddingVertical: 14,
     flexDirection: 'row',

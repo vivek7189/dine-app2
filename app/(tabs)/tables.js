@@ -14,6 +14,8 @@ import {
   Platform,
   ScrollView,
   ActionSheetIOS,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -67,6 +69,8 @@ export default function TablesScreen() {
   });
   const [savingBooking, setSavingBooking] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [updatingTables, setUpdatingTables] = useState(new Set()); // tables with pending status change
+  const pulseAnim = useRef(new Animated.Value(1)).current;
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
@@ -74,6 +78,22 @@ export default function TablesScreen() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Pulse animation for tables being updated
+  useEffect(() => {
+    if (updatingTables.size > 0) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.6, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [updatingTables.size]);
 
   // Memoize loadFloorsAndTables to prevent recreation
   const loadFloorsAndTables = useCallback(async (restaurantId) => {
@@ -121,17 +141,20 @@ export default function TablesScreen() {
   const updateTableStatusOptimistically = useCallback((tableId, status, orderId) => {
     // Convert tableId to string for comparison (params come as strings)
     const tableIdStr = String(tableId);
-    
+
+    // Mark table as updating (shows pulse animation)
+    setUpdatingTables(prev => new Set(prev).add(tableIdStr));
+
     setFloors(prevFloors => {
       return prevFloors.map(floor => ({
         ...floor,
         tables: floor.tables?.map(table => {
-          // Compare as strings to handle both string and number IDs
           if (String(table.id) === tableIdStr) {
             return {
               ...table,
               status: status,
               currentOrderId: orderId || table.currentOrderId,
+              lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
             };
           }
           return table;
@@ -141,17 +164,26 @@ export default function TablesScreen() {
 
     setTables(prevTables => {
       return prevTables.map(table => {
-        // Compare as strings to handle both string and number IDs
         if (String(table.id) === tableIdStr) {
           return {
             ...table,
             status: status,
             currentOrderId: orderId || table.currentOrderId,
+            lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
           };
         }
         return table;
       });
     });
+
+    // Clear updating state after background refresh completes (timeout as fallback)
+    setTimeout(() => {
+      setUpdatingTables(prev => {
+        const next = new Set(prev);
+        next.delete(tableIdStr);
+        return next;
+      });
+    }, 3000);
   }, []);
 
   // Background refresh without blocking
@@ -161,6 +193,8 @@ export default function TablesScreen() {
     setSyncing(true);
     try {
       isRefreshingRef.current = true;
+      // Invalidate cache first so we get fresh data from server
+      apiClient.invalidateCache(`/api/floors/${restaurantId}`);
       const response = await apiClient.getFloors(restaurantId);
 
       let floorsData = [];
@@ -192,10 +226,10 @@ export default function TablesScreen() {
       }
     } catch (error) {
       console.error('Error refreshing in background:', error);
-      // Don't show error to user, just log it
     } finally {
       isRefreshingRef.current = false;
       setSyncing(false);
+      setUpdatingTables(new Set()); // Clear all updating states
     }
   }, []);
 
@@ -210,8 +244,6 @@ export default function TablesScreen() {
 
       // Check if we have table update params (from menu screen)
       if (params.tableId && params.tableStatus) {
-        // Optimistically update table status immediately (don't wait)
-        // Note: params come as strings, so we need to match by string or convert
         const tableIdToUpdate = params.tableId;
         updateTableStatusOptimistically(
           tableIdToUpdate,
@@ -220,15 +252,27 @@ export default function TablesScreen() {
         );
       }
 
-      // Refresh in background without blocking (small delay to let optimistic update show first)
-      const restaurantId = restaurantIdRef.current;
-      if (restaurantId && !isRefreshingRef.current) {
-        // Delay background refresh slightly to let optimistic update show first
-        setTimeout(() => {
-          refreshInBackground(restaurantId);
-        }, 500);
-      }
-    }, [params.tableId, params.tableStatus, params.orderId, updateTableStatusOptimistically, refreshInBackground, router])
+      // Re-check restaurant ID (user may have switched on home)
+      const checkAndRefresh = async () => {
+        try {
+          const userData = await apiClient.getUser();
+          const rid = userData?.restaurantId || userData?.restaurant?.id;
+          if (rid && rid !== restaurantIdRef.current) {
+            // Restaurant changed — full reload
+            restaurantIdRef.current = rid;
+            setSelectedRestaurant({ id: rid, ...userData.restaurant });
+            setUser(userData);
+            await loadFloorsAndTables(rid);
+          } else if (rid && !isRefreshingRef.current) {
+            // Same restaurant — background refresh with slight delay for optimistic update
+            setTimeout(() => refreshInBackground(rid), params.tableId ? 500 : 100);
+          }
+        } catch (e) {
+          console.error('Focus refresh error:', e);
+        }
+      };
+      checkAndRefresh();
+    }, [params.tableId, params.tableStatus, params.orderId, updateTableStatusOptimistically, refreshInBackground, loadFloorsAndTables])
   );
 
   const loadInitialData = async () => {
@@ -286,26 +330,54 @@ export default function TablesScreen() {
     if (!rid) return;
 
     const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channel = pusher.subscribe(`restaurant-${rid}`);
+    const channelName = `restaurant-${rid}`;
+    const channel = pusher.subscribe(channelName);
 
     let debounceTimer = null;
-    const handleEvent = () => {
+    const debouncedRefresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         refreshInBackground(rid);
-      }, 1000);
+      }, 800);
     };
 
-    channel.bind('table-status-updated', handleEvent);
-    channel.bind('order-created', handleEvent);
-    channel.bind('order-completed', handleEvent);
+    // Handle table-specific events with optimistic update
+    channel.bind('table-status-updated', (data) => {
+      if (data?.tableId && data?.status) {
+        updateTableStatusOptimistically(data.tableId, data.status, data.orderId);
+      }
+      debouncedRefresh();
+    });
+
+    // All order events that can affect table status
+    channel.bind('order-created', (data) => {
+      // Optimistic: find table by tableNumber and mark occupied
+      if (data?.tableNumber) {
+        setFloors(prevFloors => {
+          for (const floor of prevFloors) {
+            const match = floor.tables?.find(t => t.name === data.tableNumber);
+            if (match) {
+              updateTableStatusOptimistically(match.id, 'occupied', data.orderId);
+              break;
+            }
+          }
+          return prevFloors;
+        });
+      }
+      debouncedRefresh();
+    });
+    channel.bind('order-updated', debouncedRefresh);
+    channel.bind('order-status-updated', debouncedRefresh);
+    channel.bind('order-completed', debouncedRefresh);
+    channel.bind('order-deleted', debouncedRefresh);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       channel.unbind_all();
-      pusher.unsubscribe(`restaurant-${rid}`);
+      pusher.unsubscribe(channelName);
+      pusher.disconnect();
     };
-  }, [selectedRestaurant?.id, refreshInBackground]);
+  }, [selectedRestaurant?.id, refreshInBackground, updateTableStatusOptimistically]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -334,10 +406,13 @@ export default function TablesScreen() {
       return;
     }
 
+    // Get floor name for multi-tier pricing auto-selection
+    const currentFloorName = selectedFloor?.name || selectedFloor?.floorName || '';
+
     if (table.status === 'available') {
       router.push({
         pathname: '/(tabs)/menu',
-        params: { tableId: table.id, tableNumber: table.name },
+        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName },
       });
     } else if (table.status === 'occupied' && table.currentOrderId) {
       router.push({
@@ -354,7 +429,7 @@ export default function TablesScreen() {
       } else {
         router.push({
           pathname: '/(tabs)/menu',
-          params: { tableId: table.id, tableNumber: table.name },
+          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName },
         });
       }
     } else {
@@ -447,8 +522,9 @@ export default function TablesScreen() {
     const isReserved = normalizedStatus === 'reserved';
     const isCleaning = normalizedStatus === 'cleaning';
     const isOutOfService = normalizedStatus === 'out-of-service';
+    const isUpdating = updatingTables.has(String(table.id));
 
-    return (
+    const cardContent = (
       <TouchableOpacity
         style={[
           styles.tableCard,
@@ -586,6 +662,17 @@ export default function TablesScreen() {
         </View>
       </TouchableOpacity>
     );
+
+    // Wrap with pulse animation if table is being updated
+    if (isUpdating) {
+      return (
+        <Animated.View style={{ opacity: pulseAnim }}>
+          {cardContent}
+        </Animated.View>
+      );
+    }
+
+    return cardContent;
   };
 
   const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());

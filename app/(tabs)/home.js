@@ -18,6 +18,7 @@ import { getCached, setCache, clearCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
+import { HeadquartersContent } from './headquarters';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
@@ -120,7 +121,37 @@ export default function HomeScreen() {
       }
       setUser(userData);
 
-      const restaurantId = userData.restaurantId || userData.restaurant?.id;
+      // Fetch all user's restaurants for switcher + default resolution
+      let restList = [];
+      let apiDefaultId = null;
+      try {
+        const restResponse = await apiClient.getRestaurants();
+        restList = restResponse?.restaurants || [];
+        apiDefaultId = restResponse?.defaultRestaurantId || null;
+      } catch (e) {
+        console.log('Could not fetch restaurants list:', e.message);
+      }
+
+      // Resolve the correct restaurant — match web Sidebar behavior:
+      // Priority: defaultRestaurantId (from API or user) → stored restaurantId → first restaurant
+      const storedRestaurantId = userData.restaurantId || userData.restaurant?.id;
+      const defaultId = apiDefaultId || userData.defaultRestaurantId;
+      let restaurantId = storedRestaurantId;
+
+      if (restList.length > 0) {
+        const defaultInList = defaultId ? restList.find(r => (r.id || r._id) === defaultId) : null;
+        const currentInList = storedRestaurantId ? restList.find(r => (r.id || r._id) === storedRestaurantId) : null;
+
+        // defaultRestaurantId always takes priority (user explicitly set this in admin settings)
+        if (defaultInList) {
+          restaurantId = defaultInList.id || defaultInList._id;
+        } else if (currentInList) {
+          restaurantId = currentInList.id || currentInList._id;
+        } else {
+          restaurantId = restList[0].id || restList[0]._id;
+        }
+      }
+
       // Fetch fresh restaurant data to ensure businessType and other fields are current
       let restaurantData = userData.restaurant;
       if (restaurantId) {
@@ -129,29 +160,24 @@ export default function HomeScreen() {
           const freshData = res?.restaurant || res;
           if (freshData && freshData.name) {
             restaurantData = { id: restaurantId, ...freshData };
-            // Update stored user with fresh restaurant data
-            const updatedUser = { ...userData, restaurant: restaurantData, restaurantId };
-            await apiClient.setUser(updatedUser);
-            setUser(updatedUser);
           }
         } catch (e) {
           console.log('Could not fetch fresh restaurant data:', e.message);
         }
       }
+
+      // Update stored user with resolved restaurant
+      if (restaurantId) {
+        const updatedUser = { ...userData, restaurant: restaurantData, restaurantId };
+        await apiClient.setUser(updatedUser);
+        setUser(updatedUser);
+      }
       setRestaurant(restaurantData);
 
-      // Fetch all user's restaurants for switcher
-      try {
-        const restResponse = await apiClient.getRestaurants();
-        const restList = restResponse?.restaurants || [];
-        if (restList.length > 0) {
-          setRestaurants(restList);
-        } else if (restaurantData) {
-          setRestaurants([restaurantData]);
-        }
-      } catch (e) {
-        // Fallback to current restaurant
-        if (restaurantData) setRestaurants([restaurantData]);
+      if (restList.length > 0) {
+        setRestaurants(restList);
+      } else if (restaurantData) {
+        setRestaurants([restaurantData]);
       }
 
       if (restaurantId) {
@@ -265,7 +291,7 @@ export default function HomeScreen() {
   }, [showDailySummary, dailySummary, fetchDailySummary]);
 
   const handleLogout = async () => {
-    await apiClient.clearToken();
+    await apiClient.logout();
     router.replace('/(auth)/login');
   };
 
@@ -331,6 +357,24 @@ export default function HomeScreen() {
           <Text style={styles.loadingText}>Loading dashboard...</Text>
         </View>
       </SafeAreaView>
+    );
+  }
+
+  // ==================== Owner/Admin: Show HQ Dashboard (like web) ====================
+  if (isOwnerOrManager && hasRestaurant) {
+    return (
+      <>
+        <HeadquartersContent embedded drawerToggle={() => setDrawerVisible(true)} />
+        <AppDrawer
+          visible={drawerVisible}
+          onClose={() => setDrawerVisible(false)}
+          user={user}
+          restaurants={restaurants}
+          currentRestaurant={restaurant}
+          onSwitchRestaurant={handleSwitchRestaurant}
+          onLogout={handleLogout}
+        />
+      </>
     );
   }
 
@@ -452,45 +496,6 @@ export default function HomeScreen() {
 
         {/* Waiter: Hero new order button */}
         {isWaiterOrEmployee && hasRestaurant && renderWaiterHero()}
-
-        {/* Stats Cards — Owner/Manager view */}
-        {isOwnerOrManager && hasRestaurant && (
-          <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { backgroundColor: '#eff6ff' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#3b82f6' }]}>
-                <Ionicons name="receipt-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{todayStats.totalOrders}</Text>
-              <Text style={styles.statLabel}>Today's Orders</Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: '#f0fdf4' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#10b981' }]}>
-                <Ionicons name="cash-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{formatCurrency(todayStats.totalRevenue)}</Text>
-              <Text style={styles.statLabel}>Revenue</Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: '#fefce8' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#f59e0b' }]}>
-                <Ionicons name="trending-up-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{formatCurrency(todayStats.avgOrderValue)}</Text>
-              <Text style={styles.statLabel}>Avg Order</Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: '#fdf2f8' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#ec4899' }]}>
-                <Ionicons name="restaurant-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>
-                {tableStats.occupied}/{tableStats.total}
-              </Text>
-              <Text style={styles.statLabel}>Tables Busy</Text>
-            </View>
-          </View>
-        )}
 
         {/* Cashier Stats */}
         {isCashier && hasRestaurant && (
@@ -970,6 +975,39 @@ const styles = StyleSheet.create({
   restaurantName: {
     ...Typography.caption,
     color: Colors.textMedium,
+  },
+  // Snapshot header (owner/admin)
+  snapshotHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  snapshotTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.5,
+  },
+  snapshotSubtitle: {
+    fontSize: 12,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  todayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+  },
+  todayBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
   },
   // Setup Card (first-time owner)
   setupCard: {
