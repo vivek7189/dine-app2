@@ -278,46 +278,73 @@ export default function MenuItemForm({
         </View>
       )}
 
-      {/* Per-Rule Pricing (Multi-Tier) */}
+      {/* Channel & Zone Prices — Tree Layout */}
       {multiPricingEnabled && activePricingRules.length > 0 && (
         <View style={styles.pricingRulesSection}>
-          <Text style={styles.pricingRulesTitle}>Zone / Channel Prices</Text>
-          <Text style={styles.pricingRulesHint}>Leave blank to use base price + default markup</Text>
+          <Text style={styles.pricingRulesTitle}>Channel Prices</Text>
+          <Text style={styles.pricingRulesHint}>Empty zones inherit Dine-In price</Text>
           {(() => {
+            const dineInRule = activePricingRules.find(r => DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
             const zoneRules = activePricingRules.filter(r => {
               const n = (r.name || '').toLowerCase().trim();
               return !TAKEAWAY_NAMES.includes(n) && !DELIVERY_NAMES.includes(n) && !DINEIN_NAMES.includes(n);
             });
             const takeawayRule = activePricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
             const deliveryRule = activePricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
+            const dineInPrice = dineInRule ? (formData.pricingRules?.[dineInRule.id]?.toString() || '') : '';
+            const inheritedPrice = dineInPrice || formData.price || 'Base';
             return (
               <>
-                {zoneRules.length > 0 && (
-                  <View style={styles.pricingGroup}>
-                    <Text style={styles.pricingGroupLabel}>Dine-In Zones</Text>
-                    {zoneRules.map(rule => (
-                      <View key={rule.id} style={styles.pricingRuleRow}>
-                        <Text style={styles.pricingRuleName}>{rule.name}</Text>
-                        <TextInput
-                          style={styles.pricingRuleInput}
-                          placeholder={formData.price || 'Base'}
-                          placeholderTextColor={Colors.textLight}
-                          keyboardType="numeric"
-                          value={formData.pricingRules?.[rule.id]?.toString() || ''}
-                          onChangeText={(text) => setFormData({
-                            ...formData,
-                            pricingRules: { ...(formData.pricingRules || {}), [rule.id]: text }
-                          })}
-                        />
-                      </View>
-                    ))}
+                {/* Dine-In */}
+                {dineInRule && (
+                  <View style={styles.pricingRuleRow}>
+                    <Text style={styles.pricingChannelName}>🍽️ Dine-In</Text>
+                    <TextInput
+                      style={[styles.pricingRuleInput, dineInPrice ? styles.pricingRuleInputActive : null]}
+                      placeholder={formData.price || 'Base'}
+                      placeholderTextColor={Colors.textLight}
+                      keyboardType="numeric"
+                      value={dineInPrice}
+                      onChangeText={(text) => setFormData({
+                        ...formData,
+                        pricingRules: { ...(formData.pricingRules || {}), [dineInRule.id]: text }
+                      })}
+                    />
                   </View>
                 )}
+                {/* Zone children — tree indented under Dine-In */}
+                {zoneRules.length > 0 && (
+                  <View style={styles.zoneTreeContainer}>
+                    {zoneRules.map(rule => {
+                      const val = formData.pricingRules?.[rule.id]?.toString() || '';
+                      const hasCustom = val !== '';
+                      return (
+                        <View key={rule.id} style={styles.zoneRuleRow}>
+                          <View style={[styles.zoneDot, { backgroundColor: hasCustom ? '#10b981' : '#cbd5e1' }]} />
+                          <Text style={styles.zoneRuleName}>{rule.name}</Text>
+                          <TextInput
+                            style={[styles.pricingRuleInput, styles.zoneRuleInput, hasCustom ? styles.pricingRuleInputActive : styles.zoneRuleInputInherited]}
+                            placeholder={`₹${inheritedPrice}`}
+                            placeholderTextColor="#94a3b8"
+                            keyboardType="numeric"
+                            value={val}
+                            onChangeText={(text) => setFormData({
+                              ...formData,
+                              pricingRules: { ...(formData.pricingRules || {}), [rule.id]: text }
+                            })}
+                          />
+                          {!hasCustom && <Text style={styles.inheritedLabel}>inherited</Text>}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+                {/* Takeaway */}
                 {takeawayRule && (
-                  <View style={styles.pricingRuleRow}>
-                    <Text style={styles.pricingRuleName}>Takeaway</Text>
+                  <View style={[styles.pricingRuleRow, { marginTop: 4 }]}>
+                    <Text style={styles.pricingChannelName}>🥡 Takeaway</Text>
                     <TextInput
-                      style={styles.pricingRuleInput}
+                      style={[styles.pricingRuleInput, formData.pricingRules?.[takeawayRule.id] ? styles.pricingRuleInputActive : null]}
                       placeholder={formData.price || 'Base'}
                       placeholderTextColor={Colors.textLight}
                       keyboardType="numeric"
@@ -329,11 +356,12 @@ export default function MenuItemForm({
                     />
                   </View>
                 )}
+                {/* Delivery */}
                 {deliveryRule && (
                   <View style={styles.pricingRuleRow}>
-                    <Text style={styles.pricingRuleName}>Delivery</Text>
+                    <Text style={styles.pricingChannelName}>🛵 Delivery</Text>
                     <TextInput
-                      style={styles.pricingRuleInput}
+                      style={[styles.pricingRuleInput, formData.pricingRules?.[deliveryRule.id] ? styles.pricingRuleInputActive : null]}
                       placeholder={formData.price || 'Base'}
                       placeholderTextColor={Colors.textLight}
                       keyboardType="numeric"
@@ -844,14 +872,14 @@ const styles = StyleSheet.create({
   },
   pricingRulesSection: {
     marginBottom: Spacing.md,
-    backgroundColor: '#faf5ff',
+    backgroundColor: '#f8fafc',
     borderRadius: 10,
     padding: Spacing.sm,
   },
   pricingRulesTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#7c3aed',
+    color: '#374151',
     marginBottom: 2,
   },
   pricingRulesHint: {
@@ -859,27 +887,16 @@ const styles = StyleSheet.create({
     color: Colors.textMedium,
     marginBottom: 8,
   },
-  pricingGroup: {
-    marginBottom: 6,
-  },
-  pricingGroupLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.textMedium,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
   pricingRuleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 6,
   },
-  pricingRuleName: {
+  pricingChannelName: {
     fontSize: 13,
-    fontWeight: '500',
-    color: Colors.textDark,
+    fontWeight: '600',
+    color: '#334155',
     flex: 1,
   },
   pricingRuleInput: {
@@ -893,6 +910,54 @@ const styles = StyleSheet.create({
     color: Colors.textDark,
     width: 90,
     textAlign: 'center',
+  },
+  pricingRuleInputActive: {
+    borderColor: '#10b981',
+    borderWidth: 1.5,
+    backgroundColor: '#f0fdf4',
+    color: '#166534',
+    fontWeight: '600',
+  },
+  zoneTreeContainer: {
+    marginLeft: 24,
+    borderLeftWidth: 2,
+    borderLeftColor: '#e2e8f0',
+    paddingLeft: 12,
+    marginBottom: 4,
+  },
+  zoneRuleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  zoneDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 8,
+  },
+  zoneRuleName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748b',
+    flex: 1,
+  },
+  zoneRuleInput: {
+    width: 80,
+    fontSize: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  zoneRuleInputInherited: {
+    borderColor: '#d1d5db',
+    backgroundColor: '#fafafa',
+    fontStyle: 'italic',
+  },
+  inheritedLabel: {
+    fontSize: 9,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+    marginLeft: 4,
   },
   row: {
     flexDirection: 'row',

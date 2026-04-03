@@ -22,6 +22,7 @@ import BillingSummaryBar from './billing/BillingSummaryBar';
 import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function CashierCartModal({
   visible,
@@ -192,6 +193,9 @@ export default function CashierCartModal({
     <View style={styles.cartItem}>
       <View style={styles.cartItemLeft}>
         <Text style={styles.cartItemName} numberOfLines={1}>{item.name}</Text>
+        {getItemSubline(item) ? (
+          <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+        ) : null}
         <Text style={styles.cartItemMeta}>₹{item.price} × {item.quantity}</Text>
       </View>
       <View style={styles.cartItemRight}>

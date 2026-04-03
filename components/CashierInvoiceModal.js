@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function CashierInvoiceModal({
   visible,
@@ -38,9 +39,11 @@ export default function CashierInvoiceModal({
   };
 
   const generateInvoiceText = () => {
-    const itemsList = invoiceData.items.map(item =>
-      `${item.quantity} x ${item.name} @ ₹${item.price} = ₹${item.total.toFixed(2)}`
-    ).join('\n');
+    const itemsList = invoiceData.items.map(item => {
+      const subline = getItemSubline(item);
+      const line = `${item.quantity} x ${item.name} @ ₹${item.price} = ₹${item.total.toFixed(2)}`;
+      return subline ? `${line}\n  (${subline})` : line;
+    }).join('\n');
 
     // Get business details from restaurantInfo (only if showGstOnInvoice is true)
     const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
@@ -84,14 +87,16 @@ Thank you for your visit!
   };
 
   const generateInvoiceHTML = () => {
-    const itemsHTML = invoiceData.items.map(item => `
+    const itemsHTML = invoiceData.items.map(item => {
+      const subline = getItemSubline(item);
+      return `
       <tr>
-        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd;">${item.name}</td>
+        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd;">${item.name}${subline ? `<br><span style="font-size:10px;color:#888;">${subline}</span>` : ''}</td>
         <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: center;">${item.quantity}</td>
         <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right;">₹${item.price}</td>
         <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 600;">₹${item.total.toFixed(2)}</td>
-      </tr>
-    `).join('');
+      </tr>`;
+    }).join('');
 
     // Get business details from restaurantInfo (only if showGstOnInvoice is true)
     const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
@@ -441,7 +446,12 @@ Thank you for your visit!
               {/* Items */}
               {invoiceData.items.map((item, index) => (
                 <View key={index} style={styles.itemRow}>
-                  <Text style={[styles.itemName, { flex: 2 }]} numberOfLines={2}>{item.name}</Text>
+                  <View style={{ flex: 2 }}>
+                    <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                    {getItemSubline(item) ? (
+                      <Text style={{ fontSize: 9, color: '#888', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                    ) : null}
+                  </View>
                   <Text style={[styles.itemText, { width: 40, textAlign: 'center' }]}>{item.quantity}</Text>
                   <Text style={[styles.itemText, { width: 60, textAlign: 'right' }]}>₹{item.price}</Text>
                   <Text style={[styles.itemAmount, { width: 70, textAlign: 'right' }]}>₹{item.total.toFixed(2)}</Text>

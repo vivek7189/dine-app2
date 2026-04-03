@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import { getItemSubline } from '../utils/itemSubline';
 // Note: For direct thermal printer support, install:
 // npm install react-native-thermal-receipt-printer
 // This component uses Share API as a fallback which works with most printer apps
@@ -112,9 +113,11 @@ export default function KOTModal({
   const generateKOTText = (data) => {
     const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
     const itemsText = data.items.map(item => {
+      const subline = getItemSubline(item);
       const itemLine = `${item.quantity}x ${item.name}`;
+      const sublineLine = subline ? `  (${subline})` : '';
       const notesLine = item.notes ? `  Note: ${item.notes}` : '';
-      return notesLine ? `${itemLine}\n${notesLine}` : itemLine;
+      return [itemLine, sublineLine, notesLine].filter(Boolean).join('\n');
     }).join('\n');
     
     // ESC/POS format for thermal printers (80mm width = 48 chars)
@@ -181,12 +184,15 @@ ${'='.repeat(width)}
 
   const generateKOTHTML = (data) => {
     const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
-    const itemsHTML = data.items.map(item => `
+    const itemsHTML = data.items.map(item => {
+      const subline = getItemSubline(item);
+      return `
       <tr>
         <td style="padding: 4px 0; border-bottom: 1px dashed #ddd;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start;">
             <div style="flex: 1;">
               <div style="font-weight: bold; font-size: 14px; margin-bottom: 2px;">${item.name}</div>
+              ${subline ? `<div style="font-size: 10px; color: #888; margin-bottom: 2px;">${subline}</div>` : ''}
               ${item.notes ? `<div style="font-size: 11px; color: #666; font-style: italic;">${item.notes}</div>` : ''}
             </div>
             <div style="text-align: right; margin-left: 10px;">
@@ -194,8 +200,8 @@ ${'='.repeat(width)}
             </div>
           </div>
         </td>
-      </tr>
-    `).join('');
+      </tr>`;
+    }).join('');
 
     return `
       <!DOCTYPE html>
@@ -378,6 +384,9 @@ ${'='.repeat(width)}
                 <View key={index} style={styles.itemRow}>
                   <View style={styles.itemLeft}>
                     <Text style={styles.itemName}>{item.name}</Text>
+                    {getItemSubline(item) ? (
+                      <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                    ) : null}
                     {item.notes && (
                       <Text style={styles.itemNotes}>{item.notes}</Text>
                     )}

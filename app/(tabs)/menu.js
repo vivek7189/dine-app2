@@ -39,6 +39,9 @@ import Pusher from 'pusher-js/react-native';
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
 const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+const CHANNEL_NAMES = [...DINEIN_NAMES, ...TAKEAWAY_NAMES, ...DELIVERY_NAMES];
+const isZoneRule = (rule) => !CHANNEL_NAMES.includes((rule?.name || '').toLowerCase().trim());
+const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
 
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
@@ -515,10 +518,19 @@ export default function MenuScreen() {
   // Multi-tier pricing: resolve display price
   const getItemDisplayPrice = useCallback((item) => {
     if (!multiPricingEnabled || !activePricingRuleId) return item.price;
+    // Priority 1: Per-item override for this exact rule
     if (item.pricingRules && typeof item.pricingRules[activePricingRuleId] === 'number') {
       return item.pricingRules[activePricingRuleId];
     }
+    // Priority 2: Zone rules inherit from Dine-In per-item price
     const rule = pricingRules.find(r => r.id === activePricingRuleId);
+    if (rule && isZoneRule(rule)) {
+      const diRule = findDineInRule(pricingRules);
+      if (diRule && item.pricingRules && typeof item.pricingRules[diRule.id] === 'number') {
+        return item.pricingRules[diRule.id];
+      }
+    }
+    // Priority 3: Rule default markup
     if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue) {
       return Math.round(item.price * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
     }
@@ -580,16 +592,31 @@ export default function MenuScreen() {
       const basePrice = item.originalPrice ?? menuItem?.price ?? item.price;
       let newPrice = basePrice;
       if (activePricingRuleId) {
+        // Priority 1: Per-item override
         const perItem = menuItem?.pricingRules?.[activePricingRuleId];
         const parsed = perItem != null ? Number(perItem) : NaN;
         if (!isNaN(parsed) && parsed >= 0) {
           newPrice = parsed;
         } else {
           const rule = pricingRules.find(r => r.id === activePricingRuleId);
-          if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue)
-            newPrice = Math.round(basePrice * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
-          else if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue)
-            newPrice = Math.round((basePrice + rule.defaultMarkupValue) * 100) / 100;
+          // Priority 2: Zone rules inherit from Dine-In per-item price
+          if (rule && isZoneRule(rule)) {
+            const diRule = findDineInRule(pricingRules);
+            if (diRule) {
+              const diPrice = menuItem?.pricingRules?.[diRule.id];
+              const diParsed = diPrice != null ? Number(diPrice) : NaN;
+              if (!isNaN(diParsed) && diParsed >= 0) {
+                newPrice = diParsed;
+              }
+            }
+          }
+          // Priority 3: Apply default markup from rule
+          if (newPrice === basePrice) {
+            if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue)
+              newPrice = Math.round(basePrice * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
+            else if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue)
+              newPrice = Math.round((basePrice + rule.defaultMarkupValue) * 100) / 100;
+          }
         }
       }
       return { ...item, price: newPrice, originalPrice: basePrice };
@@ -597,6 +624,20 @@ export default function MenuScreen() {
   }, [activePricingRuleId, multiPricingEnabled]);
 
   const addToCart = (item) => {
+    // Block out-of-stock items
+    if (item.isAvailable === false) {
+      Alert.alert('Out of Stock', `"${item.name}" is currently out of stock`);
+      return;
+    }
+    // Check stock limit
+    if (item.isStockManaged && typeof item.stockQuantity === 'number') {
+      const currentInCart = cart.find(c => c.id === item.id)?.quantity || 0;
+      if (currentInCart >= item.stockQuantity) {
+        Alert.alert('Stock Limit', `Only ${item.stockQuantity} "${item.name}" in stock`);
+        return;
+      }
+    }
+
     const adjustedPrice = getItemDisplayPrice(item);
     const existingItem = cart.find(cartItem => cartItem.id === item.id);
 
@@ -614,6 +655,15 @@ export default function MenuScreen() {
         originalPrice: item.price,
         quantity: 1,
         menuItemId: item.id,
+        // Business-type fields for receipt display
+        spiritCategory: item.spiritCategory || null,
+        abv: item.abv || null,
+        servingUnit: item.servingUnit || null,
+        bottleSize: item.bottleSize || null,
+        unit: item.unit || null,
+        weight: item.weight || null,
+        servingSize: item.servingSize || null,
+        scoopOptions: item.scoopOptions || null,
       }]);
     }
   };
@@ -1466,6 +1516,15 @@ export default function MenuScreen() {
     return parts.length > 0 ? parts.join(' | ') : null;
   };
 
+  const getExpiryStatus = (expiryDate) => {
+    if (!expiryDate) return null;
+    const days = Math.ceil((new Date(expiryDate) - new Date()) / 86400000);
+    if (days < 0) return 'expired';
+    if (days <= 2) return 'expiring-soon';
+    if (days <= 7) return 'expiring-week';
+    return null;
+  };
+
   const renderMenuItem = ({ item }) => {
     const cartItem = cart.find(c => c.id === item.id);
     const quantity = cartItem?.quantity || 0;
@@ -1473,12 +1532,51 @@ export default function MenuScreen() {
     const isVeg = item.isVeg !== false;
     const hasImage = imageUrl !== null;
     const typeSubtitle = getTypeSubtitle(item);
+    const isStockManaged = item.isStockManaged && typeof item.stockQuantity === 'number';
+    const isLowStock = isStockManaged && item.stockQuantity > 0 && item.stockQuantity <= (item.lowStockThreshold || 5);
+    const isOutOfStock = item.isAvailable === false || (isStockManaged && item.stockQuantity === 0);
+    const expiryStatus = getExpiryStatus(item.expiryDate);
+
+    // Stock/Expiry badge row component
+    const StockExpiryBadges = () => {
+      if (!isStockManaged && !expiryStatus) return null;
+      return (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
+          {isStockManaged && (
+            <View style={{
+              paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3,
+              backgroundColor: item.stockQuantity === 0 ? '#fee2e2' : isLowStock ? '#fef3c7' : '#dcfce7',
+            }}>
+              <Text style={{
+                fontSize: 8, fontWeight: '700',
+                color: item.stockQuantity === 0 ? '#dc2626' : isLowStock ? '#92400e' : '#166534',
+              }}>
+                {item.stockQuantity === 0 ? 'OUT' : isLowStock ? `⚠ ${item.stockQuantity} left` : `${item.stockQuantity} in stock`}
+              </Text>
+            </View>
+          )}
+          {expiryStatus && (
+            <View style={{
+              paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3,
+              backgroundColor: expiryStatus === 'expired' ? '#fee2e2' : '#fef3c7',
+            }}>
+              <Text style={{
+                fontSize: 8, fontWeight: '700',
+                color: expiryStatus === 'expired' ? '#dc2626' : '#92400e',
+              }}>
+                {expiryStatus === 'expired' ? 'EXPIRED' : expiryStatus === 'expiring-soon' ? 'Exp Soon' : 'Exp 7d'}
+              </Text>
+            </View>
+          )}
+        </View>
+      );
+    };
 
     // Modern Design with Full Image Background (when image exists)
     if (hasImage) {
       return (
         <TouchableOpacity
-          style={styles.menuItemCardImage}
+          style={[styles.menuItemCardImage, isOutOfStock && { opacity: 0.45 }]}
           onPress={() => addToCart(item)}
           activeOpacity={0.9}
         >
@@ -1520,6 +1618,7 @@ export default function MenuScreen() {
             {typeSubtitle && (
               <Text style={styles.typeSubtitleImage} numberOfLines={1}>{typeSubtitle}</Text>
             )}
+            <StockExpiryBadges />
 
             <View style={styles.priceAddRow}>
               <View style={{ flexDirection: 'column' }}>
@@ -1576,7 +1675,7 @@ export default function MenuScreen() {
     // Fallback Design (no image)
     return (
       <TouchableOpacity
-        style={[styles.menuItemCardNoImage, { borderTopColor: isVeg ? '#22c55e' : '#ef4444' }]}
+        style={[styles.menuItemCardNoImage, { borderTopColor: isVeg ? '#22c55e' : '#ef4444' }, isOutOfStock && { opacity: 0.45 }]}
         onPress={() => addToCart(item)}
         activeOpacity={0.9}
       >
@@ -1611,6 +1710,7 @@ export default function MenuScreen() {
           {typeSubtitle && (
             <Text style={styles.typeSubtitleNoImage} numberOfLines={1}>{typeSubtitle}</Text>
           )}
+          <StockExpiryBadges />
         </View>
 
         {/* Bottom Section */}

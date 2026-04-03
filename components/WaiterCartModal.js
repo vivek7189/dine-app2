@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function WaiterCartModal({
   visible,
@@ -33,6 +34,9 @@ export default function WaiterCartModal({
     <View style={styles.cartItem}>
       <View style={styles.cartItemInfo}>
         <Text style={styles.cartItemName}>{item.name}</Text>
+        {getItemSubline(item) ? (
+          <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+        ) : null}
         <Text style={styles.cartItemPrice}>₹{item.price}</Text>
       </View>
       <View style={styles.cartItemControls}>

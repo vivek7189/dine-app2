@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants/Theme';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, userRole }) {
   const [order, setOrder] = useState(null);
@@ -213,6 +214,9 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                         <View key={`item-${index}-${item.menuItemId || item.id || index}`} style={styles.itemRow}>
                           <View style={styles.itemInfo}>
                             <Text style={styles.itemName}>{itemName}</Text>
+                            {getItemSubline(item) ? (
+                              <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                            ) : null}
                             {(item.description || item.menuItem?.description) && (
                               <Text style={styles.itemDescription} numberOfLines={1}>
                                 {item.description || item.menuItem?.description}

@@ -23,6 +23,7 @@ import BillingSummaryBar from './billing/BillingSummaryBar';
 import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function CartModal({
   visible,
@@ -195,6 +196,9 @@ export default function CartModal({
     <View style={styles.cartItem}>
       <View style={styles.cartItemLeft}>
         <Text style={styles.cartItemName} numberOfLines={1}>{item.name}</Text>
+        {getItemSubline(item) ? (
+          <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+        ) : null}
       </View>
       <View style={styles.cartItemRight}>
         <View style={styles.quantityControls}>
