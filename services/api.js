@@ -1333,6 +1333,49 @@ class ApiClient {
     });
   }
 
+  // ==================== SMART IMPORT ====================
+
+  async smartImportParse(restaurantId, { text, imageUri, mimeType }) {
+    if (imageUri) {
+      const token = await this.getToken();
+      const url = `${this.baseURL}/api/inventory/${restaurantId}/smart-import/parse`;
+      const formData = new FormData();
+      formData.append('image', {
+        uri: imageUri,
+        type: mimeType || 'image/jpeg',
+        name: 'smart-import.jpg',
+      });
+      try {
+        const response = await axios(url, {
+          method: 'POST',
+          data: formData,
+          headers: {
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        });
+        return response.data;
+      } catch (error) {
+        if (error.response) {
+          throw new Error(error.response.data?.error || 'Smart import parse failed');
+        }
+        throw new Error(error.message || 'Smart import parse failed');
+      }
+    }
+    return this.request(`/api/inventory/${restaurantId}/smart-import/parse`, {
+      method: 'POST',
+      data: { text },
+    });
+  }
+
+  async smartImportConfirm(restaurantId, data) {
+    return this.request(`/api/inventory/${restaurantId}/smart-import/confirm`, {
+      method: 'POST',
+      data,
+    });
+  }
+
   // ==================== INVENTORY EXTENDED ====================
 
   async deleteInventoryItem(restaurantId, itemId) {

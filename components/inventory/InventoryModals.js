@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, Modal, TouchableOpacity, TextInput, ScrollView,
-  KeyboardAvoidingView, Platform, ActivityIndicator, FlatList,
+  KeyboardAvoidingView, Platform, ActivityIndicator, FlatList, Alert,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { CATEGORY_OPTIONS, UNIT_OPTIONS } from './useInventoryData';
@@ -1034,6 +1035,416 @@ export function AILeftoverModal({
             </TouchableOpacity>
           </View>
         )}
+      </ScrollView>
+    </ModalWrapper>
+  );
+}
+
+// ── Smart Import Modal ──────────────────────────────
+export function SmartImportModal({ visible, onClose, restaurantId, onSuccess }) {
+  const [step, setStep] = useState('input'); // input | preview | result
+  const [inputMode, setInputMode] = useState('text'); // text | camera | gallery
+  const [text, setText] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [data, setData] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const apiClient = require('../../services/api').default;
+
+  const reset = () => {
+    setStep('input');
+    setText('');
+    setData(null);
+    setResult(null);
+    setError(null);
+    setParsing(false);
+    setConfirming(false);
+    setInputMode('text');
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleParse = async () => {
+    if (!text.trim()) return;
+    try {
+      setParsing(true);
+      setError(null);
+      const res = await apiClient.smartImportParse(restaurantId, { text: text.trim() });
+      if (res.success && res.data) {
+        setData(res.data);
+        setStep('preview');
+      } else {
+        setError(res.error || 'Failed to parse');
+      }
+    } catch (e) {
+      setError(e.message || 'Failed to parse input');
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleImageParse = async (useCamera) => {
+    try {
+      const options = { mediaTypes: ['images'], quality: 0.8, base64: false };
+      let result;
+      if (useCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') { Alert.alert('Permission needed', 'Camera permission is required.'); return; }
+        result = await ImagePicker.launchCameraAsync(options);
+      } else {
+        result = await ImagePicker.launchImageLibraryAsync(options);
+      }
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      setParsing(true);
+      setError(null);
+      const res = await apiClient.smartImportParse(restaurantId, {
+        imageUri: asset.uri,
+        mimeType: asset.mimeType || 'image/jpeg',
+      });
+      if (res.success && res.data) {
+        setData(res.data);
+        setStep('preview');
+      } else {
+        setError(res.error || 'Failed to parse image');
+      }
+    } catch (e) {
+      setError(e.message || 'Failed to parse image');
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const removeInventoryItem = (idx) => {
+    setData(prev => ({
+      ...prev,
+      inventoryItems: prev.inventoryItems.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const removeMenuItem = (idx) => {
+    setData(prev => ({
+      ...prev,
+      menuItems: prev.menuItems.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const removeRecipe = (idx) => {
+    setData(prev => ({
+      ...prev,
+      recipes: prev.recipes.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const removeCategory = (idx) => {
+    setData(prev => ({
+      ...prev,
+      menuCategories: prev.menuCategories.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleConfirm = async () => {
+    try {
+      setConfirming(true);
+      setError(null);
+      const res = await apiClient.smartImportConfirm(restaurantId, data);
+      if (res.success) {
+        setResult(res);
+        setStep('result');
+        onSuccess?.();
+      } else {
+        setError(res.error || 'Import failed');
+      }
+    } catch (e) {
+      setError(e.message || 'Import failed');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const SectionHeader = ({ title, count, color = '#059669' }) => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 6 }}>
+      <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textDark, flex: 1 }}>{title}</Text>
+      <View style={{ backgroundColor: color + '20', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 2 }}>
+        <Text style={{ fontSize: 12, fontWeight: '700', color }}>{count}</Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <ModalWrapper visible={visible} onClose={handleClose} title="Smart Import">
+      <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+        {error && (
+          <View style={{ backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginTop: 8 }}>
+            <Text style={{ color: '#dc2626', fontSize: 13 }}>{error}</Text>
+          </View>
+        )}
+
+        {/* ── Step: Input ─── */}
+        {step === 'input' && (
+          <>
+            <Text style={{ fontSize: 13, color: Colors.textLight, marginTop: 8, lineHeight: 18 }}>
+              Paste recipes or ingredient lists, or take a photo. AI will create inventory items, menu items, and recipes automatically.
+            </Text>
+
+            {/* Mode tabs */}
+            <View style={styles.qoModeRow}>
+              {[
+                { key: 'text', icon: 'create-outline', label: 'Paste Text' },
+                { key: 'camera', icon: 'camera-outline', label: 'Camera' },
+                { key: 'gallery', icon: 'images-outline', label: 'Gallery' },
+              ].map(m => (
+                <TouchableOpacity
+                  key={m.key}
+                  style={[styles.qoModeBtn, inputMode === m.key && styles.qoModeBtnActive]}
+                  onPress={() => setInputMode(m.key)}
+                >
+                  <Ionicons name={m.icon} size={16} color={inputMode === m.key ? '#fff' : Colors.textMedium} />
+                  <Text style={[styles.qoModeText, inputMode === m.key && styles.qoModeTextActive]}>{m.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {inputMode === 'text' && (
+              <>
+                <TextInput
+                  style={[styles.textArea, { height: 160, marginTop: 12 }]}
+                  placeholder="Paste your recipes, ingredient lists, or menu items here...
+
+Example:
+Masala Tea - Tea leaves 5g, Milk 150ml, Sugar 10g, Ginger 2g. Price ₹30.
+Filter Coffee - Coffee powder 10g, Milk 180ml, Sugar 8g. Price ₹35."
+                  placeholderTextColor={Colors.textLight}
+                  value={text}
+                  onChangeText={setText}
+                  multiline
+                  textAlignVertical="top"
+                />
+                <TouchableOpacity
+                  style={[styles.parseBtn, { backgroundColor: '#059669' }, (!text.trim() || parsing) && { opacity: 0.5 }]}
+                  onPress={handleParse}
+                  disabled={!text.trim() || parsing}
+                >
+                  {parsing ? <ActivityIndicator color="#fff" size="small" /> : (
+                    <>
+                      <Ionicons name="sparkles" size={16} color="#fff" />
+                      <Text style={styles.parseBtnText}>Parse with AI</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+
+            {inputMode === 'camera' && (
+              <View style={{ alignItems: 'center', marginTop: 24 }}>
+                <TouchableOpacity
+                  style={[styles.imageModeBtn, { width: '100%', paddingVertical: 40 }]}
+                  onPress={() => handleImageParse(true)}
+                  disabled={parsing}
+                >
+                  {parsing ? <ActivityIndicator size="large" color="#3b82f6" /> : (
+                    <>
+                      <Ionicons name="camera" size={40} color="#3b82f6" />
+                      <Text style={[styles.imageModeBtnText, { marginTop: 8 }]}>Take Photo of Recipe</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {inputMode === 'gallery' && (
+              <View style={{ alignItems: 'center', marginTop: 24 }}>
+                <TouchableOpacity
+                  style={[styles.imageModeBtn, { width: '100%', paddingVertical: 40 }]}
+                  onPress={() => handleImageParse(false)}
+                  disabled={parsing}
+                >
+                  {parsing ? <ActivityIndicator size="large" color="#059669" /> : (
+                    <>
+                      <Ionicons name="images" size={40} color="#059669" />
+                      <Text style={[styles.imageModeBtnText, { marginTop: 8 }]}>Pick from Gallery</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {parsing && (
+              <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                <Text style={{ fontSize: 13, color: Colors.textLight }}>AI is analyzing your input...</Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ── Step: Preview ─── */}
+        {step === 'preview' && data && (
+          <>
+            <TouchableOpacity onPress={() => setStep('input')} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 4 }}>
+              <Ionicons name="arrow-back" size={18} color="#3b82f6" />
+              <Text style={{ color: '#3b82f6', fontSize: 13, fontWeight: '600', marginLeft: 4 }}>Back to Input</Text>
+            </TouchableOpacity>
+
+            {/* Inventory Items */}
+            {data.inventoryItems?.length > 0 && (
+              <>
+                <SectionHeader title="Inventory Items" count={data.inventoryItems.length} color="#059669" />
+                {data.inventoryItems.map((item, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>{item.name}</Text>
+                        {item.isDuplicate && (
+                          <View style={{ backgroundColor: '#fef3c7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
+                            <Text style={{ fontSize: 10, color: '#92400e', fontWeight: '600' }}>Exists</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={{ fontSize: 12, color: Colors.textLight }}>{item.unit} · {item.category}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeInventoryItem(idx)} style={{ padding: 6 }}>
+                      <Ionicons name="close-circle" size={20} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* Menu Categories */}
+            {data.menuCategories?.length > 0 && (
+              <>
+                <SectionHeader title="New Categories" count={data.menuCategories.length} color="#0891b2" />
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {data.menuCategories.map((cat, idx) => (
+                    <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ecfeff', borderRadius: 16, paddingLeft: 12, paddingRight: 4, paddingVertical: 4, gap: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#0e7490', fontWeight: '500' }}>{cat}</Text>
+                      <TouchableOpacity onPress={() => removeCategory(idx)} style={{ padding: 2 }}>
+                        <Ionicons name="close" size={14} color="#0891b2" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {/* Menu Items */}
+            {data.menuItems?.length > 0 && (
+              <>
+                <SectionHeader title="Menu Items" count={data.menuItems.length} color="#f59e0b" />
+                {data.menuItems.map((item, idx) => (
+                  <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>{item.name}</Text>
+                        {item.isDuplicate && (
+                          <View style={{ backgroundColor: '#fef3c7', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
+                            <Text style={{ fontSize: 10, color: '#92400e', fontWeight: '600' }}>Exists</Text>
+                          </View>
+                        )}
+                        <View style={{ backgroundColor: item.isVeg ? '#dcfce7' : '#fef2f2', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>
+                          <Text style={{ fontSize: 9, color: item.isVeg ? '#16a34a' : '#dc2626', fontWeight: '700' }}>{item.isVeg ? 'VEG' : 'NON-VEG'}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 12, color: Colors.textLight }}>{'\u20B9'}{item.price} · {item.category}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeMenuItem(idx)} style={{ padding: 6 }}>
+                      <Ionicons name="close-circle" size={20} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* Recipes */}
+            {data.recipes?.length > 0 && (
+              <>
+                <SectionHeader title="Recipes" count={data.recipes.length} color="#3b82f6" />
+                {data.recipes.map((recipe, idx) => (
+                  <View key={idx} style={{ backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ flex: 1, fontSize: 14, fontWeight: '700', color: Colors.textDark }}>{recipe.menuItemName}</Text>
+                      <TouchableOpacity onPress={() => removeRecipe(idx)} style={{ padding: 4 }}>
+                        <Ionicons name="close-circle" size={18} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={{ fontSize: 12, color: Colors.textLight, marginTop: 2 }}>
+                      {recipe.ingredients.map(i => `${i.itemName} ${i.qty}${i.unit}`).join(', ')}
+                    </Text>
+                    {recipe.instructions ? (
+                      <Text style={{ fontSize: 11, color: Colors.textMedium, marginTop: 4, fontStyle: 'italic' }} numberOfLines={2}>{recipe.instructions}</Text>
+                    ) : null}
+                  </View>
+                ))}
+              </>
+            )}
+
+            {/* Confirm button */}
+            <TouchableOpacity
+              style={[styles.saveBtn, { backgroundColor: '#059669', marginBottom: 24 }, confirming && { opacity: 0.5 }]}
+              onPress={handleConfirm}
+              disabled={confirming}
+            >
+              {confirming ? <ActivityIndicator color="#fff" size="small" /> : (
+                <>
+                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                  <Text style={[styles.saveBtnText, { marginLeft: 6 }]}>Import All</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* ── Step: Result ─── */}
+        {step === 'result' && result && (
+          <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Ionicons name="checkmark-circle" size={36} color="#16a34a" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: Colors.textDark, marginBottom: 8 }}>Import Complete!</Text>
+            <Text style={{ fontSize: 14, color: Colors.textMedium, textAlign: 'center', lineHeight: 20, marginBottom: 16 }}>{result.message}</Text>
+
+            {result.summary && (
+              <View style={{ width: '100%', backgroundColor: '#f8fafc', borderRadius: 12, padding: 16 }}>
+                {[
+                  { label: 'Inventory Items', count: result.summary.inventoryItems, color: '#059669' },
+                  { label: 'Menu Categories', count: result.summary.menuCategories, color: '#0891b2' },
+                  { label: 'Menu Items', count: result.summary.menuItems, color: '#f59e0b' },
+                  { label: 'Recipes', count: result.summary.recipes, color: '#3b82f6' },
+                ].map((item, i) => (
+                  <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                    <Text style={{ fontSize: 14, color: Colors.textMedium }}>{item.label}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: item.color }}>{item.count}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {result.errors?.length > 0 && (
+              <View style={{ width: '100%', backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginTop: 12 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626', marginBottom: 4 }}>Some items had errors:</Text>
+                {result.errors.map((e, i) => (
+                  <Text key={i} style={{ fontSize: 11, color: '#dc2626' }}>• {e}</Text>
+                ))}
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.saveBtn, { backgroundColor: '#059669', width: '100%', marginTop: 20 }]}
+              onPress={handleClose}
+            >
+              <Ionicons name="checkmark" size={18} color="#fff" />
+              <Text style={[styles.saveBtnText, { marginLeft: 6 }]}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <View style={{ height: 30 }} />
       </ScrollView>
     </ModalWrapper>
   );

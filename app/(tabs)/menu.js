@@ -210,7 +210,7 @@ export default function MenuScreen() {
     }, [restaurantId])
   );
 
-  // Refresh user/restaurant data when tab is focused (e.g., after changing business settings in Profile)
+  // Refresh user/restaurant data + pricing rules when tab is focused
   useFocusEffect(
     useCallback(() => {
       const refreshUserData = async () => {
@@ -224,8 +224,26 @@ export default function MenuScreen() {
         }
       };
 
+      const refreshPricingRules = async () => {
+        if (!restaurantId) return;
+        try {
+          const pricingRes = await apiClient.getPricingSettings(restaurantId);
+          const mp = pricingRes?.settings?.multiPricing;
+          if (mp?.enabled) {
+            setMultiPricingEnabled(true);
+            setPricingRules((mp.rules || []).filter(r => r.isActive));
+          } else {
+            setMultiPricingEnabled(false);
+            setPricingRules([]);
+          }
+        } catch (e) {
+          console.log('Pricing rules refresh error:', e);
+        }
+      };
+
       refreshUserData();
-    }, [])
+      refreshPricingRules();
+    }, [restaurantId])
   );
 
   const loadImagePreference = async () => {
@@ -249,13 +267,17 @@ export default function MenuScreen() {
     }
   };
 
+  // Track whether table params have been consumed so they aren't reused on tab re-focus
+  const tableParamsConsumedRef = useRef(false);
+
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
       setSelectedTable({ id: params.tableId, name: params.tableNumber });
+      tableParamsConsumedRef.current = false; // fresh navigation — not yet consumed
     } else if (params.tableNumber && params.barTabMode === 'true') {
-      // Bar tab mode: use tableNumber as tab display name (no tableId)
       setSelectedTable({ id: null, name: params.tableNumber });
       setIsBarTabMode(true);
+      tableParamsConsumedRef.current = false;
     }
 
     // Handle existing order items from params
@@ -275,6 +297,24 @@ export default function MenuScreen() {
       setIsBarTabMode(true);
     }
   }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
+
+  // When menu screen loses focus, mark table params as consumed
+  // So when user returns via tab bar, stale table selection is cleared
+  useFocusEffect(
+    useCallback(() => {
+      // On focus: if params were already consumed (user left and came back via tab), clear table
+      if (tableParamsConsumedRef.current && selectedTable) {
+        setSelectedTable(null);
+        setExistingOrderId(null);
+        setCart([]);
+      }
+
+      return () => {
+        // On blur: mark params as consumed
+        tableParamsConsumedRef.current = true;
+      };
+    }, [selectedTable])
+  );
 
   // Auto-select pricing rule based on table floor
   useEffect(() => {
@@ -487,6 +527,26 @@ export default function MenuScreen() {
     }
     return item.price;
   }, [multiPricingEnabled, activePricingRuleId, pricingRules]);
+
+  // Takeaway pricing rule (for showing takeaway price on menu cards)
+  const takeawayRule = useMemo(() => {
+    if (!multiPricingEnabled) return null;
+    return pricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive) || null;
+  }, [multiPricingEnabled, pricingRules]);
+
+  const getItemTakeawayPrice = useCallback((item) => {
+    if (!takeawayRule) return null;
+    if (item.pricingRules && typeof item.pricingRules[takeawayRule.id] === 'number') {
+      return item.pricingRules[takeawayRule.id];
+    }
+    if (takeawayRule.defaultMarkupType === 'percentage' && takeawayRule.defaultMarkupValue) {
+      return Math.round(item.price * (1 + takeawayRule.defaultMarkupValue / 100) * 100) / 100;
+    }
+    if (takeawayRule.defaultMarkupType === 'flat' && takeawayRule.defaultMarkupValue) {
+      return Math.round((item.price + takeawayRule.defaultMarkupValue) * 100) / 100;
+    }
+    return null;
+  }, [takeawayRule]);
 
   // Handle order type change from CartModal/CashierCartModal → auto-select pricing rule
   const handleOrderTypeChange = useCallback((newType) => {
@@ -1462,7 +1522,17 @@ export default function MenuScreen() {
             )}
 
             <View style={styles.priceAddRow}>
-              <Text style={styles.menuItemPriceImage}>₹{getItemDisplayPrice(item)}</Text>
+              <View style={{ flexDirection: 'column' }}>
+                <Text style={styles.menuItemPriceImage}>₹{getItemDisplayPrice(item)}</Text>
+                {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
+                  const tp = getItemTakeawayPrice(item);
+                  return tp && tp !== getItemDisplayPrice(item) ? (
+                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }}>
+                      T: ₹{tp}
+                    </Text>
+                  ) : null;
+                })()}
+              </View>
               {quantity > 0 ? (
                 <View style={styles.quantityControlsImage}>
                   <TouchableOpacity
@@ -1545,7 +1615,15 @@ export default function MenuScreen() {
 
         {/* Bottom Section */}
         <View style={styles.bottomSectionNoImage}>
-          <Text style={styles.menuItemPriceNoImage}>₹{getItemDisplayPrice(item)}</Text>
+          <View style={{ flexDirection: 'column' }}>
+            <Text style={styles.menuItemPriceNoImage}>₹{getItemDisplayPrice(item)}</Text>
+            {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
+              const tp = getItemTakeawayPrice(item);
+              return tp && tp !== getItemDisplayPrice(item) ? (
+                <Text style={{ fontSize: 9, color: '#9ca3af', fontWeight: '600' }}>T: ₹{tp}</Text>
+              ) : null;
+            })()}
+          </View>
           {quantity > 0 ? (
             <View style={styles.quantityControlsNoImage}>
               <TouchableOpacity
@@ -1817,15 +1895,28 @@ export default function MenuScreen() {
 
       </Animated.View>
 
-      {/* Multi-Tier Pricing Rule Selector */}
-      {multiPricingEnabled && pricingRules.length > 0 && (
-        <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6, gap: 6, flexWrap: 'wrap', backgroundColor: '#faf5ff', borderBottomWidth: 1, borderBottomColor: '#e9d5ff' }}>
+      {/* Multi-Tier Pricing: Auto-applied info when table selects rule */}
+      {multiPricingEnabled && autoSelectedRule && activePricingRuleId && (() => {
+        const activeRule = pricingRules.find(r => r.id === activePricingRuleId);
+        return activeRule ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, gap: 6, backgroundColor: '#f0fdf4', borderBottomWidth: 1, borderBottomColor: '#bbf7d0' }}>
+            <Ionicons name="pricetag" size={13} color="#059669" />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#059669' }}>
+              {activeRule.name} pricing (auto-applied for this table)
+            </Text>
+          </View>
+        ) : null;
+      })()}
+
+      {/* Multi-Tier Pricing Rule Selector — hidden when table auto-selects a rule */}
+      {multiPricingEnabled && pricingRules.length > 0 && !autoSelectedRule && (
+        <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6, gap: 6, flexWrap: 'wrap', backgroundColor: '#f9fafb', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' }}>
           <TouchableOpacity
             onPress={() => { setActivePricingRuleId(null); setAutoSelectedRule(false); }}
             style={{
               paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
-              backgroundColor: !activePricingRuleId ? '#7c3aed' : '#f3f4f6',
-              borderWidth: 1, borderColor: !activePricingRuleId ? '#7c3aed' : '#d1d5db',
+              backgroundColor: !activePricingRuleId ? '#1f2937' : '#f3f4f6',
+              borderWidth: 1, borderColor: !activePricingRuleId ? '#1f2937' : '#d1d5db',
             }}
           >
             <Text style={{ fontSize: 12, fontWeight: '500', color: !activePricingRuleId ? '#fff' : '#6b7280' }}>Base Price</Text>
@@ -1836,16 +1927,15 @@ export default function MenuScreen() {
           }).map(rule => (
             <TouchableOpacity
               key={rule.id}
-              onPress={() => { if (!autoSelectedRule) setActivePricingRuleId(rule.id); }}
+              onPress={() => setActivePricingRuleId(rule.id)}
               style={{
                 paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
-                backgroundColor: activePricingRuleId === rule.id ? '#7c3aed' : '#f3f4f6',
-                borderWidth: 1, borderColor: activePricingRuleId === rule.id ? '#7c3aed' : '#d1d5db',
-                opacity: autoSelectedRule && activePricingRuleId !== rule.id ? 0.5 : 1,
+                backgroundColor: activePricingRuleId === rule.id ? '#1f2937' : '#f3f4f6',
+                borderWidth: 1, borderColor: activePricingRuleId === rule.id ? '#1f2937' : '#d1d5db',
               }}
             >
               <Text style={{ fontSize: 12, fontWeight: '500', color: activePricingRuleId === rule.id ? '#fff' : '#6b7280' }}>
-                {rule.name}{autoSelectedRule && activePricingRuleId === rule.id ? ' (auto)' : ''}
+                {rule.name}
               </Text>
             </TouchableOpacity>
           ))}
@@ -2606,6 +2696,7 @@ const styles = StyleSheet.create({
   quantityTextImage: {
     width: 32,
     height: 28,
+    lineHeight: 28,
     fontSize: 12,
     fontWeight: '800',
     color: '#fff',
@@ -2616,9 +2707,10 @@ const styles = StyleSheet.create({
   addButtonImage: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
     paddingHorizontal: 14,
-    paddingVertical: 7,
+    height: 28,
     borderRadius: 8,
     gap: 4,
     borderWidth: 2,

@@ -436,6 +436,7 @@ export default function OrdersScreen() {
   };
 
   const handleMarkCompleted = async (orderId) => {
+    const order = orders.find(o => o.id === orderId);
     Alert.alert(
       'Complete Order',
       'Mark this order as billing completed?',
@@ -447,6 +448,19 @@ export default function OrdersScreen() {
             try {
               await apiClient.updateOrderStatus(orderId, 'completed', restaurantId);
               if (restaurantId) loadOrdersInBackground(restaurantId);
+              // Show success with option to take new order
+              const tableInfo = order?.tableNumber ? ` (Table ${order.tableNumber})` : '';
+              Alert.alert(
+                'Billing Complete',
+                `Order #${order?.dailyOrderId || orderId.slice(-6).toUpperCase()}${tableInfo} has been completed successfully.`,
+                [
+                  { text: 'Stay Here', style: 'cancel' },
+                  {
+                    text: 'Take New Order',
+                    onPress: () => router.push('/(tabs)/tables'),
+                  },
+                ]
+              );
             } catch (error) {
               Alert.alert('Error', 'Failed to mark order as completed.');
             }
@@ -675,18 +689,27 @@ export default function OrdersScreen() {
 
   const loadOrderById = async (orderId) => {
     try {
-      if (!restaurantId) {
+      let rid = restaurantId;
+      if (!rid) {
         const userData = await apiClient.getUser();
-        const rid = userData.restaurantId || userData.restaurant?.id;
+        rid = userData.restaurantId || userData.restaurant?.id;
         if (rid) {
           setRestaurantId(rid);
         }
       }
 
-      if (restaurantId) {
-        const order = await apiClient.getOrderById(restaurantId, orderId);
+      if (rid) {
+        const order = await apiClient.getOrderById(rid, orderId);
         if (order) {
-          // Handle order details
+          // Auto-open order detail modal
+          openOrderDetail(order);
+          // If completeBilling param, auto-trigger billing
+          if (params.completeBilling === 'true' && order.status !== 'completed' && order.status !== 'cancelled') {
+            // Small delay to let modal render first
+            setTimeout(() => {
+              handleMarkCompleted(order.id);
+            }, 500);
+          }
         }
       }
     } catch (error) {

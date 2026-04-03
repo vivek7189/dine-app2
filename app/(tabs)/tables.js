@@ -114,12 +114,6 @@ export default function TablesScreen() {
       }
 
       setFloors(floorsData);
-      setSelectedFloor(prev => {
-        if (!prev && floorsData.length > 0) {
-          return floorsData[0];
-        }
-        return prev;
-      });
 
       const allTables = floorsData.flatMap(floor => floor.tables || []);
       setTables(allTables);
@@ -206,10 +200,7 @@ export default function TablesScreen() {
 
       setFloors(floorsData);
       setSelectedFloor(prev => {
-        if (!prev && floorsData.length > 0) {
-          return floorsData[0];
-        }
-        // Update selected floor with fresh data
+        // Keep "All" (null) as is; update selected floor with fresh data
         if (prev) {
           const updatedFloor = floorsData.find(f => f.id === prev.id);
           return updatedFloor || prev;
@@ -301,12 +292,6 @@ export default function TablesScreen() {
       if (cached?.data?.floors) {
         setFloors(cached.data.floors);
         setTables(cached.data.tables || []);
-        setSelectedFloor(prev => {
-          if (!prev && cached.data.floors.length > 0) {
-            return cached.data.floors[0];
-          }
-          return prev;
-        });
         setLoading(false);
         // Fetch fresh data in background
         setSyncing(true);
@@ -366,8 +351,38 @@ export default function TablesScreen() {
       }
       debouncedRefresh();
     });
-    channel.bind('order-updated', debouncedRefresh);
-    channel.bind('order-status-updated', debouncedRefresh);
+    channel.bind('order-updated', (data) => {
+      // Optimistic: when order is completed/cancelled via update, release the table
+      if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
+        setFloors(prevFloors => {
+          for (const floor of prevFloors) {
+            const match = floor.tables?.find(t => t.name === data.tableNumber);
+            if (match) {
+              updateTableStatusOptimistically(match.id, 'available', null);
+              break;
+            }
+          }
+          return prevFloors;
+        });
+      }
+      debouncedRefresh();
+    });
+    channel.bind('order-status-updated', (data) => {
+      // Optimistic: when order is completed/cancelled, release the table
+      if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
+        setFloors(prevFloors => {
+          for (const floor of prevFloors) {
+            const match = floor.tables?.find(t => t.name === data.tableNumber);
+            if (match) {
+              updateTableStatusOptimistically(match.id, 'available', null);
+              break;
+            }
+          }
+          return prevFloors;
+        });
+      }
+      debouncedRefresh();
+    });
     channel.bind('order-completed', debouncedRefresh);
     channel.bind('order-deleted', debouncedRefresh);
 
@@ -399,6 +414,12 @@ export default function TablesScreen() {
     return { available, occupied, reserved, total: tables.length };
   };
 
+  const getFloorForTable = useCallback((table) => {
+    if (selectedFloor) return selectedFloor;
+    // When "All" is selected, find which floor this table belongs to
+    return floors.find(f => f.tables?.some(t => t.id === table.id)) || null;
+  }, [selectedFloor, floors]);
+
   const handleTablePress = (table) => {
     // Don't allow any actions if table is out of service
     if (table.status === 'out-of-service') {
@@ -407,7 +428,8 @@ export default function TablesScreen() {
     }
 
     // Get floor name for multi-tier pricing auto-selection
-    const currentFloorName = selectedFloor?.name || selectedFloor?.floorName || '';
+    const tableFloor = getFloorForTable(table);
+    const currentFloorName = tableFloor?.name || tableFloor?.floorName || '';
 
     if (table.status === 'available') {
       router.push({
@@ -663,12 +685,21 @@ export default function TablesScreen() {
       </TouchableOpacity>
     );
 
-    // Wrap with pulse animation if table is being updated
+    // Show a subtle syncing overlay if table is being updated
     if (isUpdating) {
       return (
-        <Animated.View style={{ opacity: pulseAnim }}>
+        <View style={{ position: 'relative' }}>
           {cardContent}
-        </Animated.View>
+          <View style={{
+            position: 'absolute', top: 8, right: 8, zIndex: 10,
+            backgroundColor: 'rgba(255,255,255,0.85)', borderRadius: 12,
+            paddingHorizontal: 8, paddingVertical: 3,
+            flexDirection: 'row', alignItems: 'center', gap: 4,
+          }}>
+            <ActivityIndicator size={10} color={Colors.primary} />
+            <Text style={{ fontSize: 9, fontWeight: '600', color: Colors.primary }}>Syncing</Text>
+          </View>
+        </View>
       );
     }
 
@@ -759,8 +790,9 @@ export default function TablesScreen() {
 
   // Open add table modal
   const openAddTable = () => {
-    setTableForm({ name: '', capacity: '4', type: 'regular', floor: selectedFloor?.name || '' });
-    setBulkForm({ fromNumber: '', toNumber: '', capacity: '4', floor: selectedFloor?.name || '' });
+    const defaultFloorName = selectedFloor?.name || floors[0]?.name || '';
+    setTableForm({ name: '', capacity: '4', type: 'regular', floor: defaultFloorName });
+    setBulkForm({ fromNumber: '', toNumber: '', capacity: '4', floor: defaultFloorName });
     setAddTableMode('single');
     setShowAddTableModal(true);
   };
@@ -1017,6 +1049,30 @@ export default function TablesScreen() {
     );
   };
 
+  const renderAllChip = () => {
+    const isSelected = selectedFloor === null;
+    return (
+      <TouchableOpacity
+        style={[styles.floorChip, isSelected && styles.floorChipSelected]}
+        onPress={() => setSelectedFloor(null)}
+      >
+        <Ionicons
+          name="grid-outline"
+          size={14}
+          color={isSelected ? '#fff' : Colors.textMedium}
+        />
+        <Text style={[styles.floorChipText, isSelected && styles.floorChipTextSelected]}>
+          All
+        </Text>
+        <View style={[styles.floorBadge, isSelected && styles.floorBadgeSelected]}>
+          <Text style={[styles.floorBadgeText, isSelected && styles.floorBadgeTextSelected]}>
+            {tables.length}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -1029,7 +1085,8 @@ export default function TablesScreen() {
   }
 
   const stats = getTableStats();
-  let currentFloorTables = selectedFloor?.tables || [];
+  // When selectedFloor is null ("All"), show all tables; otherwise show selected floor's tables
+  let currentFloorTables = selectedFloor ? (selectedFloor.tables || []) : tables;
   
   // Sort tables: text-named tables first (alphabetically), then pure numbers (numerically)
   // Example: "Sofa", "apple sofa 1", "apple sofa 2", "banana table 1", then "1", "2", "3", "10"
@@ -1171,6 +1228,7 @@ export default function TablesScreen() {
             keyExtractor={(item) => item.id}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.floorChipsContainer}
+            ListHeaderComponent={floors.length > 1 ? renderAllChip : null}
             ListFooterComponent={isOwnerOrAdmin ? (
               <TouchableOpacity style={styles.addFloorChip} onPress={openAddFloor}>
                 <Ionicons name="add" size={16} color={Colors.primary} />
@@ -1222,7 +1280,15 @@ export default function TablesScreen() {
         orderId={selectedOrderId}
         tableNumber={selectedTableForOrder?.name}
         restaurantId={selectedRestaurant?.id}
-        onAddItems={orderModalMode === 'add' ? handleAddItemsToOrder : undefined}
+        userRole={user?.role}
+        onAddItems={handleAddItemsToOrder}
+        onCompleteBill={(order) => {
+          // Navigate to orders screen with billing mode
+          router.push({
+            pathname: '/(tabs)/orders',
+            params: { orderId: order.id, completeBilling: 'true' },
+          });
+        }}
       />
 
       {/* App Drawer */}
@@ -1933,7 +1999,7 @@ const styles = StyleSheet.create({
   },
   cardGradient: {
     padding: 10,
-    minHeight: 130,
+    height: 150,
     position: 'relative',
   },
   statusIndicator: {

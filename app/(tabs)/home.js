@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Animated,
+  Easing,
   Dimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -23,6 +25,43 @@ import { HeadquartersContent } from './headquarters';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
+
+// Animated loader shown while home data loads
+function HomeLoader() {
+  const spin = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spin, { toValue: 1, duration: 1200, easing: Easing.linear, useNativeDriver: true })
+    ).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  const rotation = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top']}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <Animated.View style={{ transform: [{ rotate: rotation }, { scale: pulse }], marginBottom: 20 }}>
+          <View style={{
+            width: 56, height: 56, borderRadius: 16, backgroundColor: '#ef4444',
+            justifyContent: 'center', alignItems: 'center',
+            shadowColor: '#ef4444', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12,
+          }}>
+            <Text style={{ color: '#fff', fontSize: 24, fontWeight: '900' }}>D</Text>
+          </View>
+        </Animated.View>
+        <Text style={{ fontSize: 15, fontWeight: '600', color: '#9ca3af', letterSpacing: 0.3 }}>Loading...</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -350,21 +389,14 @@ export default function HomeScreen() {
   };
 
   if (loading) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
-        </View>
-      </SafeAreaView>
-    );
+    return <HomeLoader />;
   }
 
   // ==================== Owner/Admin: Show HQ Dashboard (like web) ====================
   if (isOwnerOrManager && hasRestaurant) {
     return (
       <>
-        <HeadquartersContent embedded drawerToggle={() => setDrawerVisible(true)} />
+        <HeadquartersContent embedded drawerToggle={() => setDrawerVisible(true)} initialUser={user} />
         <AppDrawer
           visible={drawerVisible}
           onClose={() => setDrawerVisible(false)}
@@ -900,16 +932,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.backgroundLight,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: Spacing.md,
-    ...Typography.body,
-    color: Colors.textMedium,
   },
   scrollContent: {
     paddingBottom: 100,

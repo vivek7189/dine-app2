@@ -8,23 +8,18 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  TextInput,
-  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 
-export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems }) {
+export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, userRole }) {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Invoice Mode State
-  const [showInvoice, setShowInvoice] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerTaxId, setCustomerTaxId] = useState('');
-  const [invoiceEditable, setInvoiceEditable] = useState(false);
+  // Check if user can complete billing (owner, admin, manager)
+  const canCompleteBill = ['owner', 'admin', 'manager'].includes(userRole?.toLowerCase());
 
   useEffect(() => {
     if (visible && orderId && restaurantId) {
@@ -32,18 +27,8 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
     } else {
       setOrder(null);
       setError(null);
-      setShowInvoice(false);
-      setInvoiceEditable(false);
     }
   }, [visible, orderId, restaurantId]);
-
-  // Reset invoice state when order loads
-  useEffect(() => {
-    if (order) {
-      setCustomerName(order.customerInfo?.name || 'Customer');
-      setCustomerTaxId('');
-    }
-  }, [order]);
 
   const loadOrderDetails = async () => {
     setLoading(true);
@@ -136,43 +121,6 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
         return Colors.textMedium;
       default:
         return Colors.textMedium;
-    }
-  };
-
-  const toggleInvoice = () => {
-    setShowInvoice(!showInvoice);
-  };
-
-  const handleShareInvoice = async () => {
-    try {
-      const total = calculateTotal().toFixed(2);
-      const itemsList = order.items.map(item =>
-        `${item.quantity}x ${item.name || 'Item'} - ₹${(item.price * item.quantity).toFixed(2)}`
-      ).join('\n');
-
-      const invoiceText = `
-*INVOICE*
-${order?.restaurantName || 'Restaurant'}
-
-*Order #:* ${order?.dailyOrderId || order?.orderNumber || orderId?.slice(-6)}
-*Date:* ${formatDate(order.createdAt || new Date())}
-
-*Customer:* ${customerName}
-${customerTaxId ? `*GST/Tax ID:* ${customerTaxId}` : ''}
-
-*Items:*
-${itemsList}
-
-*TOTAL: ₹${total}*
-
-Thank you for your business!
-      `.trim();
-
-      await Share.share({
-        message: invoiceText,
-      });
-    } catch (error) {
-      Alert.alert('Error', 'Failed to share invoice');
     }
   };
 
@@ -335,68 +283,6 @@ Thank you for your business!
               </>
             ) : null}
 
-            {/* Invoice View */}
-            {order && showInvoice && (
-              <View style={styles.invoiceContainer}>
-                <View style={styles.invoiceHeader}>
-                  <Text style={styles.invoiceTitle}>INVOICE</Text>
-                  <Text style={styles.invoiceSubtitle}>{order?.restaurantName || 'Restaurant'}</Text>
-                  <Text style={styles.invoiceDate}>{formatDate(order.createdAt)}</Text>
-                </View>
-
-                {/* Editable Fields */}
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Customer Name</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={customerName}
-                    onChangeText={setCustomerName}
-                    placeholder="Enter customer name"
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>GST / Tax ID (Optional)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={customerTaxId}
-                    onChangeText={setCustomerTaxId}
-                    placeholder="Enter Tax ID"
-                  />
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Invoice Items */}
-                <View style={styles.invoiceItems}>
-                  {order.items.map((item, index) => (
-                    <View key={index} style={styles.invoiceItemRow}>
-                      <Text style={styles.invoiceItemName}>
-                        {item.quantity}x {item.name || 'Item'}
-                      </Text>
-                      <Text style={styles.invoiceItemPrice}>
-                        ₹{(item.price * item.quantity).toFixed(2)}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-
-                <View style={styles.divider} />
-
-                <View style={styles.invoiceTotalRow}>
-                  <Text style={styles.invoiceTotalLabel}>TOTAL AMOUNT</Text>
-                  <Text style={styles.invoiceTotalValue}>₹{calculateTotal().toFixed(2)}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.shareButton}
-                  onPress={handleShareInvoice}
-                >
-                  <Ionicons name="share-social" size={20} color="#fff" />
-                  <Text style={styles.shareButtonText}>Share Invoice</Text>
-                </TouchableOpacity>
-              </View>
-            )}
           </ScrollView>
           {/* Footer Actions */}
           {order && !loading && !error && (
@@ -408,12 +294,11 @@ Thank you for your business!
                 <Text style={styles.cancelButtonText}>Close</Text>
               </TouchableOpacity>
 
-              {!showInvoice && typeof onAddItems === 'function' && (
+              {order.status !== 'completed' && order.status !== 'cancelled' && typeof onAddItems === 'function' && (
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={() => {
                     onClose();
-                    // Pass order items to menu screen
                     if (order.items) {
                       const cartItems = order.items.map(item => ({
                         id: item.menuItemId || item.id,
@@ -432,19 +317,18 @@ Thank you for your business!
                 </TouchableOpacity>
               )}
 
-              <TouchableOpacity
-                style={[styles.invoiceButton, showInvoice && styles.invoiceButtonActive]}
-                onPress={toggleInvoice}
-              >
-                <Ionicons
-                  name={showInvoice ? "receipt" : "receipt-outline"}
-                  size={18}
-                  color={showInvoice ? "#fff" : Colors.primary}
-                />
-                <Text style={[styles.invoiceButtonText, showInvoice && styles.invoiceButtonTextActive]}>
-                  {showInvoice ? 'View Order' : 'Invoice'}
-                </Text>
-              </TouchableOpacity>
+              {order.status !== 'completed' && order.status !== 'cancelled' && canCompleteBill && typeof onCompleteBill === 'function' && (
+                <TouchableOpacity
+                  style={styles.completeBillButton}
+                  onPress={() => {
+                    onClose();
+                    onCompleteBill(order);
+                  }}
+                >
+                  <Ionicons name="checkmark-done" size={18} color="#fff" />
+                  <Text style={styles.completeBillButtonText}>Complete Bill</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </View>
@@ -686,6 +570,22 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   addButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  completeBillButton: {
+    flex: 1,
+    flexDirection: 'row',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
+  completeBillButtonText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',

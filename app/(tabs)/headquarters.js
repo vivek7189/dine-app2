@@ -27,11 +27,11 @@ const ROLE_FILTERS = ['All', 'Manager', 'Waiter', 'Cashier', 'Chef'];
 const STATUS_FILTERS = ['All', 'Active', 'Inactive'];
 const STOCK_FILTERS = ['All', 'Normal', 'Low', 'Out'];
 
-export function HeadquartersContent({ embedded = false, drawerToggle }) {
-  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} />;
+export function HeadquartersContent({ embedded = false, drawerToggle, initialUser = null }) {
+  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} initialUser={initialUser} />;
 }
 
-export default function HeadquartersScreen({ embedded = false, drawerToggle }) {
+export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null }) {
   const router = useRouter();
 
   // Auth/loading
@@ -98,7 +98,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle }) {
   // ── Data Loading ──────────────────────────────────
   const loadInitialData = async () => {
     try {
-      const userData = await apiClient.getUser();
+      const userData = initialUser || await apiClient.getUser();
       if (!userData) { router.replace('/(auth)/login'); return; }
       if (!embedded && userData.role !== 'owner') {
         Alert.alert('Access Denied', 'Headquarters is available for restaurant owners only.');
@@ -282,13 +282,12 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle }) {
     setRefreshing(false);
   };
 
-  // ── Render: Loading ──────────────────────────────
-  if (loading) {
+  // ── Render: Loading (only when opened standalone, not embedded) ──
+  if (loading && !embedded) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={{ marginTop: 12, color: Colors.textMedium }}>Loading Headquarters...</Text>
         </View>
       </SafeAreaView>
     );

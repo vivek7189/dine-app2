@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   RefreshControl, ScrollView,
@@ -22,7 +22,7 @@ import WasteTab from '../../components/inventory/WasteTab';
 import {
   AddEditItemModal, AddSupplierModal, AddEditRecipeModal,
   ViewRecipeModal, QuickStockModal, AddPurchaseOrderModal, QuickOrderModal,
-  LogWasteModal, AILeftoverModal,
+  LogWasteModal, AILeftoverModal, SmartImportModal,
 } from '../../components/inventory/InventoryModals';
 
 const TABS = [
@@ -38,6 +38,7 @@ const TABS = [
 export default function InventoryScreen() {
   const router = useRouter();
   const inv = useInventoryData();
+  const [showSmartImport, setShowSmartImport] = useState(false);
 
   // ── Init ──────────────────────────────────────────
   useEffect(() => {
@@ -217,6 +218,12 @@ export default function InventoryScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Inventory</Text>
         <TouchableOpacity
+          onPress={() => setShowSmartImport(true)}
+          style={[styles.headerBtn, { backgroundColor: '#059669' }]}
+        >
+          <Ionicons name="sparkles" size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
           onPress={() => inv.setShowQuickOrderModal(true)}
           style={[styles.headerBtn, { backgroundColor: '#7c3aed' }]}
         >
@@ -381,6 +388,13 @@ export default function InventoryScreen() {
         handleParseText={inv.handleParseText} handlePickOrderImage={inv.handlePickOrderImage}
         addManualItem={inv.addManualItem} updateManualItemQty={inv.updateManualItemQty}
         handleConfirmQuickOrder={inv.handleConfirmQuickOrder} resetQuickOrder={inv.resetQuickOrder}
+      />
+
+      <SmartImportModal
+        visible={showSmartImport}
+        onClose={() => setShowSmartImport(false)}
+        restaurantId={inv.restaurantId}
+        onSuccess={() => inv.refreshData()}
       />
     </SafeAreaView>
   );
