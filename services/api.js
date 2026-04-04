@@ -474,6 +474,13 @@ class ApiClient {
     return this.cachedGet(`/api/tables/${restaurantId}`, 2 * 60 * 1000); // 2 min
   }
 
+  // Reset all tables to available
+  async resetAllTables(restaurantId) {
+    return this.request(`/api/tables/${restaurantId}/reset-all`, {
+      method: 'POST',
+    });
+  }
+
   // Update table status
   async updateTableStatus(tableId, status, orderId = null, restaurantId = null) {
     const body = { status };

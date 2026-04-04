@@ -703,13 +703,8 @@ export default function OrdersScreen() {
         if (order) {
           // Auto-open order detail modal
           openOrderDetail(order);
-          // If completeBilling param, auto-trigger billing
-          if (params.completeBilling === 'true' && order.status !== 'completed' && order.status !== 'cancelled') {
-            // Small delay to let modal render first
-            setTimeout(() => {
-              handleMarkCompleted(order.id);
-            }, 500);
-          }
+          // completeBilling param just opens the detail modal — user clicks "Mark Complete" from there
+          // (no auto-trigger to avoid duplicate Alert + Modal prompts)
         }
       }
     } catch (error) {

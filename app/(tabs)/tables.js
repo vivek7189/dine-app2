@@ -147,7 +147,7 @@ export default function TablesScreen() {
             return {
               ...table,
               status: status,
-              currentOrderId: orderId || table.currentOrderId,
+              currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
               lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
             };
           }
@@ -162,7 +162,7 @@ export default function TablesScreen() {
           return {
             ...table,
             status: status,
-            currentOrderId: orderId || table.currentOrderId,
+            currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
             lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
           };
         }
@@ -385,6 +385,18 @@ export default function TablesScreen() {
     });
     channel.bind('order-completed', debouncedRefresh);
     channel.bind('order-deleted', debouncedRefresh);
+    channel.bind('tables-reset', () => {
+      setFloors(prev => prev.map(floor => ({
+        ...floor,
+        tables: floor.tables?.map(t =>
+          t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
+        ),
+      })));
+      setTables(prev => prev.map(t =>
+        t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
+      ));
+      debouncedRefresh();
+    });
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -457,6 +469,40 @@ export default function TablesScreen() {
     } else {
       Alert.alert('Table Unavailable', `Table ${table.name} is ${table.status}.`);
     }
+  };
+
+  const handleResetAllTables = async () => {
+    const occupiedCount = tables.filter(t => t.status === 'occupied').length;
+    if (occupiedCount === 0) {
+      Alert.alert('No Tables to Reset', 'All tables are already available.');
+      return;
+    }
+    Alert.alert(
+      'Reset All Tables',
+      `Free ${occupiedCount} occupied table(s)? This will mark them as available.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset All', style: 'destructive', onPress: async () => {
+            try {
+              await apiClient.resetAllTables(selectedRestaurant?.id);
+              // Optimistic update
+              setFloors(prev => prev.map(floor => ({
+                ...floor,
+                tables: floor.tables?.map(t =>
+                  t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
+                ),
+              })));
+              setTables(prev => prev.map(t =>
+                t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
+              ));
+            } catch (err) {
+              Alert.alert('Error', err.message || 'Failed to reset tables');
+            }
+          }
+        },
+      ]
+    );
   };
 
   const handleAddToOrder = (table) => {
@@ -707,6 +753,7 @@ export default function TablesScreen() {
   };
 
   const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());
+  const canResetTables = isOwnerOrAdmin || user?.pageAccess?.resetTables;
 
   const openAddFloor = () => {
     setEditingFloor(null);
@@ -1174,6 +1221,11 @@ export default function TablesScreen() {
           </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {canResetTables && (
+            <TouchableOpacity onPress={handleResetAllTables} style={styles.headerActionBtn}>
+              <Ionicons name="refresh-circle-outline" size={24} color="#ef4444" />
+            </TouchableOpacity>
+          )}
           {isOwnerOrAdmin && (
             <TouchableOpacity onPress={openAddTable} style={styles.headerActionBtn}>
               <Ionicons name="add-circle" size={28} color={Colors.primary} />
