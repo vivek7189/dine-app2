@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const PERIODS = [
   { key: 'today', label: 'Today' },
@@ -75,6 +76,7 @@ export default function WasteTab({
   onMarkExpiredWaste,
   onDismissExpired,
 }) {
+  const { fs } = useResponsive();
   const expiredAlerts = (expiryAlerts || []).filter(a => a.status === 'expired' || a.isExpired);
   const expiringSoonAlerts = (expiryAlerts || []).filter(a => !a.isExpired && a.status !== 'expired');
 
@@ -379,7 +381,8 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   summaryCard: {
-    width: '48%',
+    flex: 1,
+    minWidth: '40%',
     backgroundColor: '#fff',
     borderRadius: BorderRadius.large,
     padding: Spacing.md,

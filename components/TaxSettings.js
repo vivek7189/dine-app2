@@ -15,10 +15,12 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import { Colors, Spacing, BorderRadius } from '../constants/Theme';
+import { useResponsive } from '../hooks/useResponsive';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 
 export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
+  const { modalWidth } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [taxEnabled, setTaxEnabled] = useState(false);
@@ -495,7 +497,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         onRequestClose={() => setShowAddModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, modalWidth(400)]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingTax ? 'Edit Tax' : 'Add Tax'}
@@ -723,7 +725,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 400,
   },
   modalHeader: {
     flexDirection: 'row',

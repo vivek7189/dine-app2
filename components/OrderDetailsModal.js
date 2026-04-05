@@ -13,8 +13,10 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, userRole }) {
+  const { modalWidth } = useResponsive();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -133,7 +135,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.modalContainer}>
+        <View style={[styles.modalContainer, modalWidth(500)]}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerContent}>
@@ -353,7 +355,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: BorderRadius.lg,
     width: '100%',
-    maxWidth: 500,
     height: '85%',
     maxHeight: '90%',
     overflow: 'hidden',

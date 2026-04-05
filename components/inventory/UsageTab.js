@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const PERIODS = [
   { key: 'today', label: 'Today' },
@@ -20,6 +21,7 @@ export default function UsageTab({
   usageStartDate, setUsageStartDate, usageEndDate, setUsageEndDate,
   handlePeriodChange, applyCustomDateRange,
 }) {
+  const { fs } = useResponsive();
   const [showTransactions, setShowTransactions] = useState(false);
 
   return (
@@ -158,7 +160,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.textDark, marginTop: Spacing.lg, marginBottom: Spacing.sm },
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   summaryCard: {
-    width: '48%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
+    flex: 1, minWidth: '40%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
     padding: Spacing.md, ...Shadows.small,
   },
   summaryName: { fontSize: 13, fontWeight: '600', color: Colors.textDark },

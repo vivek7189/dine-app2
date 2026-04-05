@@ -98,6 +98,21 @@ export const Typography = {
   },
 };
 
+// Responsive variants - pass fs/sp from useResponsive hook
+export const ResponsiveTypography = (fs) => ({
+  h1: { fontSize: fs(32), fontWeight: '800', lineHeight: fs(40) },
+  h2: { fontSize: fs(24), fontWeight: '700', lineHeight: fs(32) },
+  h3: { fontSize: fs(20), fontWeight: '600', lineHeight: fs(28) },
+  body: { fontSize: fs(16), fontWeight: '400', lineHeight: fs(24) },
+  bodyBold: { fontSize: fs(16), fontWeight: '600', lineHeight: fs(24) },
+  caption: { fontSize: fs(14), fontWeight: '400', lineHeight: fs(20) },
+  small: { fontSize: fs(12), fontWeight: '400', lineHeight: fs(16) },
+});
+
+export const ResponsiveSpacing = (sp) => ({
+  xs: sp(4), sm: sp(8), md: sp(16), lg: sp(24), xl: sp(32), xxl: sp(48),
+});
+
 export const Shadows = {
   small: {
     shadowColor: '#000',

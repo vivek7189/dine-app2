@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors } from '../constants/Theme';
+import { useResponsive } from '../hooks/useResponsive';
 
 const BUSINESS_TYPE_LABELS = {
   bar: 'Bar',
@@ -29,6 +30,7 @@ export default function AppDrawer({
   currentRestaurantId,
   onSwitchRestaurant,
 }) {
+  const { r } = useResponsive();
   const router = useRouter();
   const [switching, setSwitching] = useState(null); // restaurantId being switched to
   const [expanded, setExpanded] = useState(false);
@@ -124,7 +126,7 @@ export default function AppDrawer({
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={styles.drawer}>
+        <View style={[styles.drawer, { maxWidth: r(320, 400) }]}>
           {/* Drawer Header */}
           <View style={styles.drawerHeader}>
             <View style={styles.headerContent}>
@@ -293,7 +295,6 @@ const styles = StyleSheet.create({
   },
   drawer: {
     width: '80%',
-    maxWidth: 320,
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: -2, height: 0 },

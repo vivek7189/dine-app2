@@ -16,6 +16,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
 
 export default function CashierInvoiceModal({
   visible,
@@ -23,6 +24,8 @@ export default function CashierInvoiceModal({
   invoiceData,
   onNewOrder,
 }) {
+  const { isTablet } = useResponsive();
+
   if (!invoiceData) return null;
 
   const formatDate = (date) => {
@@ -115,7 +118,7 @@ Thank you for your visit!
             body {
               font-family: 'Courier New', monospace;
               padding: 20px;
-              max-width: 400px;
+              max-width: ${isTablet ? '600px' : '400px'};
               margin: 0 auto;
               background: #fff;
             }

@@ -20,11 +20,14 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import MenuItemForm from '../../components/MenuItemForm';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
 export default function MenuManagementScreen() {
   const router = useRouter();
+  const { isTablet } = useResponsive();
+  const tabletContentStyle = isTablet ? { maxWidth: 800, alignSelf: 'center', width: '100%' } : undefined;
   const [menuItems, setMenuItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -925,7 +928,7 @@ export default function MenuManagementScreen() {
         data={filteredItems}
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, tabletContentStyle]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="search" size={48} color={Colors.textLight} />

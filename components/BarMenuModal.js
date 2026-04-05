@@ -11,8 +11,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
+import { useResponsive } from '../hooks/useResponsive';
 
 export default function BarMenuModal({ visible, onClose, menuItems, activeTab, onAddItem, onUpdateQty }) {
+  const { gridColumns } = useResponsive();
+  const cols = gridColumns();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
@@ -206,7 +209,8 @@ export default function BarMenuModal({ visible, onClose, menuItems, activeTab, o
         {/* Menu Grid */}
         <FlatList
           data={filteredItems}
-          numColumns={2}
+          numColumns={cols}
+          key={`bar-menu-${cols}`}
           keyExtractor={(item) => item.id || item._id}
           renderItem={renderMenuItem}
           contentContainerStyle={styles.menuGrid}
@@ -346,7 +350,7 @@ const styles = StyleSheet.create({
   },
   menuCard: {
     flex: 1,
-    maxWidth: '50%',
+    flex: 1,
   },
   menuCardInner: {
     backgroundColor: '#fff',

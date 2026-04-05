@@ -11,6 +11,8 @@ import apiClient from '../../services/api';
 import { Alert } from 'react-native';
 
 // Hook & components
+import { useOffline } from '../../hooks/useOffline';
+import OnlineOnly from '../../components/OnlineOnly';
 import useInventoryData from '../../components/inventory/useInventoryData';
 import DashboardTab from '../../components/inventory/DashboardTab';
 import StockTab from '../../components/inventory/StockTab';
@@ -37,6 +39,7 @@ const TABS = [
 
 export default function InventoryScreen() {
   const router = useRouter();
+  const { effectivelyOffline } = useOffline();
   const inv = useInventoryData();
   const [showSmartImport, setShowSmartImport] = useState(false);
 
@@ -180,12 +183,14 @@ export default function InventoryScreen() {
         );
       case 'insights':
         return (
-          <InsightsTab
-            aiReorderSuggestions={inv.aiReorderSuggestions}
-            wastePredictions={inv.wastePredictions} wasteSummary={inv.wasteSummary}
-            inventoryItems={inv.inventoryItems} lowStockCount={inv.lowStockCount}
-            totalValue={inv.totalValue} getStockStatus={inv.getStockStatus}
-          />
+          <OnlineOnly mode="badge">
+            <InsightsTab
+              aiReorderSuggestions={inv.aiReorderSuggestions}
+              wastePredictions={inv.wastePredictions} wasteSummary={inv.wasteSummary}
+              inventoryItems={inv.inventoryItems} lowStockCount={inv.lowStockCount}
+              totalValue={inv.totalValue} getStockStatus={inv.getStockStatus}
+            />
+          </OnlineOnly>
         );
       case 'waste':
         return (
@@ -217,6 +222,12 @@ export default function InventoryScreen() {
           <Ionicons name="arrow-back" size={24} color={Colors.textDark} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Inventory</Text>
+        {effectivelyOffline && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginRight: 4 }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
+            <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
+          </View>
+        )}
         <TouchableOpacity
           onPress={() => setShowSmartImport(true)}
           style={[styles.headerBtn, { backgroundColor: '#059669' }]}

@@ -2,15 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, Alert, ActivityIndicator, RefreshControl,
-  FlatList, Dimensions, Switch, Image,
+  FlatList, Switch, Image,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { useResponsive } from '../../hooks/useResponsive';
 const TABS = [
   { key: 'overview', label: 'Overview', icon: 'bar-chart' },
   { key: 'staff', label: 'Staff', icon: 'people' },
@@ -33,6 +32,9 @@ export function HeadquartersContent({ embedded = false, drawerToggle, initialUse
 
 export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null }) {
   const router = useRouter();
+  const { width: SCREEN_WIDTH, isTablet } = useResponsive();
+  const metricCols = isTablet ? 4 : 2;
+  const metricCardWidth = (SCREEN_WIDTH - 42) / metricCols;
 
   // Auth/loading
   const [user, setUser] = useState(null);
@@ -387,14 +389,14 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
       <View style={styles.tabContent}>
         {/* Metric Cards */}
         <View style={styles.metricGrid}>
-          <View style={[styles.metricCard, { backgroundColor: '#f3f0ff' }]}>
+          <View style={[styles.metricCard, { width: metricCardWidth }, { backgroundColor: '#f3f0ff' }]}>
             <View style={[styles.metricIcon, { backgroundColor: '#8b5cf6' }]}>
               <Ionicons name="business" size={20} color="#fff" />
             </View>
             <Text style={styles.metricValue}>{totals.totalRestaurants || restaurants.length}</Text>
             <Text style={styles.metricLabel}>Total Restaurants</Text>
           </View>
-          <View style={[styles.metricCard, { backgroundColor: '#ecfdf5' }]}>
+          <View style={[styles.metricCard, { width: metricCardWidth }, { backgroundColor: '#ecfdf5' }]}>
             <View style={[styles.metricIcon, { backgroundColor: '#10b981' }]}>
               <Ionicons name="cash" size={20} color="#fff" />
             </View>
@@ -404,14 +406,14 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
               <Text style={styles.metricSubLabel}>incl. tax: {formatCurrency(totals.totalRevenueWithTax)}</Text>
             )}
           </View>
-          <View style={[styles.metricCard, { backgroundColor: '#eff6ff' }]}>
+          <View style={[styles.metricCard, { width: metricCardWidth }, { backgroundColor: '#eff6ff' }]}>
             <View style={[styles.metricIcon, { backgroundColor: '#3b82f6' }]}>
               <Ionicons name="cart" size={20} color="#fff" />
             </View>
             <Text style={styles.metricValue}>{totals.totalOrders || totals.totalTodayOrders || 0}</Text>
             <Text style={styles.metricLabel}>Total Orders</Text>
           </View>
-          <View style={[styles.metricCard, { backgroundColor: '#fffbeb' }]}>
+          <View style={[styles.metricCard, { width: metricCardWidth }, { backgroundColor: '#fffbeb' }]}>
             <View style={[styles.metricIcon, { backgroundColor: '#f59e0b' }]}>
               <Ionicons name="trending-up" size={20} color="#fff" />
             </View>
@@ -1075,7 +1077,7 @@ const styles = StyleSheet.create({
   tabContent: { padding: 16 },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   metricCard: {
-    width: (SCREEN_WIDTH - 42) / 2, borderRadius: 14, padding: 14,
+    borderRadius: 14, padding: 14,
   },
   metricIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   metricValue: { fontSize: 22, fontWeight: '800', color: '#1f2937' },

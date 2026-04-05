@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
@@ -75,7 +76,7 @@ function calculateOfferDiscount(offer, cartItems, subtotal) {
     return 0;
   }
 
-  // Regular discount — determine base
+  // Regular discount -- determine base
   let discountBase = subtotal;
 
   if (offer.scope === 'category' && offer.targetCategories?.length > 0) {
@@ -100,24 +101,49 @@ export default function OfferSelector({
   restaurantId,
   cartItems = [],
   subtotal = 0,
+  // Legacy single-offer props (backward compat)
   onOfferSelected,
-  onManualDiscountChange,
   selectedOfferId = null,
+  // Multi-offer props
+  selectedOfferIds: selectedOfferIdsProp,
+  onOffersChanged,
+  onOfferSettingsLoaded,
+  // Manual discount
+  onManualDiscountChange,
   manualDiscount = '',
   manualDiscountType = 'flat',
   customerInfo = null,
 }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [showOffers, setShowOffers] = useState(false);
+  const [offerSettings, setOfferSettings] = useState({
+    allowMultipleOffers: false,
+    maxOffersAllowed: 1,
+    autoApplyBestOffer: true,
+  });
+  const [autoAppliedIds, setAutoAppliedIds] = useState(new Set());
+  const [firstOrderWarning, setFirstOrderWarning] = useState('');
   const [localManualDiscount, setLocalManualDiscount] = useState(manualDiscount);
   const [localDiscountType, setLocalDiscountType] = useState(manualDiscountType);
-  const [autoApplied, setAutoApplied] = useState(false);
-  const [firstOrderWarning, setFirstOrderWarning] = useState('');
   const wasManuallySelected = useRef(false);
 
+  // Derive effective selectedOfferIds from either multi or single prop
+  const selectedIds = useMemo(() => {
+    if (selectedOfferIdsProp && Array.isArray(selectedOfferIdsProp)) {
+      return selectedOfferIdsProp;
+    }
+    if (selectedOfferId) return [selectedOfferId];
+    return [];
+  }, [selectedOfferIdsProp, selectedOfferId]);
+
+  const isMultiMode = offerSettings.allowMultipleOffers;
+  const maxOffers = offerSettings.maxOffersAllowed || 1;
+
   useEffect(() => {
-    if (restaurantId) loadOffers();
+    if (restaurantId) {
+      loadOffers();
+      loadOfferSettings();
+    }
   }, [restaurantId]);
 
   // Re-fetch when customerInfo.isFirstOrder changes
@@ -129,15 +155,65 @@ export default function OfferSelector({
 
   // First-order offer rejection
   useEffect(() => {
-    if (customerInfo?.isFirstOrder === false && selectedOfferId) {
-      const selectedOffer = offers.find(o => (o.id || o._id) === selectedOfferId);
-      if (selectedOffer?.isFirstOrderOnly) {
-        if (onOfferSelected) onOfferSelected(null, 0, null);
-        setFirstOrderWarning('Offer removed — not a first-time customer');
+    if (customerInfo?.isFirstOrder === false && selectedIds.length > 0) {
+      const rejectedIds = [];
+      for (const id of selectedIds) {
+        const offer = offers.find(o => (o.id || o._id) === id);
+        if (offer?.isFirstOrderOnly) {
+          rejectedIds.push(id);
+        }
+      }
+      if (rejectedIds.length > 0) {
+        const newIds = selectedIds.filter(id => !rejectedIds.includes(id));
+        notifySelection(newIds);
+        setFirstOrderWarning('Offer removed -- not a first-time customer');
         setTimeout(() => setFirstOrderWarning(''), 5000);
       }
     }
   }, [customerInfo?.isFirstOrder]);
+
+  const loadOfferSettings = async () => {
+    try {
+      const response = await apiClient.getPublicCustomerAppSettings(restaurantId);
+      const settings = response?.offerSettings || response?.settings?.offerSettings || {};
+      const resolved = {
+        allowMultipleOffers: settings.allowMultipleOffers || false,
+        maxOffersAllowed: settings.maxOffersAllowed || 1,
+        autoApplyBestOffer: settings.autoApplyBestOffer !== undefined ? settings.autoApplyBestOffer : true,
+      };
+      setOfferSettings(resolved);
+      if (onOfferSettingsLoaded) onOfferSettingsLoaded(resolved);
+    } catch (error) {
+      // Settings load failed, keep defaults (single offer, auto-apply on)
+      console.warn('Could not load offer settings:', error);
+    }
+  };
+
+  // Notify parent of selection changes
+  const notifySelection = useCallback((ids) => {
+    const selectedOffers = ids.map(id => offers.find(o => (o.id || o._id) === id)).filter(Boolean);
+    const totalDiscount = selectedOffers.reduce(
+      (sum, offer) => sum + calculateOfferDiscount(offer, cartItems, subtotal),
+      0
+    );
+
+    // Multi-offer callback
+    if (onOffersChanged) {
+      onOffersChanged(ids, totalDiscount, selectedOffers);
+    }
+
+    // Backward compat: single-offer callback
+    if (onOfferSelected) {
+      if (ids.length === 0) {
+        onOfferSelected(null, 0, null);
+      } else {
+        // Report the first/primary selected offer
+        const primary = selectedOffers[0];
+        const primaryDiscount = primary ? calculateOfferDiscount(primary, cartItems, subtotal) : 0;
+        onOfferSelected(ids[0], primaryDiscount, primary);
+      }
+    }
+  }, [offers, cartItems, subtotal, onOffersChanged, onOfferSelected]);
 
   const loadOffers = async () => {
     setLoading(true);
@@ -156,20 +232,19 @@ export default function OfferSelector({
         .filter(isOfferActiveNow)
         .filter(isDateValid)
         .filter(o => {
-          // Min order value filter
           if ((o.minimumOrder || o.minOrderValue) && subtotal < (o.minimumOrder || o.minOrderValue)) return false;
           return true;
         })
         .filter(o => {
-          // First-order filter
           if (o.isFirstOrderOnly && customerInfo?.isFirstOrder === false) return false;
           return true;
         });
 
       setOffers(activeOffers);
 
-      // Auto-apply best offer
-      if (!wasManuallySelected.current && activeOffers.length > 0) {
+      // Auto-apply best offer if setting allows and user hasn't manually selected
+      if (!wasManuallySelected.current && activeOffers.length > 0 && selectedIds.length === 0) {
+        // Use current offerSettings or default (autoApplyBestOffer defaults to true)
         let bestOffer = null;
         let bestDiscount = 0;
 
@@ -181,10 +256,18 @@ export default function OfferSelector({
           }
         }
 
-        if (bestOffer && bestDiscount > 0 && !selectedOfferId) {
-          const offerId = bestOffer.id || bestOffer._id;
-          if (onOfferSelected) onOfferSelected(offerId, bestDiscount, bestOffer);
-          setAutoApplied(true);
+        if (bestOffer && bestDiscount > 0) {
+          const bestId = bestOffer.id || bestOffer._id;
+          setAutoAppliedIds(new Set([bestId]));
+
+          // Notify via callbacks
+          const selectedOffers = [bestOffer];
+          if (onOffersChanged) {
+            onOffersChanged([bestId], bestDiscount, selectedOffers);
+          }
+          if (onOfferSelected) {
+            onOfferSelected(bestId, bestDiscount, bestOffer);
+          }
         }
       }
     } catch (error) {
@@ -194,19 +277,31 @@ export default function OfferSelector({
     }
   };
 
-  const handleSelectOffer = (offer) => {
+  const handleChipPress = (offer) => {
     const offerId = offer.id || offer._id;
     wasManuallySelected.current = true;
-    setAutoApplied(false);
+    setAutoAppliedIds(new Set());
 
-    if (selectedOfferId === offerId) {
-      // Deselect
-      if (onOfferSelected) onOfferSelected(null, 0, null);
+    const isCurrentlySelected = selectedIds.includes(offerId);
+
+    let newIds;
+    if (isCurrentlySelected) {
+      // Deselect this offer
+      newIds = selectedIds.filter(id => id !== offerId);
+    } else if (isMultiMode) {
+      // Multi-select mode: add if under limit
+      if (selectedIds.length >= maxOffers) {
+        // At limit -- replace the oldest selection
+        newIds = [...selectedIds.slice(1), offerId];
+      } else {
+        newIds = [...selectedIds, offerId];
+      }
     } else {
-      const discount = calculateOfferDiscount(offer, cartItems, subtotal);
-      if (onOfferSelected) onOfferSelected(offerId, discount, offer);
+      // Single-select mode: replace
+      newIds = [offerId];
     }
-    setShowOffers(false);
+
+    notifySelection(newIds);
   };
 
   const handleManualDiscountChange = (value) => {
@@ -232,8 +327,14 @@ export default function OfferSelector({
     return Math.min(val, subtotal);
   };
 
-  const selectedOffer = offers.find(o => (o.id || o._id) === selectedOfferId);
-  const selectedOfferDiscount = selectedOffer ? calculateOfferDiscount(selectedOffer, cartItems, subtotal) : 0;
+  // Compute total offer discount for display
+  const totalOfferDiscount = useMemo(() => {
+    return selectedIds.reduce((sum, id) => {
+      const offer = offers.find(o => (o.id || o._id) === id);
+      if (!offer) return sum;
+      return sum + calculateOfferDiscount(offer, cartItems, subtotal);
+    }, 0);
+  }, [selectedIds, offers, cartItems, subtotal]);
 
   return (
     <View style={styles.container}>
@@ -245,69 +346,74 @@ export default function OfferSelector({
         </View>
       )}
 
-      {/* Offer Selection */}
+      {/* Offer Chips */}
       {offers.length > 0 && (
         <View style={styles.offerSection}>
-          <TouchableOpacity
-            style={[styles.offerToggle, autoApplied && styles.offerToggleAutoApplied]}
-            onPress={() => setShowOffers(!showOffers)}
-          >
-            <Ionicons name="pricetag-outline" size={16} color="#8b5cf6" />
-            <Text style={styles.offerToggleText}>
-              {selectedOffer
-                ? `${selectedOffer.name} (-₹${selectedOfferDiscount.toFixed(0)})`
-                : `${offers.length} offer${offers.length > 1 ? 's' : ''} available`}
+          <View style={styles.offerHeader}>
+            <Ionicons name="pricetag-outline" size={14} color="#8b5cf6" />
+            <Text style={styles.offerHeaderText}>
+              {offers.length} offer{offers.length > 1 ? 's' : ''} available
             </Text>
-            {autoApplied && (
-              <View style={styles.autoAppliedBadge}>
-                <Text style={styles.autoAppliedText}>Auto</Text>
-              </View>
+            {isMultiMode && maxOffers > 1 && (
+              <Text style={styles.offerLimitText}>
+                (select up to {maxOffers})
+              </Text>
             )}
-            <Ionicons name={showOffers ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMedium} />
-          </TouchableOpacity>
+            {totalOfferDiscount > 0 && (
+              <Text style={styles.totalDiscountText}>
+                -₹{totalOfferDiscount.toFixed(0)}
+              </Text>
+            )}
+          </View>
 
-          {showOffers && (
-            <View style={styles.offerList}>
-              {offers.map((offer) => {
-                const offerId = offer.id || offer._id;
-                const discount = calculateOfferDiscount(offer, cartItems, subtotal);
-                const isSelected = selectedOfferId === offerId;
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.chipsScroll}
+            contentContainerStyle={styles.chipsContainer}
+          >
+            {offers.map((offer) => {
+              const offerId = offer.id || offer._id;
+              const discount = calculateOfferDiscount(offer, cartItems, subtotal);
+              const isSelected = selectedIds.includes(offerId);
+              const isAutoApplied = autoAppliedIds.has(offerId) && isSelected;
 
-                return (
-                  <TouchableOpacity
-                    key={offerId}
-                    style={[styles.offerItem, isSelected && styles.offerItemSelected]}
-                    onPress={() => handleSelectOffer(offer)}
-                  >
-                    <View style={styles.offerItemLeft}>
-                      <Text style={[styles.offerName, isSelected && styles.offerNameSelected]}>
-                        {offer.name}
+              return (
+                <TouchableOpacity
+                  key={offerId}
+                  style={[
+                    styles.chip,
+                    isSelected && styles.chipSelected,
+                    isAutoApplied && styles.chipAutoApplied,
+                  ]}
+                  onPress={() => handleChipPress(offer)}
+                  activeOpacity={0.7}
+                >
+                  {isSelected && (
+                    <Ionicons name="checkmark-circle" size={14} color="#7c3aed" style={styles.chipCheckmark} />
+                  )}
+                  <View style={styles.chipTextContainer}>
+                    <Text
+                      style={[styles.chipName, isSelected && styles.chipNameSelected]}
+                      numberOfLines={1}
+                    >
+                      {offer.name}
+                    </Text>
+                    {discount > 0 && (
+                      <Text style={[styles.chipSaves, isSelected && styles.chipSavesSelected]}>
+                        saves ₹{discount.toFixed(0)}
                       </Text>
-                      <Text style={styles.offerDetail}>
-                        {offer.discountType === 'percentage'
-                          ? `${offer.discountValue}% off`
-                          : `₹${offer.discountValue} off`}
-                        {offer.scope !== 'order' ? ` (${offer.scope})` : ''}
-                        {offer.promotionType === 'bogo' ? ' BOGO' : ''}
-                        {offer.schedule?.type === 'recurring' ? ' ⏰' : ''}
-                        {offer.isFirstOrderOnly ? ' (1st order)' : ''}
-                      </Text>
+                    )}
+                  </View>
+                  {isAutoApplied && (
+                    <View style={styles.autoBadge}>
+                      <Text style={styles.autoBadgeText}>Auto</Text>
                     </View>
-                    <View style={styles.offerItemRight}>
-                      {discount > 0 && (
-                        <Text style={[styles.offerDiscount, isSelected && styles.offerDiscountSelected]}>
-                          saves ₹{discount.toFixed(0)}
-                        </Text>
-                      )}
-                      {isSelected && (
-                        <Ionicons name="checkmark-circle" size={18} color="#8b5cf6" />
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
 
@@ -371,87 +477,95 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     flex: 1,
   },
-  // Offers
+  // Offer section
   offerSection: {
     marginBottom: 12,
   },
-  offerToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#f5f3ff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e9d5ff',
-  },
-  offerToggleAutoApplied: {
-    borderColor: '#22c55e',
-    backgroundColor: '#f0fdf4',
-  },
-  offerToggleText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6d28d9',
-  },
-  autoAppliedBadge: {
-    backgroundColor: '#dcfce7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  autoAppliedText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#16a34a',
-  },
-  offerList: {
-    marginTop: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  offerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  offerItemSelected: {
-    backgroundColor: '#f5f3ff',
-  },
-  offerItemLeft: {
-    flex: 1,
-  },
-  offerName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  offerNameSelected: {
-    color: '#6d28d9',
-  },
-  offerDetail: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  offerItemRight: {
+  offerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginBottom: 8,
   },
-  offerDiscount: {
-    fontSize: 12,
+  offerHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6d28d9',
+  },
+  offerLimitText: {
+    fontSize: 11,
+    color: '#9ca3af',
+  },
+  totalDiscountText: {
+    fontSize: 13,
     fontWeight: '700',
     color: '#10b981',
+    marginLeft: 'auto',
   },
-  offerDiscountSelected: {
+  // Chips
+  chipsScroll: {
+    flexGrow: 0,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 1,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    maxWidth: 200,
+    gap: 4,
+  },
+  chipSelected: {
+    backgroundColor: '#f5f3ff',
+    borderColor: '#c4b5fd',
+  },
+  chipAutoApplied: {
+    borderColor: '#22c55e',
+    backgroundColor: '#f0fdf4',
+  },
+  chipCheckmark: {
+    marginRight: 2,
+  },
+  chipTextContainer: {
+    flexShrink: 1,
+  },
+  chipName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  chipNameSelected: {
     color: '#6d28d9',
+  },
+  chipSaves: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#10b981',
+    marginTop: 1,
+  },
+  chipSavesSelected: {
+    color: '#7c3aed',
+  },
+  autoBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 6,
+    marginLeft: 4,
+  },
+  autoBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#16a34a',
   },
   // Loading
   loadingRow: {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useResponsive } from '../../hooks/useResponsive';
 
 /**
  * Multi-tier pricing rule selector.
@@ -13,17 +14,19 @@ export default function PricingRuleSelector({
   autoSelectedRule = false,
   multiPricingEnabled = false,
 }) {
+  const { fs } = useResponsive();
+
   if (!multiPricingEnabled || pricingRules.length === 0) return null;
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Ionicons name="pricetags-outline" size={14} color="#6b7280" />
-        <Text style={styles.headerText}>Pricing Zone</Text>
+        <Ionicons name="pricetags-outline" size={fs(14)} color="#6b7280" />
+        <Text style={[styles.headerText, { fontSize: fs(11) }]}>Pricing Zone</Text>
         {autoSelectedRule && (
           <View style={styles.autoBadge}>
-            <Ionicons name="lock-closed" size={10} color="#059669" />
-            <Text style={styles.autoText}>Auto</Text>
+            <Ionicons name="lock-closed" size={fs(10)} color="#059669" />
+            <Text style={[styles.autoText, { fontSize: fs(9) }]}>Auto</Text>
           </View>
         )}
       </View>
@@ -45,6 +48,7 @@ export default function PricingRuleSelector({
             >
               <Text style={[
                 styles.pillText,
+                { fontSize: fs(12) },
                 isActive && styles.pillTextActive,
               ]}>
                 {rule.name}

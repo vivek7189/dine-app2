@@ -23,6 +23,8 @@ import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
+import { useOffline } from '../hooks/useOffline';
 
 export default function CashierCartModal({
   visible,
@@ -46,6 +48,8 @@ export default function CashierCartModal({
   setActivePricingRuleId,
   autoSelectedRule = false,
 }) {
+  const { fs } = useResponsive();
+  const { effectivelyOffline } = useOffline();
   const [orderType, setOrderType] = useState('counter');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
@@ -60,8 +64,10 @@ export default function CashierCartModal({
 
   // Offer/discount state
   const [selectedOfferId, setSelectedOfferId] = useState(null);
+  const [selectedOfferIds, setSelectedOfferIds] = useState([]);
   const [offerDiscount, setOfferDiscount] = useState(0);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [selectedOffers, setSelectedOffers] = useState([]);
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
@@ -143,6 +149,20 @@ export default function CashierCartModal({
     setSelectedOffer(offer);
   }, []);
 
+  const handleOffersChanged = useCallback((ids, totalDiscount, offers) => {
+    setSelectedOfferIds(ids);
+    setOfferDiscount(totalDiscount);
+    setSelectedOffers(offers);
+    // Also update single-offer state for backward compat
+    if (ids.length > 0) {
+      setSelectedOfferId(ids[0]);
+      setSelectedOffer(offers[0] || null);
+    } else {
+      setSelectedOfferId(null);
+      setSelectedOffer(null);
+    }
+  }, []);
+
   const handleManualDiscountChange = useCallback((value, type) => {
     setManualDiscount(value);
     setManualDiscountType(type);
@@ -155,7 +175,9 @@ export default function CashierCartModal({
     totalDiscount: billing.totalDiscount,
     redeemLoyaltyPoints: redeemPoints,
     selectedOfferId,
+    selectedOfferIds: selectedOfferIds.length > 0 ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : []),
     selectedOfferName: selectedOffer?.name || null,
+    selectedOfferNames: selectedOffers.length > 0 ? selectedOffers.map(o => o.name) : (selectedOffer ? [selectedOffer.name] : []),
     customerPhone: customerMobile || customerData?.phone || '',
     customerId: customerData?.id || customerData?._id || null,
     serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
@@ -329,6 +351,7 @@ export default function CashierCartModal({
                   <CustomerLookup
                     restaurantId={restaurantId}
                     countryCode={countryCode}
+                    subtotal={subtotal}
                     onCustomerFound={handleCustomerFound}
                     onPhoneChange={(phone) => setCustomerMobile(phone)}
                     onRedeemChange={setRedeemPoints}
@@ -349,8 +372,10 @@ export default function CashierCartModal({
                   cartItems={cart}
                   subtotal={subtotal}
                   onOfferSelected={handleOfferSelected}
+                  onOffersChanged={handleOffersChanged}
                   onManualDiscountChange={handleManualDiscountChange}
                   selectedOfferId={selectedOfferId}
+                  selectedOfferIds={selectedOfferIds}
                   manualDiscount={manualDiscount}
                   manualDiscountType={manualDiscountType}
                   customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
@@ -419,6 +444,10 @@ export default function CashierCartModal({
                 tipPercentage={tipPercentage}
                 roundOffAmount={billing.roundOffAmount}
                 grandTotal={billing.grandTotal}
+                offerDiscount={offerDiscount}
+                offerName={selectedOffer?.name || null}
+                manualDiscount={manualDiscountAmount}
+                loyaltyDiscount={loyaltyDiscount}
               />
               {billing.totalDiscount > 0 && (
                 <Text style={styles.savingsText}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
@@ -429,7 +458,7 @@ export default function CashierCartModal({
                 <View style={styles.paymentRow}>
                   <Ionicons name="card-outline" size={14} color="#6b7280" />
                   <Text style={styles.paymentLabel}>Pay</Text>
-                  {['cash', 'upi', 'card'].map((method) => (
+                  {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
                     <TouchableOpacity
                       key={method}
                       style={[styles.paymentPill, paymentMethod === method && styles.paymentPillActive]}
@@ -442,6 +471,9 @@ export default function CashierCartModal({
                     </TouchableOpacity>
                   ))}
                 </View>
+              )}
+              {effectivelyOffline && (
+                <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, marginLeft: 4 }}>UPI/Card unavailable offline</Text>
               )}
 
               {/* Spacer for bottom button */}
@@ -463,8 +495,8 @@ export default function CashierCartModal({
               ) : (
                 <>
                   <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                  <Text style={styles.completeButtonText}>Complete Billing</Text>
-                  <Text style={styles.completeButtonAmount}>₹{billing.grandTotal.toFixed(0)}</Text>
+                  <Text style={[styles.completeButtonText, { fontSize: fs(15) }]}>Complete Billing</Text>
+                  <Text style={[styles.completeButtonAmount, { fontSize: fs(17) }]}>₹{billing.grandTotal.toFixed(0)}</Text>
                 </>
               )}
             </TouchableOpacity>

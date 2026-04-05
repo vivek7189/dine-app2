@@ -12,9 +12,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 
 export default function MoreScreen() {
   const router = useRouter();
+  const { isTablet } = useResponsive();
+  const { effectivelyOffline, pendingCount, failedCount } = useOffline();
+  const tabletContentStyle = isTablet ? { maxWidth: 600, alignSelf: 'center', width: '100%' } : undefined;
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
 
@@ -168,7 +173,7 @@ export default function MoreScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, tabletContentStyle]} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>More</Text>
@@ -188,6 +193,28 @@ export default function MoreScreen() {
           </View>
           <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
         </TouchableOpacity>
+
+        {/* Offline / Sync Status */}
+        {(effectivelyOffline || pendingCount > 0 || failedCount > 0) && (
+          <View style={[styles.sectionCard, { marginHorizontal: Spacing.md, marginBottom: Spacing.lg, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+            <Ionicons name={effectivelyOffline ? 'cloud-offline' : 'cloud-done'} size={22} color={effectivelyOffline ? '#f59e0b' : '#22c55e'} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>
+                {effectivelyOffline ? 'Offline Mode' : 'Online'}
+              </Text>
+              {(pendingCount > 0 || failedCount > 0) && (
+                <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 1 }}>
+                  {pendingCount > 0 ? `${pendingCount} pending` : ''}{pendingCount > 0 && failedCount > 0 ? ' · ' : ''}{failedCount > 0 ? `${failedCount} failed` : ''}
+                </Text>
+              )}
+            </View>
+            {pendingCount > 0 && (
+              <View style={{ backgroundColor: '#3b82f6', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{pendingCount}</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Menu Sections */}
         {menuSections.map((section) => {

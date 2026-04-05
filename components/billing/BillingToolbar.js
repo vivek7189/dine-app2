@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, LayoutAnimation } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useResponsive } from '../../hooks/useResponsive';
 
 /**
  * Horizontal scroll of billing feature pill buttons.
@@ -19,6 +20,7 @@ export default function BillingToolbar({
   selectedCompItems = [],
   selectedVoidItems = [],
 }) {
+  const { fs } = useResponsive();
   const buttons = [];
 
   if (billingSettings.serviceChargeEnabled) {
@@ -71,8 +73,8 @@ export default function BillingToolbar({
               setActiveBillingPanel(activeBillingPanel === btn.key ? null : btn.key);
             }}
           >
-            <Ionicons name={btn.icon} size={16} color={active ? '#fff' : btn.color} />
-            <Text style={[styles.label, active && { color: '#fff' }]}>{btn.label}</Text>
+            <Ionicons name={btn.icon} size={fs(16)} color={active ? '#fff' : btn.color} />
+            <Text style={[styles.label, { fontSize: fs(11) }, active && { color: '#fff' }]}>{btn.label}</Text>
           </TouchableOpacity>
         );
       })}

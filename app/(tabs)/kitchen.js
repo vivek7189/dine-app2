@@ -5,10 +5,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 
 // ─── Tab Definitions ───
 const TABS = [
@@ -33,6 +35,9 @@ const getTimerColor = (minutes) => {
 
 export default function KitchenScreen() {
   const router = useRouter();
+  const { gridColumns } = useResponsive();
+  const { effectivelyOffline } = useOffline();
+  const cols = gridColumns(1);
   const [kotOrders, setKotOrders] = useState([]);
   const [selectedTab, setSelectedTab] = useState('new');
   const [dateFilter, setDateFilter] = useState('today');
@@ -122,6 +127,15 @@ export default function KitchenScreen() {
   useEffect(() => {
     loadKotData(true);
   }, []);
+
+  // ─── Refresh on screen focus (offline data sync) ───
+  useFocusEffect(
+    useCallback(() => {
+      if (restaurantId) {
+        loadDataRef.current?.(false);
+      }
+    }, [restaurantId])
+  );
 
   // ─── Pusher ───
   useEffect(() => {
@@ -539,7 +553,15 @@ export default function KitchenScreen() {
               <Ionicons name="flame" size={22} color="white" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={s.headerTitle}>Kitchen Display</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={s.headerTitle}>Kitchen Display</Text>
+                {effectivelyOffline && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                    <Ionicons name="cloud-offline-outline" size={12} color="#ef4444" />
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#ef4444', marginLeft: 3 }}>Offline</Text>
+                  </View>
+                )}
+              </View>
               <Text style={s.headerSub}>
                 {restaurant?.name || 'Restaurant'} · {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
                 {isLive && <Text style={{ color: Colors.success }}> · Live</Text>}
@@ -606,6 +628,9 @@ export default function KitchenScreen() {
         data={filteredOrders}
         renderItem={renderCard}
         keyExtractor={item => item.id}
+        key={`kitchen-grid-${cols}`}
+        numColumns={cols}
+        columnWrapperStyle={cols > 1 ? { gap: 12 } : undefined}
         contentContainerStyle={{ padding: Spacing.md, paddingBottom: 100 }}
         onScrollBeginDrag={() => setOpenMenuId(null)}
         refreshControl={
@@ -757,7 +782,7 @@ const s = StyleSheet.create({
   loadingBarInner: { height: '100%', width: '40%', backgroundColor: Colors.primary },
 
   // Card
-  card: { backgroundColor: 'white', borderRadius: 16, marginBottom: 12, ...Shadows.small, overflow: 'hidden', position: 'relative' },
+  card: { flex: 1, backgroundColor: 'white', borderRadius: 16, marginBottom: 12, ...Shadows.small, overflow: 'hidden', position: 'relative' },
   cardOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.8)', justifyContent: 'center', alignItems: 'center', zIndex: 10, borderRadius: 16 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#fef2f2' },
   orderId: { fontSize: 15, fontWeight: '800', color: Colors.textDark, letterSpacing: -0.3 },

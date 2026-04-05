@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+// useResponsive imported below
   Modal,
   TextInput,
   KeyboardAvoidingView,
@@ -27,13 +28,18 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
 
 export default function TablesScreen() {
   const router = useRouter();
+  const { effectivelyOffline } = useOffline();
   const params = useLocalSearchParams();
+  const { gridColumns, r } = useResponsive();
+  const cols = gridColumns();
   const [floors, setFloors] = useState([]);
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1221,6 +1227,12 @@ export default function TablesScreen() {
           </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {effectivelyOffline && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
+              <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
+            </View>
+          )}
           {canResetTables && (
             <TouchableOpacity onPress={handleResetAllTables} style={styles.headerActionBtn}>
               <Ionicons name="refresh-circle-outline" size={24} color="#ef4444" />
@@ -1296,7 +1308,8 @@ export default function TablesScreen() {
         data={currentFloorTables}
         renderItem={renderTable}
         keyExtractor={(item) => item.id}
-        numColumns={2}
+        key={`tables-grid-${cols}`}
+        numColumns={cols}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }

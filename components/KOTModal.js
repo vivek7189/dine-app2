@@ -15,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
 // Note: For direct thermal printer support, install:
 // npm install react-native-thermal-receipt-printer
 // This component uses Share API as a fallback which works with most printer apps
@@ -25,6 +26,7 @@ export default function KOTModal({
   orderData,
   onPrint,
 }) {
+  const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
   const [sharingWhatsApp, setSharingWhatsApp] = useState(false);
   const [showFullInstructions, setShowFullInstructions] = useState(false);
@@ -319,7 +321,7 @@ ${'='.repeat(width)}
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, modalWidth(400)]}>
           {/* Header - Sleek and Compact */}
           <View style={styles.header}>
             <View style={styles.headerTop}>
@@ -531,7 +533,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundWhite,
     borderRadius: BorderRadius.xl,
     width: '100%',
-    maxWidth: 400,
     maxHeight: '90%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },

@@ -1,14 +1,77 @@
-import { Stack } from 'expo-router';
-import { useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import { useEffect, useState, useRef } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { Ionicons } from '@expo/vector-icons';
+import { OfflineProvider, useOffline } from '../hooks/useOffline';
+import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
+
+function PinGate({ children }) {
+  const { effectivelyOffline } = useOffline();
+  const router = useRouter();
+  const segments = useSegments();
+  const appState = useRef(AppState.currentState);
+  const [checked, setChecked] = useState(false);
+
+  // Check PIN on mount and when offline state changes
+  useEffect(() => {
+    checkPinLock();
+  }, [effectivelyOffline]);
+
+  // Lock when app goes to background while offline
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      if (appState.current === 'active' && nextState.match(/inactive|background/)) {
+        // App going to background — lock if offline
+        if (effectivelyOffline) {
+          await lockSession();
+        }
+      }
+      if (nextState === 'active' && appState.current.match(/inactive|background/)) {
+        // App coming to foreground — re-check
+        checkPinLock();
+      }
+      appState.current = nextState;
+    });
+    return () => sub.remove();
+  }, [effectivelyOffline]);
+
+  const checkPinLock = async () => {
+    // Only gate when offline
+    if (!effectivelyOffline) {
+      setChecked(true);
+      return;
+    }
+
+    const pinSet = await hasPin();
+    if (!pinSet) {
+      setChecked(true);
+      return;
+    }
+
+    const unlocked = await isUnlocked();
+    if (unlocked) {
+      setChecked(true);
+      return;
+    }
+
+    // Need PIN — redirect to pin screen (only if not already there)
+    const currentSegment = segments[0];
+    if (currentSegment !== '(auth)' || segments[1] !== 'offline-pin') {
+      router.replace('/(auth)/offline-pin');
+    }
+    setChecked(true);
+  };
+
+  if (!checked) return null;
+  return children;
+}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -17,12 +80,10 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
-      // Hide the splash screen after the fonts have loaded (or an error was returned) and the UI is ready.
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
 
-  // Prevent rendering until the font has loaded or an error was returned
   if (!fontsLoaded && !fontError) {
     return null;
   }
@@ -30,15 +91,19 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#fef7f0' },
-          }}
-        >
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(tabs)" />
-        </Stack>
+        <OfflineProvider>
+          <PinGate>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: '#fef7f0' },
+              }}
+            >
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </PinGate>
+        </OfflineProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

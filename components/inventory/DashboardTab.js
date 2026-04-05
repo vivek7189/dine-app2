@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export default function DashboardTab({
   totalItems, lowStockCount, totalValue, categoryCount, suppliers,
@@ -11,6 +12,7 @@ export default function DashboardTab({
   openAddItem, setShowQuickStockModal, setActiveTab,
   onQuickAction, onLogWaste,
 }) {
+  const { fs } = useResponsive();
   const recentPOs = (purchaseOrders || []).slice(0, 5);
   const expiringCount = inventoryItems.filter(i => {
     if (!i.expiryDate) return false;
@@ -191,14 +193,14 @@ const styles = StyleSheet.create({
   seeAll: { fontSize: 13, color: '#3b82f6', fontWeight: '600' },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   quickBtn: {
-    width: '48%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
+    flex: 1, minWidth: '40%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
     padding: Spacing.md, alignItems: 'center', ...Shadows.small,
   },
   quickIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
   quickLabel: { fontSize: 13, fontWeight: '600', color: Colors.textDark },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   statCard: {
-    width: '48%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
+    flex: 1, minWidth: '40%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
     padding: Spacing.md, borderLeftWidth: 4, ...Shadows.small,
   },
   statValue: { fontSize: 22, fontWeight: '800', color: Colors.textDark },

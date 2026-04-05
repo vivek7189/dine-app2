@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  Dimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,8 +20,8 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../consta
 import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
 import { HeadquartersContent } from './headquarters';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
 
@@ -65,6 +64,12 @@ function HomeLoader() {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { effectivelyOffline, pendingCount } = useOffline();
+  const { width: SCREEN_WIDTH, isTablet } = useResponsive();
+  const statCols = isTablet ? 4 : 2;
+  const statMinWidth = (SCREEN_WIDTH - 42) / statCols - 5;
+  const tabCols = isTablet ? 3 : 2;
+  const tabCardWidth = (SCREEN_WIDTH - 42 - 10 * (tabCols - 1)) / tabCols;
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -491,6 +496,12 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.headerRight}>
+            {effectivelyOffline && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
+              </View>
+            )}
             {hasRestaurant && (
               <View style={styles.businessBadge}>
                 <Text style={styles.businessBadgeText}>{getBusinessTypeLabel()}</Text>
@@ -532,7 +543,7 @@ export default function HomeScreen() {
         {/* Cashier Stats */}
         {isCashier && hasRestaurant && (
           <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { backgroundColor: '#eff6ff' }]}>
+            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#eff6ff' }]}>
               <View style={[styles.statIconCircle, { backgroundColor: '#3b82f6' }]}>
                 <Ionicons name="receipt-outline" size={20} color="#fff" />
               </View>
@@ -540,7 +551,7 @@ export default function HomeScreen() {
               <Text style={styles.statLabel}>Bills Today</Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: '#f0fdf4' }]}>
+            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#f0fdf4' }]}>
               <View style={[styles.statIconCircle, { backgroundColor: '#10b981' }]}>
                 <Ionicons name="cash-outline" size={20} color="#fff" />
               </View>
@@ -553,7 +564,7 @@ export default function HomeScreen() {
         {/* Waiter/Employee — Quick Stats */}
         {isWaiterOrEmployee && hasRestaurant && (
           <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { backgroundColor: '#fef3c7' }]}>
+            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#fef3c7' }]}>
               <View style={[styles.statIconCircle, { backgroundColor: '#f59e0b' }]}>
                 <Ionicons name="time-outline" size={20} color="#fff" />
               </View>
@@ -561,7 +572,7 @@ export default function HomeScreen() {
               <Text style={styles.statLabel}>Pending</Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: '#f0fdf4' }]}>
+            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#f0fdf4' }]}>
               <View style={[styles.statIconCircle, { backgroundColor: '#10b981' }]}>
                 <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
               </View>
@@ -569,7 +580,7 @@ export default function HomeScreen() {
               <Text style={styles.statLabel}>Completed</Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: '#eff6ff' }]}>
+            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#eff6ff' }]}>
               <View style={[styles.statIconCircle, { backgroundColor: '#3b82f6' }]}>
                 <Ionicons name="restaurant-outline" size={20} color="#fff" />
               </View>
@@ -785,7 +796,7 @@ export default function HomeScreen() {
                 return (
                   <TouchableOpacity
                     key={tab.id}
-                    style={[styles.openTabCard, hasItems ? styles.openTabCardActive : styles.openTabCardEmpty]}
+                    style={[styles.openTabCard, { width: tabCardWidth }, hasItems ? styles.openTabCardActive : styles.openTabCardEmpty]}
                     onPress={() => router.push('/(tabs)/bar-billing')}
                     activeOpacity={0.8}
                   >
@@ -1121,7 +1132,6 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    minWidth: (SCREEN_WIDTH - 42) / 2 - 5,
     borderRadius: BorderRadius.large,
     padding: 14,
     ...Shadows.small,
@@ -1295,7 +1305,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   openTabCard: {
-    width: (SCREEN_WIDTH - 42 - 10) / 2,
     borderRadius: 12,
     padding: 10,
     minHeight: 110,

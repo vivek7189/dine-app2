@@ -1,8 +1,12 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Theme';
 import apiClient from '../../services/api';
+import { useResponsive } from '../../hooks/useResponsive';
+import OfflineStatusBar from '../../components/OfflineStatusBar';
+import { useOffline } from '../../hooks/useOffline';
 
 export default function TabsLayout() {
   const router = useRouter();
@@ -47,8 +51,13 @@ export default function TabsLayout() {
   }, []);
 
   const roleLower = userRole?.toLowerCase() || '';
+  const { r } = useResponsive();
+  const iconSize = r(26, 30);
+  const { pendingCount } = useOffline();
 
   return (
+    <View style={{ flex: 1 }}>
+    <OfflineStatusBar />
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -58,9 +67,9 @@ export default function TabsLayout() {
           backgroundColor: '#FFFFFF',
           borderTopColor: '#E5E5E5',
           borderTopWidth: 1,
-          height: 70,
-          paddingBottom: 12,
-          paddingTop: 8,
+          height: r(70, 80),
+          paddingBottom: r(12, 16),
+          paddingTop: r(8, 10),
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -2 },
           shadowOpacity: 0.1,
@@ -68,7 +77,7 @@ export default function TabsLayout() {
           elevation: 10,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: r(11, 13),
           fontWeight: '700',
           marginTop: 2,
         },
@@ -85,7 +94,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "home" : "home-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
@@ -100,7 +109,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "restaurant" : "restaurant-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
@@ -117,7 +126,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "fast-food" : "fast-food-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
@@ -133,7 +142,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "beer" : "beer-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
@@ -149,10 +158,12 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "receipt" : "receipt-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
+          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
+          tabBarBadgeStyle: pendingCount > 0 ? { backgroundColor: '#3b82f6', fontSize: 10 } : undefined,
         }}
       />
 
@@ -164,7 +175,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "grid" : "grid-outline"}
-              size={26}
+              size={iconSize}
               color={color}
             />
           ),
@@ -237,5 +248,6 @@ export default function TabsLayout() {
         }}
       />
     </Tabs>
+    </View>
   );
 }

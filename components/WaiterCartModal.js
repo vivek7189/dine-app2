@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
 
 export default function WaiterCartModal({
   visible,
@@ -25,6 +26,7 @@ export default function WaiterCartModal({
   tableNumber,
   sending,
 }) {
+  const { fs } = useResponsive();
   const [customerPhone, setCustomerPhone] = useState('');
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [showKitchenNotes, setShowKitchenNotes] = useState(false);
@@ -159,8 +161,8 @@ export default function WaiterCartModal({
 
                 {/* Total */}
                 <View style={styles.totalContainer}>
-                  <Text style={styles.totalLabel}>Total Amount</Text>
-                  <Text style={styles.totalAmount}>₹{total.toFixed(2)}</Text>
+                  <Text style={[styles.totalLabel, { fontSize: fs(16) }]}>Total Amount</Text>
+                  <Text style={[styles.totalAmount, { fontSize: fs(20) }]}>₹{total.toFixed(2)}</Text>
                 </View>
               </>
             )}

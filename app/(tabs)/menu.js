@@ -17,10 +17,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
 import apiClient from '../../services/api';
-import { queueOrder, generateIdempotencyKey, getQueueCount } from '../../services/offlineQueue';
-import { syncPendingOrders, onSyncStatusChange } from '../../services/syncEngine';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -35,6 +32,8 @@ import { useToast } from '../../components/Toast';
 import { getCached, setCache } from '../../services/cacheManager';
 import SyncIndicator from '../../components/SyncIndicator';
 import Pusher from 'pusher-js/react-native';
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -49,6 +48,9 @@ const PUSHER_CLUSTER = 'ap2';
 export default function MenuScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { gridColumns, r } = useResponsive();
+  const { effectivelyOffline, pendingCount } = useOffline();
+  const cols = gridColumns();
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all-items');
@@ -76,8 +78,6 @@ export default function MenuScreen() {
   const [billingSettings, setBillingSettings] = useState({});
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   // Multi-tier pricing
   const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
@@ -98,32 +98,6 @@ export default function MenuScreen() {
     loadImagePreference();
   }, []);
 
-  // Network status monitoring + auto-sync
-  useEffect(() => {
-    const unsubNet = NetInfo.addEventListener(state => {
-      const online = !!state.isConnected;
-      setIsOnline(online);
-      // Auto-sync when coming back online
-      if (online) {
-        getQueueCount().then(setPendingSyncCount);
-        syncPendingOrders(apiClient);
-      }
-    });
-
-    const unsubSync = onSyncStatusChange((event) => {
-      if (['sync_complete', 'synced', 'queued', 'failed'].includes(event.type)) {
-        getQueueCount().then(setPendingSyncCount);
-      }
-    });
-
-    // Initial count
-    getQueueCount().then(setPendingSyncCount);
-
-    return () => {
-      unsubNet();
-      unsubSync();
-    };
-  }, []);
 
   // Pusher real-time menu updates
   useEffect(() => {
@@ -747,10 +721,8 @@ export default function MenuScreen() {
         orderId = existingOrderId;
       } else {
         // Create new order
-        const idempotencyKey = generateIdempotencyKey();
         const orderData = {
           restaurantId,
-          idempotencyKey,
           tableNumber: tableNumber,
           items: cart.map(item => ({
             menuItemId: item.menuItemId || item.id,
@@ -769,36 +741,7 @@ export default function MenuScreen() {
           pricingRuleId: activePricingRuleId || null,
         };
 
-        // Check if offline — queue order locally
-        const netState = await NetInfo.fetch();
-        if (!netState.isConnected) {
-          await queueOrder(orderData);
-          setPendingSyncCount(await getQueueCount());
-          toast.warning('No internet. Order saved locally and will sync when online.');
-          setCart([]);
-          setShowCart(false);
-          setExistingOrderId(null);
-          setSendingOrder(false);
-          return;
-        }
-
-        try {
-          response = await apiClient.createOrder(orderData);
-        } catch (apiErr) {
-          // Only queue for network errors, not API errors
-          const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
-          if (isNetworkError) {
-            await queueOrder(orderData);
-            setPendingSyncCount(await getQueueCount());
-            toast.warning('Connection issue. Order saved and will sync when online.');
-            setCart([]);
-            setShowCart(false);
-            setExistingOrderId(null);
-            setSendingOrder(false);
-            return;
-          }
-          throw apiErr;
-        }
+        response = await apiClient.createOrder(orderData);
         orderId = response.order?.id;
       }
 
@@ -908,11 +851,12 @@ export default function MenuScreen() {
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
           discountAmount: totalDiscount,
+          loyaltyDiscount: discountData.loyaltyDiscount || 0,
           taxAmount: taxAmount,
           finalAmount: grandTotal,
           completedAt: new Date().toISOString(),
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
-          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -940,9 +884,13 @@ export default function MenuScreen() {
           items,
           status: 'confirmed',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
+          totalAmount: subtotal,
+          discountAmount: totalDiscount,
+          loyaltyDiscount: discountData.loyaltyDiscount || 0,
+          taxAmount: taxAmount,
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
           ...(customerMobile && { customerPhone: customerMobile }),
-          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -971,10 +919,8 @@ export default function MenuScreen() {
           router.push('/(tabs)/orders');
         }
       } else {
-        const idempotencyKey = generateIdempotencyKey();
         const orderData = {
           restaurantId,
-          idempotencyKey,
           tableNumber: selectedTable?.name || params.tableNumber,
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
@@ -984,9 +930,13 @@ export default function MenuScreen() {
             waiterId: user?.id,
             waiterName: user?.name || 'Manager',
           },
+          totalAmount: subtotal,
+          discountAmount: totalDiscount,
+          loyaltyDiscount: discountData.loyaltyDiscount || 0,
+          taxAmount: taxAmount,
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
           ...(customerMobile && { customerPhone: customerMobile }),
-          offerIds: discountData.selectedOfferId ? [discountData.selectedOfferId] : [],
+          offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -997,34 +947,7 @@ export default function MenuScreen() {
         };
 
         let response;
-        const netState = await NetInfo.fetch();
-        if (!netState.isConnected && !isBarTabMode) {
-          await queueOrder(orderData);
-          setPendingSyncCount(await getQueueCount());
-          toast.warning('No internet. Order saved locally and will sync when online.');
-          setCart([]);
-          setShowCart(false);
-          setSendingOrder(false);
-          return;
-        }
-
-        try {
-          response = await apiClient.createOrder(orderData);
-        } catch (apiErr) {
-          if (!isBarTabMode) {
-            const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
-            if (isNetworkError) {
-              await queueOrder(orderData);
-              setPendingSyncCount(await getQueueCount());
-              toast.warning('Connection issue. Order saved and will sync when online.');
-              setCart([]);
-              setShowCart(false);
-              setSendingOrder(false);
-              return;
-            }
-          }
-          throw apiErr;
-        }
+        response = await apiClient.createOrder(orderData);
 
         if (isBarTabMode) {
           await apiClient.verifyPayment({
@@ -1116,10 +1039,8 @@ export default function MenuScreen() {
         };
       }
 
-      const idempotencyKey = generateIdempotencyKey();
       const orderData = {
         restaurantId,
-        idempotencyKey,
         items: cart.map(item => ({
           menuItemId: item.menuItemId || item.id,
           name: item.name,
@@ -1143,7 +1064,7 @@ export default function MenuScreen() {
         total: grandTotal,
         finalAmount: grandTotal,
         // Discount/loyalty data
-        ...(discountData.selectedOfferId && { offerIds: [discountData.selectedOfferId] }),
+        ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         ...(customerMobile && { customerPhone: customerMobile }),
@@ -1155,22 +1076,7 @@ export default function MenuScreen() {
       };
 
       let response;
-      try {
-        response = await apiClient.createOrder(orderData);
-      } catch (apiErr) {
-        // Only queue for network errors, not API errors
-        const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
-        if (isNetworkError) {
-          await queueOrder(orderData);
-          setPendingSyncCount(await getQueueCount());
-          toast.warning('Connection issue. Order saved and will sync when online.');
-          setCart([]);
-          setShowCart(false);
-          setSendingOrder(false);
-          return;
-        }
-        throw apiErr;
-      }
+      response = await apiClient.createOrder(orderData);
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
       const latestUserData = await apiClient.getUser();
@@ -1202,7 +1108,7 @@ export default function MenuScreen() {
         staffName: user?.name || 'Cashier',
         // Discount fields for invoice
         offerDiscount: discountData.offerDiscount || 0,
-        offerName: discountData.selectedOfferName || null,
+        offerName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
         // Billing fields for invoice
@@ -1276,11 +1182,9 @@ export default function MenuScreen() {
         };
       }
 
-      const idempotencyKey = generateIdempotencyKey();
       const tableNum = selectedTable?.name || params.tableNumber;
       const orderData = {
         restaurantId,
-        idempotencyKey,
         ...(tableNum && { tableNumber: tableNum }),
         items: cart.map(item => ({
           menuItemId: item.menuItemId || item.id,
@@ -1307,11 +1211,12 @@ export default function MenuScreen() {
         total: grandTotal,
         finalAmount: grandTotal,
         completedAt: new Date().toISOString(),
-        ...(discountData.selectedOfferId && { offerIds: [discountData.selectedOfferId] }),
+        ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         customerId: discountData.customerId || null,
         discountAmount: totalDiscount,
+        loyaltyDiscount: discountData.loyaltyDiscount || 0,
         pricingRuleId: activePricingRuleId || null,
         ...billingFields,
         ...partialFields,
@@ -1328,32 +1233,7 @@ export default function MenuScreen() {
         });
         completedOrderId = existingOrderId;
       } else {
-        const netState = await NetInfo.fetch();
-        if (!netState.isConnected) {
-          await queueOrder(orderData);
-          setPendingSyncCount(await getQueueCount());
-          toast.warning('No internet. Order saved locally and will sync when online.');
-          setCart([]);
-          setShowCart(false);
-          setSendingOrder(false);
-          return;
-        }
-
-        try {
-          response = await apiClient.createOrder(orderData);
-        } catch (apiErr) {
-          const isNetworkError = !apiErr.response && (apiErr.message?.includes('Network') || apiErr.message?.includes('timeout') || apiErr.code === 'ECONNABORTED');
-          if (isNetworkError) {
-            await queueOrder(orderData);
-            setPendingSyncCount(await getQueueCount());
-            toast.warning('Connection issue. Order saved and will sync when online.');
-            setCart([]);
-            setShowCart(false);
-            setSendingOrder(false);
-            return;
-          }
-          throw apiErr;
-        }
+        response = await apiClient.createOrder(orderData);
         completedOrderId = response.order?.id;
       }
 
@@ -1396,7 +1276,7 @@ export default function MenuScreen() {
         timestamp: new Date(),
         staffName: user?.name || 'Manager',
         offerDiscount: discountData.offerDiscount || 0,
-        offerName: discountData.selectedOfferName || null,
+        offerName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
         serviceChargeAmount: serviceCharge || 0,
@@ -1835,10 +1715,10 @@ export default function MenuScreen() {
               </View>
               <View style={styles.headerIcons}>
                 {/* Network status dot */}
-                <View style={[styles.networkDot, { backgroundColor: isOnline ? '#22c55e' : '#ef4444' }]} />
-                {pendingSyncCount > 0 && (
+                <View style={[styles.networkDot, { backgroundColor: !effectivelyOffline ? '#22c55e' : '#ef4444' }]} />
+                {pendingCount > 0 && (
                   <View style={styles.syncBadge}>
-                    <Text style={styles.syncBadgeText}>{pendingSyncCount}</Text>
+                    <Text style={styles.syncBadgeText}>{pendingCount}</Text>
                   </View>
                 )}
                 <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
@@ -2045,19 +1925,19 @@ export default function MenuScreen() {
       <SyncIndicator visible={syncing} />
 
       {/* Offline Sync Banner */}
-      {(!isOnline || pendingSyncCount > 0) && (
+      {(effectivelyOffline || pendingCount > 0) && (
         <View style={styles.syncBanner}>
           <Ionicons
-            name={isOnline ? 'sync' : 'cloud-offline-outline'}
+            name={!effectivelyOffline ? 'sync' : 'cloud-offline-outline'}
             size={16}
             color="#92400e"
           />
           <Text style={styles.syncBannerText}>
-            {!isOnline
+            {effectivelyOffline
               ? "You're offline. Orders will sync when connected."
-              : `Syncing ${pendingSyncCount} pending order${pendingSyncCount > 1 ? 's' : ''}...`}
+              : `Syncing ${pendingCount} pending order${pendingCount > 1 ? 's' : ''}...`}
           </Text>
-          {isOnline && pendingSyncCount > 0 && (
+          {!effectivelyOffline && pendingCount > 0 && (
             <ActivityIndicator size="small" color="#92400e" />
           )}
         </View>
@@ -2088,7 +1968,8 @@ export default function MenuScreen() {
         data={filteredItems}
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
-        numColumns={2}
+        key={`menu-grid-${cols}`}
+        numColumns={cols}
         contentContainerStyle={styles.menuList}
         columnWrapperStyle={styles.menuRow}
         ListEmptyComponent={
@@ -2666,7 +2547,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderRadius: 16,
     marginBottom: 12,
-    width: '48%',
+    flex: 1,
     height: 140,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -2832,7 +2713,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 3,
     borderRadius: 16,
     marginBottom: 12,
-    width: '48%',
+    flex: 1,
     height: 120,
     padding: 12,
     shadowColor: '#000',

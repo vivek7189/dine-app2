@@ -19,6 +19,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 // Lazy-load native modules that crash in Expo Go
 let GoogleSignin = null;
@@ -132,6 +133,7 @@ const countries = [
 ];
 
 export default function LoginScreen() {
+  const { isTablet } = useResponsive();
   const router = useRouter();
   const [loginMode, setLoginMode] = useState('owner'); // 'owner' | 'staff'
   const [loading, setLoading] = useState(false);
@@ -983,7 +985,7 @@ export default function LoginScreen() {
     >
       <StatusBar style="dark" />
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isTablet && { maxWidth: 450, alignSelf: 'center', width: '100%' }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >

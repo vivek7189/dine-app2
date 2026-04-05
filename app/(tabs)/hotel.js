@@ -14,7 +14,6 @@ import {
   ScrollView,
   Platform,
   Animated,
-  Dimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 // Room status colors
 const RoomStatusColors = {
@@ -51,6 +51,8 @@ const SCROLL_THRESHOLD = 100;
 
 export default function HotelScreen() {
   const router = useRouter();
+  const { gridColumns, width: screenWidth } = useResponsive();
+  const cols = gridColumns();
   const scrollY = useRef(new Animated.Value(0)).current;
   const tabScrollRef = useRef(null);
 
@@ -1389,7 +1391,7 @@ export default function HotelScreen() {
 
   // Tab scroll constants
   const TAB_WIDTH = 100;
-  const SCREEN_WIDTH = Dimensions.get('window').width;
+  const SCREEN_WIDTH = screenWidth;
 
   const tabs = [
     { id: 'rooms', label: 'Rooms', icon: 'bed-outline' },
@@ -1625,7 +1627,8 @@ export default function HotelScreen() {
                 data={rooms || []}
                 renderItem={renderRoomCard}
                 keyExtractor={(item, index) => item?.id || `room-${index}`}
-                numColumns={2}
+                key={`rooms-grid-${cols}`}
+                numColumns={cols}
                 columnWrapperStyle={styles.roomsRow}
                 contentContainerStyle={styles.listContent}
                 onScroll={Animated.event(
@@ -3792,7 +3795,7 @@ const styles = StyleSheet.create({
   },
   // Room card wrapper and dropdown
   roomCardWrapper: {
-    width: '48%',
+    flex: 1,
     alignItems: 'stretch',
   },
   roomCardLoading: {

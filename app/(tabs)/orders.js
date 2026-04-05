@@ -26,6 +26,8 @@ import apiClient from '../../services/api';
 import { getCached, setCache } from '../../services/cacheManager';
 import SyncIndicator from '../../components/SyncIndicator';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
+import { useOffline } from '../../hooks/useOffline';
 
 // Pusher configuration (same as web frontend)
 const PUSHER_KEY = '4e1f74ae05c66bbc4eec';
@@ -34,6 +36,9 @@ const PUSHER_CLUSTER = 'ap2';
 export default function OrdersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { isTablet } = useResponsive();
+  const { effectivelyOffline, pendingCount } = useOffline();
+  const tabletContentStyle = isTablet ? { maxWidth: 800, alignSelf: 'center', width: '100%' } : undefined;
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -844,6 +849,9 @@ export default function OrdersScreen() {
                 <Text style={{ fontSize: 9, fontWeight: '600', color: '#9ca3af' }}>{staffLabel}</Text>
               </View>
             )}
+            {(item.isLocal || item.offline || item.syncSource === 'offline') && (
+              <Ionicons name="cloud-upload-outline" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
+            )}
           </View>
         </View>
 
@@ -1420,7 +1428,15 @@ export default function OrdersScreen() {
         {/* Title Row with Tab Toggle */}
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.headerTitle}>{activeView === 'orders' ? 'Orders' : 'Sales Summary'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.headerTitle}>{activeView === 'orders' ? 'Orders' : 'Sales Summary'}</Text>
+              {effectivelyOffline && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                  <Ionicons name="cloud-offline-outline" size={12} color="#ef4444" />
+                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#ef4444', marginLeft: 3 }}>Offline{pendingCount > 0 ? ` (${pendingCount})` : ''}</Text>
+                </View>
+              )}
+            </View>
             {activeView === 'orders' && (
               <Text style={styles.headerSubtitle}>{summaryData.totalOrders} orders {dateFilterMode === 'today' ? 'today' : dateFilterMode === 'yesterday' ? 'yesterday' : dateFilterMode === '7days' ? 'this week' : dateFilterMode === '30days' ? 'this month' : ''}</Text>
             )}
@@ -1708,7 +1724,7 @@ export default function OrdersScreen() {
           data={orders}
           renderItem={renderOrder}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, tabletContentStyle]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
           }

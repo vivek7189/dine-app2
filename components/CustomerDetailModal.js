@@ -9,13 +9,11 @@ import {
   FlatList,
   Animated,
   StatusBar,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { useResponsive } from '../hooks/useResponsive';
 const PURPLE = '#7c3aed';
 const AMBER = '#f59e0b';
 
@@ -72,15 +70,16 @@ function SkeletonBlock({ width, height, style }) {
 }
 
 function LoadingSkeleton() {
+  const { width } = useResponsive();
   return (
     <View style={styles.skeletonContainer}>
       <View style={styles.statsGrid}>
-        <SkeletonBlock width={(SCREEN_WIDTH - 56) / 2} height={80} />
-        <SkeletonBlock width={(SCREEN_WIDTH - 56) / 2} height={80} />
+        <SkeletonBlock width={(width - 56) / 2} height={80} />
+        <SkeletonBlock width={(width - 56) / 2} height={80} />
       </View>
       <View style={styles.statsGrid}>
-        <SkeletonBlock width={(SCREEN_WIDTH - 56) / 2} height={80} />
-        <SkeletonBlock width={(SCREEN_WIDTH - 56) / 2} height={80} />
+        <SkeletonBlock width={(width - 56) / 2} height={80} />
+        <SkeletonBlock width={(width - 56) / 2} height={80} />
       </View>
     </View>
   );
@@ -105,6 +104,7 @@ function StatusBadge({ status }) {
 }
 
 export default function CustomerDetailModal({ visible, customerId, restaurantId, onClose }) {
+  const { width } = useResponsive();
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [customer, setCustomer] = useState(null);

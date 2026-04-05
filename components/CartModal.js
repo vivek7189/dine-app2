@@ -24,6 +24,8 @@ import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
+import { useResponsive } from '../hooks/useResponsive';
+import { useOffline } from '../hooks/useOffline';
 
 export default function CartModal({
   visible,
@@ -49,6 +51,8 @@ export default function CartModal({
   setActivePricingRuleId,
   autoSelectedRule = false,
 }) {
+  const { fs } = useResponsive();
+  const { effectivelyOffline } = useOffline();
   const [orderType, setOrderType] = useState('dine-in');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
@@ -445,7 +449,7 @@ export default function CartModal({
                   <View style={styles.paymentRow}>
                     <Ionicons name="card-outline" size={14} color="#6b7280" />
                     <Text style={styles.paymentLabel}>Pay</Text>
-                    {['cash', 'upi', 'card'].map((method) => (
+                    {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
                       <TouchableOpacity
                         key={method}
                         style={[styles.paymentPill, paymentMethod === method && styles.paymentPillActive]}
@@ -458,6 +462,9 @@ export default function CartModal({
                       </TouchableOpacity>
                     ))}
                   </View>
+                )}
+                {effectivelyOffline && (
+                  <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, marginLeft: 4 }}>UPI/Card unavailable offline</Text>
                 )}
 
                 {/* Spacer for sticky bottom buttons */}

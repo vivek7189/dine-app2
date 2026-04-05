@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { useResponsive } from '../../hooks/useResponsive';
 
 /**
  * Red gradient total bar with full billing breakdown.
@@ -19,7 +20,13 @@ export default function BillingSummaryBar({
   roundOffAmount = 0,
   grandTotal = 0,
   currencySymbol = '₹',
+  // Separate discount breakdown (optional — if provided, shows individual rows)
+  offerDiscount = 0,
+  offerName = null,
+  manualDiscount = 0,
+  loyaltyDiscount = 0,
 }) {
+  const { fs } = useResponsive();
   const fmt = (v) => `${currencySymbol}${Math.abs(v).toFixed(2)}`;
 
   return (
@@ -27,53 +34,76 @@ export default function BillingSummaryBar({
       {/* Breakdown on left, grand total on right */}
       <View style={styles.row}>
         <View style={styles.breakdownCol}>
-          <Text style={styles.heading}>Total</Text>
+          <Text style={[styles.heading, { fontSize: fs(13) }]}>Total</Text>
 
           {/* Subtotal */}
           <View style={styles.lineRow}>
-            <Text style={styles.lineLabel}>Subtotal</Text>
-            <Text style={styles.lineValue}>{fmt(subtotal)}</Text>
+            <Text style={[styles.lineLabel, { fontSize: fs(11) }]}>Subtotal</Text>
+            <Text style={[styles.lineValue, { fontSize: fs(11) }]}>{fmt(subtotal)}</Text>
           </View>
 
-          {/* Discount */}
-          {totalDiscount > 0 && (
+          {/* Discount — separate rows if breakdown provided, else combined */}
+          {(offerDiscount > 0 || manualDiscount > 0 || loyaltyDiscount > 0) ? (
+            <>
+              {offerDiscount > 0 && (
+                <View style={styles.lineRow}>
+                  <Text style={[styles.lineLabel, styles.discountColor, { fontSize: fs(11) }]}>
+                    {offerName ? `Offer: ${offerName}` : 'Offer Discount'}
+                  </Text>
+                  <Text style={[styles.lineValue, styles.discountColor, { fontSize: fs(11) }]}>-{fmt(offerDiscount)}</Text>
+                </View>
+              )}
+              {manualDiscount > 0 && (
+                <View style={styles.lineRow}>
+                  <Text style={[styles.lineLabel, styles.discountColor, { fontSize: fs(11) }]}>Manual Discount</Text>
+                  <Text style={[styles.lineValue, styles.discountColor, { fontSize: fs(11) }]}>-{fmt(manualDiscount)}</Text>
+                </View>
+              )}
+              {loyaltyDiscount > 0 && (
+                <View style={styles.lineRow}>
+                  <Text style={[styles.lineLabel, styles.loyaltyColor, { fontSize: fs(11) }]}>Loyalty Points</Text>
+                  <Text style={[styles.lineValue, styles.loyaltyColor, { fontSize: fs(11) }]}>-{fmt(loyaltyDiscount)}</Text>
+                </View>
+              )}
+            </>
+          ) : totalDiscount > 0 ? (
             <View style={styles.lineRow}>
-              <Text style={[styles.lineLabel, styles.discountColor]}>Discount</Text>
-              <Text style={[styles.lineValue, styles.discountColor]}>-{fmt(totalDiscount)}</Text>
+              <Text style={[styles.lineLabel, styles.discountColor, { fontSize: fs(11) }]}>Discount</Text>
+              <Text style={[styles.lineValue, styles.discountColor, { fontSize: fs(11) }]}>-{fmt(totalDiscount)}</Text>
             </View>
-          )}
+          ) : null}
 
           {/* Service Charge */}
           {serviceChargeAmount > 0 && (
             <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>{serviceChargeLabel} ({serviceChargeRate}%)</Text>
-              <Text style={styles.lineValue}>{fmt(serviceChargeAmount)}</Text>
+              <Text style={[styles.lineLabel, { fontSize: fs(11) }]}>{serviceChargeLabel} ({serviceChargeRate}%)</Text>
+              <Text style={[styles.lineValue, { fontSize: fs(11) }]}>{fmt(serviceChargeAmount)}</Text>
             </View>
           )}
 
           {/* Tax breakdown */}
           {taxBreakdown.map((tax, i) => (
             <View key={i} style={styles.lineRow}>
-              <Text style={styles.lineLabel}>{tax.name} ({tax.rate}%)</Text>
-              <Text style={styles.lineValue}>{fmt(tax.amount)}</Text>
+              <Text style={[styles.lineLabel, { fontSize: fs(11) }]}>{tax.name} ({tax.rate}%)</Text>
+              <Text style={[styles.lineValue, { fontSize: fs(11) }]}>{fmt(tax.amount)}</Text>
             </View>
           ))}
 
           {/* Tip */}
           {tipAmount > 0 && (
             <View style={styles.lineRow}>
-              <Text style={[styles.lineLabel, styles.tipColor]}>
+              <Text style={[styles.lineLabel, styles.tipColor, { fontSize: fs(11) }]}>
                 Tip{tipPercentage ? ` (${tipPercentage}%)` : ''}
               </Text>
-              <Text style={[styles.lineValue, styles.tipColor]}>{fmt(tipAmount)}</Text>
+              <Text style={[styles.lineValue, styles.tipColor, { fontSize: fs(11) }]}>{fmt(tipAmount)}</Text>
             </View>
           )}
 
           {/* Round-off */}
           {roundOffAmount !== 0 && (
             <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Round-off</Text>
-              <Text style={styles.lineValue}>
+              <Text style={[styles.lineLabel, { fontSize: fs(11) }]}>Round-off</Text>
+              <Text style={[styles.lineValue, { fontSize: fs(11) }]}>
                 {roundOffAmount > 0 ? '+' : '-'}{fmt(roundOffAmount)}
               </Text>
             </View>
@@ -82,7 +112,7 @@ export default function BillingSummaryBar({
 
         {/* Grand Total */}
         <View style={styles.grandTotalCol}>
-          <Text style={styles.grandTotalValue}>{fmt(grandTotal)}</Text>
+          <Text style={[styles.grandTotalValue, { fontSize: fs(22) }]}>{fmt(grandTotal)}</Text>
         </View>
       </View>
     </View>
@@ -130,6 +160,9 @@ const styles = StyleSheet.create({
   },
   discountColor: {
     color: '#bbf7d0',
+  },
+  loyaltyColor: {
+    color: '#e9d5ff',
   },
   tipColor: {
     color: '#fef08a',

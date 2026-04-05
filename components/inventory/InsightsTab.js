@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const URGENCY_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
 const RISK_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
@@ -11,6 +12,7 @@ export default function InsightsTab({
   inventoryItems, lowStockCount, totalValue,
   getStockStatus,
 }) {
+  const { fs } = useResponsive();
   const [expandedReport, setExpandedReport] = useState(null);
 
   const expiredItems = inventoryItems.filter(i => i.expiryDate && new Date(i.expiryDate) < new Date());
@@ -213,7 +215,7 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, color: Colors.textLight, marginTop: 8, textAlign: 'center' },
   reportGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   reportCard: {
-    width: '48%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
+    flex: 1, minWidth: '40%', backgroundColor: '#fff', borderRadius: BorderRadius.large,
     padding: Spacing.md, ...Shadows.small,
   },
   reportIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },

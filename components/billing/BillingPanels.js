@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 /**
  * Expandable billing panels for each feature.
@@ -46,6 +47,8 @@ export default function BillingPanels({
   // Round-off (info-only)
   roundOffAmount = 0,
 }) {
+  const { fs } = useResponsive();
+
   if (!activeBillingPanel) return null;
 
   // Cash Tendering Panel
@@ -149,7 +152,7 @@ export default function BillingPanels({
           onPress={() => setSplitPayments([...splitPayments, { method: 'cash', amount: 0 }])}
         >
           <Ionicons name="add" size={16} color="#2563eb" />
-          <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>Add Payment</Text>
+          <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: fs(13) }}>Add Payment</Text>
         </TouchableOpacity>
         {splitPayments.length > 0 && (
           <View style={styles.infoRow}>
@@ -212,8 +215,8 @@ export default function BillingPanels({
         <Text style={styles.title}>Partial Payment (Khata)</Text>
         {customerData?.outstandingBalance > 0 && (
           <View style={[styles.infoRow, { marginBottom: 8, backgroundColor: '#fef2f2', padding: 8, borderRadius: 6 }]}>
-            <Text style={{ fontSize: 12, color: '#dc2626' }}>Existing Balance:</Text>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>₹{customerData.outstandingBalance}</Text>
+            <Text style={{ fontSize: fs(12), color: '#dc2626' }}>Existing Balance:</Text>
+            <Text style={{ fontSize: fs(13), fontWeight: '700', color: '#dc2626' }}>₹{customerData.outstandingBalance}</Text>
           </View>
         )}
         <TextInput
@@ -254,8 +257,8 @@ export default function BillingPanels({
               }}
             >
               <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#14b8a6' : '#9ca3af'} />
-              <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+              <Text style={{ flex: 1, fontSize: fs(13), color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
+              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
             </TouchableOpacity>
           );
         })}
@@ -302,8 +305,8 @@ export default function BillingPanels({
               }}
             >
               <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#ef4444' : '#9ca3af'} />
-              <Text style={{ flex: 1, fontSize: 13, color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+              <Text style={{ flex: 1, fontSize: fs(13), color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
+              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
             </TouchableOpacity>
           );
         })}
@@ -335,7 +338,7 @@ export default function BillingPanels({
     return (
       <View style={styles.panel}>
         <Text style={styles.title}>Round-off</Text>
-        <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>
+        <Text style={{ fontSize: fs(13), color: '#6b7280', marginBottom: 8 }}>
           Bills will be automatically rounded to the nearest ₹{billingSettings.roundOffTo || 1}.
         </Text>
         <View style={styles.infoRow}>

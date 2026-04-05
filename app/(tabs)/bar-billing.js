@@ -11,15 +11,20 @@ import {
   ActionSheetIOS,
   Platform,
 } from 'react-native';
+import { useResponsive } from '../../hooks/useResponsive';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
+import { useOffline } from '../../hooks/useOffline';
 
 export default function BarBillingScreen() {
   const router = useRouter();
+  const { effectivelyOffline } = useOffline();
+  const { gridColumns } = useResponsive();
+  const cols = gridColumns();
   const [tabs, setTabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -400,6 +405,12 @@ export default function BarBillingScreen() {
               <Text style={styles.headerBadgeText}>{tabs.length}</Text>
             </View>
           )}
+          {effectivelyOffline && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
+              <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
+            </View>
+          )}
         </View>
         <TouchableOpacity style={styles.newTabBtn} onPress={handleNewTab}>
           <Ionicons name="add" size={20} color="#fff" />
@@ -435,7 +446,8 @@ export default function BarBillingScreen() {
         data={tabs}
         renderItem={renderTabCard}
         keyExtractor={(item) => item.id}
-        numColumns={2}
+        key={`bar-grid-${cols}`}
+        numColumns={cols}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
