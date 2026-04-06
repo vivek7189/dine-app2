@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { getDisplayImage } from '../../utils/placeholderImages';
 const TABS = [
   { key: 'overview', label: 'Overview', icon: 'bar-chart' },
   { key: 'staff', label: 'Staff', icon: 'people' },
@@ -612,13 +613,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
 
   const renderMenuItem = ({ item }) => (
     <View style={styles.listCard}>
-      {item.image ? (
-        <Image source={{ uri: item.image }} style={styles.menuItemImage} />
-      ) : (
-        <View style={[styles.menuItemImage, { backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' }]}>
-          <Ionicons name="fast-food-outline" size={20} color={Colors.textLight} />
-        </View>
-      )}
+      <Image source={{ uri: getDisplayImage(item) }} style={styles.menuItemImage} />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={styles.listCardTitle}>{item.name}</Text>
         <Text style={styles.listCardSub}>{item.restaurantName}</Text>

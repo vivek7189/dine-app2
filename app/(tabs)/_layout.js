@@ -247,6 +247,18 @@ export default function TabsLayout() {
           href: null, // Always hidden from tab bar
         }}
       />
+      <Tabs.Screen
+        name="order-history"
+        options={{
+          href: null, // Always hidden from tab bar — accessed via More screen
+        }}
+      />
+      <Tabs.Screen
+        name="webview"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
     </View>
   );

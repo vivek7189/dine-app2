@@ -96,6 +96,35 @@ export default function MoreScreen() {
           route: '/(tabs)/kitchen',
           roles: ['owner', 'manager', 'admin', 'waiter', 'employee'],
         },
+        {
+          title: 'Google Reviews',
+          subtitle: 'Manage, reply & collect reviews',
+          icon: 'star',
+          color: '#ea4335',
+          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/admin?tab=google-reviews', title: 'Google Reviews' } },
+          roles: ['owner', 'manager', 'admin'],
+        },
+      ],
+    },
+    {
+      title: 'Finance',
+      items: [
+        {
+          title: 'Books',
+          subtitle: 'Accounting & financial reports',
+          icon: 'book',
+          color: '#10b981',
+          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/books', title: 'Books' } },
+          roles: ['owner', 'manager', 'admin'],
+        },
+        {
+          title: 'Invoices',
+          subtitle: 'Create & manage invoices',
+          icon: 'document-text',
+          color: '#3b82f6',
+          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/invoice/dashboard', title: 'Invoices' } },
+          roles: ['owner', 'manager', 'admin'],
+        },
       ],
     },
     {

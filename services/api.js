@@ -1580,6 +1580,35 @@ class ApiClient {
     });
   }
 
+  // Google Reviews APIs
+  async getGoogleReviewSettings(restaurantId) {
+    return this.request(`/api/google-reviews/settings/${restaurantId}`);
+  }
+
+  async getGoogleAuthStatus(restaurantId) {
+    return this.request(`/api/google-reviews/auth/status/${restaurantId}`);
+  }
+
+  async getGoogleReviews(restaurantId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const queryString = query ? `?${query}` : '';
+    return this.request(`/api/google-reviews/reviews/${restaurantId}${queryString}`);
+  }
+
+  async replyToGoogleReview(restaurantId, reviewId, comment) {
+    return this.request(`/api/google-reviews/reviews/${restaurantId}/${encodeURIComponent(reviewId)}/reply`, {
+      method: 'POST',
+      data: { comment },
+    });
+  }
+
+  async generateGoogleReviewReply(restaurantId, data) {
+    return this.request(`/api/google-reviews/reviews/${restaurantId}/generate-reply`, {
+      method: 'POST',
+      data,
+    });
+  }
+
   // Generate restaurant code for Crave app
   async generateRestaurantCode(restaurantId) {
     return this.request(`/api/restaurants/${restaurantId}/generate-code`, {

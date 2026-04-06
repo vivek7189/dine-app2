@@ -22,6 +22,7 @@ import apiClient from '../../services/api';
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { getDisplayImage } from '../../utils/placeholderImages';
+import { canPerform } from '../../utils/permissions';
 // import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
 import WaiterCartModal from '../../components/WaiterCartModal';
@@ -357,7 +358,7 @@ export default function MenuScreen() {
       const userRole = userData.role?.toLowerCase();
       setIsWaiter(userRole === 'waiter' || userRole === 'employee');
       setIsCashier(userRole === 'cashier' || userRole === 'sales');
-      setCanCompleteBill(userData.pageAccess?.completeBill === true);
+      setCanCompleteBill(canPerform(userData, userData.pageAccess, 'orders', 'completeBill'));
 
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {

@@ -30,6 +30,7 @@ import AppDrawer from '../../components/AppDrawer';
 import SyncIndicator from '../../components/SyncIndicator';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import { canPerform } from '../../utils/permissions';
 
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
@@ -759,7 +760,7 @@ export default function TablesScreen() {
   };
 
   const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());
-  const canResetTables = isOwnerOrAdmin || user?.pageAccess?.resetTables;
+  const canResetTables = canPerform(user, user?.pageAccess, 'tables', 'reset');
 
   const openAddFloor = () => {
     setEditingFloor(null);

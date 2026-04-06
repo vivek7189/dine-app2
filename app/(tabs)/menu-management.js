@@ -21,6 +21,7 @@ import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import MenuItemForm from '../../components/MenuItemForm';
 import { useResponsive } from '../../hooks/useResponsive';
+import { getDisplayImage } from '../../utils/placeholderImages';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
@@ -568,12 +569,10 @@ export default function MenuManagementScreen() {
     return (
       <View style={[styles.menuItemCard, isOutOfStock && styles.menuItemCardOutOfStock]}>
         {/* Image */}
-        {item.images?.[0] && (
-          <Image
-            source={{ uri: item.images[0].url }}
-            style={styles.menuItemImage}
-          />
-        )}
+        <Image
+          source={{ uri: getDisplayImage(item) }}
+          style={styles.menuItemImage}
+        />
 
         {/* Content */}
         <View style={styles.menuItemContent}>
