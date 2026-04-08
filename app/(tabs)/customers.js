@@ -1570,20 +1570,39 @@ export default function CustomersScreen() {
             {customers.length} customer{customers.length !== 1 ? 's' : ''}
           </Text>
         </View>
-        {activeTab === 'customers' && (
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => {
-              setEditingCustomer(null);
-              setCustomerForm({ ...emptyCustomerForm });
-              setFormErrors({});
-              setShowAddModal(true);
-            }}
-          >
-            <Ionicons name="add" size={20} color="#fff" />
-            <Text style={styles.addButtonText}>Add</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.headerActions}>
+          {activeTab === 'customers' && (
+            <TouchableOpacity
+              style={styles.manageGroupsButton}
+              onPress={() =>
+                router.push({
+                  pathname: '/(tabs)/webview',
+                  params: {
+                    url: 'https://www.dineopen.com/customers',
+                    title: 'Customer Groups',
+                  },
+                })
+              }
+            >
+              <Ionicons name="people-outline" size={18} color={Colors.primary} />
+              <Text style={styles.manageGroupsButtonText}>Groups</Text>
+            </TouchableOpacity>
+          )}
+          {activeTab === 'customers' && (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => {
+                setEditingCustomer(null);
+                setCustomerForm({ ...emptyCustomerForm });
+                setFormErrors({});
+                setShowAddModal(true);
+              }}
+            >
+              <Ionicons name="add" size={20} color="#fff" />
+              <Text style={styles.addButtonText}>Add</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* ── Tabs ───────────────────────────────────── */}
@@ -1867,6 +1886,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textMedium,
     marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  manageGroupsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundWhite,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.medium,
+    gap: 4,
+  },
+  manageGroupsButtonText: {
+    color: Colors.primary,
+    fontWeight: '600',
+    fontSize: 13,
   },
   addButton: {
     flexDirection: 'row',

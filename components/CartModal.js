@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -67,6 +67,7 @@ export default function CartModal({
   const [selectedOfferId, setSelectedOfferId] = useState(null);
   const [offerDiscount, setOfferDiscount] = useState(0);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [freeItems, setFreeItems] = useState([]);
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [manualDiscount, setManualDiscount] = useState('');
@@ -177,7 +178,32 @@ export default function CartModal({
       menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
       amount: item.price * item.quantity, reason: voidReason,
     })) : null,
+    freeItems: freeItems && freeItems.length > 0 ? freeItems : null,
   });
+
+  // Build customer context for extended offer engine (audience targeting).
+  const customerContext = useMemo(() => {
+    const phone = customerMobile || customerData?.phone || null;
+    if (!phone && !customerData?.id && !customerData?._id) return null;
+    return {
+      customerPhone: phone,
+      customerId: customerData?.id || customerData?._id || null,
+      isFirstOrder: customerData ? customerData.totalOrders === 0 : undefined,
+    };
+  }, [customerMobile, customerData]);
+
+  // Resolve free item display names from current cart (fallback to menuItemId).
+  const freeItemsForDisplay = useMemo(() => {
+    return (freeItems || []).map(fi => {
+      const id = fi.itemId || fi.menuItemId || fi.id;
+      const match = cart.find(c => (c.menuItemId || c.id) === id);
+      return {
+        id,
+        name: fi.name || match?.name || `Item ${id}`,
+        quantity: fi.quantity || 1,
+      };
+    });
+  }, [freeItems, cart]);
 
   const insets = useSafeAreaInsets();
   const [activeAction, setActiveAction] = useState(null); // 'place' | 'complete'
@@ -333,6 +359,26 @@ export default function CartModal({
                 keyExtractor={(item) => item.id}
                 scrollEnabled={false}
                 contentContainerStyle={styles.cartList}
+                ListFooterComponent={freeItemsForDisplay.length > 0 ? (
+                  <View>
+                    {freeItemsForDisplay.map((fi) => (
+                      <View key={`free-${fi.id}`} style={styles.cartItem}>
+                        <View style={styles.cartItemLeft}>
+                          <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#16a34a' }}>FREE</Text>
+                            </View>
+                            <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.cartItemRight}>
+                          <Text style={[styles.cartItemPrice, { color: '#16a34a' }]}>₹0</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               />
             )}
 
@@ -374,6 +420,8 @@ export default function CartModal({
                     manualDiscount={manualDiscount}
                     manualDiscountType={manualDiscountType}
                     customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
+                    customerContext={customerContext}
+                    onFreeItemsChange={setFreeItems}
                   />
                 )}
 

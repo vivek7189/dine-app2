@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -68,6 +68,7 @@ export default function CashierCartModal({
   const [offerDiscount, setOfferDiscount] = useState(0);
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [selectedOffers, setSelectedOffers] = useState([]);
+  const [freeItems, setFreeItems] = useState([]);
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
@@ -203,7 +204,31 @@ export default function CashierCartModal({
       menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
       amount: item.price * item.quantity, reason: voidReason,
     })) : null,
+    freeItems: freeItems && freeItems.length > 0 ? freeItems : null,
   });
+
+  // Customer context for extended offer engine.
+  const customerContext = useMemo(() => {
+    const phone = customerMobile || customerData?.phone || null;
+    if (!phone && !customerData?.id && !customerData?._id) return null;
+    return {
+      customerPhone: phone,
+      customerId: customerData?.id || customerData?._id || null,
+      isFirstOrder: customerData ? customerData.totalOrders === 0 : undefined,
+    };
+  }, [customerMobile, customerData]);
+
+  const freeItemsForDisplay = useMemo(() => {
+    return (freeItems || []).map(fi => {
+      const id = fi.itemId || fi.menuItemId || fi.id;
+      const match = cart.find(c => (c.menuItemId || c.id) === id);
+      return {
+        id,
+        name: fi.name || match?.name || `Item ${id}`,
+        quantity: fi.quantity || 1,
+      };
+    });
+  }, [freeItems, cart]);
 
   const handlePlaceOrder = () => {
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
@@ -336,6 +361,26 @@ export default function CashierCartModal({
             <View style={styles.cartSection}>
               <FlatList
                 data={cart}
+                ListFooterComponent={freeItemsForDisplay.length > 0 ? (
+                  <View>
+                    {freeItemsForDisplay.map((fi) => (
+                      <View key={`free-${fi.id}`} style={styles.cartItem}>
+                        <View style={styles.cartItemLeft}>
+                          <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#16a34a' }}>FREE</Text>
+                            </View>
+                            <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.cartItemRight}>
+                          <Text style={[styles.cartItemTotal, { color: '#16a34a' }]}>₹0</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
                 renderItem={renderCartItem}
                 keyExtractor={(item) => item.id}
                 scrollEnabled={false}
@@ -379,6 +424,8 @@ export default function CashierCartModal({
                   manualDiscount={manualDiscount}
                   manualDiscountType={manualDiscountType}
                   customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
+                  customerContext={customerContext}
+                  onFreeItemsChange={setFreeItems}
                 />
               )}
 

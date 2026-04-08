@@ -107,24 +107,16 @@ export default function OffersScreen() {
   };
 
   const handleOpenModal = (offer = null) => {
-    if (offer) {
-      setEditingOffer(offer);
-      setFormData({
-        ...offer,
-        discountValue: String(offer.discountValue || ''),
-        minOrderValue: String(offer.minOrderValue || '0'),
-        maxDiscount: offer.maxDiscount ? String(offer.maxDiscount) : '',
-        usageLimit: offer.usageLimit ? String(offer.usageLimit) : '',
-        validFrom: offer.validFrom ? new Date(offer.validFrom).toISOString().split('T')[0] : '',
-        validUntil: offer.validUntil ? new Date(offer.validUntil).toISOString().split('T')[0] : '',
-        targetCategories: offer.targetCategories || [],
-        targetItems: offer.targetItems || [],
-      });
-    } else {
-      setEditingOffer(null);
-      setFormData({ ...emptyOffer, validFrom: new Date().toISOString().split('T')[0] });
-    }
-    setShowModal(true);
+    // Route create/edit to the rich web builder inside the WebView wrapper.
+    // The native list below still renders for fast browsing; useFocusEffect
+    // reloads offers when the user returns from the web page.
+    router.push({
+      pathname: '/(tabs)/webview',
+      params: {
+        url: 'https://www.dineopen.com/offers',
+        title: 'Offers & Promotions',
+      },
+    });
   };
 
   const handleSave = async () => {
