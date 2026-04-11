@@ -50,6 +50,7 @@ export default function CartModal({
   activePricingRuleId,
   setActivePricingRuleId,
   autoSelectedRule = false,
+  isUpdateOrder = false,
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -316,7 +317,7 @@ export default function CartModal({
             </View>
           </View>
 
-          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
             {/* Kitchen Notes — collapsible */}
             {showKitchenNotes && (
               <View style={styles.kitchenNotesBar}>
@@ -384,7 +385,7 @@ export default function CartModal({
 
             {cart.length > 0 && (
               <>
-                {/* Customer Lookup */}
+                {/* Customer Lookup — compact inline row */}
                 {restaurantId && (
                   <View style={styles.sectionContainer}>
                     <CustomerLookup
@@ -473,7 +474,10 @@ export default function CartModal({
                   />
                 </View>
 
-                {/* Billing Summary Bar */}
+                {/* Flexible spacer — pushes summary to bottom */}
+                <View style={{ flexGrow: 1, minHeight: 8 }} />
+
+                {/* Billing Summary Bar — anchored near bottom */}
                 <BillingSummaryBar
                   subtotal={subtotal}
                   totalDiscount={billing.totalDiscount}
@@ -492,50 +496,53 @@ export default function CartModal({
                   <Text style={styles.savingsText}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
                 )}
 
-                {/* Payment Method — hidden when split payment active */}
-                {splitPayments.length === 0 && (
-                  <View style={styles.paymentRow}>
-                    <Ionicons name="card-outline" size={14} color="#6b7280" />
-                    <Text style={styles.paymentLabel}>Pay</Text>
-                    {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
-                      <TouchableOpacity
-                        key={method}
-                        style={[styles.paymentPill, paymentMethod === method && styles.paymentPillActive]}
-                        onPress={() => setPaymentMethod(method)}
-                      >
-                        <Ionicons name={paymentIcons[method]} size={14} color={paymentMethod === method ? '#fff' : '#6b7280'} />
-                        <Text style={[styles.paymentPillText, paymentMethod === method && styles.paymentPillTextActive]}>
-                          {method.charAt(0).toUpperCase() + method.slice(1)}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-                {effectivelyOffline && (
-                  <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, marginLeft: 4 }}>UPI/Card unavailable offline</Text>
-                )}
-
-                {/* Spacer for sticky bottom buttons */}
-                <View style={{ height: 80 }} />
+                {/* Spacer for sticky bottom */}
+                <View style={{ height: 130 }} />
               </>
             )}
           </ScrollView>
 
-          {/* Sticky Bottom Action Buttons */}
+          {/* Sticky Bottom: payment pills + action buttons (always visible) */}
           {cart.length > 0 && (
             <View style={[styles.stickyBottom, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+              {/* Payment pills row — hidden when split payment active */}
+              {splitPayments.length === 0 && (
+                <View style={styles.paymentRow}>
+                  <Ionicons name="wallet-outline" size={14} color="#6b7280" />
+                  <Text style={styles.paymentLabel}>Pay</Text>
+                  {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
+                    <TouchableOpacity
+                      key={method}
+                      style={[styles.paymentPill, paymentMethod === method && styles.paymentPillActive]}
+                      onPress={() => setPaymentMethod(method)}
+                    >
+                      <Ionicons name={paymentIcons[method]} size={13} color={paymentMethod === method ? '#fff' : '#6b7280'} />
+                      <Text style={[styles.paymentPillText, paymentMethod === method && styles.paymentPillTextActive]}>
+                        {method.charAt(0).toUpperCase() + method.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              {effectivelyOffline && (
+                <Text style={{ fontSize: 10, color: '#f59e0b', marginLeft: 12, marginBottom: 4 }}>
+                  UPI/Card unavailable offline
+                </Text>
+              )}
+
               <View style={styles.dualButtonRow}>
                 <TouchableOpacity
                   style={[styles.actionBtn, styles.kitchenBtn, sending && { opacity: 0.6 }]}
                   onPress={handlePlaceOrder}
                   disabled={sending}
+                  activeOpacity={0.85}
                 >
                   {sending && activeAction === 'place' ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <>
-                      <Ionicons name="flame-outline" size={18} color="#fff" />
-                      <Text style={styles.actionBtnText}>Place Order</Text>
+                      <Ionicons name={isUpdateOrder ? "refresh" : "paper-plane"} size={17} color="#fff" />
+                      <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update Order' : 'Place Order'}</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -544,12 +551,13 @@ export default function CartModal({
                     style={[styles.actionBtn, styles.billBtn, sending && { opacity: 0.6 }]}
                     onPress={handleCompleteBill}
                     disabled={sending}
+                    activeOpacity={0.85}
                   >
                     {sending && activeAction === 'complete' ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
-                        <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                        <Ionicons name="checkmark-circle" size={17} color="#fff" />
                         <Text style={styles.actionBtnText}>Complete Bill</Text>
                       </>
                     )}
@@ -693,7 +701,7 @@ const styles = StyleSheet.create({
   cartItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
@@ -744,48 +752,55 @@ const styles = StyleSheet.create({
   // Sections
   sectionContainer: {
     paddingHorizontal: 12,
-    marginTop: 6,
+    marginTop: 4,
   },
   billingSection: {
     paddingHorizontal: 12,
-    marginTop: 6,
+    marginTop: 4,
   },
   savingsText: {
     textAlign: 'center',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#10b981',
-    marginTop: 4,
+    marginTop: 3,
+    marginBottom: 2,
   },
   // Payment
   paymentRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingTop: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 12,
+    flexWrap: 'wrap',
   },
   paymentLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     color: '#6b7280',
     marginRight: 2,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   paymentPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: 999,
     backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   paymentPillActive: {
     backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
   },
   paymentPillText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#6b7280',
   },
   paymentPillTextActive: {
@@ -799,18 +814,19 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: '#fff',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'android' ? 24 : 10,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 8,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 12,
   },
   dualButtonRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   actionBtn: {
     flex: 1,
@@ -818,19 +834,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 13,
-    borderRadius: 10,
+    paddingVertical: 14,
+    borderRadius: 12,
   },
   kitchenBtn: {
-    backgroundColor: '#1e40af',
+    backgroundColor: '#f97316',
+    shadowColor: '#f97316',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
   },
   billBtn: {
     backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
   },
   actionBtnText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#fff',
+    letterSpacing: 0.2,
   },
   emptyCart: {
     alignItems: 'center',

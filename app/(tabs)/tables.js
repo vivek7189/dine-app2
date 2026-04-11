@@ -23,11 +23,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import AppDrawer from '../../components/AppDrawer';
-import SyncIndicator from '../../components/SyncIndicator';
+// SyncIndicator moved to settings page
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { canPerform } from '../../utils/permissions';
@@ -78,12 +79,26 @@ export default function TablesScreen() {
   const [syncing, setSyncing] = useState(false);
   const [updatingTables, setUpdatingTables] = useState(new Set()); // tables with pending status change
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
 
   useEffect(() => {
     loadInitialData();
+  }, []);
+
+  // Listen for restaurant switch from other tabs
+  useEffect(() => {
+    const unsub = restaurantEvents.on('switch', ({ restaurantId: newRid, restaurant: newRest }) => {
+      setSelectedRestaurant(newRest ? { id: newRid, ...newRest } : null);
+      setFloors([]);
+      setTables([]);
+      setSelectedFloor(null);
+      setLoading(true);
+      loadInitialData();
+    });
+    return unsub;
   }, []);
 
   // Pulse animation for tables being updated
@@ -177,15 +192,18 @@ export default function TablesScreen() {
       });
     });
 
-    // Clear updating state after background refresh completes (timeout as fallback)
+    // Clear updating state after server has had time to process, then do a final refresh
     setTimeout(() => {
       setUpdatingTables(prev => {
         const next = new Set(prev);
         next.delete(tableIdStr);
         return next;
       });
-    }, 3000);
-  }, []);
+      // Final refresh to get authoritative server state
+      const rid = restaurantIdRef.current;
+      if (rid) refreshInBackground(rid);
+    }, 5000);
+  }, [refreshInBackground]);
 
   // Background refresh without blocking
   const refreshInBackground = useCallback(async (restaurantId) => {
@@ -205,9 +223,44 @@ export default function TablesScreen() {
         floorsData = response;
       }
 
-      setFloors(floorsData);
+      // Merge: preserve optimistic state for tables that are still mid-update,
+      // so a stale server response doesn't overwrite a just-set status.
+      setUpdatingTables(prevUpdating => {
+        const pending = prevUpdating;
+        const mergeTable = (serverTable, localTable) => {
+          if (pending.has(String(serverTable.id)) && localTable) {
+            return {
+              ...serverTable,
+              status: localTable.status,
+              currentOrderId: localTable.currentOrderId,
+              lastOrderTime: localTable.lastOrderTime,
+            };
+          }
+          return serverTable;
+        };
+
+        setTables(prevTables => {
+          const byId = new Map(prevTables.map(t => [String(t.id), t]));
+          return floorsData
+            .flatMap(floor => floor.tables || [])
+            .map(t => mergeTable(t, byId.get(String(t.id))));
+        });
+
+        setFloors(prevFloors => {
+          const localById = new Map(
+            prevFloors.flatMap(f => f.tables || []).map(t => [String(t.id), t])
+          );
+          return floorsData.map(floor => ({
+            ...floor,
+            tables: (floor.tables || []).map(t => mergeTable(t, localById.get(String(t.id)))),
+          }));
+        });
+
+        // Don't wipe the set — per-table 3s timeout clears individual entries.
+        return prevUpdating;
+      });
+
       setSelectedFloor(prev => {
-        // Keep "All" (null) as is; update selected floor with fresh data
         if (prev) {
           const updatedFloor = floorsData.find(f => f.id === prev.id);
           return updatedFloor || prev;
@@ -215,11 +268,9 @@ export default function TablesScreen() {
         return prev;
       });
 
-      const allTables = floorsData.flatMap(floor => floor.tables || []);
-      setTables(allTables);
-
       // Save to cache for stale-while-revalidate
       if (restaurantId) {
+        const allTables = floorsData.flatMap(floor => floor.tables || []);
         setCache('cache_floors_' + restaurantId, { floors: floorsData, tables: allTables });
       }
     } catch (error) {
@@ -227,7 +278,6 @@ export default function TablesScreen() {
     } finally {
       isRefreshingRef.current = false;
       setSyncing(false);
-      setUpdatingTables(new Set()); // Clear all updating states
     }
   }, []);
 
@@ -417,6 +467,8 @@ export default function TablesScreen() {
     setRefreshing(true);
     try {
       if (selectedRestaurant?.id) {
+        // Invalidate in-memory cache so we get fresh data from server
+        apiClient.invalidateCache(`/api/floors/${selectedRestaurant.id}`);
         await loadFloorsAndTables(selectedRestaurant.id);
       }
     } catch (error) {
@@ -456,17 +508,18 @@ export default function TablesScreen() {
         params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName },
       });
     } else if (table.status === 'occupied' && table.currentOrderId) {
-      router.push({
-        pathname: '/(tabs)/orders',
-        params: { orderId: table.currentOrderId },
-      });
+      // Keep user on tables page — open the order detail modal inline
+      setSelectedOrderId(table.currentOrderId);
+      setSelectedTableForOrder(table);
+      setOrderModalMode('view');
+      setShowOrderModal(true);
     } else if (table.status === 'cleaning') {
       // Allow operations on cleaning tables
       if (table.currentOrderId) {
-        router.push({
-          pathname: '/(tabs)/orders',
-          params: { orderId: table.currentOrderId },
-        });
+        setSelectedOrderId(table.currentOrderId);
+        setSelectedTableForOrder(table);
+        setOrderModalMode('view');
+        setShowOrderModal(true);
       } else {
         router.push({
           pathname: '/(tabs)/menu',
@@ -521,10 +574,52 @@ export default function TablesScreen() {
 
     // Allow adding to order for occupied or cleaning tables
     if ((table.status === 'occupied' || table.status === 'cleaning') && table.currentOrderId) {
-      setSelectedOrderId(table.currentOrderId);
-      setSelectedTableForOrder(table);
-      setOrderModalMode('add');
-      setShowOrderModal(true);
+      Alert.alert(
+        `Table ${table.name}`,
+        'What would you like to do?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Update Order',
+            onPress: () => {
+              setSelectedOrderId(table.currentOrderId);
+              setSelectedTableForOrder(table);
+              setOrderModalMode('add');
+              setShowOrderModal(true);
+            },
+          },
+          {
+            text: 'Mark Complete',
+            style: 'destructive',
+            onPress: () => handleMarkTableComplete(table),
+          },
+        ]
+      );
+    }
+  };
+
+  const handleMarkTableComplete = async (table) => {
+    if (!table.currentOrderId) return;
+    const rid = selectedRestaurant?.id;
+
+    // Optimistic: mark the table available right away
+    updateTableStatusOptimistically(table.id, 'available', null);
+
+    try {
+      await apiClient.updateOrderStatus(table.currentOrderId, 'completed', rid);
+      if (table.id) {
+        try {
+          await apiClient.updateTableStatus(table.id, 'available', null, rid);
+        } catch (e) {
+          console.warn('Table status update failed:', e?.message);
+        }
+      }
+      // Refresh in background
+      if (rid) refreshInBackground(rid);
+    } catch (err) {
+      // Revert on failure
+      updateTableStatusOptimistically(table.id, 'occupied', table.currentOrderId);
+      Alert.alert('Error', err?.message || 'Failed to complete order.');
     }
   };
 
@@ -546,11 +641,14 @@ export default function TablesScreen() {
 
   const handleAddItemsToOrder = (order, cartItems) => {
     // Navigate to menu with existing order items
+    const tableFloor = selectedTableForOrder ? getFloorForTable(selectedTableForOrder) : null;
+    const floorName = tableFloor?.name || tableFloor?.floorName || '';
     router.push({
       pathname: '/(tabs)/menu',
       params: {
         tableId: selectedTableForOrder?.id,
         tableNumber: selectedTableForOrder?.name,
+        floorName,
         orderId: order.id,
         existingOrder: 'true',
         cartItems: JSON.stringify(cartItems),
@@ -617,8 +715,12 @@ export default function TablesScreen() {
         onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
-        {/* Gradient Overlay */}
-        <View style={styles.cardGradient}>
+        {/* Left accent border */}
+        <View style={[styles.cardAccent, {
+          backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
+        }]} />
+        {/* Card Inner */}
+        <View style={styles.cardInner}>
           {/* Status Indicator */}
           <View style={styles.statusIndicator}>
             {isAvailable && <View style={styles.statusDotGreen} />}
@@ -626,21 +728,6 @@ export default function TablesScreen() {
             {isReserved && <View style={styles.statusDotPurple} />}
             {isCleaning && <View style={styles.statusDotBlue} />}
             {isOutOfService && <View style={styles.statusDotRed} />}
-          </View>
-
-          {/* Restaurant Icon Watermark */}
-          <View style={styles.watermarkIcon}>
-            <Ionicons
-              name="restaurant"
-              size={60}
-              color={
-                isAvailable ? "rgba(16, 185, 129, 0.06)" : 
-                isOccupied ? "rgba(245, 158, 11, 0.06)" : 
-                isReserved ? "rgba(139, 92, 246, 0.06)" :
-                isCleaning ? "rgba(59, 130, 246, 0.06)" :
-                "rgba(239, 68, 68, 0.06)"
-              }
-            />
           </View>
 
           {/* Table Content */}
@@ -704,7 +791,7 @@ export default function TablesScreen() {
                 </View>
               ) : isAvailable ? (
                 <View style={styles.takeOrderButtonContainer}>
-                  <Ionicons name="restaurant" size={12} color="#fff" />
+                  <Ionicons name="restaurant-outline" size={12} color="#fff" />
                   <Text style={styles.takeOrderButtonText}>Take Order</Text>
                 </View>
               ) : (
@@ -727,7 +814,7 @@ export default function TablesScreen() {
                       handleAddToOrder(table);
                     }}
                   >
-                    <Ionicons name="add-circle" size={11} color="#5b7ff5" />
+                    <Ionicons name="add-outline" size={13} color="#3b82f6" />
                     <Text style={styles.addButtonText}>Add</Text>
                   </TouchableOpacity>
                 </View>
@@ -741,16 +828,20 @@ export default function TablesScreen() {
     // Show a subtle syncing overlay if table is being updated
     if (isUpdating) {
       return (
-        <View style={{ position: 'relative' }}>
+        <View style={{ flex: 1, position: 'relative' }}>
           {cardContent}
-          <View style={{
-            position: 'absolute', top: 8, right: 8, zIndex: 10,
-            backgroundColor: 'rgba(255,255,255,0.85)', borderRadius: 12,
-            paddingHorizontal: 8, paddingVertical: 3,
-            flexDirection: 'row', alignItems: 'center', gap: 4,
-          }}>
-            <ActivityIndicator size={10} color={Colors.primary} />
-            <Text style={{ fontSize: 9, fontWeight: '600', color: Colors.primary }}>Syncing</Text>
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: 8, right: 8, zIndex: 10,
+              backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 999,
+              paddingHorizontal: 6, paddingVertical: 2,
+              flexDirection: 'row', alignItems: 'center', gap: 3,
+              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.1, shadowRadius: 2, elevation: 2,
+            }}
+          >
+            <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.6 }] }} />
           </View>
         </View>
       );
@@ -1207,6 +1298,33 @@ export default function TablesScreen() {
     currentFloorTables = [...sortTablesAlphabetically(filtered), ...sortTablesAlphabetically(rest)];
   }
 
+  // Animated header compaction
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, 80],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const greetingOpacity = scrollY.interpolate({
+    inputRange: [0, 40],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const brandScale = scrollY.interpolate({
+    inputRange: [0, 80],
+    outputRange: [1, 0.8],
+    extrapolate: 'clamp',
+  });
+  const compactStatsOpacity = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const compactStatsHeight = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [44, 0],
+    extrapolate: 'clamp',
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
@@ -1219,69 +1337,60 @@ export default function TablesScreen() {
           <Ionicons name="menu" size={28} color={Colors.textDark} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <View style={styles.brandIcon}>
+          <Animated.View style={[styles.brandIcon, { transform: [{ scale: brandScale }] }]}>
             <Ionicons name="restaurant" size={22} color="#fff" />
-          </View>
+          </Animated.View>
           <View>
             <Text style={styles.restaurantName}>{selectedRestaurant?.name || 'Restaurant'}</Text>
-            <Text style={styles.userName}>Hello, {user?.name || 'Staff'}</Text>
+            <Animated.Text style={[styles.userName, { opacity: greetingOpacity }]}>Hello, {user?.name || 'Staff'}</Animated.Text>
           </View>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          {effectivelyOffline && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
-              <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
-            </View>
-          )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           {canResetTables && (
-            <TouchableOpacity onPress={handleResetAllTables} style={styles.headerActionBtn}>
-              <Ionicons name="refresh-circle-outline" size={24} color="#ef4444" />
+            <TouchableOpacity onPress={handleResetAllTables} style={[styles.headerActionBtn, { backgroundColor: '#fef2f2' }]}>
+              <Ionicons name="trash-outline" size={18} color="#ef4444" />
             </TouchableOpacity>
           )}
           {isOwnerOrAdmin && (
-            <TouchableOpacity onPress={openAddTable} style={styles.headerActionBtn}>
-              <Ionicons name="add-circle" size={28} color={Colors.primary} />
+            <TouchableOpacity onPress={openAddTable} style={[styles.headerActionBtn, { backgroundColor: '#eff6ff' }]}>
+              <Ionicons name="add" size={18} color="#3b82f6" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={styles.refreshButton}>
-            <Ionicons name="refresh-circle" size={32} color={Colors.primary} />
+          <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={[styles.headerActionBtn, { backgroundColor: '#eef2ff' }]}>
+            <Ionicons name="sync-outline" size={18} color="#6366f1" />
           </TouchableOpacity>
         </View>
       </View>
 
-      <SyncIndicator visible={syncing} />
-
-      {/* Quick Stats - Icon + Count Only */}
-      <View style={styles.quickStats}>
+      {/* Status Filter Chips */}
+      <Animated.View style={{ opacity: compactStatsOpacity, maxHeight: compactStatsHeight, overflow: 'hidden' }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusChipsRow}>
         <TouchableOpacity
-          style={[styles.statCard, selectedStatus === 'available' && styles.statCardSelected]}
+          style={[styles.statusChip, selectedStatus === 'available' && styles.statusChipActiveGreen]}
           onPress={() => setSelectedStatus(selectedStatus === 'available' ? null : 'available')}
         >
-          <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
-          <Text style={[styles.statCount, selectedStatus === 'available' && styles.statCountSelected]}>
-            {stats.available}
-          </Text>
+          <View style={[styles.statusChipDot, { backgroundColor: '#16a34a' }]} />
+          <Text style={[styles.statusChipLabel, selectedStatus === 'available' && styles.statusChipLabelActive]}>Available</Text>
+          <Text style={[styles.statusChipCount, selectedStatus === 'available' && styles.statusChipCountActive]}>{stats.available}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.statCard, selectedStatus === 'occupied' && styles.statCardSelected]}
+          style={[styles.statusChip, selectedStatus === 'occupied' && styles.statusChipActiveOrange]}
           onPress={() => setSelectedStatus(selectedStatus === 'occupied' ? null : 'occupied')}
         >
-          <Ionicons name="time" size={18} color="#ea580c" />
-          <Text style={[styles.statCount, selectedStatus === 'occupied' && styles.statCountSelected]}>
-            {stats.occupied}
-          </Text>
+          <View style={[styles.statusChipDot, { backgroundColor: '#ea580c' }]} />
+          <Text style={[styles.statusChipLabel, selectedStatus === 'occupied' && styles.statusChipLabelActive]}>Occupied</Text>
+          <Text style={[styles.statusChipCount, selectedStatus === 'occupied' && styles.statusChipCountActive]}>{stats.occupied}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.statCard, selectedStatus === 'reserved' && styles.statCardSelected]}
+          style={[styles.statusChip, selectedStatus === 'reserved' && styles.statusChipActivePurple]}
           onPress={() => setSelectedStatus(selectedStatus === 'reserved' ? null : 'reserved')}
         >
-          <Ionicons name="calendar" size={18} color="#9333ea" />
-          <Text style={[styles.statCount, selectedStatus === 'reserved' && styles.statCountSelected]}>
-            {stats.reserved}
-          </Text>
+          <View style={[styles.statusChipDot, { backgroundColor: '#9333ea' }]} />
+          <Text style={[styles.statusChipLabel, selectedStatus === 'reserved' && styles.statusChipLabelActive]}>Reserved</Text>
+          <Text style={[styles.statusChipCount, selectedStatus === 'reserved' && styles.statusChipCountActive]}>{stats.reserved}</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
+      </Animated.View>
 
       {/* Floor Selector */}
       {(floors.length > 0 || isOwnerOrAdmin) && (
@@ -1305,7 +1414,7 @@ export default function TablesScreen() {
       )}
 
       {/* Tables Grid */}
-      <FlatList
+      <Animated.FlatList
         data={currentFloorTables}
         renderItem={renderTable}
         keyExtractor={(item) => item.id}
@@ -1314,6 +1423,11 @@ export default function TablesScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
         contentContainerStyle={styles.tablesGrid}
         showsVerticalScrollIndicator={false}
         columnWrapperStyle={styles.tableRow}
@@ -1348,12 +1462,52 @@ export default function TablesScreen() {
         restaurantId={selectedRestaurant?.id}
         userRole={user?.role}
         onAddItems={handleAddItemsToOrder}
-        onCompleteBill={(order) => {
-          // Navigate to orders screen with billing mode
-          router.push({
-            pathname: '/(tabs)/orders',
-            params: { orderId: order.id, completeBilling: 'true' },
-          });
+        onCompleteBill={async (order) => {
+          // Complete the bill inline — no navigation, no duplicate confirmations.
+          const tableForOrder = selectedTableForOrder;
+          const rid = selectedRestaurant?.id;
+          // Close the modal immediately for a snappy feel
+          setShowOrderModal(false);
+
+          // Optimistic: mark the table available right away
+          if (tableForOrder?.id) {
+            updateTableStatusOptimistically(tableForOrder.id, 'available', null);
+          }
+
+          try {
+            await apiClient.updateOrderStatus(order.id, 'completed', rid);
+            // Free the table on the server — await so failures surface
+            if (tableForOrder?.id) {
+              try {
+                await apiClient.updateTableStatus(tableForOrder.id, 'available', null, rid);
+              } catch (e) {
+                console.warn('Table status update failed:', e?.message);
+              }
+            }
+            // Refresh tables from server so local state reflects authoritative truth
+            if (rid) {
+              try { loadFloorsAndTables(rid); } catch (_) {}
+            }
+            // Non-blocking toast on Android; silent on iOS
+            try {
+              const { ToastAndroid, Platform } = require('react-native');
+              if (Platform.OS === 'android') {
+                ToastAndroid.show(
+                  `Billing complete • Table ${tableForOrder?.name || ''}`.trim(),
+                  ToastAndroid.SHORT
+                );
+              }
+            } catch (_) {}
+            // Cleanup selection state
+            setSelectedOrderId(null);
+            setSelectedTableForOrder(null);
+          } catch (err) {
+            // Revert optimistic state on failure
+            if (tableForOrder?.id) {
+              updateTableStatusOptimistically(tableForOrder.id, 'occupied', order.id);
+            }
+            Alert.alert('Error', err?.message || 'Failed to complete billing.');
+          }
         }}
       />
 
@@ -1897,7 +2051,7 @@ export default function TablesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
   header: {
     flexDirection: 'row',
@@ -1906,8 +2060,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
   },
   menuButton: {
     padding: 6,
@@ -1942,67 +2099,86 @@ const styles = StyleSheet.create({
     color: Colors.textMedium,
     marginTop: 1,
   },
-  refreshButton: {
-    padding: 4,
-  },
-  quickStats: {
+  statusChipsRow: {
     flexDirection: 'row',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     gap: 8,
     backgroundColor: '#fff',
   },
-  statCard: {
-    flex: 1,
+  statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     backgroundColor: '#f8f9fa',
-    borderRadius: 10,
+    borderRadius: 20,
     gap: 6,
     borderWidth: 1.5,
-    borderColor: 'transparent',
+    borderColor: '#f0f0f0',
   },
-  statCardSelected: {
-    backgroundColor: '#fef2f2',
-    borderColor: Colors.primary,
+  statusChipDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
-  statCount: {
-    fontSize: 16,
+  statusChipLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: Colors.textMedium,
+  },
+  statusChipLabelActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  statusChipCount: {
+    fontSize: 13,
     fontWeight: '700',
     color: Colors.textDark,
   },
-  statCountSelected: {
-    color: Colors.primary,
+  statusChipCountActive: {
+    color: '#fff',
+  },
+  statusChipActiveGreen: {
+    backgroundColor: '#16a34a',
+    borderColor: '#16a34a',
+  },
+  statusChipActiveOrange: {
+    backgroundColor: '#ea580c',
+    borderColor: '#ea580c',
+  },
+  statusChipActivePurple: {
+    backgroundColor: '#9333ea',
+    borderColor: '#9333ea',
   },
   floorSelector: {
     backgroundColor: '#fff',
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+    borderBottomColor: '#f0f0f0',
   },
   floorChipsContainer: {
     paddingHorizontal: 14,
-    gap: 6,
+    paddingRight: 24,
+    gap: 8,
   },
   floorChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     backgroundColor: '#f5f5f5',
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#e5e5e5',
+    borderColor: '#e8e8e8',
   },
   floorChipSelected: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
   floorChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: Colors.textDark,
   },
@@ -2039,20 +2215,21 @@ const styles = StyleSheet.create({
   tableCard: {
     flex: 1,
     margin: 4,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: '#fff', // default background to prevent grey bleed when status missing
+    backgroundColor: '#fff',
+    flexDirection: 'row',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
     elevation: 2,
   },
   tableCardAvailable: {
     backgroundColor: '#fff',
   },
   tableCardOccupied: {
-    backgroundColor: '#fffbeb',
+    backgroundColor: '#fef9ee',
   },
   tableCardReserved: {
     backgroundColor: '#faf5ff',
@@ -2063,9 +2240,14 @@ const styles = StyleSheet.create({
   tableCardOutOfService: {
     backgroundColor: '#f9fafb',
   },
-  cardGradient: {
+  cardAccent: {
+    width: 3.5,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
+  },
+  cardInner: {
+    flex: 1,
     padding: 10,
-    height: 150,
     position: 'relative',
   },
   statusIndicator: {
@@ -2075,75 +2257,69 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   statusDotGreen: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#16a34a',
     shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     elevation: 2,
   },
   statusDotOrange: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#ea580c',
     shadowColor: '#ea580c',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     elevation: 2,
   },
   statusDotPurple: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#9333ea',
     shadowColor: '#9333ea',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     elevation: 2,
   },
   statusDotBlue: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#3b82f6',
     shadowColor: '#3b82f6',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     elevation: 2,
   },
   statusDotRed: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#ef4444',
     shadowColor: '#ef4444',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     elevation: 2,
-  },
-  watermarkIcon: {
-    position: 'absolute',
-    bottom: -8,
-    right: -8,
-    opacity: 0.6,
   },
   tableContent: {
     flex: 1,
     justifyContent: 'space-between',
   },
   tableNumber: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
     color: Colors.textDark,
-    letterSpacing: 0,
+    letterSpacing: -0.3,
   },
   tableNumberDisabled: {
     color: '#9ca3af',
@@ -2208,12 +2384,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    paddingVertical: 8,
+    paddingVertical: 7,
     backgroundColor: '#16a34a',
-    borderRadius: 8,
+    borderRadius: 10,
     shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 3,
   },
@@ -2232,11 +2408,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 8,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#e5e5e5',
+    paddingVertical: 7,
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   viewButtonText: {
     fontSize: 11,
@@ -2249,16 +2425,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 8,
-    backgroundColor: '#dbeafe',
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#5b7ff5',
+    paddingVertical: 7,
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
   },
   addButtonText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#5b7ff5',
+    color: '#3b82f6',
   },
   outOfServiceButtonContainer: {
     flexDirection: 'row',
@@ -2444,7 +2620,11 @@ const styles = StyleSheet.create({
   },
   // Header action button
   headerActionBtn: {
-    padding: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Empty state add button
   emptyAddBtn: {

@@ -376,7 +376,7 @@ export default function OrderHistoryScreen() {
                 {selectedOrder.discountAmount > 0 && (
                   <View style={styles.detailItem}>
                     <Text style={[styles.detailLabel, { color: '#10b981' }]}>
-                      {selectedOrder.appliedOffer?.name ? `Offer: ${selectedOrder.appliedOffer.name}` : 'Offer Discount'}
+                      {(() => { const n = typeof selectedOrder.appliedOffer === 'string' ? selectedOrder.appliedOffer : (selectedOrder.appliedOffer?.name || selectedOrder.selectedOfferName); return n ? `Offer: ${n}` : 'Offer Discount'; })()}
                     </Text>
                     <Text style={[styles.detailValue, { color: '#10b981' }]}>-{formatCurrency(selectedOrder.discountAmount)}</Text>
                   </View>

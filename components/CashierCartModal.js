@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
   StatusBar,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +24,7 @@ import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
+import { calculateOfferResult } from '../services/offerEngine';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 
@@ -113,10 +115,17 @@ export default function CashierCartModal({
   })();
 
   // Calculate loyalty discount
+  // Supports both old `redemptionValue` (e.g. 0.1 = 1pt = ₹0.10)
+  // and new `redemptionRate` (e.g. 100 = 100pts per ₹1 → 1pt = ₹0.01)
   const loyaltyDiscount = (() => {
     if (!redeemPoints || !loyaltySettings) return 0;
-    const redemptionRate = loyaltySettings.redemptionValue || 0.1;
-    return Math.round(redeemPoints * redemptionRate * 100) / 100;
+    let ratePerPoint;
+    if (loyaltySettings.redemptionRate) {
+      ratePerPoint = 1 / loyaltySettings.redemptionRate;
+    } else {
+      ratePerPoint = loyaltySettings.redemptionValue || 0.1;
+    }
+    return Math.round(redeemPoints * ratePerPoint * 100) / 100;
   })();
 
   // Comp items reduce subtotal
@@ -179,6 +188,15 @@ export default function CashierCartModal({
     selectedOfferIds: selectedOfferIds.length > 0 ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : []),
     selectedOfferName: selectedOffer?.name || null,
     selectedOfferNames: selectedOffers.length > 0 ? selectedOffers.map(o => o.name) : (selectedOffer ? [selectedOffer.name] : []),
+    appliedOffers: selectedOffers.length > 0
+      ? selectedOffers.map(offer => ({
+          id: offer.id || offer._id,
+          name: offer.name,
+          discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
+        }))
+      : (selectedOffer && offerDiscount > 0
+          ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]
+          : []),
     customerPhone: customerMobile || customerData?.phone || '',
     customerId: customerData?.id || customerData?._id || null,
     serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
@@ -492,7 +510,13 @@ export default function CashierCartModal({
                 roundOffAmount={billing.roundOffAmount}
                 grandTotal={billing.grandTotal}
                 offerDiscount={offerDiscount}
-                offerName={selectedOffer?.name || null}
+                offerName={selectedOffers.length > 0 ? selectedOffers.map(o => o.name).join(', ') : (selectedOffer?.name || null)}
+                appliedOffers={selectedOffers.length > 0
+                  ? selectedOffers.map(offer => ({
+                      name: offer.name,
+                      discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
+                    }))
+                  : []}
                 manualDiscount={manualDiscountAmount}
                 loyaltyDiscount={loyaltyDiscount}
               />
@@ -781,7 +805,7 @@ const styles = StyleSheet.create({
   bottomAction: {
     backgroundColor: '#fff',
     padding: 14,
-    paddingBottom: 24,
+    paddingBottom: Platform.OS === 'android' ? 36 : 24,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
   },

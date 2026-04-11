@@ -20,6 +20,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -91,6 +92,17 @@ export default function CustomersScreen() {
   const [offers, setOffers] = useState([]);
   const [loadingOffers, setLoadingOffers] = useState(false);
 
+  // ── Customer Groups state ─────────────────────────
+  const [groups, setGroups] = useState([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [showGroupsModal, setShowGroupsModal] = useState(false);
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [groupForm, setGroupForm] = useState({ name: '', description: '', color: '#3b82f6' });
+  const [savingGroup, setSavingGroup] = useState(false);
+  const [showAssignGroupModal, setShowAssignGroupModal] = useState(false);
+  const [assigningCustomer, setAssigningCustomer] = useState(null);
+
   // ── Loyalty & Settings state ─────────────────────────
   const [loyaltySettings, setLoyaltySettings] = useState(null);
   const [loadingLoyaltySettings, setLoadingLoyaltySettings] = useState(false);
@@ -106,6 +118,18 @@ export default function CustomersScreen() {
   // ── Init ────────────────────────────────────────────
   useEffect(() => {
     loadInitialData();
+  }, []);
+
+  // Listen for restaurant switch from other tabs
+  useEffect(() => {
+    const unsub = restaurantEvents.on('switch', ({ restaurantId: newRid, restaurant: newRest }) => {
+      setRestaurantId(newRid);
+      setRestaurantName(newRest?.name || '');
+      setCustomers([]);
+      setLoading(true);
+      loadInitialData();
+    });
+    return unsub;
   }, []);
 
   useFocusEffect(
@@ -138,6 +162,7 @@ export default function CustomersScreen() {
       setRestaurantName(userData.restaurant?.name || '');
       if (rid) {
         await loadCustomers(rid);
+        loadGroups(rid); // fire-and-forget, non-blocking
       }
     } catch (error) {
       console.error('Error loading customer data:', error);
@@ -147,12 +172,43 @@ export default function CustomersScreen() {
   };
 
   // ── Data loading ────────────────────────────────────
+  const loadGroups = async (rid) => {
+    try {
+      setLoadingGroups(true);
+      const response = await apiClient.getCustomerGroups(rid);
+      setGroups(Array.isArray(response?.groups) ? response.groups : Array.isArray(response) ? response : []);
+    } catch (error) {
+      console.warn('Error loading groups:', error?.message);
+      setGroups([]);
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
   const loadCustomers = async (rid) => {
     try {
       const response = await apiClient.getCustomers(rid);
-      setCustomers(response.customers || []);
+      const raw = Array.isArray(response?.customers) ? response.customers : [];
+      // Sanitize: coerce any non-primitive text fields to strings so bad data
+      // (e.g., an event object accidentally saved to phone/name) cannot crash render.
+      const clean = (v) => {
+        if (v == null) return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+        return '';
+      };
+      const sanitized = raw.map((c) => ({
+        ...c,
+        name: clean(c?.name),
+        phone: clean(c?.phone),
+        email: clean(c?.email),
+        city: clean(c?.city),
+        dob: clean(c?.dob),
+      }));
+      setCustomers(sanitized);
     } catch (error) {
       console.error('Error loading customers:', error);
+      setCustomers([]);
     }
   };
 
@@ -248,7 +304,7 @@ export default function CustomersScreen() {
 
   // ── Filter & sort customers ─────────────────────────
   const filteredCustomers = React.useMemo(() => {
-    let list = [...customers];
+    let list = Array.isArray(customers) ? [...customers] : [];
 
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
@@ -365,6 +421,95 @@ export default function CustomersScreen() {
     );
   };
 
+  // ── Group handlers ─────────────────────────────────
+  const GROUP_COLORS = ['#3b82f6', '#ef4444', '#16a34a', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+
+  const handleSaveGroup = async () => {
+    if (!groupForm.name?.trim()) {
+      Alert.alert('Required', 'Group name is required.');
+      return;
+    }
+    setSavingGroup(true);
+    try {
+      if (editingGroup) {
+        await apiClient.updateCustomerGroup(restaurantId, editingGroup.id || editingGroup._id, {
+          name: groupForm.name.trim(),
+          description: groupForm.description.trim(),
+          color: groupForm.color,
+        });
+      } else {
+        await apiClient.createCustomerGroup(restaurantId, {
+          name: groupForm.name.trim(),
+          description: groupForm.description.trim(),
+          color: groupForm.color,
+        });
+      }
+      setShowGroupForm(false);
+      setEditingGroup(null);
+      setGroupForm({ name: '', description: '', color: '#3b82f6' });
+      await loadGroups(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error?.message || 'Failed to save group');
+    } finally {
+      setSavingGroup(false);
+    }
+  };
+
+  const handleDeleteGroup = (group) => {
+    Alert.alert('Delete Group', `Delete "${group.name}"? Customers won't be deleted.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiClient.deleteCustomerGroup(restaurantId, group.id || group._id);
+            await loadGroups(restaurantId);
+          } catch (error) {
+            Alert.alert('Error', error?.message || 'Failed to delete group');
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleEditGroup = (group) => {
+    setEditingGroup(group);
+    setGroupForm({
+      name: group.name || '',
+      description: group.description || '',
+      color: group.color || '#3b82f6',
+    });
+    setShowGroupForm(true);
+  };
+
+  const getCustomerGroups = useCallback((customer) => {
+    if (!groups.length || !customer) return [];
+    const cId = customer.id || customer._id;
+    const cPhone = customer.phone ? customer.phone.replace(/\D/g, '').slice(-10) : null;
+    return groups.filter(g => {
+      const ids = g.customerIds || [];
+      const phones = (g.customerPhones || []).map(p => p.replace(/\D/g, '').slice(-10));
+      return ids.includes(cId) || (cPhone && phones.includes(cPhone));
+    });
+  }, [groups]);
+
+  const handleAssignToGroup = async (customer, group) => {
+    try {
+      const cId = customer.id || customer._id;
+      const cPhone = customer.phone ? customer.phone.replace(/\D/g, '').slice(-10) : null;
+      await apiClient.addGroupMembers(restaurantId, group.id || group._id, {
+        customerIds: [cId],
+        customerPhones: cPhone ? [cPhone] : [],
+      });
+      await loadGroups(restaurantId);
+      setShowAssignGroupModal(false);
+      setAssigningCustomer(null);
+    } catch (error) {
+      Alert.alert('Error', error?.message || 'Failed to add to group');
+    }
+  };
+
   const openCustomerProfile = (customer) => {
     setSelectedCustomer(customer);
     setShowProfileModal(true);
@@ -403,10 +548,24 @@ export default function CustomersScreen() {
 
   // ──────────────────────────────────────────────────── RENDERS
 
+  // Coerce any value to a safe primitive string for rendering.
+  // Guards against bad data (objects accidentally saved to fields like phone/name).
+  const safeStr = (v) => {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    return ''; // Silently drop objects/arrays — never render them as text
+  };
+
   // ── Customer Row ────────────────────────────────────
   const renderCustomerItem = ({ item }) => {
     const hasLoyalty = (item.loyaltyPoints || 0) > 0;
     const isCraveCustomer = item.source === 'customer_app';
+    const safeName = safeStr(item.name);
+    const safePhone = safeStr(item.phone);
+    const safeCity = safeStr(item.city);
+    const safeLoyaltyPoints = Number(item.loyaltyPoints) || 0;
+    const customerGroupList = getCustomerGroups(item);
 
     return (
       <TouchableOpacity
@@ -417,14 +576,14 @@ export default function CustomersScreen() {
         <View style={styles.customerRow}>
           {/* Avatar */}
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{getInitial(item.name)}</Text>
+            <Text style={styles.avatarText}>{getInitial(safeName)}</Text>
           </View>
 
           {/* Info */}
           <View style={styles.customerInfo}>
             <View style={styles.nameRow}>
               <Text style={styles.customerName} numberOfLines={1}>
-                {item.name || 'Unnamed'}
+                {safeName || 'Unnamed'}
               </Text>
               {isCraveCustomer && (
                 <View style={styles.craveBadge}>
@@ -434,24 +593,30 @@ export default function CustomersScreen() {
               {hasLoyalty && (
                 <View style={styles.loyaltyBadge}>
                   <Ionicons name="diamond" size={10} color="#7c3aed" />
-                  <Text style={styles.loyaltyBadgeText}>{item.loyaltyPoints}</Text>
+                  <Text style={styles.loyaltyBadgeText}>{safeLoyaltyPoints}</Text>
                 </View>
               )}
             </View>
 
             <View style={styles.chipRow}>
-              {item.phone && (
+              {!!safePhone && (
                 <View style={styles.infoChip}>
                   <Ionicons name="call-outline" size={11} color={Colors.textLight} />
-                  <Text style={styles.chipText}>{item.phone}</Text>
+                  <Text style={styles.chipText}>{safePhone}</Text>
                 </View>
               )}
-              {item.city && (
+              {!!safeCity && (
                 <View style={styles.infoChip}>
                   <Ionicons name="location-outline" size={11} color={Colors.textLight} />
-                  <Text style={styles.chipText}>{item.city}</Text>
+                  <Text style={styles.chipText}>{safeCity}</Text>
                 </View>
               )}
+              {customerGroupList.map(g => (
+                <View key={g.id || g._id} style={[styles.infoChip, { backgroundColor: (g.color || '#3b82f6') + '18', borderColor: (g.color || '#3b82f6') + '40' }]}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: g.color || '#3b82f6' }} />
+                  <Text style={[styles.chipText, { color: g.color || '#3b82f6', fontWeight: '700' }]} numberOfLines={1}>{safeStr(g.name)}</Text>
+                </View>
+              ))}
             </View>
 
             <View style={styles.statsRow}>
@@ -491,6 +656,12 @@ export default function CustomersScreen() {
               onPress={() => handleEditCustomer(item)}
             >
               <Ionicons name="create-outline" size={18} color={Colors.secondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionIcon}
+              onPress={() => { setAssigningCustomer(item); setShowAssignGroupModal(true); }}
+            >
+              <Ionicons name="people-outline" size={16} color="#8b5cf6" />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionIcon}
@@ -1021,32 +1192,32 @@ export default function CustomersScreen() {
                 <Ionicons name="trophy" size={20} color="#d97706" />
                 <Text style={styles.loyaltyRuleTitle}>Top Loyalty Customers</Text>
               </View>
-              {customers
-                .filter(c => (c.loyaltyPoints || 0) > 0)
-                .sort((a, b) => (b.loyaltyPoints || 0) - (a.loyaltyPoints || 0))
+              {(Array.isArray(customers) ? customers : [])
+                .filter(c => c && (c.loyaltyPoints || 0) > 0)
+                .sort((a, b) => (b?.loyaltyPoints || 0) - (a?.loyaltyPoints || 0))
                 .slice(0, 10)
                 .map((c, i) => (
                   <TouchableOpacity
-                    key={c.id}
+                    key={c.id || i}
                     style={styles.topCustomerRow}
                     onPress={() => openCustomerProfile(c)}
                   >
                     <Text style={styles.topCustomerRank}>#{i + 1}</Text>
                     <View style={styles.topCustomerAvatar}>
-                      <Text style={styles.topCustomerInitial}>{getInitial(c.name)}</Text>
+                      <Text style={styles.topCustomerInitial}>{getInitial(c?.name)}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.topCustomerName}>{c.name || c.phone}</Text>
-                      <Text style={styles.topCustomerOrders}>{c.totalOrders} orders</Text>
+                      <Text style={styles.topCustomerName}>{c?.name || c?.phone || 'Unknown'}</Text>
+                      <Text style={styles.topCustomerOrders}>{c?.totalOrders || 0} orders</Text>
                     </View>
                     <View style={styles.topCustomerPoints}>
                       <Ionicons name="diamond" size={12} color="#7c3aed" />
-                      <Text style={styles.topCustomerPointsText}>{c.loyaltyPoints}</Text>
+                      <Text style={styles.topCustomerPointsText}>{c?.loyaltyPoints || 0}</Text>
                     </View>
                   </TouchableOpacity>
                 ))
               }
-              {customers.filter(c => (c.loyaltyPoints || 0) > 0).length === 0 && (
+              {(Array.isArray(customers) ? customers : []).filter(c => c && (c.loyaltyPoints || 0) > 0).length === 0 && (
                 <Text style={styles.emptySubtitle}>No customers with loyalty points yet.</Text>
               )}
             </View>
@@ -1564,33 +1735,25 @@ export default function CustomersScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* ── Header ─────────────────────────────────── */}
       <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBackBtn}>
+          <Ionicons name="arrow-back" size={22} color="#374151" />
+        </TouchableOpacity>
         <View>
           <Text style={styles.headerTitle}>Customers</Text>
-          <Text style={styles.headerSubtitle}>
-            {customers.length} customer{customers.length !== 1 ? 's' : ''}
-          </Text>
+          {restaurantName ? <Text style={{ fontSize: 11, color: '#9ca3af', fontWeight: '500', marginTop: 1 }}>{restaurantName}</Text> : null}
         </View>
         <View style={styles.headerActions}>
           {activeTab === 'customers' && (
             <TouchableOpacity
-              style={styles.manageGroupsButton}
-              onPress={() =>
-                router.push({
-                  pathname: '/(tabs)/webview',
-                  params: {
-                    url: 'https://www.dineopen.com/customers',
-                    title: 'Customer Groups',
-                  },
-                })
-              }
+              style={styles.headerIconBtn}
+              onPress={() => setShowGroupsModal(true)}
             >
-              <Ionicons name="people-outline" size={18} color={Colors.primary} />
-              <Text style={styles.manageGroupsButtonText}>Groups</Text>
+              <Ionicons name="people-outline" size={20} color="#6b7280" />
             </TouchableOpacity>
           )}
           {activeTab === 'customers' && (
             <TouchableOpacity
-              style={styles.addButton}
+              style={styles.headerAddBtn}
               onPress={() => {
                 setEditingCustomer(null);
                 setCustomerForm({ ...emptyCustomerForm });
@@ -1599,7 +1762,6 @@ export default function CustomersScreen() {
               }}
             >
               <Ionicons name="add" size={20} color="#fff" />
-              <Text style={styles.addButtonText}>Add</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -1617,8 +1779,8 @@ export default function CustomersScreen() {
             >
               <Ionicons
                 name={isActive ? tab.icon : `${tab.icon}-outline`}
-                size={18}
-                color={isActive ? Colors.primary : Colors.textLight}
+                size={16}
+                color={isActive ? '#374151' : '#9ca3af'}
               />
               <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                 {tab.label}
@@ -1728,41 +1890,24 @@ export default function CustomersScreen() {
         </>
       )}
 
-      {/* OFFERS TAB */}
+      {/* OFFERS TAB — redirect to full Offers screen */}
       {activeTab === 'offers' && (
-        loadingOffers ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color={Colors.primary} />
+        <View style={[styles.centered, { gap: 16 }]}>
+          <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="pricetag" size={36} color={Colors.primary} />
           </View>
-        ) : offers.length === 0 ? (
-          <ScrollView
-            contentContainerStyle={styles.emptyState}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          <Text style={styles.emptyTitle}>Offers & Promotions</Text>
+          <Text style={[styles.emptySubtitle, { textAlign: 'center', paddingHorizontal: 40 }]}>
+            Create, manage and track all your offers, discounts, and BOGO promotions.
+          </Text>
+          <TouchableOpacity
+            style={[styles.addButton, { marginTop: Spacing.sm, paddingHorizontal: 24 }]}
+            onPress={() => router.push('/(tabs)/offers')}
           >
-            <Ionicons name="pricetag-outline" size={56} color={Colors.textLight} />
-            <Text style={styles.emptyTitle}>No Offers</Text>
-            <Text style={styles.emptySubtitle}>
-              Create offers from the Offers section in More menu or from the web dashboard.
-            </Text>
-            <TouchableOpacity
-              style={[styles.addButton, { marginTop: Spacing.lg }]}
-              onPress={() => router.push('/(tabs)/offers')}
-            >
-              <Ionicons name="pricetag" size={18} color="#fff" />
-              <Text style={styles.addButtonText}>Go to Offers</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        ) : (
-          <FlatList
-            data={offers}
-            keyExtractor={(item) => item.id}
-            renderItem={renderOfferItem}
-            contentContainerStyle={styles.listContent}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-          />
-        )
+            <Ionicons name="arrow-forward" size={18} color="#fff" />
+            <Text style={styles.addButtonText}>Open Offers Manager</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* LOYALTY TAB */}
@@ -1844,6 +1989,178 @@ export default function CustomersScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ── Groups Management Modal ──────────────── */}
+      <Modal visible={showGroupsModal} animationType="slide" onRequestClose={() => setShowGroupsModal(false)}>
+        <SafeAreaView style={styles.modalContainer} edges={['top']}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => { setShowGroupsModal(false); setShowGroupForm(false); setEditingGroup(null); }}>
+              <Ionicons name="close" size={24} color={Colors.textDark} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Customer Groups</Text>
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => { setEditingGroup(null); setGroupForm({ name: '', description: '', color: '#3b82f6' }); setShowGroupForm(true); }}>
+              <Ionicons name="add-circle" size={26} color={Colors.primary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Group Form (inline) */}
+          {showGroupForm && (
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', backgroundColor: '#fafafa' }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textDark, marginBottom: 10 }}>
+                {editingGroup ? 'Edit Group' : 'New Group'}
+              </Text>
+              <TextInput
+                style={[styles.formInput, { marginBottom: 10 }]}
+                placeholder="Group name"
+                placeholderTextColor={Colors.textLight}
+                value={groupForm.name}
+                onChangeText={(t) => setGroupForm(p => ({ ...p, name: t }))}
+              />
+              <TextInput
+                style={[styles.formInput, { marginBottom: 10 }]}
+                placeholder="Description (optional)"
+                placeholderTextColor={Colors.textLight}
+                value={groupForm.description}
+                onChangeText={(t) => setGroupForm(p => ({ ...p, description: t }))}
+              />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textLight, marginBottom: 6 }}>Color</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                {GROUP_COLORS.map(c => (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => setGroupForm(p => ({ ...p, color: c }))}
+                    style={{
+                      width: 32, height: 32, borderRadius: 16, backgroundColor: c,
+                      borderWidth: groupForm.color === c ? 3 : 0,
+                      borderColor: '#fff',
+                      shadowColor: groupForm.color === c ? c : 'transparent',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: groupForm.color === c ? 0.5 : 0,
+                      shadowRadius: 4,
+                      elevation: groupForm.color === c ? 4 : 0,
+                    }}
+                  />
+                ))}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: '#f3f4f6', alignItems: 'center' }}
+                  onPress={() => { setShowGroupForm(false); setEditingGroup(null); }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textMedium }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', opacity: savingGroup ? 0.6 : 1 }}
+                  onPress={handleSaveGroup}
+                  disabled={savingGroup}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                    {savingGroup ? 'Saving...' : editingGroup ? 'Update' : 'Create'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Groups List */}
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            {loadingGroups ? (
+              <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 40 }} />
+            ) : groups.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="people-outline" size={56} color={Colors.textLight} />
+                <Text style={styles.emptyTitle}>No Groups Yet</Text>
+                <Text style={styles.emptySubtitle}>Create groups to organize and segment your customers.</Text>
+              </View>
+            ) : (
+              groups.map(group => {
+                const memberCount = (group.customerIds?.length || 0) + (group.customerPhones?.length || 0);
+                return (
+                  <View key={group.id || group._id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 14, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#f0f0f0' }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: (group.color || '#3b82f6') + '20', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                      <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: group.color || '#3b82f6' }} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textDark }}>{safeStr(group.name)}</Text>
+                      {group.description ? (
+                        <Text style={{ fontSize: 12, color: Colors.textLight }} numberOfLines={1}>{safeStr(group.description)}</Text>
+                      ) : null}
+                      <Text style={{ fontSize: 11, color: Colors.textLight, marginTop: 2 }}>{memberCount} member{memberCount !== 1 ? 's' : ''}</Text>
+                    </View>
+                    <TouchableOpacity style={{ padding: 8 }} onPress={() => handleEditGroup(group)}>
+                      <Ionicons name="create-outline" size={18} color={Colors.secondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={{ padding: 8 }} onPress={() => handleDeleteGroup(group)}>
+                      <Ionicons name="trash-outline" size={16} color={Colors.error} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Assign to Group Modal ────────────────── */}
+      <Modal visible={showAssignGroupModal} transparent animationType="fade" onRequestClose={() => { setShowAssignGroupModal(false); setAssigningCustomer(null); }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 360 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.textDark, marginBottom: 4 }}>
+              Add to Group
+            </Text>
+            <Text style={{ fontSize: 13, color: Colors.textLight, marginBottom: 16 }}>
+              {safeStr(assigningCustomer?.name) || safeStr(assigningCustomer?.phone) || 'Customer'}
+            </Text>
+
+            {groups.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                <Ionicons name="people-outline" size={36} color={Colors.textLight} />
+                <Text style={{ fontSize: 13, color: Colors.textLight, marginTop: 8 }}>No groups created yet.</Text>
+                <TouchableOpacity
+                  style={{ marginTop: 12, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: Colors.primary, borderRadius: 8 }}
+                  onPress={() => { setShowAssignGroupModal(false); setShowGroupsModal(true); }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Create Group</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 300 }}>
+                {groups.map(group => {
+                  const isInGroup = assigningCustomer ? getCustomerGroups(assigningCustomer).some(g => (g.id || g._id) === (group.id || group._id)) : false;
+                  return (
+                    <TouchableOpacity
+                      key={group.id || group._id}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10,
+                        marginBottom: 6, backgroundColor: isInGroup ? (group.color || '#3b82f6') + '15' : '#f9fafb',
+                        borderWidth: 1, borderColor: isInGroup ? (group.color || '#3b82f6') + '40' : '#e5e7eb',
+                      }}
+                      onPress={() => !isInGroup && handleAssignToGroup(assigningCustomer, group)}
+                      disabled={isInGroup}
+                    >
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: group.color || '#3b82f6', marginRight: 10 }} />
+                      <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: Colors.textDark }}>{safeStr(group.name)}</Text>
+                      {isInGroup && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+                          <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600' }}>Added</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={{ marginTop: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: '#f3f4f6', alignItems: 'center' }}
+              onPress={() => { setShowAssignGroupModal(false); setAssigningCustomer(null); }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textMedium }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1853,7 +2170,7 @@ export default function CustomersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.backgroundCream,
+    backgroundColor: '#f8f9fa',
   },
   centered: {
     flex: 1,
@@ -1869,53 +2186,57 @@ const styles = StyleSheet.create({
   // ── Header ──────────────────────────────────────────
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    backgroundColor: Colors.backgroundWhite,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: '#f0f0f0',
+  },
+  headerBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   headerTitle: {
-    fontSize: 20,
+    flex: 1,
+    fontSize: 18,
     fontWeight: '700',
-    color: Colors.textDark,
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: Colors.textMedium,
-    marginTop: 2,
+    color: '#111827',
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  manageGroupsButton: {
-    flexDirection: 'row',
+  headerIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundWhite,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.medium,
-    gap: 4,
   },
-  manageGroupsButtonText: {
-    color: Colors.primary,
-    fontWeight: '600',
-    fontSize: 13,
+  headerAddBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.medium,
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
   },
   addButtonText: {
     color: '#fff',
@@ -1926,31 +2247,32 @@ const styles = StyleSheet.create({
   // ── Tabs ────────────────────────────────────────────
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: Colors.backgroundWhite,
-    paddingHorizontal: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    gap: 4,
+    paddingBottom: 0,
   },
   tab: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 5,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
   tabActive: {
-    borderBottomColor: Colors.primary,
+    borderBottomColor: '#111827',
   },
   tabText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: Colors.textLight,
+    fontWeight: '500',
+    color: '#9ca3af',
   },
   tabTextActive: {
-    color: Colors.primary,
+    color: '#111827',
+    fontWeight: '600',
   },
 
   // ── Search & Sort ───────────────────────────────────

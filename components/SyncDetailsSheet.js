@@ -10,13 +10,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useOffline } from '../hooks/useOffline';
-import { getFailedItems, deleteItem, getSyncLogs } from '../services/syncQueueV2';
+import { getFailedItems, deleteItem, getSyncLogs, getPendingItems } from '../services/syncQueueV2';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 
 export default function SyncDetailsSheet({ visible, onClose }) {
   const { pendingCount, failedCount, lastSyncAt, retryFailed, triggerSync, isOnline } = useOffline();
 
   const failedItems = visible ? getFailedItems() : [];
+  const pendingItems = visible ? getPendingItems() : [];
   const logs = visible ? getSyncLogs(20) : [];
 
   const formatTime = (ts) => {
@@ -90,6 +91,31 @@ export default function SyncDetailsSheet({ visible, onClose }) {
           </View>
 
           <ScrollView style={styles.scrollArea}>
+            {/* Pending Items */}
+            {pendingItems.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Pending Changes</Text>
+                {pendingItems.map((item) => (
+                  <View key={item.idempotency_key} style={[styles.failedItem, { backgroundColor: '#eff6ff' }]}>
+                    <View style={styles.failedInfo}>
+                      <Text style={styles.failedType}>
+                        {item.entity_type} ({item.operation})
+                      </Text>
+                      <Text style={[styles.failedError, { color: '#3b82f6' }]} numberOfLines={2}>
+                        {item.endpoint}
+                      </Text>
+                      <Text style={styles.failedMeta}>
+                        Retries: {item.retry_count} | {formatTime(item.created_at)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => handleDiscard(item.idempotency_key)}>
+                      <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Failed Items */}
             {failedItems.length > 0 && (
               <View style={styles.section}>

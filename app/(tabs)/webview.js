@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -11,8 +11,9 @@ export default function WebViewScreen() {
   const router = useRouter();
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [authUrl, setAuthUrl] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     buildAuthUrl();
@@ -21,15 +22,45 @@ export default function WebViewScreen() {
   const buildAuthUrl = async () => {
     try {
       const token = await apiClient.getToken();
+      const ud = await apiClient.getUser();
+      setUserData(ud);
       if (token && url) {
-        const separator = url.includes('?') ? '&' : '?';
-        setAuthUrl(`${url}${separator}token=${token}`);
+        const u = new URL(url);
+        u.searchParams.set('token', token);
+        if (ud) {
+          const rid = ud.restaurantId || ud.restaurant?.id;
+          if (rid) u.searchParams.set('restaurantId', rid);
+        }
+        setAuthUrl(u.toString());
       } else {
         setAuthUrl(url);
       }
     } catch (e) {
+      console.error('WebView buildAuthUrl error:', e);
       setAuthUrl(url);
     }
+  };
+
+  // Inject auth data into localStorage before page loads
+  const injectedJS = React.useMemo(() => {
+    if (!authUrl) return '';
+    try {
+      const u = new URL(authUrl);
+      const token = u.searchParams.get('token');
+      const rid = u.searchParams.get('restaurantId');
+      const parts = [];
+      if (token) parts.push(`localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
+      if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
+      if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
+      parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
+      return parts.join('\n') + '\ntrue;';
+    } catch { return 'true;'; }
+  }, [authUrl, userData]);
+
+  const handleRetry = () => {
+    setLoadFailed(false);
+    setLoading(true);
+    webViewRef.current?.reload();
   };
 
   if (!authUrl) {
@@ -44,14 +75,14 @@ export default function WebViewScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
+      {/* Minimal Header — back + refresh only */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-          <Ionicons name="arrow-back" size={24} color="#374151" />
+          <Ionicons name="arrow-back" size={22} color="#374151" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{title || 'DineOpen'}</Text>
-        <TouchableOpacity onPress={() => webViewRef.current?.reload()} style={styles.headerBtn}>
-          <Ionicons name="refresh" size={22} color="#374151" />
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity onPress={handleRetry} style={styles.headerBtn}>
+          <Ionicons name="refresh" size={20} color="#6b7280" />
         </TouchableOpacity>
       </View>
 
@@ -63,34 +94,66 @@ export default function WebViewScreen() {
         </View>
       )}
 
-      {/* Error state */}
-      {error ? (
-        <View style={styles.centered}>
-          <Ionicons name="cloud-offline" size={48} color="#9ca3af" />
-          <Text style={styles.errorTitle}>Failed to load page</Text>
-          <Text style={styles.errorSubtitle}>Check your internet connection and try again</Text>
-          <TouchableOpacity
-            style={styles.retryBtn}
-            onPress={() => { setError(false); webViewRef.current?.reload(); }}
-          >
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
+      {/* WebView is ALWAYS mounted — never removed on error */}
+      <View style={{ flex: 1 }}>
         <WebView
           ref={webViewRef}
           source={{ uri: authUrl }}
           style={styles.webview}
-          onLoadStart={() => setLoading(true)}
+          injectedJavaScriptBeforeContentLoaded={injectedJS}
+          onLoadStart={() => { setLoading(true); setLoadFailed(false); }}
           onLoadEnd={() => setLoading(false)}
-          onError={() => { setLoading(false); setError(true); }}
-          onHttpError={(e) => { if (e.nativeEvent.statusCode >= 400) setError(true); }}
+          onError={(e) => {
+            const desc = e.nativeEvent?.description || '';
+            console.warn('WebView onError:', desc);
+            setLoading(false);
+            // Ignore aborted/cancelled loads (caused by blocking /login nav)
+            if (desc.includes('ERR_ABORTED') || desc.includes('cancelled') || e.nativeEvent?.code === -999) {
+              return;
+            }
+            setLoadFailed(true);
+          }}
+          onHttpError={(e) => {
+            console.warn('WebView HTTP error:', e.nativeEvent?.statusCode, e.nativeEvent?.url);
+            // Only flag on actual server errors
+            if (e.nativeEvent?.statusCode >= 500) setLoadFailed(true);
+          }}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState={false}
           sharedCookiesEnabled
+          allowsBackForwardNavigationGestures
+          originWhitelist={['https://*', 'http://*']}
+          mixedContentMode="compatibility"
+          allowsInlineMediaPlayback
+          cacheEnabled
+          // On Android, block /login navigations at the native level
+          onShouldStartLoadWithRequest={(request) => {
+            // Block navigations to /login — the mobile embed should never redirect there
+            if (request.url && request.url.includes('/login')) {
+              return false;
+            }
+            return true;
+          }}
+          // Android: also inject on each new page load
+          injectedJavaScript={`
+            window.__DINEOPEN_MOBILE_EMBED__ = true;
+            true;
+          `}
         />
-      )}
+
+        {/* Error overlay — shown ON TOP of WebView, not replacing it */}
+        {loadFailed && (
+          <View style={styles.errorOverlay}>
+            <Ionicons name="cloud-offline" size={48} color="#9ca3af" />
+            <Text style={styles.errorTitle}>Failed to load page</Text>
+            <Text style={styles.errorSubtitle}>Check your internet connection and try again</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -98,28 +161,18 @@ export default function WebViewScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fef7f0',
+    backgroundColor: '#fff',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    backgroundColor: '#ffffff',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    backgroundColor: '#fff',
   },
   headerBtn: {
     padding: 8,
     borderRadius: 8,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#111827',
-    textAlign: 'center',
-    marginHorizontal: 8,
   },
   loadingBar: {
     flexDirection: 'row',
@@ -141,6 +194,13 @@ const styles = StyleSheet.create({
   },
   centered: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,

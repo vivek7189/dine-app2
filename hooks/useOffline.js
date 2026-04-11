@@ -38,6 +38,7 @@ export function OfflineProvider({ children }) {
 
   const syncTimeoutRef = useRef(null);
   const statsIntervalRef = useRef(null);
+  const prevIsOnlineRef = useRef(true);
 
   const effectivelyOffline = isOfflineMode || !isOnline;
 
@@ -79,10 +80,17 @@ export function OfflineProvider({ children }) {
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
       const online = !!state.isConnected;
+      const wasOffline = !prevIsOnlineRef.current;
+      prevIsOnlineRef.current = online;
       setIsOnline(online);
 
-      // Auto-sync when coming back online (debounced)
-      if (online && !isOfflineMode && dbReady) {
+      if (!online) {
+        // Network just dropped — if we were syncing, reset status so banner doesn't stick
+        setSyncStatus(prev => prev === 'syncing' ? 'error' : prev);
+        stopStatsPoll();
+      } else if (online && !isOfflineMode && dbReady) {
+        // Came back online — reset any error state and trigger sync
+        setSyncStatus(prev => prev === 'error' || prev === 'syncing' ? 'idle' : prev);
         scheduleSyncDebounced();
       }
     });
@@ -161,15 +169,7 @@ export function OfflineProvider({ children }) {
     }
   }, []);
 
-  const triggerSyncRef = useRef(triggerSync);
-  useEffect(() => { triggerSyncRef.current = triggerSync; }, [triggerSync]);
-
-  const scheduleSyncDebounced = useCallback(() => {
-    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-    syncTimeoutRef.current = setTimeout(() => {
-      triggerSyncRef.current();
-    }, SYNC_DEBOUNCE_MS);
-  }, []);
+  const triggerSyncRef = useRef(null);
 
   const triggerSync = useCallback(async () => {
     if (effectivelyOffline) return;
@@ -181,6 +181,22 @@ export function OfflineProvider({ children }) {
       console.error('Manual sync trigger error:', e);
     }
   }, [effectivelyOffline]);
+
+  useEffect(() => { triggerSyncRef.current = triggerSync; }, [triggerSync]);
+
+  const scheduleSyncDebounced = useCallback(() => {
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+      if (triggerSyncRef.current) triggerSyncRef.current();
+    }, SYNC_DEBOUNCE_MS);
+  }, []);
+
+  // Kick off an initial sync once DB is ready and we're online
+  useEffect(() => {
+    if (dbReady && isOnline && !isOfflineMode) {
+      scheduleSyncDebounced();
+    }
+  }, [dbReady, isOnline, isOfflineMode, scheduleSyncDebounced]);
 
   const toggleOfflineMode = useCallback(async (value) => {
     const newValue = value !== undefined ? value : !isOfflineMode;

@@ -23,8 +23,9 @@ import Pusher from 'pusher-js';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import apiClient from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
-import SyncIndicator from '../../components/SyncIndicator';
+// SyncIndicator moved to settings page
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -45,6 +46,7 @@ export default function OrdersScreen() {
   const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
+  const [restaurantName, setRestaurantName] = useState('');
   const [user, setUser] = useState(null);
 
   // Spinning animation for refresh icon
@@ -98,6 +100,18 @@ export default function OrdersScreen() {
 
   useEffect(() => {
     loadInitialData();
+  }, []);
+
+  // Listen for restaurant switch from other tabs
+  useEffect(() => {
+    const unsub = restaurantEvents.on('switch', ({ restaurantId: newRid, restaurant: newRest }) => {
+      setRestaurantId(newRid);
+      setRestaurantName(newRest?.name || '');
+      setOrders([]);
+      setLoading(true);
+      loadInitialData();
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -285,6 +299,7 @@ export default function OrdersScreen() {
       }
 
       setUser(userData);
+      setRestaurantName(userData.restaurant?.name || '');
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {
         return;
@@ -440,39 +455,38 @@ export default function OrdersScreen() {
     });
   };
 
+  // No-confirmation direct complete. The caller (tap on "Mark Complete" button
+  // or the inline Complete on the order card) already implies user intent.
   const handleMarkCompleted = async (orderId) => {
     const order = orders.find(o => o.id === orderId);
-    Alert.alert(
-      'Complete Order',
-      'Mark this order as billing completed?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Complete',
-          onPress: async () => {
-            try {
-              await apiClient.updateOrderStatus(orderId, 'completed', restaurantId);
-              if (restaurantId) loadOrdersInBackground(restaurantId);
-              // Show success with option to take new order
-              const tableInfo = order?.tableNumber ? ` (Table ${order.tableNumber})` : '';
-              Alert.alert(
-                'Billing Complete',
-                `Order #${order?.dailyOrderId || orderId.slice(-6).toUpperCase()}${tableInfo} has been completed successfully.`,
-                [
-                  { text: 'Stay Here', style: 'cancel' },
-                  {
-                    text: 'Take New Order',
-                    onPress: () => router.push('/(tabs)/tables'),
-                  },
-                ]
-              );
-            } catch (error) {
-              Alert.alert('Error', 'Failed to mark order as completed.');
-            }
-          },
-        },
-      ]
-    );
+    try {
+      // Optimistic: mark order completed locally so the card updates instantly
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'completed', paymentStatus: 'paid' } : o));
+
+      await apiClient.updateOrderStatus(orderId, 'completed', restaurantId);
+
+      // Free the table back to available (fire-and-forget, don't block UX)
+      const tableRef = order?.tableId || order?.tableNumber;
+      if (tableRef) {
+        apiClient
+          .updateTableStatus(tableRef, 'available', null, restaurantId)
+          .catch(e => console.warn('Table status update failed:', e?.message));
+      }
+
+      if (restaurantId) loadOrdersInBackground(restaurantId);
+
+      // Non-blocking toast (Android) or silent no-op (iOS).
+      try {
+        const { ToastAndroid, Platform } = require('react-native');
+        if (Platform.OS === 'android') {
+          ToastAndroid.show(`Billing complete • #${order?.dailyOrderId || orderId.slice(-6).toUpperCase()}`, ToastAndroid.SHORT);
+        }
+      } catch (_) {}
+    } catch (error) {
+      // Revert optimistic on failure
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: order?.status || 'confirmed', paymentStatus: order?.paymentStatus } : o));
+      Alert.alert('Error', 'Failed to mark order as completed.');
+    }
   };
 
   const handlePrintBill = (order) => {
@@ -634,9 +648,8 @@ export default function OrdersScreen() {
         o.id === order.id ? { ...o, paidAmount: finalAmt, outstandingAmount: 0, paymentStatus: 'paid' } : o
       ));
       setMarkPaidOrderId(null);
-      Alert.alert('Success', 'Order marked as fully paid');
-      // Refresh
-      if (restaurantId) loadOrders(restaurantId);
+      // No blocking alert — state change is visible in the list
+      if (restaurantId) loadOrdersInBackground(restaurantId);
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to mark as paid');
     } finally {
@@ -670,8 +683,8 @@ export default function OrdersScreen() {
       setRefundType('full');
       setRefundAmount('');
       setRefundReason('');
-      Alert.alert('Success', `₹${amount.toFixed(2)} refunded successfully`);
-      if (restaurantId) loadOrders(restaurantId);
+      // No blocking alert — refund status is reflected inline
+      if (restaurantId) loadOrdersInBackground(restaurantId);
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to process refund');
     } finally {
@@ -1428,15 +1441,8 @@ export default function OrdersScreen() {
         {/* Title Row with Tab Toggle */}
         <View style={styles.headerTop}>
           <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.headerTitle}>{activeView === 'orders' ? 'Orders' : 'Sales Summary'}</Text>
-              {effectivelyOffline && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
-                  <Ionicons name="cloud-offline-outline" size={12} color="#ef4444" />
-                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#ef4444', marginLeft: 3 }}>Offline{pendingCount > 0 ? ` (${pendingCount})` : ''}</Text>
-                </View>
-              )}
-            </View>
+            <Text style={styles.headerTitle}>{activeView === 'orders' ? 'Orders' : 'Sales Summary'}</Text>
+            {restaurantName ? <Text style={{ fontSize: 11, color: '#9ca3af', fontWeight: '500', marginTop: 1 }}>{restaurantName}</Text> : null}
             {activeView === 'orders' && (
               <Text style={styles.headerSubtitle}>{summaryData.totalOrders} orders {dateFilterMode === 'today' ? 'today' : dateFilterMode === 'yesterday' ? 'yesterday' : dateFilterMode === '7days' ? 'this week' : dateFilterMode === '30days' ? 'this month' : ''}</Text>
             )}
@@ -1715,8 +1721,6 @@ export default function OrdersScreen() {
         )}
         </>)}
       </View>
-
-      <SyncIndicator visible={syncing} />
 
       {/* ========== ORDERS VIEW ========== */}
       {activeView === 'orders' && (

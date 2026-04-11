@@ -58,6 +58,66 @@
       },
       "oauth_client": [
         {
+          "client_id": "1087929121342-n3djk9b7thlm412q5tenf1v2cmpve0ln.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dineopen.waiter",
+            "certificate_hash": "cf1843b91fd055f921eb15222d3974b5a527dee8"
+          }
+        },
+        {
+          "client_id": "1087929121342-tv1d6c0dav9otp4d4arhhkt27da8hpll.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dineopen.waiter",
+            "certificate_hash": "5517d05b537ab75b1c03e697c66918aabaaecb60"
+          }
+        },
+        {
+          "client_id": "1087929121342-uha60cpaoq83714kstkrtvrr2vc85o43.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dineopen.waiter",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "1087929121342-22v55s7oqhgnt93q8118t4ltdlo53lcq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkWEb3I31PJvawciC95aZ4y6rx6Vg30Qc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1087929121342-22v55s7oqhgnt93q8118t4ltdlo53lcq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1087929121342-8hmp1jef1atsbvug14l03ko9ngne3fkp.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dineopen.waiter"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1087929121342:android:12add13ecd75509aa42f6f",
+        "android_client_info": {
+          "package_name": "com.dineopenkotprinter"
+        }
+      },
+      "oauth_client": [
+        {
           "client_id": "1087929121342-22v55s7oqhgnt93q8118t4ltdlo53lcq.apps.googleusercontent.com",
           "client_type": 3
         }

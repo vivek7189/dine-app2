@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
@@ -386,7 +387,7 @@ export default function LoginScreen() {
       } else if (err.code === 'auth/app-not-authorized') {
         msg = 'Phone auth is not enabled. Please contact support.';
       } else if (err.code === 'auth/missing-client-identifier') {
-        msg = 'APNs configuration issue. Please try again.';
+        msg = 'Phone verification setup issue. Please try again or use Email login.';
       }
       setError(msg);
     } finally {
@@ -979,8 +980,9 @@ export default function LoginScreen() {
   );
 
   return (
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
     <KeyboardAvoidingView
-      style={styles.container}
+      style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <StatusBar style="dark" />
@@ -1096,6 +1098,7 @@ export default function LoginScreen() {
         </View>
       </Modal>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

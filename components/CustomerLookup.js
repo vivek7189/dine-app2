@@ -46,6 +46,8 @@ export default function CustomerLookup({
   onPhoneChange,
   onRedeemChange,
   onCustomerChipPress,
+  onCustomerNameChange,
+  onCustomerEmailChange,
   redeemPoints = 0,
   compact = false,
   countryCode = 'IN',
@@ -56,6 +58,9 @@ export default function CustomerLookup({
   const [customer, setCustomer] = useState(null);
   const [loyaltySettings, setLoyaltySettings] = useState(null);
   const [error, setError] = useState('');
+  const [showExtraFields, setShowExtraFields] = useState(false);
+  const [customerNameLocal, setCustomerNameLocal] = useState('');
+  const [customerEmailLocal, setCustomerEmailLocal] = useState('');
   const debounceRef = useRef(null);
   const lastPhoneRef = useRef('');
 
@@ -145,7 +150,7 @@ export default function CustomerLookup({
         if (!settings) {
           try {
             const appSettings = await apiClient.getPublicCustomerAppSettings(restaurantId);
-            settings = appSettings?.loyaltyProgram || null;
+            settings = appSettings?.settings?.loyaltySettings || null;
             setLoyaltySettings(settings);
           } catch (e) {
             // Loyalty may not be configured
@@ -229,30 +234,75 @@ export default function CustomerLookup({
 
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
-      {/* Phone Input */}
-      <View style={[
-        styles.phoneRow,
-        lookupStatus === 'found' && styles.phoneRowFound,
-      ]}>
-        <Ionicons name="call-outline" size={18} color={lookupStatus === 'found' ? '#22c55e' : Colors.textLight} />
-        <TextInput
-          style={styles.phoneInput}
-          placeholder="Customer phone"
-          placeholderTextColor="#999"
-          keyboardType="phone-pad"
-          value={phone}
-          onChangeText={handlePhoneChange}
-          maxLength={minLength + 3}
-        />
-        {lookupStatus === 'loading' && (
-          <ActivityIndicator size="small" color="#ef4444" />
-        )}
-        {lookupStatus === 'found' && customer && (
-          <View style={styles.foundBadge}>
+      {/* Phone + Add button row */}
+      <View style={styles.customerInputRow}>
+        <View style={[
+          styles.phoneRow,
+          lookupStatus === 'found' && styles.phoneRowFound,
+          { flex: 1 },
+        ]}>
+          <Ionicons name="call-outline" size={16} color={lookupStatus === 'found' ? '#22c55e' : '#9ca3af'} />
+          <TextInput
+            style={styles.phoneInput}
+            placeholder="Customer phone"
+            placeholderTextColor="#9ca3af"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={handlePhoneChange}
+            maxLength={minLength + 3}
+          />
+          {lookupStatus === 'loading' && (
+            <ActivityIndicator size="small" color="#ef4444" />
+          )}
+          {lookupStatus === 'found' && customer && (
             <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
-          </View>
+          )}
+        </View>
+        {!customer && (
+          <TouchableOpacity
+            style={[styles.addFieldsBtn, showExtraFields && styles.addFieldsBtnActive]}
+            onPress={() => setShowExtraFields(!showExtraFields)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={showExtraFields ? 'chevron-up' : 'add'} size={18} color={showExtraFields ? '#6366f1' : '#6b7280'} />
+          </TouchableOpacity>
         )}
       </View>
+
+      {/* Extra fields: Name & Email */}
+      {showExtraFields && !customer && (
+        <View style={styles.extraFields}>
+          <View style={styles.extraFieldRow}>
+            <Ionicons name="person-outline" size={16} color="#9ca3af" />
+            <TextInput
+              style={styles.extraInput}
+              placeholder="Customer name"
+              placeholderTextColor="#9ca3af"
+              value={customerNameLocal}
+              onChangeText={(text) => {
+                setCustomerNameLocal(text);
+                if (onCustomerNameChange) onCustomerNameChange(text);
+              }}
+              autoCapitalize="words"
+            />
+          </View>
+          <View style={styles.extraFieldRow}>
+            <Ionicons name="mail-outline" size={16} color="#9ca3af" />
+            <TextInput
+              style={styles.extraInput}
+              placeholder="Email (optional)"
+              placeholderTextColor="#9ca3af"
+              value={customerEmailLocal}
+              onChangeText={(text) => {
+                setCustomerEmailLocal(text);
+                if (onCustomerEmailChange) onCustomerEmailChange(text);
+              }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+        </View>
+      )}
 
       {/* Customer Info Chip */}
       {customer && lookupStatus === 'found' && (
@@ -400,28 +450,66 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 4,
   },
+  customerInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   phoneRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#f9fafb',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#e5e7eb',
-    borderRadius: 8,
+    borderRadius: 12,
     paddingHorizontal: 12,
     gap: 8,
   },
   phoneRowFound: {
-    borderColor: '#22c55e',
+    borderColor: '#86efac',
     backgroundColor: '#f0fdf4',
   },
   phoneInput: {
     flex: 1,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: '#1f2937',
+    fontWeight: '500',
+  },
+  addFieldsBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  addFieldsBtnActive: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+  },
+  extraFields: {
+    marginTop: 8,
+    gap: 8,
+  },
+  extraFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  extraInput: {
+    flex: 1,
     paddingVertical: 10,
     fontSize: 14,
     color: '#1f2937',
-  },
-  foundBadge: {
-    padding: 2,
+    fontWeight: '500',
   },
   customerInfo: {
     marginTop: 10,

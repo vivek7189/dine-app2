@@ -68,8 +68,11 @@ ITEMS:
 --------------------------------
 ${itemsList}
 --------------------------------
-Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.offerDiscount > 0 ? `
-Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : ''}${invoiceData.manualDiscount > 0 ? `
+Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.appliedOffers?.length > 1
+? invoiceData.appliedOffers.map(ao => `
+Offer (${ao.name}): -₹${(ao.discountApplied || 0).toFixed(2)}`).join('')
+: (invoiceData.offerDiscount > 0 ? `
+Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : '')}${invoiceData.manualDiscount > 0 ? `
 Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
 Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
 Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
@@ -244,12 +247,18 @@ Thank you for your visit!
                 <span>Subtotal</span>
                 <span>₹${invoiceData.subtotal.toFixed(2)}</span>
               </div>
-              ${invoiceData.offerDiscount > 0 ? `
+              ${invoiceData.appliedOffers?.length > 1
+                ? invoiceData.appliedOffers.map(ao => `
+              <div class="total-row" style="color: #10b981;">
+                <span>Offer (${ao.name})</span>
+                <span>-₹${(ao.discountApplied || 0).toFixed(2)}</span>
+              </div>`).join('')
+                : (invoiceData.offerDiscount > 0 ? `
               <div class="total-row" style="color: #10b981;">
                 <span>${invoiceData.offerName || 'Offer'} Discount</span>
                 <span>-₹${invoiceData.offerDiscount.toFixed(2)}</span>
               </div>
-              ` : ''}
+              ` : '')}
               ${invoiceData.manualDiscount > 0 ? `
               <div class="total-row" style="color: #10b981;">
                 <span>Manual Discount</span>
@@ -470,12 +479,19 @@ Thank you for your visit!
                   <Text style={styles.totalLabel}>Subtotal</Text>
                   <Text style={styles.totalValue}>₹{invoiceData.subtotal.toFixed(2)}</Text>
                 </View>
-                {invoiceData.offerDiscount > 0 && (
+                {invoiceData.appliedOffers?.length > 1 ? (
+                  invoiceData.appliedOffers.map((ao, i) => (
+                    <View key={`offer-${i}`} style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>Offer ({ao.name})</Text>
+                      <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{(ao.discountApplied || 0).toFixed(2)}</Text>
+                    </View>
+                  ))
+                ) : invoiceData.offerDiscount > 0 ? (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#10b981' }]}>{invoiceData.offerName || 'Offer'} Discount</Text>
                     <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.offerDiscount.toFixed(2)}</Text>
                   </View>
-                )}
+                ) : null}
                 {invoiceData.manualDiscount > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#10b981' }]}>Manual Discount</Text>

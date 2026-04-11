@@ -467,22 +467,50 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Sync Status */}
+            {/* Sync Status — always visible */}
+            <TouchableOpacity
+              style={styles.connectivityRow}
+              onPress={() => setShowSyncSheet(true)}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons
+                  name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'sync' : 'checkmark-circle'}
+                  size={20}
+                  color={failedCount > 0 ? '#ef4444' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
+                />
+                <View>
+                  <Text style={styles.connectivityLabel}>Sync Status</Text>
+                  <Text style={styles.connectivityMeta}>
+                    {failedCount > 0
+                      ? `${failedCount} failed, ${pendingCount} pending`
+                      : pendingCount > 0
+                        ? `${pendingCount} changes pending sync`
+                        : 'All changes synced'}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textLight} />
+            </TouchableOpacity>
+
+            {/* Manual Sync Button */}
             {(pendingCount > 0 || failedCount > 0) && (
               <TouchableOpacity
-                style={styles.connectivityRow}
-                onPress={() => setShowSyncSheet(true)}
+                style={[styles.connectivityRow, { backgroundColor: failedCount > 0 ? '#fef2f2' : '#f0f9ff' }]}
+                onPress={async () => {
+                  try {
+                    await triggerSync();
+                    Alert.alert('Sync Started', 'Syncing pending changes...');
+                  } catch (e) {
+                    Alert.alert('Sync Error', e.message);
+                  }
+                }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Ionicons name="sync" size={20} color={failedCount > 0 ? '#ef4444' : '#3b82f6'} />
-                  <View>
-                    <Text style={styles.connectivityLabel}>Sync Queue</Text>
-                    <Text style={styles.connectivityMeta}>
-                      {pendingCount} pending{failedCount > 0 ? `, ${failedCount} failed` : ''}
-                    </Text>
-                  </View>
+                  <Ionicons name="refresh" size={20} color={failedCount > 0 ? '#ef4444' : '#3b82f6'} />
+                  <Text style={[styles.connectivityLabel, { color: failedCount > 0 ? '#ef4444' : '#3b82f6' }]}>
+                    {failedCount > 0 ? 'Retry Failed Syncs' : 'Sync Now'}
+                  </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textLight} />
               </TouchableOpacity>
             )}
 

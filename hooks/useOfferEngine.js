@@ -1,16 +1,18 @@
 /**
  * useOfferEngine (React Native)
  *
- * Thin RN-friendly port of dine-frontend/src/hooks/useOfferEngine.js.
- * Uses the pure engine in services/offerEngine.js plus apiClient.getOffers.
+ * Port of dine-frontend/src/hooks/useOfferEngine.js with multi-offer support.
+ * Uses the pure engine in services/offerEngine.js plus apiClient.
  *
  * Inputs:  { restaurantId, cart, subtotal, customerContext?, options? }
  *   customerContext: { customerId?, customerPhone?, isFirstOrder?, customerGroupIds? }
- *   options: { autoApply?: boolean }   // default false
+ *   options: { autoApply?: boolean }   // default false — overridden by offerSettings.autoApplyBestOffer
  *
  * Returns: { applicableOffers, selectedOfferId, setSelectedOfferId,
- *            offerDiscount, freeItems, isLoadingOffers, customerGroupIds,
- *            recomputeWithPhone, autoApplied }
+ *            selectedOfferIds, toggleOffer, offerDiscount, selectedOfferName,
+ *            freeItems, isLoadingOffers, customerGroupIds,
+ *            recomputeWithPhone, autoApplied, resetOffers,
+ *            offerSettings, loyaltySettings, calculateDiscountForOffer }
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,17 +34,36 @@ const useOfferEngine = ({
   customerContext = null,
   options = {},
 } = {}) => {
-  const { autoApply = false } = options;
+  const { autoApply: autoApplyProp = false } = options;
 
   const [allOffers, setAllOffers] = useState([]);
   const [isLoadingOffers, setIsLoadingOffers] = useState(false);
   const [selectedOfferId, setSelectedOfferIdInternal] = useState(null);
+  const [selectedOfferIds, setSelectedOfferIdsInternal] = useState([]);
   const [autoApplied, setAutoApplied] = useState(false);
+  const [offerDiscount, setOfferDiscount] = useState(0);
+  const [selectedOfferName, setSelectedOfferName] = useState('');
+
+  const [offerSettings, setOfferSettings] = useState({
+    autoApplyBestOffer: false,
+    allowMultipleOffers: false,
+    maxOffersAllowed: 1,
+  });
+  const [loyaltySettings, setLoyaltySettings] = useState({
+    enabled: false,
+    earnPerAmount: 100,
+    pointsEarned: 4,
+    redemptionRate: 100,
+    maxRedemptionPercent: 20,
+    earnPointsOnRedemption: false,
+    earnOnFullAmount: false,
+  });
 
   const [phoneOverride, setPhoneOverride] = useState(null);
   const [customerGroupIds, setCustomerGroupIds] = useState([]);
   const groupLookupCacheRef = useRef({}); // phone -> groupIds
   const wasManuallySelectedRef = useRef(false);
+  const settingsLoadedRef = useRef(false);
 
   // -------- load offers --------
   useEffect(() => {
@@ -51,7 +72,6 @@ const useOfferEngine = ({
     (async () => {
       setIsLoadingOffers(true);
       try {
-        // Prefer admin endpoint (full fields); fall back to POS/public.
         let resp = null;
         try {
           resp = await apiClient.getOffers(restaurantId);
@@ -70,6 +90,28 @@ const useOfferEngine = ({
         if (__DEV__) console.warn('[useOfferEngine] load offers failed:', err?.message);
       } finally {
         if (!cancelled) setIsLoadingOffers(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [restaurantId]);
+
+  // -------- load offerSettings + loyaltySettings --------
+  useEffect(() => {
+    if (!restaurantId || settingsLoadedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const settingsRes = await apiClient.getPublicCustomerAppSettings(restaurantId);
+        if (cancelled) return;
+        settingsLoadedRef.current = true;
+        if (settingsRes?.settings?.offerSettings) {
+          setOfferSettings(prev => ({ ...prev, ...settingsRes.settings.offerSettings }));
+        }
+        if (settingsRes?.settings?.loyaltySettings) {
+          setLoyaltySettings(prev => ({ ...prev, ...settingsRes.settings.loyaltySettings }));
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[useOfferEngine] settings load failed:', e?.message);
       }
     })();
     return () => { cancelled = true; };
@@ -154,51 +196,171 @@ const useOfferEngine = ({
     return out;
   }, [allOffers, subtotal, cart, resolvedContext]);
 
-  // -------- auto-apply best --------
+  // -------- helper: calculate discount for a single offer --------
+  const calculateDiscountForOffer = useCallback((offer, sub, c, ctx) => {
+    if (!offer) return 0;
+    const res = calculateOfferResult(offer, sub || subtotal, c || cart, ctx || resolvedContext || {});
+    return res?.discount || 0;
+  }, [subtotal, cart, resolvedContext]);
+
+  // -------- free items for current selection --------
+  const freeItems = useMemo(() => {
+    const activeIds = offerSettings.allowMultipleOffers && selectedOfferIds.length > 0
+      ? selectedOfferIds
+      : (selectedOfferId ? [selectedOfferId] : []);
+    if (activeIds.length === 0) return [];
+    const all = [];
+    for (const oid of activeIds) {
+      const offer = allOffers.find(o => getOfferId(o) === oid);
+      if (!offer) continue;
+      const res = calculateOfferResult(offer, subtotal, cart, resolvedContext || {});
+      if (res.freeItems && res.freeItems.length) all.push(...res.freeItems);
+    }
+    return all;
+  }, [selectedOfferId, selectedOfferIds, allOffers, subtotal, cart, offerSettings.allowMultipleOffers, resolvedContext]);
+
+  // -------- update discount when selection or subtotal changes --------
   useEffect(() => {
-    if (!autoApply) return;
+    // Multi-offer mode
+    if (offerSettings.allowMultipleOffers && selectedOfferIds.length > 0) {
+      let totalDisc = 0;
+      const names = [];
+      for (const oid of selectedOfferIds) {
+        const offer = allOffers.find(o => getOfferId(o) === oid);
+        if (offer) {
+          totalDisc += calculateDiscountForOffer(offer, subtotal, cart);
+          names.push(offer.name);
+        }
+      }
+      totalDisc = Math.min(totalDisc, subtotal);
+      setOfferDiscount(Math.round(totalDisc * 100) / 100);
+      setSelectedOfferName(names.join(', '));
+      return;
+    }
+
+    // Single offer mode
+    if (!selectedOfferId) {
+      setOfferDiscount(0);
+      setSelectedOfferName('');
+      return;
+    }
+
+    const offer = allOffers.find(o => getOfferId(o) === selectedOfferId);
+    if (!offer) {
+      setOfferDiscount(0);
+      setSelectedOfferName('');
+      return;
+    }
+
+    setSelectedOfferName(offer.name);
+    const disc = calculateDiscountForOffer(offer, subtotal, cart);
+    setOfferDiscount(disc);
+  }, [selectedOfferId, selectedOfferIds, subtotal, cart, allOffers, offerSettings.allowMultipleOffers, calculateDiscountForOffer]);
+
+  // -------- auto-apply best offer(s) --------
+  useEffect(() => {
+    const shouldAutoApply = offerSettings.autoApplyBestOffer || autoApplyProp;
+    if (!shouldAutoApply) return;
     if (wasManuallySelectedRef.current) return;
+
     const eligible = applicableOffers.filter(o => !o._requiresLogin);
     if (eligible.length === 0) {
       if (selectedOfferId) {
         setSelectedOfferIdInternal(null);
+        setSelectedOfferIdsInternal([]);
         setAutoApplied(false);
       }
       return;
     }
-    const best = pickBestOffer(eligible, subtotal, cart, resolvedContext || {});
-    if (best) {
-      const bid = getOfferId(best);
-      if (bid !== selectedOfferId) {
-        setSelectedOfferIdInternal(bid);
-        setAutoApplied(true);
+
+    if (offerSettings.allowMultipleOffers) {
+      // Multi-offer: auto-apply top N by discount
+      const maxOffers = offerSettings.maxOffersAllowed || 1;
+      const scored = eligible.map(offer => ({
+        offer,
+        discount: calculateDiscountForOffer(offer, subtotal, cart, resolvedContext || {}),
+      })).filter(s => s.discount > 0);
+      scored.sort((a, b) => b.discount - a.discount);
+      const topN = scored.slice(0, maxOffers);
+
+      if (topN.length > 0) {
+        const newIds = topN.map(s => getOfferId(s.offer));
+        const currentIds = selectedOfferIds.join(',');
+        if (newIds.join(',') !== currentIds) {
+          setSelectedOfferIdsInternal(newIds);
+          setSelectedOfferIdInternal(newIds[0]);
+          setAutoApplied(true);
+        }
+      }
+    } else {
+      // Single offer: pick best
+      const best = pickBestOffer(eligible, subtotal, cart, resolvedContext || {});
+      if (best) {
+        const bid = getOfferId(best);
+        if (bid !== selectedOfferId) {
+          setSelectedOfferIdInternal(bid);
+          setAutoApplied(true);
+        }
       }
     }
-  }, [autoApply, applicableOffers, subtotal, cart, resolvedContext, selectedOfferId]);
+  }, [autoApplyProp, offerSettings.autoApplyBestOffer, offerSettings.allowMultipleOffers, offerSettings.maxOffersAllowed,
+      applicableOffers, subtotal, cart, resolvedContext, selectedOfferId, selectedOfferIds, calculateDiscountForOffer]);
 
   // Clear selection when cart emptied
   useEffect(() => {
-    if (cart.length === 0 && selectedOfferId) {
+    if (cart.length === 0 && (selectedOfferId || selectedOfferIds.length > 0)) {
       setSelectedOfferIdInternal(null);
+      setSelectedOfferIdsInternal([]);
       setAutoApplied(false);
+      setOfferDiscount(0);
+      setSelectedOfferName('');
       wasManuallySelectedRef.current = false;
     }
-  }, [cart.length, selectedOfferId]);
+  }, [cart.length, selectedOfferId, selectedOfferIds.length]);
 
-  // -------- discount + freeItems for current selection --------
-  const { offerDiscount, freeItems } = useMemo(() => {
-    if (!selectedOfferId) return { offerDiscount: 0, freeItems: [] };
-    const offer = allOffers.find(o => getOfferId(o) === selectedOfferId);
-    if (!offer) return { offerDiscount: 0, freeItems: [] };
-    const res = calculateOfferResult(offer, subtotal, cart, resolvedContext || {});
-    return { offerDiscount: res.discount || 0, freeItems: res.freeItems || [] };
-  }, [selectedOfferId, allOffers, subtotal, cart, resolvedContext]);
-
-  // -------- public setter --------
+  // -------- public setter (single offer) --------
   const setSelectedOfferId = useCallback((offerId) => {
-    wasManuallySelectedRef.current = !!offerId;
-    setAutoApplied(false);
+    if (offerId) {
+      wasManuallySelectedRef.current = true;
+      setAutoApplied(false);
+    } else {
+      wasManuallySelectedRef.current = false;
+    }
     setSelectedOfferIdInternal(offerId);
+  }, []);
+
+  // -------- toggle offer in multi-select mode --------
+  const toggleOffer = useCallback((offerId) => {
+    wasManuallySelectedRef.current = true;
+    setAutoApplied(false);
+    setSelectedOfferIdsInternal(prev => {
+      if (prev.includes(offerId)) {
+        const next = prev.filter(id => id !== offerId);
+        if (next.length === 0) {
+          setSelectedOfferIdInternal(null);
+          wasManuallySelectedRef.current = false;
+        } else {
+          setSelectedOfferIdInternal(next[0]);
+        }
+        return next;
+      }
+      // Check max offers cap
+      const max = offerSettings.maxOffersAllowed || 1;
+      if (prev.length >= max) return prev;
+      const next = [...prev, offerId];
+      setSelectedOfferIdInternal(next[0]);
+      return next;
+    });
+  }, [offerSettings.maxOffersAllowed]);
+
+  // -------- reset --------
+  const resetOffers = useCallback(() => {
+    setSelectedOfferIdInternal(null);
+    setSelectedOfferIdsInternal([]);
+    setOfferDiscount(0);
+    setSelectedOfferName('');
+    setAutoApplied(false);
+    wasManuallySelectedRef.current = false;
   }, []);
 
   // -------- recompute with phone (for login-to-unlock flow) --------
@@ -206,7 +368,6 @@ const useOfferEngine = ({
     const n = normalizePhone(phone);
     if (!n) return;
     setPhoneOverride(n);
-    // Clear manual selection so auto-apply can re-pick best after group lookup.
     wasManuallySelectedRef.current = false;
   }, []);
 
@@ -214,12 +375,19 @@ const useOfferEngine = ({
     applicableOffers,
     selectedOfferId,
     setSelectedOfferId,
+    selectedOfferIds,
+    toggleOffer,
     offerDiscount,
+    selectedOfferName,
     freeItems,
     isLoadingOffers,
     customerGroupIds,
     recomputeWithPhone,
     autoApplied,
+    resetOffers,
+    offerSettings,
+    loyaltySettings,
+    calculateDiscountForOffer,
   };
 };
 

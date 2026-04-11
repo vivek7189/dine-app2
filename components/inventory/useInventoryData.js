@@ -383,6 +383,8 @@ export default function useInventoryData() {
 
   const refreshData = async () => {
     if (!restaurantId) return;
+    // Invalidate in-memory cache so we get fresh data from server
+    apiClient.invalidateCache(`/api/inventory/${restaurantId}`);
     switch (activeTab) {
       case 'dashboard': case 'stock':
         await loadCoreData(restaurantId);

@@ -1,11 +1,12 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
 import apiClient from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
-import OfflineStatusBar from '../../components/OfflineStatusBar';
+
 import { useOffline } from '../../hooks/useOffline';
 
 export default function TabsLayout() {
@@ -54,35 +55,40 @@ export default function TabsLayout() {
   const { r } = useResponsive();
   const iconSize = r(26, 30);
   const { pendingCount } = useOffline();
+  const insets = useSafeAreaInsets();
+  // Add bottom safe area so tab bar sits above Android nav bar / iOS home indicator
+  // With edge-to-edge enabled in MainActivity, Android now reports real insets.
+  // Fallback of 24px for devices that still misreport (Xiaomi gesture nav, etc.)
+  const bottomInset = Platform.OS === 'android'
+    ? Math.max(insets.bottom, 24)
+    : insets.bottom;
 
   return (
     <View style={{ flex: 1 }}>
-    <OfflineStatusBar />
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: '#999',
+        tabBarActiveTintColor: '#10b981',
+        tabBarInactiveTintColor: '#9ca3af',
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
-          borderTopColor: '#E5E5E5',
-          borderTopWidth: 1,
-          height: r(70, 80),
-          paddingBottom: r(12, 16),
+          borderTopWidth: 0,
+          height: r(64, 74) + bottomInset,
+          paddingBottom: bottomInset + r(4, 6),
           paddingTop: r(8, 10),
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.1,
-          shadowRadius: 8,
-          elevation: 10,
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.06,
+          shadowRadius: 12,
+          elevation: 12,
         },
         tabBarLabelStyle: {
           fontSize: r(11, 13),
-          fontWeight: '700',
+          fontWeight: '600',
           marginTop: 2,
         },
         tabBarIconStyle: {
-          marginTop: 4,
+          marginTop: 2,
         },
       }}
     >

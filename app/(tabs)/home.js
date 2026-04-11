@@ -15,10 +15,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache, clearCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import AppDrawer from '../../components/AppDrawer';
-import SyncIndicator from '../../components/SyncIndicator';
+// SyncIndicator moved to settings page
 import { HeadquartersContent } from './headquarters';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -310,7 +311,14 @@ export default function HomeScreen() {
     setRefreshing(true);
     const restaurantId = getRestaurantId();
     if (restaurantId) {
-      await loadStats(restaurantId);
+      // Invalidate in-memory cache so we get fresh data from server
+      apiClient.invalidateCache(`/api/floors/${restaurantId}`);
+      apiClient.invalidateCache(`/api/orders/${restaurantId}`);
+      apiClient.invalidateCache(`/api/analytics/${restaurantId}`);
+      await Promise.all([
+        loadStats(restaurantId),
+        fetchDailySummary(),
+      ]);
     }
     setRefreshing(false);
   };
@@ -360,6 +368,9 @@ export default function HomeScreen() {
 
       // Reload stats for new restaurant
       await loadStats(newRestaurantId);
+
+      // Broadcast switch to all other tabs so they reload immediately
+      restaurantEvents.emit('switch', { restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant });
     } catch (error) {
       console.error('Error switching restaurant:', error);
     }
@@ -484,48 +495,36 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Clean Header with Avatar */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={() => setDrawerVisible(true)} style={styles.menuButton}>
-              <Ionicons name="menu" size={24} color={Colors.textDark} />
+            <TouchableOpacity onPress={() => setDrawerVisible(true)} style={styles.avatarCircle}>
+              <Ionicons name="person" size={20} color="#fff" />
             </TouchableOpacity>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.greeting}>{getGreeting()}</Text>
               <Text style={styles.userName}>{user?.name || 'Staff'}</Text>
             </View>
           </View>
           <View style={styles.headerRight}>
-            {effectivelyOffline && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
-                <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Offline</Text>
-              </View>
-            )}
             {hasRestaurant && (
               <View style={styles.businessBadge}>
                 <Text style={styles.businessBadgeText}>{getBusinessTypeLabel()}</Text>
               </View>
             )}
-            {isOwnerOrManager && (
-              <View style={styles.roleBadge}>
-                <Text style={styles.roleBadgeText}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
-              </View>
-            )}
           </View>
         </View>
 
-        <SyncIndicator visible={syncing} />
-
-        {/* Restaurant Name — tap to open drawer for switching */}
+        {/* Restaurant Name — tap to switch */}
         {hasRestaurant && (
           <TouchableOpacity onPress={() => setDrawerVisible(true)} activeOpacity={0.7}>
             <View style={styles.restaurantNameRow}>
+              <Ionicons name="storefront-outline" size={14} color={Colors.textMedium} />
               <Text style={styles.restaurantName}>
                 {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
               </Text>
               {restaurants.length > 1 && (
-                <Ionicons name="swap-horizontal" size={14} color={Colors.textLight} />
+                <Ionicons name="chevron-down" size={14} color={Colors.textLight} />
               )}
             </View>
           </TouchableOpacity>
@@ -592,7 +591,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Quick Actions */}
+        {/* Quick Actions — circular icons */}
         {hasRestaurant && (
           <>
             <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -601,8 +600,8 @@ export default function HomeScreen() {
                 style={styles.actionButton}
                 onPress={() => router.push(newOrderRoute)}
               >
-                <View style={[styles.actionIcon, { backgroundColor: Colors.primary }]}>
-                  <Ionicons name="add-circle-outline" size={24} color="#fff" />
+                <View style={[styles.actionIcon, { backgroundColor: '#fef2f2' }]}>
+                  <Ionicons name="add-circle" size={26} color={Colors.primary} />
                 </View>
                 <Text style={styles.actionText}>{isBarType ? 'Open Tab' : 'New Order'}</Text>
               </TouchableOpacity>
@@ -612,8 +611,8 @@ export default function HomeScreen() {
                   style={styles.actionButton}
                   onPress={() => router.push('/(tabs)/tables')}
                 >
-                  <View style={[styles.actionIcon, { backgroundColor: '#3b82f6' }]}>
-                    <Ionicons name="restaurant-outline" size={24} color="#fff" />
+                  <View style={[styles.actionIcon, { backgroundColor: '#eff6ff' }]}>
+                    <Ionicons name="restaurant" size={24} color="#3b82f6" />
                   </View>
                   <Text style={styles.actionText}>Tables</Text>
                 </TouchableOpacity>
@@ -623,8 +622,8 @@ export default function HomeScreen() {
                 style={styles.actionButton}
                 onPress={() => router.push('/(tabs)/orders')}
               >
-                <View style={[styles.actionIcon, { backgroundColor: '#f59e0b' }]}>
-                  <Ionicons name="receipt-outline" size={24} color="#fff" />
+                <View style={[styles.actionIcon, { backgroundColor: '#fef3c7' }]}>
+                  <Ionicons name="receipt" size={24} color="#f59e0b" />
                 </View>
                 <Text style={styles.actionText}>Orders</Text>
               </TouchableOpacity>
@@ -634,8 +633,8 @@ export default function HomeScreen() {
                   style={styles.actionButton}
                   onPress={() => router.push('/(tabs)/headquarters')}
                 >
-                  <View style={[styles.actionIcon, { backgroundColor: '#6366f1' }]}>
-                    <Ionicons name="business-outline" size={24} color="#fff" />
+                  <View style={[styles.actionIcon, { backgroundColor: '#eef2ff' }]}>
+                    <Ionicons name="business" size={24} color="#6366f1" />
                   </View>
                   <Text style={styles.actionText}>HQ</Text>
                 </TouchableOpacity>
@@ -646,8 +645,8 @@ export default function HomeScreen() {
                   style={styles.actionButton}
                   onPress={() => router.push('/(tabs)/more')}
                 >
-                  <View style={[styles.actionIcon, { backgroundColor: '#8b5cf6' }]}>
-                    <Ionicons name="settings-outline" size={24} color="#fff" />
+                  <View style={[styles.actionIcon, { backgroundColor: '#f5f3ff' }]}>
+                    <Ionicons name="settings" size={24} color="#8b5cf6" />
                   </View>
                   <Text style={styles.actionText}>Manage</Text>
                 </TouchableOpacity>
@@ -942,7 +941,7 @@ function getStatusColor(status) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.backgroundLight,
+    backgroundColor: '#f8f9fa',
   },
   scrollContent: {
     paddingBottom: 100,
@@ -952,49 +951,70 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.xs,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#fff',
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
   },
-  menuButton: {
-    padding: Spacing.xs,
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1f2937',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   greeting: {
-    ...Typography.caption,
+    fontSize: 13,
     color: Colors.textLight,
+    fontWeight: '400',
   },
   userName: {
-    ...Typography.h3,
+    fontSize: 18,
+    fontWeight: '700',
     color: Colors.textDark,
   },
   headerRight: {
-    alignItems: 'flex-end',
-    gap: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  businessBadge: {
-    backgroundColor: Colors.primary + '15',
-    paddingHorizontal: 10,
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: BorderRadius.full,
+    borderRadius: 12,
   },
-  businessBadgeText: {
-    ...Typography.small,
-    color: Colors.primary,
+  offlineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ef4444',
+    marginRight: 4,
+  },
+  offlineText: {
+    fontSize: 11,
+    color: '#ef4444',
     fontWeight: '600',
   },
-  roleBadge: {
-    backgroundColor: '#8b5cf6' + '15',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+  businessBadge: {
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
-  roleBadgeText: {
-    fontSize: 10,
-    color: '#8b5cf6',
+  businessBadgeText: {
+    fontSize: 12,
+    color: '#10b981',
     fontWeight: '600',
   },
   restaurantNameRow: {
@@ -1002,12 +1022,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: Spacing.md,
-    marginLeft: 44,
-    marginBottom: Spacing.md,
+    paddingBottom: 12,
+    backgroundColor: '#fff',
   },
   restaurantName: {
-    ...Typography.caption,
+    fontSize: 14,
     color: Colors.textMedium,
+    fontWeight: '500',
   },
   // Snapshot header (owner/admin)
   snapshotHeader: {
@@ -1094,20 +1115,24 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
     marginBottom: Spacing.lg,
     backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.xl,
+    borderRadius: 20,
     overflow: 'hidden',
-    ...Shadows.medium,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   heroActionInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 18,
+    padding: 20,
     gap: 14,
   },
   heroIconCircle: {
     width: 48,
     height: 48,
-    borderRadius: 14,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1132,34 +1157,43 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    borderRadius: BorderRadius.large,
-    padding: 14,
-    ...Shadows.small,
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    borderLeftWidth: 3,
   },
   statIconCircle: {
     width: 36,
     height: 36,
-    borderRadius: 18,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   statValue: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
     color: Colors.textDark,
     marginBottom: 2,
   },
   statLabel: {
-    ...Typography.small,
-    color: Colors.textMedium,
+    fontSize: 12,
+    color: Colors.textLight,
+    fontWeight: '500',
   },
   // Section
   sectionTitle: {
-    ...Typography.bodyBold,
-    color: Colors.textDark,
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1f2937',
     paddingHorizontal: Spacing.md,
     marginBottom: Spacing.sm,
+    marginTop: 4,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1173,29 +1207,30 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '600',
   },
-  // Quick Actions
+  // Quick Actions — circular icon style
   actionsRow: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.md,
-    gap: 12,
+    gap: 8,
     marginBottom: Spacing.lg,
   },
   actionButton: {
     flex: 1,
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   actionIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
   },
   actionText: {
-    ...Typography.small,
+    fontSize: 11,
     color: Colors.textMedium,
-    fontWeight: '500',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   // Pending Alert
   pendingAlert: {
@@ -1226,17 +1261,21 @@ const styles = StyleSheet.create({
     color: '#92400e',
     fontWeight: '600',
   },
-  // Order Cards
+  // Order Cards — clean with subtle shadow
   orderCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#fff',
     marginHorizontal: Spacing.md,
-    padding: 14,
-    borderRadius: BorderRadius.large,
-    marginBottom: 8,
-    ...Shadows.small,
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   orderCardLeft: {
     flex: 1,

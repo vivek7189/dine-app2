@@ -7,6 +7,7 @@ import {
   ScrollView,
   Modal,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -32,50 +33,47 @@ export default function AppDrawer({
 }) {
   const { r } = useResponsive();
   const router = useRouter();
-  const [switching, setSwitching] = useState(null); // restaurantId being switched to
+  const [switching, setSwitching] = useState(null);
   const [expanded, setExpanded] = useState(false);
 
   const hasMultiple = restaurants.length > 1;
   const currentRestaurant = restaurants.find(r => (r.id || r._id) === currentRestaurantId) || restaurants[0];
 
-  const menuItems = [
+  const generalItems = [
     {
       title: 'Home',
-      icon: 'home',
+      icon: 'home-outline',
       route: '/(tabs)/home',
-      color: '#3b82f6',
     },
     {
       title: 'Tables',
-      icon: 'restaurant',
+      icon: 'grid-outline',
       route: '/(tabs)/tables',
-      color: Colors.primary,
       restrictedRoles: ['cashier', 'sales'],
     },
     {
       title: 'Menu',
-      icon: 'fast-food',
+      icon: 'restaurant-outline',
       route: '/(tabs)/menu',
-      color: '#10b981',
     },
     {
       title: 'Orders',
-      icon: 'receipt',
+      icon: 'receipt-outline',
       route: '/(tabs)/orders',
-      color: '#f59e0b',
     },
+  ];
+
+  const managementItems = [
     {
       title: 'Menu Management',
-      icon: 'settings',
+      icon: 'construct-outline',
       route: '/(tabs)/menu-management',
-      color: '#8b5cf6',
       requiresRole: ['owner', 'manager'],
     },
     {
       title: 'Settings',
-      icon: 'person',
+      icon: 'settings-outline',
       route: '/(tabs)/profile',
-      color: '#06b6d4',
     },
   ];
 
@@ -113,71 +111,77 @@ export default function AppDrawer({
     return item.requiresRole.includes(user.role.toLowerCase());
   };
 
+  const initials = (user?.name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  const renderMenuItem = (item, index) => (
+    <TouchableOpacity
+      key={index}
+      style={styles.menuItem}
+      onPress={() => handleNavigate(item.route)}
+      activeOpacity={0.6}
+    >
+      <Ionicons name={item.icon} size={20} color="#6b7280" />
+      <Text style={styles.menuItemText}>{item.title}</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={onClose}
-        />
         <View style={[styles.drawer, { maxWidth: r(320, 400) }]}>
-          {/* Drawer Header */}
-          <View style={styles.drawerHeader}>
-            <View style={styles.headerContent}>
-              <View style={styles.avatarContainer}>
-                <Ionicons name="person" size={32} color="#fff" />
+          {/* Warm Header Banner */}
+          <View style={styles.headerBanner}>
+            {/* Top row: brand + close */}
+            <View style={styles.headerTopRow}>
+              <View style={styles.brandRow}>
+                <View style={styles.brandDots}>
+                  <Ionicons name="restaurant" size={18} color="#fff" />
+                </View>
+                <Text style={styles.brandName}>DineOpen</Text>
               </View>
-              <View style={styles.userInfo}>
-                <Text style={styles.userName}>{user?.name || 'User'}</Text>
-                <Text style={styles.userRole}>{user?.role || 'Staff'}</Text>
-              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Ionicons name="close" size={20} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
+
+            {/* Avatar */}
+            <View style={styles.avatarContainer}>
+              <Text style={styles.avatarText}>{initials}</Text>
+            </View>
+
+            {/* Name + subtitle */}
+            <Text style={styles.userName}>{user?.name || 'User'}</Text>
+            <Text style={styles.userSubtitle}>
+              {currentRestaurant?.name || 'Your Restaurant'}
+            </Text>
           </View>
 
-          {/* Menu Items */}
           <ScrollView style={styles.menuContainer} showsVerticalScrollIndicator={false}>
-            {/* Restaurant Switcher */}
-            {restaurants.length > 0 && (
-              <View style={styles.menuSection}>
-                <Text style={styles.sectionTitle}>RESTAURANT</Text>
-
-                {/* Current restaurant */}
+            {/* Restaurant Switcher (if multiple) */}
+            {hasMultiple && (
+              <View style={styles.switcherSection}>
                 <TouchableOpacity
-                  style={styles.restaurantCard}
-                  onPress={() => hasMultiple && setExpanded(!expanded)}
-                  activeOpacity={hasMultiple ? 0.7 : 1}
+                  style={styles.switcherCard}
+                  onPress={() => setExpanded(!expanded)}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.restaurantIconContainer}>
-                    <Ionicons name="storefront" size={22} color={Colors.primary} />
+                  <View style={styles.switcherIcon}>
+                    <Ionicons name="swap-horizontal-outline" size={16} color="#8b7355" />
                   </View>
-                  <View style={styles.restaurantInfo}>
-                    <Text style={styles.restaurantName} numberOfLines={1}>
-                      {currentRestaurant?.name || 'My Restaurant'}
-                    </Text>
-                    <Text style={styles.restaurantType}>
-                      {BUSINESS_TYPE_LABELS[currentRestaurant?.businessType] || 'Restaurant'}
-                    </Text>
-                  </View>
-                  {hasMultiple && (
-                    <Ionicons
-                      name={expanded ? 'chevron-up' : 'chevron-down'}
-                      size={20}
-                      color={Colors.textLight}
-                    />
-                  )}
+                  <Text style={styles.switcherText}>Switch Restaurant</Text>
+                  <Ionicons
+                    name={expanded ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color="#9ca3af"
+                  />
                 </TouchableOpacity>
 
-                {/* Expanded restaurant list */}
-                {hasMultiple && expanded && (
+                {expanded && (
                   <View style={styles.restaurantList}>
                     {restaurants.map((rest) => {
                       const restId = rest.id || rest._id;
@@ -195,17 +199,14 @@ export default function AppDrawer({
                           disabled={isSelected || !!switching}
                         >
                           <View style={[
-                            styles.restaurantOptionAccent,
-                            { backgroundColor: isSelected ? Colors.primary : '#e5e7eb' },
+                            styles.restaurantDot,
+                            { backgroundColor: isSelected ? '#8b7355' : '#d1d5db' },
                           ]} />
-                          <View style={styles.restaurantOptionInfo}>
-                            <Text
-                              style={[
-                                styles.restaurantOptionName,
-                                isSelected && styles.restaurantOptionNameSelected,
-                              ]}
-                              numberOfLines={1}
-                            >
+                          <View style={{ flex: 1 }}>
+                            <Text style={[
+                              styles.restaurantOptionName,
+                              isSelected && { color: '#8b7355', fontWeight: '700' },
+                            ]} numberOfLines={1}>
                               {rest.name}
                             </Text>
                             <Text style={styles.restaurantOptionType}>
@@ -213,9 +214,9 @@ export default function AppDrawer({
                             </Text>
                           </View>
                           {isSwitching ? (
-                            <ActivityIndicator size="small" color={Colors.primary} />
+                            <ActivityIndicator size="small" color="#8b7355" />
                           ) : isSelected ? (
-                            <Ionicons name="checkmark-circle" size={22} color={Colors.primary} />
+                            <Ionicons name="checkmark-circle" size={18} color="#8b7355" />
                           ) : null}
                         </TouchableOpacity>
                       );
@@ -225,60 +226,52 @@ export default function AppDrawer({
               </View>
             )}
 
-            <View style={styles.menuSection}>
-              <Text style={styles.sectionTitle}>NAVIGATION</Text>
-              {menuItems.filter(shouldShowItem).map((item, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={styles.menuItem}
-                  onPress={() => handleNavigate(item.route)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
-                    <Ionicons name={item.icon} size={24} color={item.color} />
-                  </View>
-                  <Text style={styles.menuItemText}>{item.title}</Text>
-                  <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
-                </TouchableOpacity>
-              ))}
+            {/* General */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>General</Text>
+              {generalItems.filter(shouldShowItem).map(renderMenuItem)}
             </View>
 
-            {/* Additional Options */}
-            <View style={styles.menuSection}>
-              <Text style={styles.sectionTitle}>MORE</Text>
-              <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                <View style={[styles.menuIconContainer, { backgroundColor: '#64748b15' }]}>
-                  <Ionicons name="help-circle" size={24} color="#64748b" />
-                </View>
-                <Text style={styles.menuItemText}>Help & Support</Text>
-                <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                <View style={[styles.menuIconContainer, { backgroundColor: '#64748b15' }]}>
-                  <Ionicons name="information-circle" size={24} color="#64748b" />
-                </View>
-                <Text style={styles.menuItemText}>About</Text>
-                <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
-              </TouchableOpacity>
+            <View style={styles.sectionDivider} />
+
+            {/* Management */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Management</Text>
+              {managementItems.filter(shouldShowItem).map(renderMenuItem)}
             </View>
 
-            {/* Logout Button */}
+            <View style={styles.sectionDivider} />
+
+            {/* Sign Out */}
             <TouchableOpacity
-              style={styles.logoutButton}
+              style={styles.signOutButton}
               onPress={handleLogout}
               activeOpacity={0.7}
             >
-              <Ionicons name="log-out" size={24} color="#ef4444" />
-              <Text style={styles.logoutText}>Logout</Text>
+              <Ionicons name="log-out-outline" size={20} color="#e5484d" />
+              <Text style={styles.signOutText}>Sign Out</Text>
             </TouchableOpacity>
+
+            <View style={{ height: 30 }} />
           </ScrollView>
 
-          {/* Footer */}
-          <View style={styles.drawerFooter}>
-            <Text style={styles.footerText}>DineOpen Staff</Text>
-            <Text style={styles.footerVersion}>Version 1.0.0</Text>
+          {/* Footer Buttons */}
+          <View style={styles.footer}>
+            <View style={styles.footerRolePill}>
+              <View style={styles.footerRoleDot} />
+              <Text style={styles.footerRoleText}>{user?.role || 'Staff'}</Text>
+            </View>
+            <TouchableOpacity style={styles.footerVersionPill}>
+              <Text style={styles.footerVersionText}>v1.6.0</Text>
+            </TouchableOpacity>
           </View>
         </View>
+
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={onClose}
+        />
       </View>
     </Modal>
   );
@@ -291,190 +284,254 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
   },
   drawer: {
-    width: '80%',
+    width: '82%',
     backgroundColor: '#fff',
     shadowColor: '#000',
-    shadowOffset: { width: -2, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 16,
+    shadowOffset: { width: 6, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 30,
+    elevation: 24,
   },
-  drawerHeader: {
+
+  // Header Banner
+  headerBanner: {
+    backgroundColor: '#8b7355',
+    paddingTop: Platform.OS === 'android' ? 48 : 56,
+    paddingBottom: 28,
+    paddingHorizontal: 22,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    alignItems: 'center',
+  },
+  headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    padding: 20,
-    paddingTop: 50,
-    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 20,
   },
-  headerContent: {
-    flex: 1,
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  avatarContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  brandDots: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
   },
-  userInfo: {
-    gap: 4,
+  brandName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 1,
   },
   userName: {
     fontSize: 20,
     fontWeight: '700',
     color: '#fff',
+    marginBottom: 4,
+    letterSpacing: -0.3,
   },
-  userRole: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    textTransform: 'capitalize',
+  userSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '500',
   },
-  closeButton: {
-    padding: 4,
-  },
+
+  // Menu
   menuContainer: {
     flex: 1,
   },
-  menuSection: {
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textLight,
+
+  // Switcher
+  switcherSection: {
     paddingHorizontal: 20,
-    paddingBottom: 8,
-    letterSpacing: 0.5,
+    paddingTop: 18,
+    paddingBottom: 4,
   },
-  // Restaurant switcher
-  restaurantCard: {
+  switcherCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    gap: 12,
+    gap: 10,
+    backgroundColor: '#faf8f5',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#f0ece6',
   },
-  restaurantIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: Colors.primary + '15',
+  switcherIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#f0ece6',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  restaurantInfo: {
+  switcherText: {
     flex: 1,
-  },
-  restaurantName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  restaurantType: {
-    fontSize: 12,
-    color: Colors.textLight,
-    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
   },
   restaurantList: {
-    marginHorizontal: 20,
-    marginTop: 4,
-    borderRadius: 10,
-    backgroundColor: '#f9fafb',
+    marginTop: 6,
+    borderRadius: 12,
+    backgroundColor: '#faf8f5',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#f0ece6',
     overflow: 'hidden',
   },
   restaurantOption: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    paddingRight: 14,
+    paddingHorizontal: 14,
+    gap: 10,
   },
   restaurantOptionSelected: {
-    backgroundColor: '#f0f4ff',
+    backgroundColor: '#f0ece6',
   },
-  restaurantOptionAccent: {
-    width: 3,
-    height: '100%',
-    marginRight: 12,
-  },
-  restaurantOptionInfo: {
-    flex: 1,
+  restaurantDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   restaurantOptionName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.textDark,
-  },
-  restaurantOptionNameSelected: {
-    color: Colors.primary,
+    color: '#374151',
   },
   restaurantOptionType: {
     fontSize: 11,
-    color: Colors.textLight,
+    color: '#9ca3af',
     marginTop: 1,
   },
+
+  // Sections
+  section: {
+    paddingTop: 20,
+    paddingBottom: 4,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9ca3af',
+    paddingHorizontal: 22,
+    marginBottom: 6,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginHorizontal: 22,
+    marginTop: 8,
+  },
+
   // Menu items
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    gap: 16,
-  },
-  menuIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    gap: 14,
   },
   menuItemText: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textDark,
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#374151',
   },
-  logoutButton: {
+
+  // Sign out
+  signOutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    paddingHorizontal: 20,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    marginTop: 8,
+    gap: 14,
+  },
+  signOutText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#e5484d',
+  },
+
+  // Footer
+  footer: {
     paddingVertical: 16,
-    marginHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 20,
-    backgroundColor: '#fef2f2',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#fee2e2',
-  },
-  logoutText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#ef4444',
-  },
-  drawerFooter: {
-    padding: 20,
+    paddingHorizontal: 22,
     borderTopWidth: 1,
-    borderTopColor: '#e5e5e5',
+    borderTopColor: '#f3f4f6',
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 4,
+    gap: 10,
+    paddingBottom: Platform.OS === 'android' ? 16 : 28,
   },
-  footerText: {
-    fontSize: 14,
+  footerRolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8b7355',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+  },
+  footerRoleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#d4c5a9',
+  },
+  footerRoleText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#fff',
+    textTransform: 'capitalize',
   },
-  footerVersion: {
-    fontSize: 12,
-    color: Colors.textLight,
+  footerVersionPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+  },
+  footerVersionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9ca3af',
   },
 });

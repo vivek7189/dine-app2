@@ -74,10 +74,17 @@ export default function OfferSelector({
     applicableOffers,
     selectedOfferId,
     setSelectedOfferId,
+    selectedOfferIds,
+    toggleOffer,
     offerDiscount,
+    selectedOfferName,
     freeItems,
     isLoadingOffers,
     recomputeWithPhone,
+    autoApplied,
+    offerSettings,
+    loyaltySettings,
+    calculateDiscountForOffer: calcDiscount,
   } = useOfferEngine({
     restaurantId,
     cart: cartItems,
@@ -86,49 +93,43 @@ export default function OfferSelector({
     options: { autoApply: true },
   });
 
-  // Manual discount local state (mirrors props for uncontrolled fallback)
-  const [localManualDiscount, setLocalManualDiscount] = useState(manualDiscount);
-  const [localDiscountType, setLocalDiscountType] = useState(manualDiscountType);
-
   // Login-to-unlock inline modal state
   const [loginModalVisible, setLoginModalVisible] = useState(false);
   const [pendingPhone, setPendingPhone] = useState('');
   const [pendingOfferId, setPendingOfferId] = useState(null);
 
-  // One-time settings-loaded notification (kept for back-compat shape)
+  // Notify parent when offer settings are loaded from API
   const settingsNotifiedRef = useRef(false);
   useEffect(() => {
-    if (!settingsNotifiedRef.current && onOfferSettingsLoaded) {
+    if (onOfferSettingsLoaded && offerSettings && !settingsNotifiedRef.current) {
       settingsNotifiedRef.current = true;
-      onOfferSettingsLoaded({
-        allowMultipleOffers: false,
-        maxOffersAllowed: 1,
-        autoApplyBestOffer: true,
-      });
+      onOfferSettingsLoaded(offerSettings);
     }
-  }, [onOfferSettingsLoaded]);
+  }, [onOfferSettingsLoaded, offerSettings]);
 
-  // Notify parent of selection + discount changes in the legacy shape.
-  const lastNotifiedRef = useRef({ id: null, discount: 0 });
+  // Notify parent of selection + discount changes
+  const lastNotifiedRef = useRef({ ids: '', discount: 0 });
   useEffect(() => {
-    const lastId = lastNotifiedRef.current.id;
-    const lastDisc = lastNotifiedRef.current.discount;
-    if (lastId === selectedOfferId && lastDisc === offerDiscount) return;
-    lastNotifiedRef.current = { id: selectedOfferId, discount: offerDiscount };
+    const isMulti = offerSettings?.allowMultipleOffers;
+    const activeIds = isMulti && selectedOfferIds.length > 0
+      ? selectedOfferIds
+      : (selectedOfferId ? [selectedOfferId] : []);
+    const idsKey = activeIds.join(',');
 
-    const offer = selectedOfferId
-      ? applicableOffers.find(o => (o.id || o._id) === selectedOfferId) || null
-      : null;
+    if (lastNotifiedRef.current.ids === idsKey && lastNotifiedRef.current.discount === offerDiscount) return;
+    lastNotifiedRef.current = { ids: idsKey, discount: offerDiscount };
+
+    const activeOffers = activeIds
+      .map(id => applicableOffers.find(o => (o.id || o._id) === id))
+      .filter(Boolean);
 
     if (onOfferSelected) {
-      onOfferSelected(selectedOfferId || null, offerDiscount || 0, offer);
+      onOfferSelected(activeIds[0] || null, offerDiscount || 0, activeOffers[0] || null);
     }
     if (onOffersChanged) {
-      const ids = selectedOfferId ? [selectedOfferId] : [];
-      const offers = offer ? [offer] : [];
-      onOffersChanged(ids, offerDiscount || 0, offers);
+      onOffersChanged(activeIds, offerDiscount || 0, activeOffers);
     }
-  }, [selectedOfferId, offerDiscount, applicableOffers, onOfferSelected, onOffersChanged]);
+  }, [selectedOfferId, selectedOfferIds, offerDiscount, applicableOffers, onOfferSelected, onOffersChanged, offerSettings?.allowMultipleOffers]);
 
   // Notify parent of freeItems changes (additive).
   const lastFreeItemsRef = useRef([]);
@@ -160,12 +161,16 @@ export default function OfferSelector({
       setLoginModalVisible(true);
       return;
     }
-    if (selectedOfferId === offerId) {
-      setSelectedOfferId(null);
+    if (offerSettings?.allowMultipleOffers) {
+      toggleOffer(offerId);
     } else {
-      setSelectedOfferId(offerId);
+      if (selectedOfferId === offerId) {
+        setSelectedOfferId(null);
+      } else {
+        setSelectedOfferId(offerId);
+      }
     }
-  }, [selectedOfferId, setSelectedOfferId]);
+  }, [selectedOfferId, setSelectedOfferId, toggleOffer, offerSettings?.allowMultipleOffers]);
 
   const handlePhoneSubmit = useCallback(() => {
     const phone = (pendingPhone || '').trim();
@@ -177,26 +182,6 @@ export default function OfferSelector({
     setPendingOfferId(null);
     setPendingPhone('');
   }, [pendingPhone, recomputeWithPhone]);
-
-  // Manual Discount handlers
-  const handleManualDiscountChange = (value) => {
-    setLocalManualDiscount(value);
-    if (onManualDiscountChange) onManualDiscountChange(value, localDiscountType);
-  };
-
-  const toggleDiscountType = () => {
-    const newType = localDiscountType === 'flat' ? 'percentage' : 'flat';
-    setLocalDiscountType(newType);
-    if (onManualDiscountChange) onManualDiscountChange(localManualDiscount, newType);
-  };
-
-  const getManualDiscountAmount = () => {
-    const val = parseFloat(localManualDiscount) || 0;
-    if (localDiscountType === 'percentage') {
-      return Math.round((subtotal * val / 100) * 100) / 100;
-    }
-    return Math.min(val, subtotal);
-  };
 
   return (
     <View style={styles.container}>
@@ -225,7 +210,8 @@ export default function OfferSelector({
               const offerId = offer.id || offer._id;
               const isLocked = !!offer._requiresLogin;
               const preview = discountFor(offer);
-              const isSelected = !isLocked && selectedOfferId === offerId;
+              const isMulti = offerSettings?.allowMultipleOffers;
+              const isSelected = !isLocked && (isMulti ? selectedOfferIds.includes(offerId) : selectedOfferId === offerId);
 
               return (
                 <TouchableOpacity
@@ -241,8 +227,10 @@ export default function OfferSelector({
                   {isLocked ? (
                     <Text style={styles.chipLockIcon}>🔒</Text>
                   ) : isSelected ? (
-                    <Ionicons name="checkmark-circle" size={14} color="#7c3aed" style={styles.chipCheckmark} />
-                  ) : null}
+                    <Ionicons name="close-circle" size={16} color="#7c3aed" style={styles.chipCheckmark} />
+                  ) : (
+                    <Ionicons name="pricetag-outline" size={13} color="#9ca3af" style={styles.chipCheckmark} />
+                  )}
                   <View style={styles.chipTextContainer}>
                     <Text
                       style={[
@@ -275,29 +263,6 @@ export default function OfferSelector({
           <Text style={styles.loadingText}>Loading offers...</Text>
         </View>
       )}
-
-      {/* Manual Discount */}
-      <View style={styles.manualSection}>
-        <Text style={styles.manualLabel}>Manual Discount</Text>
-        <View style={styles.manualRow}>
-          <TouchableOpacity style={styles.discountTypeToggle} onPress={toggleDiscountType}>
-            <Text style={styles.discountTypeText}>
-              {localDiscountType === 'percentage' ? '%' : '₹'}
-            </Text>
-          </TouchableOpacity>
-          <TextInput
-            style={styles.manualInput}
-            placeholder="0"
-            placeholderTextColor="#999"
-            keyboardType="numeric"
-            value={localManualDiscount}
-            onChangeText={handleManualDiscountChange}
-          />
-          {getManualDiscountAmount() > 0 && (
-            <Text style={styles.manualAmount}>-₹{getManualDiscountAmount().toFixed(0)}</Text>
-          )}
-        </View>
-      </View>
 
       {/* Inline login-to-unlock modal */}
       <Modal
@@ -345,11 +310,12 @@ export default function OfferSelector({
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#fff',
-    marginTop: 8,
-    padding: 16,
+    marginTop: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   offerSection: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
   offerHeader: {
     flexDirection: 'row',
@@ -443,51 +409,6 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 12,
     color: Colors.textLight,
-  },
-  manualSection: {},
-  manualLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  manualRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  discountTypeToggle: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  discountTypeText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#374151',
-  },
-  manualInput: {
-    flex: 1,
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
-    color: '#1f2937',
-  },
-  manualAmount: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#10b981',
-    minWidth: 50,
-    textAlign: 'right',
   },
   // Login modal
   loginBackdrop: {

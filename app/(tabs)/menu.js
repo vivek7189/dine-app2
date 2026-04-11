@@ -12,12 +12,16 @@ import {
   Animated,
   Modal,
   ScrollView,
+  RefreshControl,
+  Platform,
+  Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -31,7 +35,7 @@ import CashierInvoiceModal from '../../components/CashierInvoiceModal';
 import KOTModal from '../../components/KOTModal';
 import { useToast } from '../../components/Toast';
 import { getCached, setCache } from '../../services/cacheManager';
-import SyncIndicator from '../../components/SyncIndicator';
+// SyncIndicator moved to settings page
 import Pusher from 'pusher-js/react-native';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -80,6 +84,7 @@ export default function MenuScreen() {
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   // Multi-tier pricing
   const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
   const [pricingRules, setPricingRules] = useState([]);
@@ -89,6 +94,8 @@ export default function MenuScreen() {
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
   const menuFlatListRef = useRef(null);
+  const categoryChipsRef = useRef(null);
+  const categoryChipLayouts = useRef({});
   const [showCategorySheet, setShowCategorySheet] = useState(false);
   const HEADER_EXPANDED = 200;
   const HEADER_COLLAPSED = 92; // room for row1 + row2 chips (wrap)
@@ -99,6 +106,33 @@ export default function MenuScreen() {
     loadImagePreference();
   }, []);
 
+  // Listen for restaurant switch from other tabs (e.g. home drawer)
+  useEffect(() => {
+    const unsub = restaurantEvents.on('switch', ({ restaurantId: newRid, restaurant: newRest }) => {
+      // Reset all menu-related state for the new restaurant
+      setRestaurantId(newRid);
+      setRestaurantName(newRest?.name || 'Restaurant');
+      setBusinessType(newRest?.businessType || 'restaurant');
+      setMenuItems([]);
+      setCategories([{ id: 'all-items', name: 'All Items' }]);
+      setSelectedCategory('all-items');
+      setMultiPricingEnabled(false);
+      setPricingRules([]);
+      setActivePricingRuleId(null);
+      setAutoSelectedRule(false);
+      setBillingSettings({});
+      setTaxSettings({ enabled: false, rate: 0, taxes: [] });
+      setCart([]);
+      setSelectedTable(null);
+      setExistingOrderId(null);
+      setSearchTerm('');
+      setShortCodeSearch('');
+      setSyncing(true);
+      // Reload everything for the new restaurant
+      loadInitialData();
+    });
+    return unsub;
+  }, []);
 
   // Pusher real-time menu updates
   useEffect(() => {
@@ -245,17 +279,22 @@ export default function MenuScreen() {
     }
   };
 
-  // Track whether table params have been consumed so they aren't reused on tab re-focus
-  const tableParamsConsumedRef = useRef(false);
+  // Track table params stamp so we know when to clear stale table selection
+  const tableParamsStampRef = useRef(null);
+  const lastAppliedStampRef = useRef(null);
 
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
-      setSelectedTable({ id: params.tableId, name: params.tableNumber });
-      tableParamsConsumedRef.current = false; // fresh navigation — not yet consumed
+      const stamp = `${params.tableId}_${params.tableNumber}_${params.orderId || ''}_${Date.now()}`;
+      tableParamsStampRef.current = stamp;
+      lastAppliedStampRef.current = stamp;
+      setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '' });
     } else if (params.tableNumber && params.barTabMode === 'true') {
+      const stamp = `bartab_${params.tableNumber}_${Date.now()}`;
+      tableParamsStampRef.current = stamp;
+      lastAppliedStampRef.current = stamp;
       setSelectedTable({ id: null, name: params.tableNumber });
       setIsBarTabMode(true);
-      tableParamsConsumedRef.current = false;
     }
 
     // Handle existing order items from params
@@ -276,22 +315,31 @@ export default function MenuScreen() {
     }
   }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
 
-  // When menu screen loses focus, mark table params as consumed
-  // So when user returns via tab bar, stale table selection is cleared
+  // When menu tab regains focus WITHOUT fresh table params, clear stale table selection
+  // This handles: user taps "Menu" tab directly (no table context)
   useFocusEffect(
     useCallback(() => {
-      // On focus: if params were already consumed (user left and came back via tab), clear table
-      if (tableParamsConsumedRef.current && selectedTable) {
-        setSelectedTable(null);
-        setExistingOrderId(null);
-        setCart([]);
+      // If the stamp hasn't changed since last focus, user came back via tab bar — clear table
+      if (selectedTable && tableParamsStampRef.current === lastAppliedStampRef.current) {
+        // Stamp matches — this is a re-focus, not a fresh navigation
+        // But only clear if we actually lost focus before (not initial mount)
+        // We use a small trick: on first mount, both refs are null, so they match — skip
+        if (tableParamsStampRef.current !== null) {
+          // Don't clear on first focus after params were set
+          // Mark that we've seen this stamp on focus; next time we see the same stamp → clear
+          const seenKey = `seen_${tableParamsStampRef.current}`;
+          if (lastAppliedStampRef.current === seenKey) {
+            setSelectedTable(null);
+            setExistingOrderId(null);
+            setCart([]);
+            tableParamsStampRef.current = null;
+            lastAppliedStampRef.current = null;
+          } else {
+            lastAppliedStampRef.current = seenKey;
+          }
+        }
       }
-
-      return () => {
-        // On blur: mark params as consumed
-        tableParamsConsumedRef.current = true;
-      };
-    }, [selectedTable])
+    }, []) // No deps — runs on every focus
   );
 
   // Auto-select pricing rule based on table floor
@@ -489,6 +537,19 @@ export default function MenuScreen() {
     }
   };
 
+  const handleMenuRefresh = async () => {
+    if (!restaurantId) return;
+    setRefreshing(true);
+    try {
+      apiClient.invalidateCache(`/api/menus/${restaurantId}`);
+      await loadMenu(restaurantId);
+      toast('Menu refreshed');
+    } catch (error) {
+      console.error('Error refreshing menu:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Multi-tier pricing: resolve display price
   const getItemDisplayPrice = useCallback((item) => {
@@ -858,6 +919,7 @@ export default function MenuScreen() {
           completedAt: new Date().toISOString(),
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
+          selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -892,6 +954,7 @@ export default function MenuScreen() {
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
+          selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -938,6 +1001,7 @@ export default function MenuScreen() {
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
+          selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
@@ -1066,11 +1130,13 @@ export default function MenuScreen() {
         finalAmount: grandTotal,
         // Discount/loyalty data
         ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
+        selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         ...(customerMobile && { customerPhone: customerMobile }),
         customerId: discountData.customerId || null,
         discountAmount: totalDiscount,
+        loyaltyDiscount: discountData.loyaltyDiscount || 0,
         pricingRuleId: activePricingRuleId || null,
         ...billingFields,
         ...partialFields,
@@ -1110,6 +1176,7 @@ export default function MenuScreen() {
         // Discount fields for invoice
         offerDiscount: discountData.offerDiscount || 0,
         offerName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
+        appliedOffers: discountData.appliedOffers || [],
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
         // Billing fields for invoice
@@ -1213,6 +1280,7 @@ export default function MenuScreen() {
         finalAmount: grandTotal,
         completedAt: new Date().toISOString(),
         ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
+        selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
         ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         customerId: discountData.customerId || null,
@@ -1278,6 +1346,7 @@ export default function MenuScreen() {
         staffName: user?.name || 'Manager',
         offerDiscount: discountData.offerDiscount || 0,
         offerName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
+        appliedOffers: discountData.appliedOffers || [],
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
         serviceChargeAmount: serviceCharge || 0,
@@ -1453,98 +1522,72 @@ export default function MenuScreen() {
       );
     };
 
-    // Modern Design with Full Image Background (when image exists)
+    // Clean Card Design — image on top, white info section below (like food delivery apps)
     if (hasImage) {
       return (
         <TouchableOpacity
-          style={[styles.menuItemCardImage, isOutOfStock && { opacity: 0.45 }]}
+          style={[styles.menuItemCard, isOutOfStock && { opacity: 0.45 }]}
           onPress={() => addToCart(item)}
-          activeOpacity={0.9}
+          activeOpacity={0.92}
         >
-          {/* Full Background Image */}
-          <View style={styles.fullImageContainer}>
+          {/* Image Section — top portion */}
+          <View style={styles.cardImageSection}>
             <Image
               source={{ uri: imageUrl }}
-              style={styles.fullImage}
+              style={styles.cardImage}
               resizeMode="cover"
             />
-            {/* Dark Gradient Overlay - Simulated with multiple layers */}
-            <View style={styles.darkGradientOverlay} />
-            <View style={styles.darkGradientOverlayBottom} />
-          </View>
-
-          {/* Veg/Non-Veg Badge - Top Left */}
-          <View style={[styles.vegBadgeImage, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
-            <Ionicons 
-              name={isVeg ? "leaf" : "nutrition"} 
-              size={8} 
-              color="#fff" 
-            />
-          </View>
-
-          {/* Top Right Badges */}
-          <View style={styles.topRightBadges}>
+            {/* Veg/Non-Veg Badge - Top Left on image */}
+            <View style={[styles.cardVegBadge, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
+              <Ionicons name={isVeg ? "leaf" : "nutrition"} size={9} color="#fff" />
+            </View>
+            {/* Shortcode badge - Top Right on image */}
             {item.shortCode && (
-              <View style={styles.shortCodeBadgeImage}>
-                <Text style={styles.shortCodeTextImage}>{item.shortCode}</Text>
+              <View style={styles.cardShortCodeBadge}>
+                <Text style={styles.cardShortCodeText}>{item.shortCode}</Text>
               </View>
             )}
           </View>
 
-          {/* Bottom Content - Overlaid on image */}
-          <View style={styles.bottomContentOverlay}>
-            <Text style={styles.menuItemNameImage} numberOfLines={2}>
-              {item.name}
-            </Text>
+          {/* Info Section — white bottom */}
+          <View style={styles.cardInfoSection}>
+            <Text style={styles.cardItemName} numberOfLines={2}>{item.name}</Text>
             {typeSubtitle && (
-              <Text style={styles.typeSubtitleImage} numberOfLines={1}>{typeSubtitle}</Text>
+              <Text style={styles.cardTypeSubtitle} numberOfLines={1}>{typeSubtitle}</Text>
             )}
             <StockExpiryBadges />
-
-            <View style={styles.priceAddRow}>
-              <View style={{ flexDirection: 'column' }}>
-                <Text style={styles.menuItemPriceImage}>₹{getItemDisplayPrice(item)}</Text>
+            <View style={styles.cardPriceRow}>
+              <View>
+                <Text style={styles.cardPrice}>₹{getItemDisplayPrice(item)}</Text>
                 {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
                   const tp = getItemTakeawayPrice(item);
                   return tp && tp !== getItemDisplayPrice(item) ? (
-                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }}>
-                      T: ₹{tp}
-                    </Text>
+                    <Text style={styles.cardTakeawayPrice}>T: ₹{tp}</Text>
                   ) : null;
                 })()}
               </View>
               {quantity > 0 ? (
-                <View style={styles.quantityControlsImage}>
+                <View style={styles.cardQuantityControls}>
                   <TouchableOpacity
-                    style={styles.quantityButtonImage}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      updateCartQuantity(item.id, quantity - 1);
-                    }}
+                    style={styles.cardQtyBtn}
+                    onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity - 1); }}
                   >
-                    <Ionicons name="remove" size={9} color="#fff" />
+                    <Ionicons name="remove" size={14} color="#fff" />
                   </TouchableOpacity>
-                  <Text style={styles.quantityTextImage}>{quantity}</Text>
+                  <Text style={styles.cardQtyText}>{quantity}</Text>
                   <TouchableOpacity
-                    style={styles.quantityButtonImage}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      updateCartQuantity(item.id, quantity + 1);
-                    }}
+                    style={styles.cardQtyBtn}
+                    onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity + 1); }}
                   >
-                    <Ionicons name="add" size={9} color="#fff" />
+                    <Ionicons name="add" size={14} color="#fff" />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity
-                  style={styles.addButtonImage}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    addToCart(item);
-                  }}
+                  style={styles.cardAddButton}
+                  onPress={(e) => { e.stopPropagation(); addToCart(item); }}
                 >
-                  <Ionicons name="add" size={8} color="#1f2937" />
-                  <Text style={styles.addButtonText}>ADD</Text>
+                  <Ionicons name="add" size={18} color="#fff" />
                 </TouchableOpacity>
               )}
             </View>
@@ -1553,92 +1596,72 @@ export default function MenuScreen() {
       );
     }
 
-    // Fallback Design (no image)
+    // Card without image — placeholder icon area on top
     return (
       <TouchableOpacity
-        style={[styles.menuItemCardNoImage, { borderTopColor: isVeg ? '#22c55e' : '#ef4444' }, isOutOfStock && { opacity: 0.45 }]}
+        style={[styles.menuItemCard, isOutOfStock && { opacity: 0.45 }]}
         onPress={() => addToCart(item)}
-        activeOpacity={0.9}
+        activeOpacity={0.92}
       >
-        {/* Veg/Non-Veg Badge - Top Left */}
-        <View style={[styles.vegBadgeNoImage, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
-          <Ionicons 
-            name={isVeg ? "leaf" : "nutrition"} 
-            size={9} 
-            color="#fff" 
-          />
-        </View>
-
-        {/* Top Right Badges */}
-        <View style={styles.topRightBadgesNoImage}>
+        {/* Placeholder image area */}
+        <View style={[styles.cardImageSection, styles.cardPlaceholderSection]}>
+          <Ionicons name="restaurant-outline" size={32} color="#d1d5db" />
+          {/* Veg/Non-Veg Badge */}
+          <View style={[styles.cardVegBadge, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
+            <Ionicons name={isVeg ? "leaf" : "nutrition"} size={9} color="#fff" />
+          </View>
           {item.shortCode && (
-            <View style={styles.shortCodeBadgeNoImage}>
-              <Text style={styles.shortCodeTextNoImage}>{item.shortCode}</Text>
+            <View style={styles.cardShortCodeBadge}>
+              <Text style={styles.cardShortCodeText}>{item.shortCode}</Text>
             </View>
           )}
         </View>
 
-        {/* Main Content */}
-        <View style={styles.contentNoImage}>
-          <Text style={styles.menuItemNameNoImage} numberOfLines={2}>
-            {item.name}
-          </Text>
+        {/* Info Section */}
+        <View style={styles.cardInfoSection}>
+          <Text style={styles.cardItemName} numberOfLines={2}>{item.name}</Text>
           {item.description && (
-            <Text style={styles.menuItemDescriptionNoImage} numberOfLines={1}>
-              {item.description}
-            </Text>
+            <Text style={styles.cardDescription} numberOfLines={1}>{item.description}</Text>
           )}
           {typeSubtitle && (
-            <Text style={styles.typeSubtitleNoImage} numberOfLines={1}>{typeSubtitle}</Text>
+            <Text style={styles.cardTypeSubtitle} numberOfLines={1}>{typeSubtitle}</Text>
           )}
           <StockExpiryBadges />
-        </View>
-
-        {/* Bottom Section */}
-        <View style={styles.bottomSectionNoImage}>
-          <View style={{ flexDirection: 'column' }}>
-            <Text style={styles.menuItemPriceNoImage}>₹{getItemDisplayPrice(item)}</Text>
-            {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
-              const tp = getItemTakeawayPrice(item);
-              return tp && tp !== getItemDisplayPrice(item) ? (
-                <Text style={{ fontSize: 9, color: '#9ca3af', fontWeight: '600' }}>T: ₹{tp}</Text>
-              ) : null;
-            })()}
-          </View>
-          {quantity > 0 ? (
-            <View style={styles.quantityControlsNoImage}>
-              <TouchableOpacity
-                style={styles.quantityButtonNoImage}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  updateCartQuantity(item.id, quantity - 1);
-                }}
-              >
-                <Ionicons name="remove" size={10} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.quantityTextNoImage}>{quantity}</Text>
-              <TouchableOpacity
-                style={styles.quantityButtonNoImage}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  updateCartQuantity(item.id, quantity + 1);
-                }}
-              >
-                <Ionicons name="add" size={10} color="#fff" />
-              </TouchableOpacity>
+          <View style={styles.cardPriceRow}>
+            <View>
+              <Text style={styles.cardPrice}>₹{getItemDisplayPrice(item)}</Text>
+              {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
+                const tp = getItemTakeawayPrice(item);
+                return tp && tp !== getItemDisplayPrice(item) ? (
+                  <Text style={styles.cardTakeawayPrice}>T: ₹{tp}</Text>
+                ) : null;
+              })()}
             </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.addButtonNoImage}
-              onPress={(e) => {
-                e.stopPropagation();
-                addToCart(item);
-              }}
-            >
-              <Ionicons name="add" size={8} color="#6b7280" />
-              <Text style={styles.addButtonTextNoImage}>ADD</Text>
-            </TouchableOpacity>
-          )}
+            {quantity > 0 ? (
+              <View style={styles.cardQuantityControls}>
+                <TouchableOpacity
+                  style={styles.cardQtyBtn}
+                  onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity - 1); }}
+                >
+                  <Ionicons name="remove" size={14} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.cardQtyText}>{quantity}</Text>
+                <TouchableOpacity
+                  style={styles.cardQtyBtn}
+                  onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity + 1); }}
+                >
+                  <Ionicons name="add" size={14} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.cardAddButton}
+                onPress={(e) => { e.stopPropagation(); addToCart(item); }}
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -1694,15 +1717,15 @@ export default function MenuScreen() {
       >
         {selectedTable ? (
           <>
-            {/* Table Selection Mode */}
-            <View style={styles.headerTop}>
+            {/* Table Selection Mode — Compact Header */}
+            <View style={[styles.headerTop, { paddingVertical: 8, gap: 8 }]}>
               <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-                <Ionicons name="arrow-back" size={24} color="#1f2937" />
+                <Ionicons name="arrow-back" size={20} color="#1f2937" />
               </TouchableOpacity>
               <View style={styles.tableInfoCard}>
-                <Ionicons name={isBarTabMode ? "beer" : "restaurant"} size={18} color={Colors.primary} />
+                <Ionicons name={isBarTabMode ? "beer" : "restaurant"} size={14} color={Colors.primary} />
                 <Text style={styles.tableInfoText}>{isBarTabMode ? selectedTable.name : `Table ${selectedTable.name}`}</Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => {
                     setSelectedTable(null);
                     setCart([]);
@@ -1711,27 +1734,48 @@ export default function MenuScreen() {
                   style={styles.clearTableButton}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                  <Ionicons name="close-circle" size={18} color={Colors.primary} />
+                  <Ionicons name="close-circle" size={16} color={Colors.primary} />
                 </TouchableOpacity>
               </View>
-              <View style={styles.headerIcons}>
-                {/* Network status dot */}
+              <View style={[styles.headerIcons, { gap: 6 }]}>
                 <View style={[styles.networkDot, { backgroundColor: !effectivelyOffline ? '#22c55e' : '#ef4444' }]} />
                 {pendingCount > 0 && (
                   <View style={styles.syncBadge}>
                     <Text style={styles.syncBadgeText}>{pendingCount}</Text>
                   </View>
                 )}
-                <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
-                  <Ionicons
-                    name={showImages ? "image" : "image-outline"}
-                    size={22}
-                    color="#6b7280"
-                  />
+                <TouchableOpacity style={[styles.iconBtn, { width: 34, height: 34, borderRadius: 10, backgroundColor: refreshing ? '#f3f4f6' : '#eef2ff' }]} onPress={handleMenuRefresh} disabled={refreshing}>
+                  <Ionicons name="refresh" size={18} color={refreshing ? '#9ca3af' : '#6366f1'} />
                 </TouchableOpacity>
-                {/* <TouchableOpacity style={styles.iconBtn} onPress={() => setShowVoiceModal(true)}>
-                  <Ionicons name="mic" size={22} color={Colors.primary} />
-                </TouchableOpacity> */}
+                <TouchableOpacity style={[styles.iconBtn, { width: 34, height: 34, borderRadius: 10, backgroundColor: showImages ? '#dcfce7' : '#f3f4f6' }]} onPress={toggleImages}>
+                  <Ionicons name={showImages ? "image" : "image-outline"} size={18} color={showImages ? '#16a34a' : '#9ca3af'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            {/* Search bar for table order mode */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, gap: 8 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, gap: 8 }}>
+                <Ionicons name="search" size={16} color="#9ca3af" />
+                <TextInput
+                  style={{ flex: 1, fontSize: 14, color: '#1f2937', padding: 0, fontWeight: '500' }}
+                  placeholder="Search items..."
+                  placeholderTextColor="#9ca3af"
+                  value={searchTerm || shortCodeSearch}
+                  onChangeText={(text) => {
+                    if (text.length <= 5 && text === text.toUpperCase()) {
+                      setShortCodeSearch(text);
+                      setSearchTerm('');
+                    } else {
+                      setSearchTerm(text);
+                      setShortCodeSearch('');
+                    }
+                  }}
+                />
+                {(searchTerm || shortCodeSearch) ? (
+                  <TouchableOpacity onPress={() => { setSearchTerm(''); setShortCodeSearch(''); }}>
+                    <Ionicons name="close-circle" size={16} color="#9ca3af" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
             </View>
           </>
@@ -1752,45 +1796,51 @@ export default function MenuScreen() {
               </View>
               <View style={styles.headerIcons}>
                 <TouchableOpacity
-                  style={styles.iconBtn}
+                  style={[styles.iconBtn, { backgroundColor: refreshing ? '#f3f4f6' : '#eef2ff' }]}
+                  onPress={handleMenuRefresh}
+                  disabled={refreshing}
+                  accessibilityLabel="Refresh menu"
+                >
+                  <Ionicons name="refresh" size={20} color={refreshing ? '#9ca3af' : '#6366f1'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.iconBtn, { backgroundColor: '#fef3c7' }]}
                   onPress={() => router.push('/(tabs)/menu-management')}
                   accessibilityLabel="Manage menu"
                 >
-                  <Ionicons name="create-outline" size={20} color="#6b7280" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.iconBtn} onPress={toggleImages}>
-                  <Ionicons
-                    name={showImages ? "image" : "image-outline"}
-                    size={20}
-                    color="#6b7280"
-                  />
+                  <Ionicons name="create-outline" size={20} color="#d97706" />
                 </TouchableOpacity>
               </View>
             </Animated.View>
 
-            {/* Expanded Search Bar */}
+            {/* Clean Pill Search Bar */}
             <Animated.View style={[styles.searchContainer, { opacity: scrollY.interpolate({ inputRange: [0, SCROLL_THRESHOLD], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
-              <Ionicons name="search" size={20} color="#9ca3af" />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search menu items..."
-                placeholderTextColor="#9ca3af"
-                value={searchTerm || shortCodeSearch}
-                onChangeText={(text) => {
-                  if (text.length <= 5 && text === text.toUpperCase()) {
-                    setShortCodeSearch(text);
-                    setSearchTerm('');
-                  } else {
-                    setSearchTerm(text);
-                    setShortCodeSearch('');
-                  }
-                }}
-              />
-              {(searchTerm || shortCodeSearch) && (
-                <TouchableOpacity onPress={() => { setSearchTerm(''); setShortCodeSearch(''); }}>
-                  <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                </TouchableOpacity>
-              )}
+              <View style={styles.searchBarPill}>
+                <Ionicons name="search" size={18} color="#9ca3af" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search menu items..."
+                  placeholderTextColor="#9ca3af"
+                  value={searchTerm || shortCodeSearch}
+                  onChangeText={(text) => {
+                    if (text.length <= 5 && text === text.toUpperCase()) {
+                      setShortCodeSearch(text);
+                      setSearchTerm('');
+                    } else {
+                      setSearchTerm(text);
+                      setShortCodeSearch('');
+                    }
+                  }}
+                />
+                {(searchTerm || shortCodeSearch) ? (
+                  <TouchableOpacity onPress={() => { setSearchTerm(''); setShortCodeSearch(''); }}>
+                    <Ionicons name="close-circle" size={18} color="#9ca3af" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <TouchableOpacity style={styles.searchFilterBtn} onPress={toggleImages}>
+                <Ionicons name={showImages ? "image" : "image-outline"} size={20} color={showImages ? '#10b981' : '#9ca3af'} />
+              </TouchableOpacity>
             </Animated.View>
 
             {/* Expanded Category Pills - hide when scrolled (chips move to compact bar) */}
@@ -1842,13 +1892,25 @@ export default function MenuScreen() {
                 </View>
                 <TouchableOpacity
                   style={styles.compactManageBtn}
+                  onPress={handleMenuRefresh}
+                  disabled={refreshing}
+                >
+                  <Ionicons name="refresh" size={18} color={refreshing ? '#9ca3af' : '#6366f1'} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.compactManageBtn}
                   onPress={() => router.push('/(tabs)/menu-management')}
                 >
-                  <Ionicons name="create-outline" size={18} color="#6b7280" />
+                  <Ionicons name="create-outline" size={18} color="#d97706" />
                 </TouchableOpacity>
               </View>
-              <View style={styles.compactChipsWrap}>
-                {categories.map((item) => {
+              <ScrollView
+                ref={categoryChipsRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.compactChipsScroll}
+              >
+                {categories.map((item, index) => {
                   const isSelected = selectedCategory === item.id;
                   return (
                     <TouchableOpacity
@@ -1856,6 +1918,9 @@ export default function MenuScreen() {
                       style={[styles.categoryPillCompact, isSelected && styles.categoryPillCompactSelected]}
                       onPress={() => setSelectedCategory(item.id)}
                       activeOpacity={0.7}
+                      onLayout={(e) => {
+                        categoryChipLayouts.current[item.id] = e.nativeEvent.layout;
+                      }}
                     >
                       <Text
                         style={[
@@ -1869,7 +1934,7 @@ export default function MenuScreen() {
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             </Animated.View>
           </>
         )}
@@ -1923,27 +1988,6 @@ export default function MenuScreen() {
         </View>
       )}
 
-      <SyncIndicator visible={syncing} />
-
-      {/* Offline Sync Banner */}
-      {(effectivelyOffline || pendingCount > 0) && (
-        <View style={styles.syncBanner}>
-          <Ionicons
-            name={!effectivelyOffline ? 'sync' : 'cloud-offline-outline'}
-            size={16}
-            color="#92400e"
-          />
-          <Text style={styles.syncBannerText}>
-            {effectivelyOffline
-              ? "You're offline. Orders will sync when connected."
-              : `Syncing ${pendingCount} pending order${pendingCount > 1 ? 's' : ''}...`}
-          </Text>
-          {!effectivelyOffline && pendingCount > 0 && (
-            <ActivityIndicator size="small" color="#92400e" />
-          )}
-        </View>
-      )}
-
       {/* Categories section - only for table mode; default mode has categories inside header above */}
       {selectedTable && (
         <View style={styles.categoriesSection}>
@@ -1973,6 +2017,9 @@ export default function MenuScreen() {
         numColumns={cols}
         contentContainerStyle={styles.menuList}
         columnWrapperStyle={styles.menuRow}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleMenuRefresh} tintColor={Colors.primary} />
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
@@ -2045,8 +2092,8 @@ export default function MenuScreen() {
               >
                 {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
                   <>
-                    <Ionicons name="receipt" size={16} color="#fff" />
-                    <Text style={styles.checkoutBtnText}>Place Order</Text>
+                    <Ionicons name={existingOrderId ? "refresh" : "receipt"} size={16} color="#fff" />
+                    <Text style={styles.checkoutBtnText}>{existingOrderId ? 'Update Order' : 'Place Order'}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -2135,6 +2182,7 @@ export default function MenuScreen() {
           activePricingRuleId={activePricingRuleId}
           setActivePricingRuleId={setActivePricingRuleId}
           autoSelectedRule={autoSelectedRule}
+          isUpdateOrder={!!existingOrderId}
         />
       )}
 
@@ -2187,60 +2235,84 @@ export default function MenuScreen() {
           setLastOrderData(null);
         }}
       />
-      {/* Floating Category FAB - bottom left */}
+      {/* Floating Category FAB - bottom right, above checkout bar */}
       {categories.length > 1 && (
         <TouchableOpacity
-          style={styles.categoryFAB}
+          style={[styles.categoryFAB, cart.length > 0 && { bottom: 90 + (Platform.OS === 'android' ? 16 : 0) }]}
           onPress={() => setShowCategorySheet(true)}
           activeOpacity={0.8}
         >
-          <Ionicons name="grid-outline" size={22} color="#fff" />
+          <Ionicons name="grid" size={22} color="#fff" />
+          <Text style={styles.categoryFABLabel}>Menu</Text>
         </TouchableOpacity>
       )}
 
       {/* Category Bottom Sheet */}
-      <Modal
-        visible={showCategorySheet}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowCategorySheet(false)}
-      >
-        <TouchableOpacity
-          style={styles.categorySheetOverlay}
-          activeOpacity={1}
-          onPress={() => setShowCategorySheet(false)}
+      {showCategorySheet && (
+        <Modal
+          visible={true}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowCategorySheet(false)}
         >
-          <View style={styles.categorySheetContainer}>
-            <View style={styles.categorySheetHandle} />
-            <Text style={styles.categorySheetTitle}>Categories</Text>
-            <ScrollView style={styles.categorySheetScroll} showsVerticalScrollIndicator={false}>
-              <View style={styles.categorySheetGrid}>
-                {categories.map((cat) => {
-                  const isSelected = selectedCategory === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      style={[styles.categorySheetItem, isSelected && styles.categorySheetItemSelected]}
-                      onPress={() => {
-                        setSelectedCategory(cat.id);
-                        setShowCategorySheet(false);
-                        // Scroll to top when category changes
-                        setTimeout(() => {
-                          menuFlatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-                        }, 100);
-                      }}
-                    >
-                      <Text style={[styles.categorySheetItemText, isSelected && styles.categorySheetItemTextSelected]} numberOfLines={2}>
-                        {cat.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
+          <View style={{ flex: 1 }}>
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+              onPress={() => setShowCategorySheet(false)}
+            />
+            <View style={{
+              backgroundColor: '#fff',
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              paddingTop: 12,
+              paddingHorizontal: 20,
+              paddingBottom: Platform.OS === 'android' ? 40 : 44,
+              maxHeight: '80%',
+            }}>
+              <View style={styles.categorySheetHandle} />
+              <Text style={styles.categorySheetTitle}>Categories</Text>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.categorySheetGrid}>
+                  {categories.map((cat) => {
+                    const isSelected = selectedCategory === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        style={[styles.categorySheetItem, isSelected && styles.categorySheetItemSelected]}
+                        onPress={() => {
+                          const catId = cat.id;
+                          setSelectedCategory(catId);
+                          setShowCategorySheet(false);
+                          setTimeout(() => {
+                            menuFlatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+                            // Scroll the top chips to show the selected category
+                            const layout = categoryChipLayouts.current[catId];
+                            if (layout && categoryChipsRef.current) {
+                              categoryChipsRef.current.scrollTo({
+                                x: Math.max(0, layout.x - 16),
+                                animated: true,
+                              });
+                            }
+                          }, 150);
+                        }}
+                      >
+                        <Ionicons
+                          name={isSelected ? 'checkmark-circle' : 'restaurant-outline'}
+                          size={18}
+                          color={isSelected ? '#fff' : '#6b7280'}
+                        />
+                        <Text style={[styles.categorySheetItemText, isSelected && styles.categorySheetItemTextSelected]} numberOfLines={2}>
+                          {cat.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
           </View>
-        </TouchableOpacity>
-      </Modal>
+        </Modal>
+      )}
 
       <ToastView />
     </SafeAreaView>
@@ -2250,7 +2322,7 @@ export default function MenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
   // Clean Header Section
   headerSection: {
@@ -2322,6 +2394,11 @@ const styles = StyleSheet.create({
     gap: 4,
     alignSelf: 'stretch',
   },
+  compactChipsScroll: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingRight: 16,
+  },
   compactChipsContainer: {
     gap: 4,
     paddingRight: 8,
@@ -2338,68 +2415,66 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#f3f4f6',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
   },
   tableInfoCard: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
     backgroundColor: '#fef2f2',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#fecaca',
   },
   tableInfoText: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: Colors.primary,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
     flex: 1,
   },
   clearTableButton: {
-    marginLeft: 8,
-    padding: 4,
+    marginLeft: 4,
+    padding: 2,
   },
   headerTitleSection: {
     flex: 1,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 26,
+    fontWeight: '900',
     color: '#1f2937',
     letterSpacing: -0.5,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#6b7280',
+    color: '#9ca3af',
     marginTop: 2,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   itemCountBadge: {
-    backgroundColor: '#fef2f2',
+    backgroundColor: Colors.primary,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#fecaca',
   },
   itemCountText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#fff',
   },
   headerIcons: {
     flexDirection: 'row',
@@ -2444,38 +2519,43 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f3f4f6',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 0,
   },
-  // Separate Clean Search Bar
+  // Clean Pill Search Bar
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
     marginHorizontal: 16,
     marginTop: 8,
-    borderRadius: 12,
+    gap: 10,
+  },
+  searchBarPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+    borderRadius: 24,
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    paddingVertical: 10,
+    gap: 10,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     color: '#1f2937',
     padding: 0,
     fontWeight: '500',
-    letterSpacing: 0,
+  },
+  searchFilterBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Clean Category Pills
   categoriesSection: {
@@ -2488,22 +2568,25 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   categoryPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-    marginRight: 6,
-    minHeight: 32,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    marginRight: 8,
+    minHeight: 36,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   categoryPillSelected: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
   },
   categoryPillText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#4b5563',
+    color: '#374151',
   },
   categoryPillTextSelected: {
     color: '#fff',
@@ -2511,23 +2594,26 @@ const styles = StyleSheet.create({
   },
   // Compact bar chips (smaller, wrapping)
   categoryPillCompact: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
-    marginRight: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    marginRight: 6,
     marginBottom: 4,
-    minHeight: 26,
+    minHeight: 28,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   categoryPillCompactSelected: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
   },
   categoryPillCompactText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#4b5563',
+    color: '#374151',
   },
   categoryPillCompactTextSelected: {
     color: '#fff',
@@ -2537,194 +2623,40 @@ const styles = StyleSheet.create({
   menuList: {
     paddingHorizontal: 16,
     paddingTop: 0,
-    paddingBottom: 100,
+    paddingBottom: Platform.OS === 'android' ? 120 : 100,
   },
   menuRow: {
     justifyContent: 'space-between',
-    gap: Spacing.lg,
+    gap: 12,
   },
-  // Modern Design with Full Image Background
-  menuItemCardImage: {
+  // Clean Card Design — image on top, info section below
+  menuItemCard: {
     backgroundColor: '#ffffff',
     borderRadius: 16,
     marginBottom: 12,
     flex: 1,
-    height: 140,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 3,
-    position: 'relative',
-  },
-  fullImageContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 0,
-  },
-  fullImage: {
-    width: '100%',
-    height: '100%',
-  },
-  darkGradientOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  darkGradientOverlayBottom: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '60%',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-  },
-  vegBadgeImage: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-    borderWidth: 2,
-    borderColor: '#fff',
-    ...Shadows.small,
-  },
-  topRightBadges: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 10,
-    gap: 4,
-  },
-  shortCodeBadgeImage: {
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  shortCodeTextImage: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#ffffff',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  bottomContentOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    zIndex: 5,
-    padding: 10,
-    gap: 6,
-  },
-  menuItemNameImage: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#ffffff',
-    lineHeight: 16,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-  },
-  typeSubtitleImage: {
-    fontSize: 9,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 1,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  priceAddRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 2,
-  },
-  menuItemPriceImage: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#ffffff',
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-  },
-  quantityControlsImage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primary,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  quantityButtonImage: {
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  quantityTextImage: {
-    width: 32,
-    height: 28,
-    lineHeight: 28,
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#fff',
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  addButtonImage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    paddingHorizontal: 14,
-    height: 28,
-    borderRadius: 8,
-    gap: 4,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-    ...Shadows.small,
-  },
-  addButtonText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#1f2937',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  // Fallback Design (No Image)
-  menuItemCardNoImage: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderTopWidth: 3,
-    borderRadius: 16,
-    marginBottom: 12,
-    flex: 1,
-    height: 120,
-    padding: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
-    shadowRadius: 6,
+    shadowRadius: 8,
     elevation: 3,
-    position: 'relative',
   },
-  vegBadgeNoImage: {
+  cardImageSection: {
+    height: 110,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cardPlaceholderSection: {
+    backgroundColor: '#f9fafb',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cardVegBadge: {
     position: 'absolute',
     top: 8,
     left: 8,
@@ -2736,110 +2668,97 @@ const styles = StyleSheet.create({
     zIndex: 10,
     borderWidth: 2,
     borderColor: '#fff',
-    ...Shadows.small,
   },
-  topRightBadgesNoImage: {
+  cardShortCodeBadge: {
     position: 'absolute',
     top: 8,
     right: 8,
-    zIndex: 10,
-    gap: 4,
-  },
-  shortCodeBadgeNoImage: {
-    backgroundColor: '#6b7280',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+    zIndex: 10,
   },
-  shortCodeTextNoImage: {
+  cardShortCodeText: {
     fontSize: 9,
-    fontWeight: '600',
-    color: '#ffffff',
+    fontWeight: '700',
+    color: '#fff',
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
   },
-  contentNoImage: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 8,
+  cardInfoSection: {
+    padding: 10,
   },
-  menuItemNameNoImage: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+  cardItemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1f2937',
     lineHeight: 17,
-    textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  menuItemDescriptionNoImage: {
-    fontSize: 10,
-    color: '#6b7280',
-    lineHeight: 12,
-    textAlign: 'center',
-  },
-  typeSubtitleNoImage: {
-    fontSize: 9,
+  cardDescription: {
+    fontSize: 11,
     color: '#9ca3af',
-    marginTop: 2,
-    textAlign: 'center',
-    fontWeight: '500',
+    lineHeight: 14,
+    marginBottom: 2,
   },
-  bottomSectionNoImage: {
+  cardTypeSubtitle: {
+    fontSize: 10,
+    color: '#9ca3af',
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  cardTakeawayPrice: {
+    fontSize: 10,
+    color: '#9ca3af',
+    fontWeight: '600',
+  },
+  cardPriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    marginTop: 8,
+    marginTop: 4,
   },
-  menuItemPriceNoImage: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.primary,
+  cardPrice: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1f2937',
   },
-  quantityControlsNoImage: {
+  cardAddButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#10b981',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cardQuantityControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
-    borderRadius: 8,
+    backgroundColor: '#10b981',
+    borderRadius: 20,
     overflow: 'hidden',
   },
-  quantityButtonNoImage: {
-    width: 28,
-    height: 28,
+  cardQtyBtn: {
+    width: 30,
+    height: 30,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  quantityTextNoImage: {
-    width: 36,
-    height: 28,
-    fontSize: 12,
-    fontWeight: '700',
+  cardQtyText: {
+    minWidth: 24,
+    height: 30,
+    lineHeight: 30,
+    fontSize: 13,
+    fontWeight: '800',
     color: '#fff',
     textAlign: 'center',
     textAlignVertical: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  addButtonNoImage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  addButtonTextNoImage: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
   },
   // Bottom Order Bar (for waiters)
   bottomOrderBar: {
@@ -2962,49 +2881,58 @@ const styles = StyleSheet.create({
   // Category FAB
   categoryFAB: {
     position: 'absolute',
-    bottom: 24,
-    left: 16,
-    width: 48,
-    height: 48,
-    borderRadius: 14,
+    bottom: 24 + (Platform.OS === 'android' ? 16 : 0),
+    right: 16,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: '#1f2937',
+    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 16,
+    gap: 6,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 10,
     zIndex: 50,
+  },
+  categoryFABLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   // Category Bottom Sheet
   categorySheetOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
   categorySheetContainer: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingTop: 12,
     paddingHorizontal: 20,
-    paddingBottom: 40,
-    maxHeight: '60%',
+    paddingBottom: Platform.OS === 'android' ? 40 : 44,
+    maxHeight: '55%',
   },
   categorySheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 40,
+    height: 5,
+    borderRadius: 3,
     backgroundColor: '#d1d5db',
     alignSelf: 'center',
     marginBottom: 16,
   },
   categorySheetTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1f2937',
     marginBottom: 16,
+    letterSpacing: -0.3,
   },
   categorySheetScroll: {
     flex: 1,
@@ -3013,26 +2941,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+    paddingBottom: 8,
   },
   categorySheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: '#f3f4f6',
-    borderWidth: 1,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1.5,
     borderColor: '#e5e7eb',
-    minWidth: '30%',
-    alignItems: 'center',
+    minWidth: '45%',
+    flexGrow: 1,
   },
   categorySheetItemSelected: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
   categorySheetItemText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#374151',
-    textAlign: 'center',
+    flex: 1,
   },
   categorySheetItemTextSelected: {
     color: '#fff',
@@ -3050,7 +2982,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 28,
+    paddingBottom: Platform.OS === 'android' ? 40 : 28,
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     shadowColor: '#000',

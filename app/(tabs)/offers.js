@@ -102,7 +102,10 @@ export default function OffersScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (restaurantId) await loadOffers(restaurantId);
+    if (restaurantId) {
+      apiClient.invalidateCache(`/api/offers/${restaurantId}`);
+      await loadOffers(restaurantId);
+    }
     setRefreshing(false);
   };
 

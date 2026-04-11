@@ -118,13 +118,24 @@ export function markFailed(idempotencyKey, error) {
 }
 
 /**
- * Revert a syncing item back to pending (e.g., app killed during sync).
+ * Revert ALL syncing items back to pending (e.g., app killed during sync).
  */
 export function revertSyncing() {
   const db = getDb();
   db.runSync(
     "UPDATE sync_queue SET status = 'pending', updated_at = ? WHERE status = 'syncing'",
     [now()]
+  );
+}
+
+/**
+ * Revert a single syncing item back to pending.
+ */
+export function revertSyncingItem(idempotencyKey) {
+  const db = getDb();
+  db.runSync(
+    "UPDATE sync_queue SET status = 'pending', retry_count = retry_count + 1, updated_at = ? WHERE idempotency_key = ? AND status = 'syncing'",
+    [now(), idempotencyKey]
   );
 }
 

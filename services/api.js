@@ -6,6 +6,9 @@ import { router } from 'expo-router';
 // Get API URL from environment or use deployed backend
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-lake.vercel.app';
 
+// Frontend web URL for WebView embeds (mobile layout)
+export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
+
 class ApiClient {
   constructor() {
     this.baseURL = API_BASE_URL;
@@ -1734,6 +1737,46 @@ class ApiClient {
   async deleteOffer(restaurantId, offerId) {
     return this.request(`/api/offers/${restaurantId}/${offerId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // ==================== CUSTOMER GROUPS ====================
+
+  async getCustomerGroups(restaurantId) {
+    return this.request(`/api/customer-groups/${restaurantId}`);
+  }
+
+  async createCustomerGroup(restaurantId, data) {
+    return this.request(`/api/customer-groups/${restaurantId}`, {
+      method: 'POST',
+      data,
+    });
+  }
+
+  async updateCustomerGroup(restaurantId, groupId, data) {
+    return this.request(`/api/customer-groups/${restaurantId}/${groupId}`, {
+      method: 'PATCH',
+      data,
+    });
+  }
+
+  async deleteCustomerGroup(restaurantId, groupId) {
+    return this.request(`/api/customer-groups/${restaurantId}/${groupId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addGroupMembers(restaurantId, groupId, data) {
+    return this.request(`/api/customer-groups/${restaurantId}/${groupId}/members`, {
+      method: 'POST',
+      data,
+    });
+  }
+
+  async removeGroupMember(restaurantId, groupId, data) {
+    return this.request(`/api/customer-groups/${restaurantId}/${groupId}/members`, {
+      method: 'DELETE',
+      data,
     });
   }
 

@@ -7,11 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
-import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants/Theme';
+import { getCached, setCache } from '../services/cacheManager';
+import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 
@@ -21,7 +21,6 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Check if user can complete billing (owner, admin, manager)
   const canCompleteBill = ['owner', 'admin', 'manager'].includes(userRole?.toLowerCase());
 
   useEffect(() => {
@@ -34,32 +33,36 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   }, [visible, orderId, restaurantId]);
 
   const loadOrderDetails = async () => {
-    setLoading(true);
     setError(null);
-    try {
-      const response = await apiClient.getOrders(restaurantId, {
-        search: orderId,
-        limit: 1,
-      });
 
+    // Show cached order instantly while fetching fresh data
+    const cacheKey = `order_${orderId}`;
+    const cached = await getCached(cacheKey);
+    if (cached?.data) {
+      setOrder(cached.data);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const response = await apiClient.getOrders(restaurantId, { search: orderId, limit: 1 });
+      let freshOrder = null;
       if (response.orders && response.orders.length > 0) {
-        const orderData = response.orders[0];
-        console.log('Order data:', orderData);
-        console.log('Order items:', orderData.items);
-        console.log('Items length:', orderData.items?.length);
-        console.log('Items type:', Array.isArray(orderData.items));
-        setOrder(orderData);
+        freshOrder = response.orders[0];
       } else if (response.order) {
-        // Handle case where API returns order directly
-        console.log('Order data (direct):', response.order);
-        console.log('Order items:', response.order.items);
-        setOrder(response.order);
-      } else {
+        freshOrder = response.order;
+      }
+      if (freshOrder) {
+        setOrder(freshOrder);
+        setCache(cacheKey, freshOrder);
+      } else if (!cached?.data) {
         setError('Order not found');
       }
     } catch (err) {
-      console.error('Error loading order:', err);
-      setError(err.message || 'Failed to load order details');
+      if (!cached?.data) {
+        setError(err.message || 'Failed to load order details');
+      }
     } finally {
       setLoading(false);
     }
@@ -67,104 +70,84 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
 
   const calculateTotal = () => {
     if (!order?.items) return 0;
-    return order.items.reduce((sum, item) => {
-      const price = item.price || 0;
-      const quantity = item.quantity || 1;
-      return sum + (price * quantity);
-    }, 0);
+    return order.items.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
   };
 
   const formatDate = (dateInput) => {
     if (!dateInput) return 'N/A';
-
     try {
       let date;
-
-      // Handle Firestore timestamp
-      if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-        date = dateInput.toDate();
-      } else if (dateInput._seconds) {
-        // Handle Firestore timestamp format
-        date = new Date(dateInput._seconds * 1000);
-      } else if (dateInput instanceof Date) {
-        date = dateInput;
-      } else if (typeof dateInput === 'string' || typeof dateInput === 'number') {
-        date = new Date(dateInput);
-      } else {
-        return 'N/A';
-      }
-
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        return 'N/A';
-      }
-
+      if (dateInput.toDate && typeof dateInput.toDate === 'function') date = dateInput.toDate();
+      else if (dateInput._seconds) date = new Date(dateInput._seconds * 1000);
+      else if (dateInput instanceof Date) date = dateInput;
+      else date = new Date(dateInput);
+      if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true,
       });
-    } catch (error) {
-      console.error('Date formatting error:', error);
+    } catch (e) {
       return 'N/A';
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'confirmed':
-      case 'preparing':
-        return Colors.warning;
-      case 'ready':
-        return Colors.success;
-      case 'completed':
-        return Colors.textMedium;
-      default:
-        return Colors.textMedium;
-    }
+  const statusStyle = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'confirmed' || s === 'preparing') return { bg: '#fef3c7', fg: '#b45309', dot: '#f59e0b' };
+    if (s === 'ready') return { bg: '#d1fae5', fg: '#047857', dot: '#10b981' };
+    if (s === 'completed') return { bg: '#dbeafe', fg: '#1d4ed8', dot: '#3b82f6' };
+    if (s === 'cancelled') return { bg: '#fee2e2', fg: '#b91c1c', dot: '#ef4444' };
+    return { bg: '#e5e7eb', fg: '#374151', dot: '#6b7280' };
   };
 
+  const finalTotal = order?.finalAmount || calculateTotal();
+  const sStyle = statusStyle(order?.status);
+  const orderNumberShort = order?.dailyOrderId || order?.orderNumber || orderId?.slice(-6);
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={[styles.modalContainer, modalWidth(500)]}>
+        <View style={[styles.modalContainer, modalWidth(520)]}>
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <Text style={styles.headerTitle}>
-                Order #{order?.dailyOrderId || order?.orderNumber || orderId?.slice(-6)}
-              </Text>
-              {order?.status && (
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) + '20' }]}>
-                  <Text style={[styles.statusText, { color: getStatusColor(order.status) }]}>
-                    {order.status.toUpperCase()}
-                  </Text>
-                </View>
-              )}
+            <View style={styles.headerTopRow}>
+              <View style={styles.headerIconWrap}>
+                <Ionicons name="receipt" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.headerLabel}>ORDER</Text>
+                <Text style={styles.headerTitle}>#{orderNumberShort}</Text>
+              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color={Colors.textDark} />
-            </TouchableOpacity>
+
+            {order?.status && (
+              <View style={styles.headerMetaRow}>
+                <View style={[styles.statusPill, { backgroundColor: sStyle.bg }]}>
+                  <View style={[styles.statusDot, { backgroundColor: sStyle.dot }]} />
+                  <Text style={[styles.statusPillText, { color: sStyle.fg }]}>{order.status.toUpperCase()}</Text>
+                </View>
+                {(tableNumber || order?.tableNumber) ? (
+                  <View style={styles.headerChipWhite}>
+                    <Ionicons name="restaurant" size={12} color="#fff" />
+                    <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}</Text>
+                  </View>
+                ) : null}
+              </View>
+            )}
           </View>
 
           {/* Content */}
           <ScrollView
             style={styles.content}
-            showsVerticalScrollIndicator={true}
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
             {loading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={Colors.primary} />
-                <Text style={styles.loadingText}>Loading order details...</Text>
+                <Text style={styles.loadingText}>Loading order…</Text>
               </View>
             ) : error ? (
               <View style={styles.errorContainer}>
@@ -173,66 +156,53 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
               </View>
             ) : order ? (
               <>
-                {/* Order Info */}
-                <View style={styles.infoSection}>
-                  <View style={styles.infoCard}>
-                    <Ionicons name="time-outline" size={18} color={Colors.primary} />
-                    <Text style={styles.infoTextBold}>
-                      {formatDate(order.createdAt || order.timestamp || order.kotTime)}
-                    </Text>
+                {/* Meta row */}
+                <View style={styles.metaRow}>
+                  <View style={styles.metaChip}>
+                    <Ionicons name="time-outline" size={14} color="#6b7280" />
+                    <Text style={styles.metaChipText}>{formatDate(order.createdAt || order.timestamp || order.kotTime)}</Text>
                   </View>
-                  {(tableNumber || order.tableNumber) && (
-                    <View style={styles.infoCard}>
-                      <Ionicons name="restaurant-outline" size={18} color={Colors.primary} />
-                      <Text style={styles.infoTextBold}>
-                        Table {tableNumber || order.tableNumber}
-                      </Text>
-                    </View>
-                  )}
-                  {(order.staffInfo?.name || order.staffInfo?.waiterName) && (
-                    <View style={styles.infoCard}>
-                      <Ionicons name="person-outline" size={18} color={Colors.primary} />
-                      <Text style={styles.infoTextBold}>
+                  {(order.staffInfo?.name || order.staffInfo?.waiterName) ? (
+                    <View style={styles.metaChip}>
+                      <Ionicons name="person-outline" size={14} color="#6b7280" />
+                      <Text style={styles.metaChipText} numberOfLines={1}>
                         {order.staffInfo?.name || order.staffInfo?.waiterName}
                       </Text>
                     </View>
-                  )}
+                  ) : null}
                 </View>
 
-                {/* Items List */}
+                {/* Items list */}
                 <View style={styles.itemsSection}>
-                  <Text style={styles.sectionTitle}>
-                    Order Items {order.items ? `(${order.items.length})` : '(0)'}
-                  </Text>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Items</Text>
+                    <Text style={styles.sectionCount}>{order.items?.length || 0}</Text>
+                  </View>
+
                   {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
                     order.items.map((item, index) => {
-                      // Handle different item structures
                       const itemName = item.name || item.menuItem?.name || item.itemName || 'Unknown Item';
                       const itemPrice = item.price || item.unitPrice || item.itemPrice || item.menuItem?.price || 0;
                       const itemQuantity = item.quantity || 1;
                       const itemTotal = item.total || (itemPrice * itemQuantity);
+                      const subline = getItemSubline(item);
 
                       return (
                         <View key={`item-${index}-${item.menuItemId || item.id || index}`} style={styles.itemRow}>
+                          <View style={styles.qtyBadge}>
+                            <Text style={styles.qtyBadgeText}>×{itemQuantity}</Text>
+                          </View>
                           <View style={styles.itemInfo}>
-                            <Text style={styles.itemName}>{itemName}</Text>
-                            {getItemSubline(item) ? (
-                              <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
-                            ) : null}
-                            {(item.description || item.menuItem?.description) && (
-                              <Text style={styles.itemDescription} numberOfLines={1}>
+                            <Text style={styles.itemName} numberOfLines={1}>{itemName}</Text>
+                            {subline ? (
+                              <Text style={styles.itemSubline} numberOfLines={1}>{subline}</Text>
+                            ) : (item.description || item.menuItem?.description) ? (
+                              <Text style={styles.itemSubline} numberOfLines={1}>
                                 {item.description || item.menuItem?.description}
                               </Text>
-                            )}
+                            ) : null}
                           </View>
-                          <View style={styles.itemQuantity}>
-                            <Text style={styles.quantityText}>x{itemQuantity}</Text>
-                          </View>
-                          <View style={styles.itemPrice}>
-                            <Text style={styles.priceText}>
-                              ₹{itemTotal.toFixed(2)}
-                            </Text>
-                          </View>
+                          <Text style={styles.itemPrice}>₹{itemTotal.toFixed(2)}</Text>
                         </View>
                       );
                     })
@@ -240,69 +210,81 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                     <View style={styles.emptyItemsContainer}>
                       <Ionicons name="receipt-outline" size={32} color={Colors.textLight} />
                       <Text style={styles.emptyItemsText}>No items found</Text>
-                      <Text style={styles.emptyItemsSubtext}>
-                        {order.items ? `Items type: ${typeof order.items}, isArray: ${Array.isArray(order.items)}, length: ${order.items?.length}` : 'Items is undefined'}
-                      </Text>
                     </View>
                   )}
                 </View>
 
-                {/* Total with Discount Breakdown */}
-                <View style={styles.totalSection}>
+                {/* Totals card */}
+                <View style={styles.totalCard}>
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>Subtotal</Text>
-                    <Text style={styles.totalAmount}>₹{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
+                    <Text style={styles.totalValue}>₹{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
                   </View>
                   {order.discountAmount > 0 && (
                     <View style={styles.totalRow}>
-                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>
-                        {order.appliedOffer?.name || 'Offer Discount'}
+                      <Text style={[styles.totalLabel, styles.discountText]}>
+                        {typeof order.appliedOffer === 'string' ? order.appliedOffer : (order.appliedOffer?.name || order.selectedOfferName || 'Offer')}
                       </Text>
-                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.discountAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.discountAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {order.manualDiscount > 0 && (
                     <View style={styles.totalRow}>
-                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>Manual Discount</Text>
-                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.manualDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalLabel, styles.discountText]}>Manual Discount</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.manualDiscount.toFixed(2)}</Text>
                     </View>
                   )}
                   {order.loyaltyDiscount > 0 && (
                     <View style={styles.totalRow}>
-                      <Text style={[styles.totalLabel, { color: '#10b981' }]}>Loyalty Points</Text>
-                      <Text style={[styles.totalAmount, { color: '#10b981' }]}>-₹{order.loyaltyDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalLabel, styles.discountText]}>Loyalty</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.loyaltyDiscount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {(order.serviceChargeAmount || 0) > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>Service Charge{order.serviceChargeRate ? ` (${order.serviceChargeRate}%)` : ''}</Text>
+                      <Text style={styles.totalValue}>₹{order.serviceChargeAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {(order.taxAmount || 0) > 0 && (
                     <View style={styles.totalRow}>
-                      <Text style={styles.totalLabel}>Tax</Text>
-                      <Text style={styles.totalAmount}>₹{order.taxAmount.toFixed(2)}</Text>
+                      <Text style={styles.totalLabel}>{order.taxBreakdown?.length > 0 ? order.taxBreakdown.map(t => `${t.name}${t.rate ? ` ${t.rate}%` : ''}`).join(', ') : 'Tax'}</Text>
+                      <Text style={styles.totalValue}>₹{order.taxAmount.toFixed(2)}</Text>
                     </View>
                   )}
-                  <View style={[styles.totalRow, { borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 8, marginTop: 4 }]}>
-                    <Text style={[styles.totalLabel, { fontWeight: '700', fontSize: 16 }]}>Total Amount</Text>
-                    <Text style={[styles.totalAmount, { fontWeight: '800', fontSize: 18 }]}>
-                      ₹{(order.finalAmount || calculateTotal()).toFixed(2)}
-                    </Text>
+                  {(order.tipAmount || 0) > 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>
+                      <Text style={[styles.totalValue, { color: '#d97706' }]}>₹{order.tipAmount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {order.roundOffAmount != null && order.roundOffAmount !== 0 && (
+                    <View style={styles.totalRow}>
+                      <Text style={[styles.totalLabel, { color: '#9ca3af' }]}>Round Off</Text>
+                      <Text style={[styles.totalValue, { color: '#9ca3af' }]}>{order.roundOffAmount > 0 ? '+' : ''}₹{order.roundOffAmount.toFixed(2)}</Text>
+                    </View>
+                  )}
+                  <View style={styles.totalDivider} />
+                  <View style={styles.grandTotalRow}>
+                    <Text style={styles.grandTotalLabel}>Total</Text>
+                    <Text style={styles.grandTotalValue}>₹{finalTotal.toFixed(2)}</Text>
                   </View>
                 </View>
               </>
             ) : null}
-
           </ScrollView>
+
           {/* Footer Actions */}
           {order && !loading && !error && (
             <View style={styles.footer}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={onClose}
-              >
+              <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.7}>
                 <Text style={styles.cancelButtonText}>Close</Text>
               </TouchableOpacity>
 
               {order.status !== 'completed' && order.status !== 'cancelled' && typeof onAddItems === 'function' && (
                 <TouchableOpacity
                   style={styles.addButton}
+                  activeOpacity={0.85}
                   onPress={() => {
                     onClose();
                     if (order.items) {
@@ -318,7 +300,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                     }
                   }}
                 >
-                  <Ionicons name="add-circle" size={18} color="#fff" />
+                  <Ionicons name="add" size={18} color="#dc2626" />
                   <Text style={styles.addButtonText}>Add Items</Text>
                 </TouchableOpacity>
               )}
@@ -326,12 +308,10 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
               {order.status !== 'completed' && order.status !== 'cancelled' && canCompleteBill && typeof onCompleteBill === 'function' && (
                 <TouchableOpacity
                   style={styles.completeBillButton}
-                  onPress={() => {
-                    onClose();
-                    onCompleteBill(order);
-                  }}
+                  activeOpacity={0.85}
+                  onPress={() => onCompleteBill(order)}
                 >
-                  <Ionicons name="checkmark-done" size={18} color="#fff" />
+                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
                   <Text style={styles.completeBillButtonText}>Complete Bill</Text>
                 </TouchableOpacity>
               )}
@@ -339,277 +319,331 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
           )}
         </View>
       </View>
-    </Modal >
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: Spacing.md,
   },
   modalContainer: {
     backgroundColor: '#fff',
-    borderRadius: BorderRadius.lg,
+    borderRadius: 20,
     width: '100%',
-    height: '85%',
-    maxHeight: '90%',
+    maxHeight: '88%',
     overflow: 'hidden',
     ...Shadows.large,
   },
+
+  // Header
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+    backgroundColor: '#dc2626',
   },
-  headerContent: {
-    flex: 1,
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerLabel: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.2,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: Spacing.xs,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.sm,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '800',
+    marginTop: 1,
   },
   closeButton: {
-    padding: Spacing.xs,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  headerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
+    gap: 8,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    gap: 6,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  headerChipWhite: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  headerChipText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Content
   content: {
-    flex: 1,
-    padding: Spacing.md,
+    flexGrow: 0,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingBottom: Spacing.lg,
+    padding: 16,
+    paddingBottom: 12,
   },
-  loadingContainer: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: Spacing.sm,
-    color: Colors.textMedium,
-    fontSize: 14,
-  },
-  errorContainer: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-  },
-  errorText: {
-    marginTop: Spacing.sm,
-    color: Colors.error,
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  infoSection: {
-    marginBottom: Spacing.md,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+
+  // States
+  loadingContainer: { padding: 32, alignItems: 'center' },
+  loadingText: { marginTop: 10, color: '#6b7280', fontSize: 13 },
+  errorContainer: { padding: 32, alignItems: 'center' },
+  errorText: { marginTop: 10, color: Colors.error, fontSize: 14, textAlign: 'center' },
+
+  // Meta
+  metaRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.sm,
+    gap: 8,
+    marginBottom: 16,
   },
-  infoCard: {
+  metaChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundLight,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
-    flex: 1,
-    minWidth: '45%',
+    gap: 6,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
   },
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.backgroundLight,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
-    flex: 1,
-    minWidth: '45%',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.xs,
-    gap: Spacing.xs,
-  },
-  infoText: {
-    fontSize: 13,
-    color: Colors.textMedium,
-  },
-  infoTextBold: {
-    fontSize: 13,
+  metaChipText: {
+    fontSize: 12,
+    color: '#374151',
     fontWeight: '600',
-    color: Colors.textDark,
   },
-  itemsSection: {
-    marginBottom: Spacing.md,
+
+  // Items
+  itemsSection: { marginBottom: 14 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#6b7280',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  sectionCount: {
+    fontSize: 11,
     fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: Spacing.sm,
+    color: '#fff',
+    backgroundColor: '#9ca3af',
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    borderRadius: 999,
+    minWidth: 20,
+    textAlign: 'center',
+    overflow: 'hidden',
   },
   itemRow: {
     flexDirection: 'row',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-    backgroundColor: Colors.backgroundWhite,
-    marginBottom: Spacing.xs,
-    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    gap: 12,
   },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
-    marginBottom: 2,
-  },
-  itemDescription: {
-    fontSize: 12,
-    color: Colors.textMedium,
-  },
-  itemQuantity: {
-    width: 40,
+  qtyBadge: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#fee2e2',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 8,
   },
-  quantityText: {
+  qtyBadgeText: {
+    color: '#dc2626',
     fontSize: 13,
-    fontWeight: '600',
-    color: Colors.textDark,
+    fontWeight: '800',
   },
-  itemPrice: {
-    width: 80,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  priceText: {
+  itemInfo: { flex: 1 },
+  itemName: {
     fontSize: 14,
     fontWeight: '700',
-    color: Colors.textDark,
+    color: '#111827',
   },
-  totalSection: {
-    marginTop: Spacing.md,
-    paddingTop: Spacing.md,
-    borderTopWidth: 2,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.backgroundLight,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.sm,
+  itemSubline: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  itemPrice: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  emptyItemsContainer: {
+    padding: 28,
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+  },
+  emptyItemsText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#9ca3af',
+  },
+
+  // Totals
+  totalCard: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 4,
   },
   totalLabel: {
-    fontSize: 16,
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  totalValue: {
+    fontSize: 13,
+    color: '#111827',
     fontWeight: '700',
-    color: Colors.textDark,
   },
-  totalAmount: {
-    fontSize: 20,
+  discountText: {
+    color: '#059669',
+  },
+  totalDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 8,
+  },
+  grandTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  grandTotalLabel: {
+    fontSize: 15,
     fontWeight: '800',
-    color: Colors.primary,
+    color: '#111827',
   },
+  grandTotalValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#dc2626',
+  },
+
+  // Footer
   footer: {
     flexDirection: 'row',
-    padding: Spacing.md,
+    padding: 14,
+    gap: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    gap: Spacing.sm,
+    borderTopColor: '#f1f5f9',
+    backgroundColor: '#fff',
   },
   cancelButton: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    paddingVertical: 13,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cancelButtonText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: Colors.textDark,
+    fontWeight: '700',
+    color: '#6b7280',
   },
   addButton: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.primary,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#dc2626',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.xs,
+    gap: 6,
   },
   addButtonText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
+    fontWeight: '800',
+    color: '#dc2626',
   },
   completeBillButton: {
-    flex: 1,
+    flex: 1.2,
     flexDirection: 'row',
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.md,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     backgroundColor: '#059669',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.xs,
+    gap: 6,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   completeBillButtonText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#fff',
-  },
-  emptyItemsContainer: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyItemsText: {
-    marginTop: Spacing.sm,
-    fontSize: 14,
-    color: Colors.textLight,
-    textAlign: 'center',
-  },
-  emptyItemsSubtext: {
-    marginTop: Spacing.xs,
-    fontSize: 12,
-    color: Colors.textLight,
-    textAlign: 'center',
   },
 });

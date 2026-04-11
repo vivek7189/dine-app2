@@ -6,12 +6,14 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import apiClient from '../../services/api';
-import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import apiClient, { WEB_BASE_URL } from '../../services/api';
+import restaurantEvents from '../../services/restaurantEvents';
+import { Colors } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 
@@ -19,12 +21,20 @@ export default function MoreScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
   const { effectivelyOffline, pendingCount, failedCount } = useOffline();
-  const tabletContentStyle = isTablet ? { maxWidth: 600, alignSelf: 'center', width: '100%' } : undefined;
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
 
   useEffect(() => {
     loadUserData();
+  }, []);
+
+  // Listen for restaurant switch from other tabs
+  useEffect(() => {
+    const unsub = restaurantEvents.on('switch', ({ restaurant: newRest }) => {
+      setRestaurant(newRest);
+      loadUserData();
+    });
+    return unsub;
   }, []);
 
   const loadUserData = async () => {
@@ -43,6 +53,7 @@ export default function MoreScreen() {
   const businessType = restaurant?.businessType || user?.restaurant?.businessType || 'restaurant';
   const isOwnerOrManager = ['owner', 'manager', 'admin'].includes(role);
   const isHotelType = businessType === 'hotel';
+  const initials = (user?.name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
   const menuSections = [
     {
@@ -50,58 +61,38 @@ export default function MoreScreen() {
       items: [
         {
           title: 'Headquarters',
-          subtitle: 'Multi-restaurant overview & analytics',
-          icon: 'business',
-          color: '#6366f1',
+          icon: 'analytics-outline',
           route: '/(tabs)/headquarters',
           roles: ['owner'],
         },
         {
           title: 'Menu Management',
-          subtitle: 'Add, edit, and manage menu items',
-          icon: 'fast-food',
-          color: '#8b5cf6',
+          icon: 'restaurant-outline',
           route: '/(tabs)/menu-management',
           roles: ['owner', 'manager', 'admin', 'cashier'],
         },
         {
-          title: 'Offers',
-          subtitle: 'Happy hour, discounts, BOGO deals',
-          icon: 'pricetag',
-          color: '#ec4899',
-          route: '/(tabs)/offers',
-          roles: ['owner', 'manager', 'admin'],
-        },
-        {
           title: 'Customers',
-          subtitle: 'Customer list, loyalty points',
-          icon: 'people',
-          color: '#06b6d4',
-          route: '/(tabs)/customers',
+          icon: 'people-outline',
+          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } },
           roles: ['owner', 'manager', 'admin'],
         },
         {
           title: 'Inventory',
-          subtitle: 'Stock levels, usage & recipes',
-          icon: 'cube',
-          color: '#059669',
+          icon: 'cube-outline',
           route: '/(tabs)/inventory',
           roles: ['owner', 'manager', 'admin'],
         },
         {
           title: 'Kitchen Display',
-          subtitle: 'Live kitchen orders & KOT tracking',
-          icon: 'flame',
-          color: '#ef4444',
+          icon: 'flame-outline',
           route: '/(tabs)/kitchen',
           roles: ['owner', 'manager', 'admin', 'waiter', 'employee'],
         },
         {
           title: 'Google Reviews',
-          subtitle: 'Manage, reply & collect reviews',
-          icon: 'star',
-          color: '#ea4335',
-          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/admin?tab=google-reviews', title: 'Google Reviews' } },
+          icon: 'star-outline',
+          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/admin?tab=google-reviews`, title: 'Google Reviews' } },
           roles: ['owner', 'manager', 'admin'],
         },
       ],
@@ -111,32 +102,26 @@ export default function MoreScreen() {
       items: [
         {
           title: 'Books',
-          subtitle: 'Accounting & financial reports',
-          icon: 'book',
-          color: '#10b981',
-          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/books', title: 'Books' } },
+          icon: 'book-outline',
+          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } },
           roles: ['owner', 'manager', 'admin'],
         },
         {
           title: 'Invoices',
-          subtitle: 'Create & manage invoices',
-          icon: 'document-text',
-          color: '#3b82f6',
-          route: { pathname: '/(tabs)/webview', params: { url: 'https://www.dineopen.com/invoice/dashboard', title: 'Invoices' } },
+          icon: 'document-text-outline',
+          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } },
           roles: ['owner', 'manager', 'admin'],
         },
       ],
     },
     {
-      title: 'History & Reports',
+      title: 'History',
       items: [
         {
           title: 'Order History',
-          subtitle: 'Past orders and revenue',
-          icon: 'time',
-          color: '#f59e0b',
+          icon: 'time-outline',
           route: '/(tabs)/order-history',
-          roles: null, // all roles
+          roles: null,
         },
       ],
     },
@@ -147,9 +132,7 @@ export default function MoreScreen() {
             items: [
               {
                 title: 'Hotel Management',
-                subtitle: 'Rooms, bookings, check-in/out',
-                icon: 'bed',
-                color: '#3b82f6',
+                icon: 'bed-outline',
                 route: '/(tabs)/hotel',
                 roles: null,
               },
@@ -158,13 +141,11 @@ export default function MoreScreen() {
         ]
       : []),
     {
-      title: 'Settings',
+      title: 'Account',
       items: [
         {
           title: 'Settings',
-          subtitle: 'Tax, business info, zone pricing',
-          icon: 'settings',
-          color: '#6b7280',
+          icon: 'settings-outline',
           route: '/(tabs)/profile',
           roles: null,
         },
@@ -173,7 +154,7 @@ export default function MoreScreen() {
   ];
 
   const shouldShowItem = (item) => {
-    if (!item.roles) return true; // null = all roles
+    if (!item.roles) return true;
     if (!role) return false;
     return item.roles.includes(role);
   };
@@ -201,217 +182,313 @@ export default function MoreScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, tabletContentStyle]} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>More</Text>
+    <View style={styles.container}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* ── Branded Header Banner ──────────────────── */}
+        <View style={styles.headerBanner}>
+          {/* Brand row */}
+          <View style={styles.brandRow}>
+            <View style={styles.brandIcon}>
+              <Ionicons name="restaurant" size={18} color="#fff" />
+            </View>
+            <Text style={styles.brandName}>DineOpen</Text>
+          </View>
+
+          {/* Avatar */}
+          <View style={styles.avatarContainer}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+
+          {/* User info */}
+          <Text style={styles.userName}>{user?.name || 'Staff Member'}</Text>
+          <Text style={styles.userSubtitle}>
+            {restaurant?.name || 'Your Restaurant'}
+          </Text>
         </View>
 
-        {/* User Card */}
-        <TouchableOpacity style={styles.userCard} onPress={() => router.push('/(tabs)/profile')}>
-          <View style={styles.userAvatar}>
-            <Ionicons name="person" size={28} color={Colors.primary} />
-          </View>
-          <View style={styles.userInfo}>
-            <Text style={styles.userName}>{user?.name || 'Staff Member'}</Text>
-            <Text style={styles.userRole}>
-              {role.charAt(0).toUpperCase() + role.slice(1) || 'Staff'}
-              {restaurant?.name ? ` · ${restaurant.name}` : ''}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={Colors.textLight} />
-        </TouchableOpacity>
-
-        {/* Offline / Sync Status */}
+        {/* ── Sync Status (conditional) ──────────────── */}
         {(effectivelyOffline || pendingCount > 0 || failedCount > 0) && (
-          <View style={[styles.sectionCard, { marginHorizontal: Spacing.md, marginBottom: Spacing.lg, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-            <Ionicons name={effectivelyOffline ? 'cloud-offline' : 'cloud-done'} size={22} color={effectivelyOffline ? '#f59e0b' : '#22c55e'} />
+          <View style={styles.syncCard}>
+            <View style={[styles.syncIcon, { backgroundColor: effectivelyOffline ? '#fef3c7' : '#ecfdf5' }]}>
+              <Ionicons
+                name={effectivelyOffline ? 'cloud-offline-outline' : 'cloud-done-outline'}
+                size={20}
+                color={effectivelyOffline ? '#d97706' : '#10b981'}
+              />
+            </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>
+              <Text style={styles.syncTitle}>
                 {effectivelyOffline ? 'Offline Mode' : 'Online'}
               </Text>
               {(pendingCount > 0 || failedCount > 0) && (
-                <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 1 }}>
+                <Text style={styles.syncSubtitle}>
                   {pendingCount > 0 ? `${pendingCount} pending` : ''}{pendingCount > 0 && failedCount > 0 ? ' · ' : ''}{failedCount > 0 ? `${failedCount} failed` : ''}
                 </Text>
               )}
             </View>
             {pendingCount > 0 && (
-              <View style={{ backgroundColor: '#3b82f6', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{pendingCount}</Text>
+              <View style={styles.syncBadge}>
+                <Text style={styles.syncBadgeText}>{pendingCount}</Text>
               </View>
             )}
           </View>
         )}
 
-        {/* Menu Sections */}
-        {menuSections.map((section) => {
+        {/* ── Menu Sections ──────────────────────────── */}
+        {menuSections.map((section, sectionIndex) => {
           const visibleItems = section.items.filter(shouldShowItem);
           if (visibleItems.length === 0) return null;
 
           return (
-            <View key={section.title} style={styles.section}>
-              <Text style={styles.sectionTitle}>{section.title}</Text>
-              <View style={styles.sectionCard}>
-                {visibleItems.map((item, index) => (
+            <View key={section.title}>
+              <View style={styles.section}>
+                <Text style={styles.sectionLabel}>{section.title}</Text>
+                {visibleItems.map((item) => (
                   <TouchableOpacity
                     key={item.title}
-                    style={[
-                      styles.menuItem,
-                      index < visibleItems.length - 1 && styles.menuItemBorder,
-                    ]}
+                    style={styles.menuItem}
                     onPress={() => handleNavigate(item.route)}
+                    activeOpacity={0.6}
                   >
-                    <View style={[styles.menuItemIcon, { backgroundColor: item.color + '15' }]}>
-                      <Ionicons name={item.icon} size={22} color={item.color} />
-                    </View>
-                    <View style={styles.menuItemContent}>
-                      <Text style={styles.menuItemTitle}>{item.title}</Text>
-                      <Text style={styles.menuItemSubtitle}>{item.subtitle}</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={Colors.textLight} />
+                    <Ionicons name={item.icon} size={20} color="#6b7280" />
+                    <Text style={styles.menuItemText}>{item.title}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
+              <View style={styles.sectionDivider} />
             </View>
           );
         })}
 
-        {/* Logout Button */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color={Colors.error} />
-          <Text style={styles.logoutText}>Logout</Text>
+        {/* ── Sign Out ───────────────────────────────── */}
+        <TouchableOpacity
+          style={styles.signOutButton}
+          onPress={handleLogout}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="log-out-outline" size={20} color="#e5484d" />
+          <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
-
-        {/* App Version */}
-        <Text style={styles.versionText}>DineOpen v1.0</Text>
       </ScrollView>
-    </SafeAreaView>
+
+      {/* ── Footer ─────────────────────────────────── */}
+      <View style={styles.footer}>
+        <View style={styles.footerRolePill}>
+          <View style={styles.footerRoleDot} />
+          <Text style={styles.footerRoleText}>{role || 'Staff'}</Text>
+        </View>
+        <TouchableOpacity style={styles.footerVersionPill}>
+          <Text style={styles.footerVersionText}>v1.6.0</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.backgroundLight,
+    backgroundColor: '#fff',
   },
-  scrollContent: {
-    paddingBottom: 100,
+
+  // ── Header Banner ───────────────────────────────
+  headerBanner: {
+    backgroundColor: '#8b7355',
+    paddingTop: Platform.OS === 'android' ? 48 : 60,
+    paddingBottom: 28,
+    paddingHorizontal: 22,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    alignItems: 'center',
   },
-  header: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.md,
-  },
-  headerTitle: {
-    ...Typography.h2,
-    color: Colors.textDark,
-  },
-  // User Card
-  userCard: {
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    marginHorizontal: Spacing.md,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.large,
-    marginBottom: Spacing.lg,
-    ...Shadows.small,
+    alignSelf: 'flex-start',
+    gap: 8,
+    marginBottom: 20,
   },
-  userAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Colors.primary + '15',
+  brandIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  userInfo: {
-    flex: 1,
-    marginLeft: 12,
+  brandName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  avatarContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 1,
   },
   userName: {
-    ...Typography.bodyBold,
-    color: Colors.textDark,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 4,
+    letterSpacing: -0.3,
   },
-  userRole: {
-    ...Typography.small,
-    color: Colors.textMedium,
-    marginTop: 2,
+  userSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '500',
   },
-  // Sections
-  section: {
-    marginBottom: Spacing.lg,
-  },
-  sectionTitle: {
-    ...Typography.small,
-    color: Colors.textLight,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  sectionCard: {
-    backgroundColor: '#fff',
-    marginHorizontal: Spacing.md,
-    borderRadius: BorderRadius.large,
-    ...Shadows.small,
-  },
-  menuItem: {
+
+  // ── Sync Card ───────────────────────────────────
+  syncCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
+    marginHorizontal: 20,
+    marginTop: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 12,
+    backgroundColor: '#faf8f5',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#f0ece6',
   },
-  menuItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-  },
-  menuItemIcon: {
-    width: 40,
-    height: 40,
+  syncIcon: {
+    width: 36,
+    height: 36,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  menuItemContent: {
-    flex: 1,
-    marginLeft: 12,
+  syncTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
   },
-  menuItemTitle: {
-    ...Typography.bodyBold,
-    color: Colors.textDark,
-    fontSize: 15,
-  },
-  menuItemSubtitle: {
-    ...Typography.small,
-    color: Colors.textLight,
+  syncSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
     marginTop: 1,
   },
-  // Logout
-  logoutButton: {
+  syncBadge: {
+    backgroundColor: '#8b7355',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  syncBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // ── Sections ────────────────────────────────────
+  section: {
+    paddingTop: 20,
+    paddingBottom: 4,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9ca3af',
+    paddingHorizontal: 22,
+    marginBottom: 6,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginHorizontal: 22,
+    marginTop: 8,
+  },
+
+  // ── Menu Items ──────────────────────────────────
+  menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginHorizontal: Spacing.md,
-    padding: 14,
-    backgroundColor: '#fff',
-    borderRadius: BorderRadius.large,
-    borderWidth: 1,
-    borderColor: Colors.error + '30',
-    marginBottom: Spacing.md,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    gap: 14,
   },
-  logoutText: {
-    ...Typography.bodyBold,
-    color: Colors.error,
+  menuItemText: {
+    flex: 1,
     fontSize: 15,
+    fontWeight: '500',
+    color: '#374151',
   },
-  versionText: {
-    ...Typography.small,
-    color: Colors.textLight,
-    textAlign: 'center',
-    marginBottom: Spacing.xl,
+
+  // ── Sign Out ────────────────────────────────────
+  signOutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    marginTop: 8,
+    gap: 14,
+  },
+  signOutText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#e5484d',
+  },
+
+  // ── Footer ──────────────────────────────────────
+  footer: {
+    paddingVertical: 16,
+    paddingHorizontal: 22,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    paddingBottom: Platform.OS === 'android' ? 16 : 28,
+  },
+  footerRolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8b7355',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+  },
+  footerRoleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#d4c5a9',
+  },
+  footerRoleText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+    textTransform: 'capitalize',
+  },
+  footerVersionPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+  },
+  footerVersionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9ca3af',
   },
 });

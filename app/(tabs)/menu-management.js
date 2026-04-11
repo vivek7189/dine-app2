@@ -11,6 +11,7 @@ import {
   Modal,
   Image,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -45,6 +46,7 @@ export default function MenuManagementScreen() {
   const [processingStep, setProcessingStep] = useState('');
   const [actionLoading, setActionLoading] = useState(null); // Track which item action is loading
   const [businessType, setBusinessType] = useState('restaurant');
+  const [refreshing, setRefreshing] = useState(false);
   const [hasDefaultMenu, setHasDefaultMenu] = useState(false);
   const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
   const [activePricingRules, setActivePricingRules] = useState([]);
@@ -154,12 +156,14 @@ export default function MenuManagementScreen() {
   const handleRefresh = async () => {
     if (restaurantId) {
       try {
-        setLoading(true);
+        setRefreshing(true);
+        // Invalidate in-memory cache so we get fresh data from server
+        apiClient.invalidateCache(`/api/menus/${restaurantId}`);
         await loadMenu(restaurantId);
       } catch (error) {
         Alert.alert('Error', 'Failed to refresh menu.');
       } finally {
-        setLoading(false);
+        setRefreshing(false);
       }
     }
   };
@@ -244,23 +248,55 @@ export default function MenuManagementScreen() {
     }
   };
 
-  const handleUploadFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf', 'text/csv'],
-        copyToCacheDirectory: true,
-      });
-      if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        await uploadAndExtract({
-          uri: asset.uri,
-          name: asset.name || 'menu',
-          type: asset.mimeType || 'image/jpeg',
-        });
-      }
-    } catch (error) {
-      setUploadError(error.message || 'Upload failed');
-    }
+  const handleUploadFile = () => {
+    Alert.alert(
+      'Upload Menu',
+      'Choose a file type to upload your menu from',
+      [
+        {
+          text: 'Photo from Gallery',
+          onPress: async () => {
+            try {
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                quality: 0.8,
+              });
+              if (!result.canceled && result.assets?.[0]) {
+                await uploadAndExtract({
+                  uri: result.assets[0].uri,
+                  name: 'menu.jpg',
+                  type: 'image/jpeg',
+                });
+              }
+            } catch (error) {
+              setUploadError(error.message || 'Upload failed');
+            }
+          },
+        },
+        {
+          text: 'PDF or CSV File',
+          onPress: async () => {
+            try {
+              const result = await DocumentPicker.getDocumentAsync({
+                type: ['application/pdf', 'text/csv'],
+                copyToCacheDirectory: true,
+              });
+              if (!result.canceled && result.assets?.[0]) {
+                const asset = result.assets[0];
+                await uploadAndExtract({
+                  uri: asset.uri,
+                  name: asset.name || 'menu',
+                  type: asset.mimeType || 'application/pdf',
+                });
+              }
+            } catch (error) {
+              setUploadError(error.message || 'Upload failed');
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const filterItems = () => {
@@ -816,21 +852,21 @@ export default function MenuManagementScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
+      {/* Clean Header */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Menu Management</Text>
           <Text style={styles.headerSubtitle}>{filteredItems.length} of {menuItems.filter(i => i.status !== 'deleted').length} items</Text>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.iconButton} onPress={handleRefresh}>
-            <Ionicons name="refresh" size={22} color={Colors.primary} />
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#eef2ff' }]} onPress={handleRefresh} disabled={refreshing}>
+            <Ionicons name="sync-outline" size={20} color={refreshing ? '#d1d5db' : '#6366f1'} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton} onPress={handleTakePhoto}>
-            <Ionicons name="camera" size={22} color={Colors.primary} />
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#ecfdf5' }]} onPress={handleTakePhoto}>
+            <Ionicons name="camera-outline" size={20} color="#10b981" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton} onPress={handleUploadFile}>
-            <Ionicons name="document-attach" size={22} color={Colors.primary} />
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fffbeb' }]} onPress={handleUploadFile}>
+            <Ionicons name="cloud-upload-outline" size={20} color="#f59e0b" />
           </TouchableOpacity>
         </View>
       </View>
@@ -838,21 +874,23 @@ export default function MenuManagementScreen() {
       {uploadError ? <Text style={styles.inlineError}>{uploadError}</Text> : null}
       {uploadSuccess ? <Text style={styles.inlineSuccess}>{uploadSuccess}</Text> : null}
 
-      {/* Search */}
+      {/* Pill Search */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color={Colors.textLight} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search items or short code..."
-          placeholderTextColor={Colors.textLight}
-          value={searchTerm}
-          onChangeText={setSearchTerm}
-        />
-        {searchTerm.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchTerm('')}>
-            <Ionicons name="close-circle" size={20} color={Colors.textLight} />
-          </TouchableOpacity>
-        )}
+        <View style={styles.searchPill}>
+          <Ionicons name="search" size={18} color="#9ca3af" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search items or short code..."
+            placeholderTextColor="#9ca3af"
+            value={searchTerm}
+            onChangeText={setSearchTerm}
+          />
+          {searchTerm.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchTerm('')}>
+              <Ionicons name="close-circle" size={18} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Categories */}
@@ -928,6 +966,9 @@ export default function MenuManagementScreen() {
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, tabletContentStyle]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="search" size={48} color={Colors.textLight} />
@@ -1005,34 +1046,44 @@ export default function MenuManagementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.backgroundCream,
+    backgroundColor: '#f8f9fa',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    backgroundColor: Colors.backgroundWhite,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.textDark,
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#1f2937',
+    letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: Colors.textMedium,
+    color: '#9ca3af',
     marginTop: 2,
+    fontWeight: '500',
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 6,
   },
   iconButton: {
-    padding: Spacing.sm,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fab: {
     position: 'absolute',
@@ -1041,103 +1092,114 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: Colors.primary,
+    backgroundColor: '#10b981',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: '#10b981',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 6,
+    shadowRadius: 8,
     elevation: 8,
   },
   inlineError: {
-    backgroundColor: '#fee2e2',
-    color: Colors.error,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
+    backgroundColor: '#fef2f2',
+    color: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     fontSize: 12,
+    fontWeight: '500',
   },
   inlineSuccess: {
-    backgroundColor: '#d1fae5',
-    color: Colors.success,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
+    backgroundColor: '#f0fdf4',
+    color: '#10b981',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     fontSize: 12,
+    fontWeight: '500',
   },
   searchContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  searchPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundWhite,
-    marginHorizontal: Spacing.md,
-    marginVertical: Spacing.sm,
-    borderRadius: BorderRadius.medium,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    gap: Spacing.sm,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: Colors.textDark,
+    color: '#1f2937',
+    padding: 0,
+    fontWeight: '500',
   },
   categoriesContainer: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: 16,
+    paddingRight: 32,
+    paddingVertical: 10,
   },
   categoryButton: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: Colors.backgroundWhite,
-    marginRight: Spacing.sm,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    marginRight: 8,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    minHeight: 36,
   },
   categoryButtonSelected: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
   },
   categoryText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.textMedium,
+    color: '#374151',
+    lineHeight: 18,
   },
   categoryTextSelected: {
     color: '#fff',
   },
   list: {
-    padding: Spacing.md,
+    padding: 16,
     paddingBottom: 160,
   },
   menuItemCard: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: BorderRadius.medium,
-    marginBottom: Spacing.md,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    marginBottom: 12,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
   },
   menuItemCardOutOfStock: {
-    opacity: 0.7,
+    opacity: 0.6,
   },
   menuItemImage: {
     width: '100%',
-    height: 140,
-    backgroundColor: Colors.backgroundLight,
+    height: 160,
+    backgroundColor: '#f9fafb',
   },
   menuItemContent: {
-    padding: Spacing.md,
+    padding: 14,
   },
   menuItemHeader: {
-    marginBottom: Spacing.xs,
+    marginBottom: 6,
   },
   menuItemTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: 6,
   },
   vegIndicator: {
     width: 16,
@@ -1155,19 +1217,19 @@ const styles = StyleSheet.create({
   menuItemName: {
     flex: 1,
     fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textDark,
+    fontWeight: '700',
+    color: '#1f2937',
   },
   menuItemCategory: {
     fontSize: 12,
-    color: Colors.textLight,
+    color: '#9ca3af',
     marginTop: 2,
-    marginLeft: 20,
+    marginLeft: 22,
   },
   menuItemDescription: {
     fontSize: 13,
-    color: Colors.textMedium,
-    marginBottom: Spacing.sm,
+    color: '#6b7280',
+    marginBottom: 8,
     lineHeight: 18,
   },
   menuItemFooter: {
@@ -1178,135 +1240,144 @@ const styles = StyleSheet.create({
   priceContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
+    gap: 8,
   },
   menuItemPrice: {
     fontSize: 18,
-    fontWeight: '700',
-    color: Colors.primary,
+    fontWeight: '800',
+    color: '#1f2937',
   },
   menuItemShortCode: {
-    fontSize: 12,
-    color: Colors.textLight,
-    backgroundColor: Colors.backgroundLight,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    fontSize: 11,
+    color: '#6b7280',
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    fontWeight: '600',
   },
   menuItemActions: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 6,
   },
   actionBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: Colors.backgroundLight,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
   },
   actionBtnActive: {
-    backgroundColor: Colors.accentYellow + '20',
+    backgroundColor: '#fef9c3',
+    borderColor: '#fde68a',
   },
   actionBtnOutOfStock: {
-    backgroundColor: Colors.accentGreen + '20',
+    backgroundColor: '#ecfdf5',
+    borderColor: '#d1fae5',
   },
   badgeRow: {
     flexDirection: 'row',
-    gap: Spacing.xs,
-    marginTop: Spacing.sm,
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
   },
   outOfStockBadge: {
-    backgroundColor: Colors.secondary + '20',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   outOfStockText: {
     fontSize: 11,
     fontWeight: '600',
-    color: Colors.secondary,
+    color: '#ef4444',
   },
   inactiveBadge: {
-    backgroundColor: Colors.textLight + '20',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   inactiveText: {
     fontSize: 11,
     fontWeight: '600',
-    color: Colors.textLight,
+    color: '#9ca3af',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.md,
+    gap: 16,
   },
   loadingText: {
     fontSize: 15,
-    color: Colors.textMedium,
+    color: '#9ca3af',
+    fontWeight: '500',
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: Spacing.xl,
-    gap: Spacing.sm,
+    padding: 32,
+    gap: 8,
   },
   emptyText: {
     fontSize: 16,
-    color: Colors.textMedium,
+    color: '#9ca3af',
+    fontWeight: '500',
   },
   emptyStateContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: Spacing.lg,
+    padding: 24,
   },
   emptyStateCard: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: BorderRadius.large,
-    padding: Spacing.xl,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 32,
     alignItems: 'center',
-    maxWidth: 320,
+    maxWidth: 340,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
     elevation: 4,
   },
   emptyStateTitle: {
     fontSize: 22,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginTop: Spacing.md,
+    fontWeight: '800',
+    color: '#1f2937',
+    marginTop: 16,
+    letterSpacing: -0.3,
   },
   emptyStateSubtitle: {
     fontSize: 14,
-    color: Colors.textMedium,
+    color: '#6b7280',
     textAlign: 'center',
-    marginTop: Spacing.sm,
+    marginTop: 8,
     lineHeight: 20,
   },
   emptyStateActions: {
     flexDirection: 'row',
-    gap: Spacing.md,
-    marginTop: Spacing.lg,
+    gap: 12,
+    marginTop: 24,
   },
   uploadActionButton: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.medium,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 14,
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: 6,
   },
   takePhotoButton: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#10b981',
   },
   uploadFileButton: {
-    backgroundColor: Colors.secondary,
+    backgroundColor: '#3b82f6',
   },
   uploadActionLabel: {
     fontSize: 14,
@@ -1316,68 +1387,74 @@ const styles = StyleSheet.create({
   manualAddButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    marginTop: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    gap: 6,
+    marginTop: 24,
+    paddingVertical: 8,
   },
   manualAddText: {
     fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '500',
+    color: '#10b981',
+    fontWeight: '600',
   },
   uploadErrorText: {
     fontSize: 12,
-    color: Colors.error,
-    marginTop: Spacing.md,
+    color: '#ef4444',
+    marginTop: 16,
     textAlign: 'center',
   },
   uploadSuccessText: {
     fontSize: 12,
-    color: Colors.success,
-    marginTop: Spacing.md,
+    color: '#10b981',
+    marginTop: 16,
     textAlign: 'center',
   },
   processingOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   processingCard: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: BorderRadius.large,
-    padding: Spacing.xl,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 32,
     alignItems: 'center',
-    minWidth: 180,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 10,
   },
   processingStep: {
-    marginTop: Spacing.md,
+    marginTop: 16,
     fontSize: 14,
-    color: Colors.textDark,
+    color: '#374151',
+    fontWeight: '500',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: '#fff',
   },
   modalContent: {
     flex: 1,
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: '#fff',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    paddingTop: Platform.OS === 'ios' ? 60 : Spacing.xl,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    paddingTop: Platform.OS === 'ios' ? 60 : 32,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-    backgroundColor: Colors.backgroundWhite,
+    borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fff',
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: Colors.textDark,
+    color: '#1f2937',
     flex: 1,
     textAlign: 'center',
   },
@@ -1385,7 +1462,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: Colors.backgroundLight,
+    backgroundColor: '#f3f4f6',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1394,28 +1471,28 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     flexDirection: 'row',
-    padding: Spacing.md,
-    gap: Spacing.md,
+    padding: 16,
+    gap: 12,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: '#f3f4f6',
   },
   cancelButton: {
     flex: 1,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.medium,
-    backgroundColor: Colors.backgroundLight,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#f3f4f6',
     alignItems: 'center',
   },
   cancelButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#374151',
   },
   saveButton: {
     flex: 1,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.medium,
-    backgroundColor: Colors.primary,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#10b981',
     alignItems: 'center',
   },
   saveButtonText: {

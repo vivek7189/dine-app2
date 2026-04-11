@@ -5,6 +5,7 @@ import {
   markSynced,
   markFailed,
   revertSyncing,
+  revertSyncingItem,
   getQueueStats,
   getPendingCount,
 } from './syncQueueV2';
@@ -14,6 +15,7 @@ const MAX_RETRIES = 5;
 const BACKOFF_BASE_MS = 2000;
 const MAX_BACKOFF_MS = 30000;
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
+const SYNC_TIMEOUT_MS = 120000; // 2 minutes max for entire sync run
 
 let isSyncing = false;
 let syncListeners = [];
@@ -59,12 +61,23 @@ export async function syncAll(apiClient) {
   let syncedCount = 0;
   let failedCount = 0;
   let authFailures = 0;
+  const startTime = Date.now();
 
   try {
     while (true) {
+      // Timeout check — don't sync forever
+      if (Date.now() - startTime > SYNC_TIMEOUT_MS) {
+        console.warn('Sync timeout reached after', SYNC_TIMEOUT_MS, 'ms');
+        break;
+      }
+
       // Check network before each item
       const currentNet = await NetInfo.fetch();
-      if (!currentNet.isConnected) break;
+      if (!currentNet.isConnected) {
+        // Network dropped mid-sync — notify UI so banner doesn't stick
+        notifyListeners({ type: 'sync_error', error: 'Network disconnected during sync' });
+        break;
+      }
 
       // Too many auth failures — stop and let user re-auth
       if (authFailures >= MAX_CONSECUTIVE_AUTH_FAILURES) {
@@ -107,7 +120,7 @@ export async function syncAll(apiClient) {
         const statusCode = err.response?.status || err.statusCode;
 
         if (statusCode === 403 || statusCode === 401) {
-          // Auth failure — revert to pending and count
+          // Auth failure — mark failed and count
           markFailed(item.idempotency_key, `Auth error: ${statusCode}`);
           authFailures++;
           failedCount++;
@@ -126,8 +139,8 @@ export async function syncAll(apiClient) {
           continue;
         }
 
-        // Network/server error — revert to pending for automatic retry
-        revertSyncing();
+        // Network/server error — revert ONLY THIS ITEM to pending for retry
+        revertSyncingItem(item.idempotency_key);
         failedCount++;
 
         // Exponential backoff
@@ -135,7 +148,11 @@ export async function syncAll(apiClient) {
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
-
+  } catch (err) {
+    console.error('Sync engine error:', err);
+    notifyListeners({ type: 'sync_error', error: err.message });
+  } finally {
+    // ALWAYS emit sync_complete so UI never gets stuck on "Syncing..."
     const stats = getQueueStats();
     notifyListeners({
       type: 'sync_complete',
@@ -143,16 +160,10 @@ export async function syncAll(apiClient) {
       failedCount,
       pendingCount: stats.pending,
     });
-
-    return { synced: syncedCount, failed: failedCount };
-
-  } catch (err) {
-    console.error('Sync engine error:', err);
-    notifyListeners({ type: 'sync_error', error: err.message });
-    return { synced: syncedCount, failed: failedCount };
-  } finally {
     isSyncing = false;
   }
+
+  return { synced: syncedCount, failed: failedCount };
 }
 
 /**
