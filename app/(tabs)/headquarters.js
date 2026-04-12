@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, Alert, ActivityIndicator, RefreshControl,
-  FlatList, Switch, Image,
+  FlatList, Switch, Image, Platform, ActionSheetIOS,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,11 +27,11 @@ const ROLE_FILTERS = ['All', 'Manager', 'Waiter', 'Cashier', 'Chef'];
 const STATUS_FILTERS = ['All', 'Active', 'Inactive'];
 const STOCK_FILTERS = ['All', 'Normal', 'Low', 'Out'];
 
-export function HeadquartersContent({ embedded = false, drawerToggle, initialUser = null }) {
-  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} initialUser={initialUser} />;
+export function HeadquartersContent({ embedded = false, drawerToggle, initialUser = null, extraContent = null, restaurants = [], onSwitchRestaurant = null }) {
+  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} initialUser={initialUser} extraContent={extraContent} restaurants={restaurants} onSwitchRestaurant={onSwitchRestaurant} />;
 }
 
-export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null }) {
+export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null, extraContent = null, restaurants = [], onSwitchRestaurant = null }) {
   const router = useRouter();
   const { width: SCREEN_WIDTH, isTablet } = useResponsive();
   const metricCols = isTablet ? 4 : 2;
@@ -298,17 +298,74 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
 
   // ── Render: Sub-components ─────────────────────────
 
+  const getGreetingText = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good Morning';
+    if (hour < 17) return 'Good Afternoon';
+    return 'Good Evening';
+  };
+
+  const showRestaurantPickerHQ = () => {
+    if (!onSwitchRestaurant || restaurants.length <= 1) return;
+    const currentId = user?.restaurantId || user?.restaurant?.id;
+    if (Platform.OS === 'ios') {
+      const options = [...restaurants.map(r => {
+        const name = r.name || r.id;
+        const rid = r.id || r._id;
+        return rid === currentId ? `${name} (current)` : name;
+      }), 'Cancel'];
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
+        (idx) => {
+          if (idx < restaurants.length) {
+            onSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Switch Restaurant',
+        'Select which restaurant to manage',
+        [
+          ...restaurants.map(r => ({
+            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
+            onPress: () => onSwitchRestaurant(r.id || r._id),
+          })),
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    }
+  };
+
   const renderHeader = () => (
     <View style={styles.header}>
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={embedded && drawerToggle ? drawerToggle : () => router.back()} style={styles.backBtn}>
-          <Ionicons name={embedded ? "menu" : "arrow-back"} size={22} color={Colors.textDark} />
-        </TouchableOpacity>
+        {!embedded && (
+          <TouchableOpacity onPress={drawerToggle || (() => router.back())} style={styles.backBtn}>
+            <Ionicons name={drawerToggle ? "menu" : "arrow-back"} size={22} color={Colors.textDark} />
+          </TouchableOpacity>
+        )}
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>{getHeadline()}</Text>
-          <Text style={styles.headerSubtitle}>
-            {dashboardData?.restaurants?.length || 0} restaurant{(dashboardData?.restaurants?.length || 0) !== 1 ? 's' : ''}
-          </Text>
+          <Text style={styles.headerTitle}>{embedded ? getGreetingText() : getHeadline()}</Text>
+          {embedded ? (
+            <TouchableOpacity
+              style={styles.restaurantSwitchChip}
+              onPress={restaurants.length > 1 ? showRestaurantPickerHQ : undefined}
+              activeOpacity={restaurants.length > 1 ? 0.7 : 1}
+            >
+              <Ionicons name="storefront-outline" size={13} color="#10b981" />
+              <Text style={styles.restaurantSwitchText} numberOfLines={1}>
+                {user?.restaurant?.name || dashboardData?.restaurants?.[0]?.name || 'Restaurant'}
+              </Text>
+              {restaurants.length > 1 && (
+                <Ionicons name="swap-horizontal" size={13} color="#94a3b8" />
+              )}
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.headerSubtitle}>
+              {`${dashboardData?.restaurants?.length || 0} restaurant${(dashboardData?.restaurants?.length || 0) !== 1 ? 's' : ''}`}
+            </Text>
+          )}
         </View>
         <TouchableOpacity
           style={styles.aiBtn}
@@ -422,6 +479,9 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
             <Text style={styles.metricLabel}>Avg Order Value</Text>
           </View>
         </View>
+
+        {/* Extra content from home page (quick actions, sales summary, etc.) */}
+        {extraContent && extraContent()}
 
         {/* Revenue Trend (simple bar chart) */}
         {analyticsData?.revenueByDay?.length > 0 && (
@@ -1031,6 +1091,12 @@ const styles = StyleSheet.create({
   backBtn: { padding: 4, marginRight: 8 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#1f2937' },
   headerSubtitle: { fontSize: 12, color: '#9ca3af', marginTop: 1 },
+  restaurantSwitchChip: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+    gap: 4, backgroundColor: '#f1f5f9', paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 16, marginTop: 4,
+  },
+  restaurantSwitchText: { fontSize: 12, fontWeight: '600', color: '#334155', maxWidth: 160 },
   aiBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: Colors.primary, paddingHorizontal: 12, paddingVertical: 7,

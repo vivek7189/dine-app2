@@ -27,11 +27,11 @@ import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
-import AppDrawer from '../../components/AppDrawer';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { canPerform } from '../../utils/permissions';
+import { useTabBar } from '../../contexts/TabBarContext';
 
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
@@ -39,6 +39,7 @@ const PUSHER_CLUSTER = 'ap2';
 export default function TablesScreen() {
   const router = useRouter();
   const { effectivelyOffline } = useOffline();
+  const tabBar = useTabBar();
   const params = useLocalSearchParams();
   const { gridColumns, r } = useResponsive();
   const cols = gridColumns();
@@ -54,7 +55,6 @@ export default function TablesScreen() {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedTableForOrder, setSelectedTableForOrder] = useState(null);
   const [orderModalMode, setOrderModalMode] = useState('view');
-  const [drawerVisible, setDrawerVisible] = useState(false);
   const [showFloorModal, setShowFloorModal] = useState(false);
   const [editingFloor, setEditingFloor] = useState(null);
   const [floorForm, setFloorForm] = useState({ name: '', description: '', areaChargeType: 'none', areaChargeValue: '' });
@@ -140,6 +140,15 @@ export default function TablesScreen() {
       const allTables = floorsData.flatMap(floor => floor.tables || []);
       setTables(allTables);
 
+      // Keep selectedFloor in sync so currentFloorTables reflects new data
+      setSelectedFloor(prev => {
+        if (prev) {
+          const updatedFloor = floorsData.find(f => f.id === prev.id);
+          return updatedFloor || null;
+        }
+        return prev;
+      });
+
       // Save to cache for stale-while-revalidate
       const rid = restaurantIdRef.current;
       if (rid) {
@@ -190,6 +199,23 @@ export default function TablesScreen() {
         }
         return table;
       });
+    });
+
+    // Keep selectedFloor in sync
+    const updateTable = (table) => {
+      if (String(table.id) === tableIdStr) {
+        return {
+          ...table,
+          status: status,
+          currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
+          lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
+        };
+      }
+      return table;
+    };
+    setSelectedFloor(prev => {
+      if (!prev) return prev;
+      return { ...prev, tables: prev.tables?.map(updateTable) || [] };
     });
 
     // Clear updating state after server has had time to process, then do a final refresh
@@ -284,6 +310,9 @@ export default function TablesScreen() {
   // Refresh tables when screen comes into focus (only after initial load)
   useFocusEffect(
     useCallback(() => {
+      // Show tab bar when this screen focuses
+      tabBar?.reset();
+
       // Skip refresh on initial mount
       if (isInitialLoadRef.current) {
         isInitialLoadRef.current = false;
@@ -443,15 +472,17 @@ export default function TablesScreen() {
     channel.bind('order-completed', debouncedRefresh);
     channel.bind('order-deleted', debouncedRefresh);
     channel.bind('tables-reset', () => {
+      const resetT = (t) =>
+        t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t;
       setFloors(prev => prev.map(floor => ({
         ...floor,
-        tables: floor.tables?.map(t =>
-          t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
-        ),
+        tables: floor.tables?.map(resetT),
       })));
-      setTables(prev => prev.map(t =>
-        t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
-      ));
+      setTables(prev => prev.map(resetT));
+      setSelectedFloor(prev => {
+        if (!prev) return prev;
+        return { ...prev, tables: prev.tables?.map(resetT) };
+      });
       debouncedRefresh();
     });
 
@@ -546,16 +577,18 @@ export default function TablesScreen() {
           text: 'Reset All', style: 'destructive', onPress: async () => {
             try {
               await apiClient.resetAllTables(selectedRestaurant?.id);
-              // Optimistic update
+              const resetTable = (t) =>
+                t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t;
+              // Optimistic update — floors, tables, AND selectedFloor
               setFloors(prev => prev.map(floor => ({
                 ...floor,
-                tables: floor.tables?.map(t =>
-                  t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
-                ),
+                tables: floor.tables?.map(resetTable),
               })));
-              setTables(prev => prev.map(t =>
-                t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t
-              ));
+              setTables(prev => prev.map(resetTable));
+              setSelectedFloor(prev => {
+                if (!prev) return prev;
+                return { ...prev, tables: prev.tables?.map(resetTable) };
+              });
             } catch (err) {
               Alert.alert('Error', err.message || 'Failed to reset tables');
             }
@@ -715,26 +748,16 @@ export default function TablesScreen() {
         onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
-        {/* Left accent border */}
-        <View style={[styles.cardAccent, {
-          backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
-        }]} />
         {/* Card Inner */}
         <View style={styles.cardInner}>
-          {/* Status Indicator */}
-          <View style={styles.statusIndicator}>
-            {isAvailable && <View style={styles.statusDotGreen} />}
-            {isOccupied && <View style={styles.statusDotOrange} />}
-            {isReserved && <View style={styles.statusDotPurple} />}
-            {isCleaning && <View style={styles.statusDotBlue} />}
-            {isOutOfService && <View style={styles.statusDotRed} />}
-          </View>
-
           {/* Table Content */}
           <View style={styles.tableContent}>
-            {/* Table Number + Elapsed Time */}
-            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-              <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]}>{table.name}</Text>
+            {/* Table Name Row: dot + name + elapsed time */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+              <View style={[styles.statusDotInline, {
+                backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
+              }]} />
+              <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{table.name}</Text>
               {isOccupied && table.lastOrderTime && (() => {
                 const elapsed = getTimeElapsed(table.lastOrderTime);
                 if (!elapsed) return null;
@@ -776,7 +799,7 @@ export default function TablesScreen() {
             {/* Seats */}
             {table.capacity && (
               <View style={styles.seatsRow}>
-                <Ionicons name="people" size={12} color={isOutOfService ? Colors.textMedium : Colors.textMedium} />
+                <Ionicons name="people" size={14} color={isOutOfService ? Colors.textMedium : Colors.textMedium} />
                 <Text style={[styles.seatsText, isOutOfService && styles.seatsTextDisabled]}>{table.capacity} Seats</Text>
               </View>
             )}
@@ -786,12 +809,12 @@ export default function TablesScreen() {
               {isOutOfService ? (
                 // Out of service - no actions allowed
                 <View style={styles.outOfServiceButtonContainer}>
-                  <Ionicons name="ban" size={12} color="#9ca3af" />
+                  <Ionicons name="ban" size={14} color="#9ca3af" />
                   <Text style={styles.outOfServiceButtonText}>Not Available</Text>
                 </View>
               ) : isAvailable ? (
                 <View style={styles.takeOrderButtonContainer}>
-                  <Ionicons name="restaurant-outline" size={12} color="#fff" />
+                  <Ionicons name="restaurant-outline" size={15} color="#fff" />
                   <Text style={styles.takeOrderButtonText}>Take Order</Text>
                 </View>
               ) : (
@@ -822,6 +845,15 @@ export default function TablesScreen() {
             </View>
           </View>
         </View>
+        {/* Bottom status color bar */}
+        <View style={[
+          styles.statusBar,
+          isAvailable && styles.statusBarGreen,
+          isOccupied && styles.statusBarOrange,
+          isReserved && styles.statusBarPurple,
+          isCleaning && styles.statusBarBlue,
+          isOutOfService && styles.statusBarGrey,
+        ]} />
       </TouchableOpacity>
     );
 
@@ -886,6 +918,10 @@ export default function TablesScreen() {
         setFloors(prev => prev.map(f =>
           f.id === editingFloor.id ? { ...f, ...data } : f
         ));
+        setSelectedFloor(prev => {
+          if (prev?.id === editingFloor.id) return { ...prev, ...data };
+          return prev;
+        });
       } else {
         const response = await apiClient.createFloor(selectedRestaurant.id, data);
         if (response.floor) {
@@ -955,7 +991,9 @@ export default function TablesScreen() {
         status: 'available',
       };
       const response = await apiClient.createTable(selectedRestaurant.id, data);
-      // Refresh floors to get updated table data
+      // Invalidate cache so loadFloorsAndTables fetches fresh data
+      apiClient.invalidateCache('/api/floors/');
+      apiClient.invalidateCache('/api/tables/');
       await loadFloorsAndTables(selectedRestaurant.id);
       setShowAddTableModal(false);
       Alert.alert('Success', 'Table added successfully!');
@@ -984,6 +1022,9 @@ export default function TablesScreen() {
         capacity: parseInt(bulkForm.capacity) || 4,
       };
       const response = await apiClient.bulkCreateTables(selectedRestaurant.id, data);
+      // Invalidate cache so loadFloorsAndTables fetches fresh data
+      apiClient.invalidateCache('/api/floors/');
+      apiClient.invalidateCache('/api/tables/');
       await loadFloorsAndTables(selectedRestaurant.id);
       setShowAddTableModal(false);
       const count = response.created || (to - from + 1);
@@ -1009,12 +1050,16 @@ export default function TablesScreen() {
           onPress: async () => {
             try {
               await apiClient.deleteTable(table.id, selectedRestaurant?.id);
-              // Remove from local state
+              // Remove from local state — floors, tables, AND selectedFloor
               setFloors(prev => prev.map(f => ({
                 ...f,
                 tables: f.tables?.filter(t => t.id !== table.id) || [],
               })));
               setTables(prev => prev.filter(t => t.id !== table.id));
+              setSelectedFloor(prev => {
+                if (!prev) return prev;
+                return { ...prev, tables: prev.tables?.filter(t => t.id !== table.id) || [] };
+              });
             } catch (error) {
               Alert.alert('Error', error.message || 'Failed to delete table');
             }
@@ -1031,12 +1076,16 @@ export default function TablesScreen() {
       updateTableStatusOptimistically(table.id, newStatus, null);
       // Clear customer info if marking available
       if (newStatus === 'available') {
+        const clearCustomer = (t) =>
+          t.id === table.id ? { ...t, status: 'available', customerName: null, reservationTime: null, currentOrderId: null } : t;
         setFloors(prev => prev.map(f => ({
           ...f,
-          tables: f.tables?.map(t =>
-            t.id === table.id ? { ...t, status: 'available', customerName: null, reservationTime: null, currentOrderId: null } : t
-          ) || [],
+          tables: f.tables?.map(clearCustomer) || [],
         })));
+        setSelectedFloor(prev => {
+          if (!prev) return prev;
+          return { ...prev, tables: prev.tables?.map(clearCustomer) || [] };
+        });
       }
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to update table status');
@@ -1299,21 +1348,6 @@ export default function TablesScreen() {
   }
 
   // Animated header compaction
-  const headerHeight = scrollY.interpolate({
-    inputRange: [0, 80],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-  const greetingOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-  const brandScale = scrollY.interpolate({
-    inputRange: [0, 80],
-    outputRange: [1, 0.8],
-    extrapolate: 'clamp',
-  });
   const compactStatsOpacity = scrollY.interpolate({
     inputRange: [0, 60],
     outputRange: [1, 0],
@@ -1329,35 +1363,25 @@ export default function TablesScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => setDrawerVisible(true)}
-          style={styles.menuButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="menu" size={28} color={Colors.textDark} />
-        </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Animated.View style={[styles.brandIcon, { transform: [{ scale: brandScale }] }]}>
-            <Ionicons name="restaurant" size={22} color="#fff" />
-          </Animated.View>
-          <View>
-            <Text style={styles.restaurantName}>{selectedRestaurant?.name || 'Restaurant'}</Text>
-            <Animated.Text style={[styles.userName, { opacity: greetingOpacity }]}>Hello, {user?.name || 'Staff'}</Animated.Text>
+          <View style={styles.brandIcon}>
+            <Ionicons name="restaurant" size={20} color="#fff" />
           </View>
+          <Text style={styles.restaurantName} numberOfLines={1}>{selectedRestaurant?.name || 'Restaurant'}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           {canResetTables && (
             <TouchableOpacity onPress={handleResetAllTables} style={[styles.headerActionBtn, { backgroundColor: '#fef2f2' }]}>
-              <Ionicons name="trash-outline" size={18} color="#ef4444" />
+              <Ionicons name="refresh-circle-outline" size={16} color="#ef4444" />
             </TouchableOpacity>
           )}
           {isOwnerOrAdmin && (
             <TouchableOpacity onPress={openAddTable} style={[styles.headerActionBtn, { backgroundColor: '#eff6ff' }]}>
-              <Ionicons name="add" size={18} color="#3b82f6" />
+              <Ionicons name="add" size={16} color="#3b82f6" />
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={[styles.headerActionBtn, { backgroundColor: '#eef2ff' }]}>
-            <Ionicons name="sync-outline" size={18} color="#6366f1" />
+            <Ionicons name="sync-outline" size={16} color="#6366f1" />
           </TouchableOpacity>
         </View>
       </View>
@@ -1405,8 +1429,7 @@ export default function TablesScreen() {
             ListHeaderComponent={floors.length > 1 ? renderAllChip : null}
             ListFooterComponent={isOwnerOrAdmin ? (
               <TouchableOpacity style={styles.addFloorChip} onPress={openAddFloor}>
-                <Ionicons name="add" size={16} color={Colors.primary} />
-                <Text style={styles.addFloorText}>Add Floor</Text>
+                <Ionicons name="add" size={16} color="#9ca3af" />
               </TouchableOpacity>
             ) : null}
           />
@@ -1423,10 +1446,11 @@ export default function TablesScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
-        )}
+        onScroll={(e) => {
+          const y = e.nativeEvent.contentOffset.y;
+          scrollY.setValue(y);
+          tabBar?.handleScroll(y);
+        }}
         scrollEventThrottle={16}
         contentContainerStyle={styles.tablesGrid}
         showsVerticalScrollIndicator={false}
@@ -1508,17 +1532,6 @@ export default function TablesScreen() {
             }
             Alert.alert('Error', err?.message || 'Failed to complete billing.');
           }
-        }}
-      />
-
-      {/* App Drawer */}
-      <AppDrawer
-        visible={drawerVisible}
-        onClose={() => setDrawerVisible(false)}
-        user={user}
-        onLogout={async () => {
-          await apiClient.logout();
-          router.replace('/(auth)/login');
         }}
       />
 
@@ -2060,15 +2073,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  menuButton: {
-    padding: 6,
-    marginRight: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   headerCenter: {
     flex: 1,
@@ -2077,27 +2083,18 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   brandIcon: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     borderRadius: 10,
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
   },
   restaurantName: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
     color: Colors.textDark,
-  },
-  userName: {
-    fontSize: 11,
-    color: Colors.textMedium,
-    marginTop: 1,
+    flex: 1,
   },
   statusChipsRow: {
     flexDirection: 'row',
@@ -2205,121 +2202,74 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   tablesGrid: {
-    padding: 10,
-    paddingBottom: 90,
+    padding: 8,
+    paddingBottom: 100,
   },
   tableRow: {
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
   },
   tableCard: {
     flex: 1,
     margin: 4,
-    borderRadius: 16,
+    borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#fff',
-    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   tableCardAvailable: {
     backgroundColor: '#fff',
+    borderColor: '#d1fae5',
   },
   tableCardOccupied: {
-    backgroundColor: '#fef9ee',
+    backgroundColor: '#fffbeb',
+    borderColor: '#fed7aa',
   },
   tableCardReserved: {
     backgroundColor: '#faf5ff',
+    borderColor: '#ddd6fe',
   },
   tableCardCleaning: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#bae6fd',
   },
   tableCardOutOfService: {
     backgroundColor: '#f9fafb',
-  },
-  cardAccent: {
-    width: 3.5,
-    borderTopLeftRadius: 16,
-    borderBottomLeftRadius: 16,
+    borderColor: '#e5e7eb',
   },
   cardInner: {
     flex: 1,
-    padding: 10,
-    position: 'relative',
+    padding: 12,
   },
-  statusIndicator: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    zIndex: 2,
+  statusBar: {
+    height: 3,
+    backgroundColor: '#e5e7eb',
   },
-  statusDotGreen: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#16a34a',
-    shadowColor: '#16a34a',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statusDotOrange: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#ea580c',
-    shadowColor: '#ea580c',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statusDotPurple: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#9333ea',
-    shadowColor: '#9333ea',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statusDotBlue: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#3b82f6',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  statusDotRed: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#ef4444',
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 2,
+  statusBarGreen: { backgroundColor: '#22c55e' },
+  statusBarOrange: { backgroundColor: '#f97316' },
+  statusBarPurple: { backgroundColor: '#a855f7' },
+  statusBarBlue: { backgroundColor: '#3b82f6' },
+  statusBarGrey: { backgroundColor: '#9ca3af' },
+  statusDotInline: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
   },
   tableContent: {
     flex: 1,
-    justifyContent: 'space-between',
   },
   tableNumber: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '700',
     color: Colors.textDark,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
+    flex: 1,
   },
   tableNumberDisabled: {
     color: '#9ca3af',
@@ -2365,8 +2315,8 @@ const styles = StyleSheet.create({
   seatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 6,
+    gap: 5,
+    marginTop: 8,
   },
   seatsText: {
     fontSize: 12,
@@ -2386,16 +2336,16 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingVertical: 7,
     backgroundColor: '#16a34a',
-    borderRadius: 10,
+    borderRadius: 8,
     shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.2,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 2,
   },
   takeOrderButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: '#fff',
   },
   occupiedActions: {
@@ -2408,14 +2358,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 7,
+    paddingVertical: 9,
     backgroundColor: '#f9fafb',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
   viewButtonText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textDark,
   },
@@ -2425,14 +2375,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 7,
+    paddingVertical: 9,
     backgroundColor: '#eff6ff',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#bfdbfe',
   },
   addButtonText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#3b82f6',
   },
@@ -2496,20 +2446,15 @@ const styles = StyleSheet.create({
   },
   // Add floor chip
   addFloorChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: Colors.primary,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
     borderStyle: 'dashed',
-  },
-  addFloorText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Floor modal
   floorModalOverlay: {
@@ -2521,15 +2466,15 @@ const styles = StyleSheet.create({
   },
   floorModalCard: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 16,
+    padding: 20,
     width: '100%',
     maxWidth: 380,
-    gap: 16,
+    gap: 14,
   },
   floorModalTitle: {
-    fontSize: 20,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
     color: Colors.textDark,
   },
   floorFormField: {
@@ -2543,8 +2488,8 @@ const styles = StyleSheet.create({
   floorFormInput: {
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
+    padding: 10,
+    fontSize: 14,
     color: Colors.textDark,
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -2585,9 +2530,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   floorDeleteBtn: {
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     backgroundColor: '#fef2f2',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2596,33 +2541,33 @@ const styles = StyleSheet.create({
   },
   floorModalCancel: {
     flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
+    paddingVertical: 11,
+    borderRadius: 10,
     backgroundColor: '#f5f5f5',
     alignItems: 'center',
   },
   floorModalCancelText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: Colors.textMedium,
   },
   floorModalSave: {
     flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
+    paddingVertical: 11,
+    borderRadius: 10,
     backgroundColor: Colors.primary,
     alignItems: 'center',
   },
   floorModalSaveText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   // Header action button
   headerActionBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2651,7 +2596,7 @@ const styles = StyleSheet.create({
   },
   modeBtn: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 8,
     alignItems: 'center',
   },

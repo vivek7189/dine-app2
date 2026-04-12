@@ -52,6 +52,8 @@ export default function CustomerLookup({
   compact = false,
   countryCode = 'IN',
   subtotal = 0,
+  hideLoyalty = false,
+  coolStyle = false,
 }) {
   const [phone, setPhone] = useState('');
   const [lookupStatus, setLookupStatus] = useState('idle'); // idle | loading | found | not_found | error
@@ -238,14 +240,15 @@ export default function CustomerLookup({
       <View style={styles.customerInputRow}>
         <View style={[
           styles.phoneRow,
-          lookupStatus === 'found' && styles.phoneRowFound,
+          coolStyle && styles.phoneRowCool,
+          lookupStatus === 'found' && (coolStyle ? styles.phoneRowCoolFound : styles.phoneRowFound),
           { flex: 1 },
         ]}>
-          <Ionicons name="call-outline" size={16} color={lookupStatus === 'found' ? '#22c55e' : '#9ca3af'} />
+          <Ionicons name="phone-portrait-outline" size={15} color={lookupStatus === 'found' ? '#22c55e' : '#9ca3af'} />
           <TextInput
-            style={styles.phoneInput}
-            placeholder="Customer phone"
-            placeholderTextColor="#9ca3af"
+            style={[styles.phoneInput, coolStyle && styles.phoneInputCool]}
+            placeholder={coolStyle ? 'Enter phone number' : 'Customer phone'}
+            placeholderTextColor={coolStyle ? '#9ca3af' : '#9ca3af'}
             keyboardType="phone-pad"
             value={phone}
             onChangeText={handlePhoneChange}
@@ -264,7 +267,7 @@ export default function CustomerLookup({
             onPress={() => setShowExtraFields(!showExtraFields)}
             activeOpacity={0.7}
           >
-            <Ionicons name={showExtraFields ? 'chevron-up' : 'add'} size={18} color={showExtraFields ? '#6366f1' : '#6b7280'} />
+            <Ionicons name={showExtraFields ? 'chevron-up' : 'add'} size={18} color={showExtraFields ? '#0d9488' : '#6b7280'} />
           </TouchableOpacity>
         )}
       </View>
@@ -335,7 +338,7 @@ export default function CustomerLookup({
           </TouchableOpacity>
 
           {/* Loyalty Redemption Slider */}
-          {hasRedeemablePoints && (
+          {!hideLoyalty && hasRedeemablePoints && (
             <View style={styles.redeemSection}>
               <View style={styles.redeemHeader}>
                 <Text style={styles.redeemLabel}>Redeem points</Text>
@@ -355,7 +358,7 @@ export default function CustomerLookup({
                     value={redeemPoints > 0 ? String(redeemPoints) : ''}
                     onChangeText={handleRedeemInputChange}
                     placeholder="0"
-                    placeholderTextColor="#a78bfa"
+                    placeholderTextColor="#5eead4"
                     maxLength={8}
                   />
                   <Text style={styles.redeemInputSuffix}>pts</Text>
@@ -413,7 +416,7 @@ export default function CustomerLookup({
           )}
 
           {/* Earning display */}
-          {loyaltyEnabled && earnPerAmount > 0 && pointsEarnedPerUnit > 0 && subtotal > 0 && (
+          {!hideLoyalty && loyaltyEnabled && earnPerAmount > 0 && pointsEarnedPerUnit > 0 && subtotal > 0 && (
             <View style={styles.earnSection}>
               {earningInfo.paused ? (
                 <View style={styles.earnRow}>
@@ -447,8 +450,8 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   containerCompact: {
-    padding: 12,
-    marginTop: 4,
+    padding: 4,
+    marginTop: 0,
   },
   customerInputRow: {
     flexDirection: 'row',
@@ -469,6 +472,24 @@ const styles = StyleSheet.create({
     borderColor: '#86efac',
     backgroundColor: '#f0fdf4',
   },
+  phoneRowCool: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d1d5db',
+    borderWidth: 1,
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  phoneRowCoolFound: {
+    backgroundColor: '#ffffff',
+    borderColor: '#86efac',
+  },
+  phoneInputCool: {
+    color: '#1e293b',
+  },
   phoneInput: {
     flex: 1,
     paddingVertical: 11,
@@ -487,8 +508,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   addFieldsBtnActive: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
+    backgroundColor: '#f0fdfa',
+    borderColor: '#5eead4',
   },
   extraFields: {
     marginTop: 8,
@@ -513,11 +534,11 @@ const styles = StyleSheet.create({
   },
   customerInfo: {
     marginTop: 10,
-    backgroundColor: '#f5f3ff',
+    backgroundColor: '#f0fdfa',
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#e9d5ff',
+    borderColor: '#99f6e4',
   },
   customerRow: {
     flexDirection: 'row',
@@ -533,10 +554,10 @@ const styles = StyleSheet.create({
   customerName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6d28d9',
+    color: '#0f766e',
   },
   ordersBadge: {
-    backgroundColor: '#ede9fe',
+    backgroundColor: '#ccfbf1',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
@@ -544,7 +565,7 @@ const styles = StyleSheet.create({
   ordersBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#7c3aed',
+    color: '#0d9488',
   },
   chipRight: {
     flexDirection: 'row',
@@ -573,7 +594,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#e9d5ff',
+    borderTopColor: '#99f6e4',
   },
   redeemHeader: {
     flexDirection: 'row',
@@ -584,12 +605,12 @@ const styles = StyleSheet.create({
   redeemLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6d28d9',
+    color: '#0f766e',
   },
   redeemValue: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#7c3aed',
+    color: '#0d9488',
   },
   redeemControls: {
     gap: 8,
@@ -597,22 +618,22 @@ const styles = StyleSheet.create({
   redeemInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ede9fe',
+    backgroundColor: '#ccfbf1',
     borderRadius: 8,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: '#c4b5fd',
+    borderColor: '#5eead4',
   },
   redeemInput: {
     flex: 1,
     paddingVertical: 8,
     fontSize: 16,
     fontWeight: '600',
-    color: '#6d28d9',
+    color: '#0f766e',
   },
   redeemInputSuffix: {
     fontSize: 12,
-    color: '#7c3aed',
+    color: '#0d9488',
     fontWeight: '500',
   },
   quickPills: {
@@ -624,13 +645,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
-    backgroundColor: '#ede9fe',
+    backgroundColor: '#ccfbf1',
     borderWidth: 1,
-    borderColor: '#c4b5fd',
+    borderColor: '#5eead4',
   },
   pillActive: {
-    backgroundColor: '#7c3aed',
-    borderColor: '#7c3aed',
+    backgroundColor: '#0d9488',
+    borderColor: '#0d9488',
   },
   pillClear: {
     backgroundColor: '#fef2f2',
@@ -640,7 +661,7 @@ const styles = StyleSheet.create({
   pillText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#6d28d9',
+    color: '#0f766e',
   },
   pillTextActive: {
     color: '#fff',
@@ -652,18 +673,18 @@ const styles = StyleSheet.create({
   },
   barTrack: {
     height: 4,
-    backgroundColor: '#e9d5ff',
+    backgroundColor: '#99f6e4',
     borderRadius: 2,
     overflow: 'hidden',
   },
   barFill: {
     height: 4,
-    backgroundColor: '#7c3aed',
+    backgroundColor: '#0d9488',
     borderRadius: 2,
   },
   barLabel: {
     fontSize: 10,
-    color: '#8b5cf6',
+    color: '#0f766e',
     marginTop: 3,
   },
 
@@ -672,7 +693,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#e9d5ff',
+    borderTopColor: '#99f6e4',
   },
   earnRow: {
     flexDirection: 'row',

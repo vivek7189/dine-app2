@@ -61,7 +61,8 @@ const useOfferEngine = ({
 
   const [phoneOverride, setPhoneOverride] = useState(null);
   const [customerGroupIds, setCustomerGroupIds] = useState([]);
-  const groupLookupCacheRef = useRef({}); // phone -> groupIds
+  const [customerGroups, setCustomerGroups] = useState([]); // full objects { id, name, color }
+  const groupLookupCacheRef = useRef({}); // phone -> { ids, groups }
   const wasManuallySelectedRef = useRef(false);
   const settingsLoadedRef = useRef(false);
 
@@ -131,14 +132,15 @@ const useOfferEngine = ({
 
   // -------- customer group lookup --------
   useEffect(() => {
-    if (!restaurantId) { setCustomerGroupIds([]); return; }
+    if (!restaurantId) { setCustomerGroupIds(prev => prev.length ? [] : prev); return; }
     const phone = resolvedContext?.customerPhone;
     const cid = resolvedContext?.customerId;
-    if (!phone && !cid) { setCustomerGroupIds([]); return; }
+    if (!phone && !cid) { setCustomerGroupIds(prev => prev.length ? [] : prev); setCustomerGroups(prev => prev.length ? [] : prev); return; }
 
     const cacheKey = `${restaurantId}|${normalizePhone(phone) || ''}|${cid || ''}`;
     if (groupLookupCacheRef.current[cacheKey]) {
-      setCustomerGroupIds(groupLookupCacheRef.current[cacheKey]);
+      setCustomerGroupIds(groupLookupCacheRef.current[cacheKey].ids);
+      setCustomerGroups(groupLookupCacheRef.current[cacheKey].groups);
       return;
     }
     let cancelled = false;
@@ -154,10 +156,17 @@ const useOfferEngine = ({
         ).catch(() => null);
         const groups = res?.groups || [];
         const ids = groups.map(g => g.id).filter(Boolean);
-        groupLookupCacheRef.current[cacheKey] = ids;
-        if (!cancelled) setCustomerGroupIds(ids);
+        const groupObjs = groups.map(g => ({ id: g.id, name: g.name, color: g.color })).filter(g => g.id);
+        groupLookupCacheRef.current[cacheKey] = { ids, groups: groupObjs };
+        if (!cancelled) {
+          setCustomerGroupIds(ids);
+          setCustomerGroups(groupObjs);
+        }
       } catch (_) {
-        if (!cancelled) setCustomerGroupIds([]);
+        if (!cancelled) {
+          setCustomerGroupIds(prev => prev.length ? [] : prev);
+          setCustomerGroups(prev => prev.length ? [] : prev);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -187,14 +196,29 @@ const useOfferEngine = ({
 
       if (hasContext) {
         if (matchesAudience(offer, ctxForFilter)) out.push(offer);
-        else if (!isPublicAudience) out.push({ ...offer, _requiresLogin: true });
+        // targeted offer that doesn't match: simply exclude
       } else {
         if (isPublicAudience) out.push(offer);
-        else out.push({ ...offer, _requiresLogin: true });
+        // targeted audience without context: exclude (shown after customer identified)
       }
     }
     return out;
   }, [allOffers, subtotal, cart, resolvedContext]);
+
+  // Split applicable offers into generic (everyone/first-order) and personalized (group/customer-targeted)
+  const { genericOffers, personalizedOffers } = useMemo(() => {
+    const generic = [];
+    const personalized = [];
+    for (const offer of applicableOffers) {
+      const audienceType = offer.audience?.type || (offer.isFirstOrderOnly ? 'first_order' : 'all');
+      if (audienceType === 'all' || audienceType === 'first_order') {
+        generic.push(offer);
+      } else {
+        personalized.push(offer);
+      }
+    }
+    return { genericOffers: generic, personalizedOffers: personalized };
+  }, [applicableOffers]);
 
   // -------- helper: calculate discount for a single offer --------
   const calculateDiscountForOffer = useCallback((offer, sub, c, ctx) => {
@@ -263,7 +287,7 @@ const useOfferEngine = ({
     if (!shouldAutoApply) return;
     if (wasManuallySelectedRef.current) return;
 
-    const eligible = applicableOffers.filter(o => !o._requiresLogin);
+    const eligible = applicableOffers;
     if (eligible.length === 0) {
       if (selectedOfferId) {
         setSelectedOfferIdInternal(null);
@@ -373,6 +397,8 @@ const useOfferEngine = ({
 
   return {
     applicableOffers,
+    genericOffers,
+    personalizedOffers,
     selectedOfferId,
     setSelectedOfferId,
     selectedOfferIds,
@@ -382,6 +408,7 @@ const useOfferEngine = ({
     freeItems,
     isLoadingOffers,
     customerGroupIds,
+    customerGroups,
     recomputeWithPhone,
     autoApplied,
     resetOffers,

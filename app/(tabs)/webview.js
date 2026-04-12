@@ -77,7 +77,9 @@ export default function WebViewScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Minimal Header — back + refresh only */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <TouchableOpacity onPress={() => {
+          router.replace('/(tabs)/more');
+        }} style={styles.headerBtn}>
           <Ionicons name="arrow-back" size={22} color="#374151" />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />

@@ -126,9 +126,9 @@ export default function BillingSummaryBar({
 
 const styles = StyleSheet.create({
   container: {
-    marginHorizontal: 12,
+    marginHorizontal: 0,
     marginTop: 8,
-    borderRadius: 12,
+    borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: '#dc2626',
     paddingHorizontal: 12,

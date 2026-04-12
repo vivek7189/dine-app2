@@ -17,7 +17,7 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
@@ -39,6 +39,7 @@ import { getCached, setCache } from '../../services/cacheManager';
 import Pusher from 'pusher-js/react-native';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import { useTabBar } from '../../contexts/TabBarContext';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -55,6 +56,10 @@ export default function MenuScreen() {
   const params = useLocalSearchParams();
   const { gridColumns, r } = useResponsive();
   const { effectivelyOffline, pendingCount } = useOffline();
+  const tabBar = useTabBar();
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, 24) : insets.bottom;
+  const tabBarHeight = r(64, 74) + bottomInset;
   const cols = gridColumns();
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -90,6 +95,7 @@ export default function MenuScreen() {
   const [pricingRules, setPricingRules] = useState([]);
   const [activePricingRuleId, setActivePricingRuleId] = useState(null);
   const [autoSelectedRule, setAutoSelectedRule] = useState(false);
+  const [floors, setFloors] = useState([]);
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -161,6 +167,13 @@ export default function MenuScreen() {
       pusher.unsubscribe(channelName);
     };
   }, [restaurantId]);
+
+  // Show tab bar when this screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      tabBar?.reset();
+    }, [tabBar])
+  );
 
   // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
   useFocusEffect(
@@ -316,30 +329,32 @@ export default function MenuScreen() {
   }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
 
   // When menu tab regains focus WITHOUT fresh table params, clear stale table selection
-  // This handles: user taps "Menu" tab directly (no table context)
+  // This handles: user taps "Menu" tab directly (no table context) or navigates back
+  const hasBlurredRef = useRef(false);
+  const selectedTableRef = useRef(null);
+  // Keep ref in sync with state
+  useEffect(() => { selectedTableRef.current = selectedTable; }, [selectedTable]);
+
   useFocusEffect(
     useCallback(() => {
-      // If the stamp hasn't changed since last focus, user came back via tab bar — clear table
-      if (selectedTable && tableParamsStampRef.current === lastAppliedStampRef.current) {
-        // Stamp matches — this is a re-focus, not a fresh navigation
-        // But only clear if we actually lost focus before (not initial mount)
-        // We use a small trick: on first mount, both refs are null, so they match — skip
-        if (tableParamsStampRef.current !== null) {
-          // Don't clear on first focus after params were set
-          // Mark that we've seen this stamp on focus; next time we see the same stamp → clear
-          const seenKey = `seen_${tableParamsStampRef.current}`;
-          if (lastAppliedStampRef.current === seenKey) {
-            setSelectedTable(null);
-            setExistingOrderId(null);
-            setCart([]);
-            tableParamsStampRef.current = null;
-            lastAppliedStampRef.current = null;
-          } else {
-            lastAppliedStampRef.current = seenKey;
-          }
-        }
+      // On focus: if we blurred before and had a table selected, clear it
+      if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
+        setSelectedTable(null);
+        setExistingOrderId(null);
+        setCart([]);
+        setIsBarTabMode(false);
+        setAutoSelectedRule(false);
+        setActivePricingRuleId(null);
+        tableParamsStampRef.current = null;
+        lastAppliedStampRef.current = null;
       }
-    }, []) // No deps — runs on every focus
+      hasBlurredRef.current = false;
+
+      // On blur: mark that we left this screen
+      return () => {
+        hasBlurredRef.current = true;
+      };
+    }, []) // No deps — runs on every focus/blur
   );
 
   // Auto-select pricing rule based on table floor
@@ -447,6 +462,12 @@ export default function MenuScreen() {
           } catch { /* ignore */ }
         })(),
         loadMenu(rid),
+        (async () => {
+          try {
+            const fRes = await apiClient.getFloors(rid);
+            setFloors(fRes?.floors || []);
+          } catch { /* ignore */ }
+        })(),
       ]);
       setSyncing(false);
     } catch (error) {
@@ -543,7 +564,7 @@ export default function MenuScreen() {
     try {
       apiClient.invalidateCache(`/api/menus/${restaurantId}`);
       await loadMenu(restaurantId);
-      toast('Menu refreshed');
+      toast.success('Menu refreshed');
     } catch (error) {
       console.error('Error refreshing menu:', error);
     } finally {
@@ -619,6 +640,19 @@ export default function MenuScreen() {
       setActivePricingRuleId(null);
     }
   }, [multiPricingEnabled, pricingRules, params.floorName, selectedTable]);
+
+  // Handle table number entered from CashierCartModal → lookup floor → auto-select pricing rule
+  const handleCashierTableSelect = useCallback((tableName, floorName) => {
+    if (tableName && floorName) {
+      setSelectedTable({ id: null, name: tableName, floor: floorName });
+    } else if (tableName) {
+      setSelectedTable({ id: null, name: tableName, floor: '' });
+    } else {
+      setSelectedTable(null);
+      setAutoSelectedRule(false);
+      setActivePricingRuleId(null);
+    }
+  }, []);
 
   // Re-price cart when active pricing rule changes
   useEffect(() => {
@@ -748,13 +782,13 @@ export default function MenuScreen() {
     return subtotal + taxAmount;
   };
 
-  const handleSendToKitchen = async (customerPhone = '') => {
+  const handleSendToKitchen = async (customerPhone = '', specialInstructions = null, discountData = {}, tableNumberFromModal = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before sending to kitchen.');
       return;
     }
 
-    if (!selectedTable && !params.tableNumber) {
+    if (!selectedTable && !params.tableNumber && !tableNumberFromModal) {
       Alert.alert('Select Table', 'Please select a table first.');
       return;
     }
@@ -763,7 +797,7 @@ export default function MenuScreen() {
 
     try {
       const tableId = selectedTable?.id || params.tableId;
-      const tableNumber = selectedTable?.name || params.tableNumber;
+      const tableNumber = selectedTable?.name || params.tableNumber || tableNumberFromModal;
       let response;
       let orderId;
 
@@ -782,7 +816,7 @@ export default function MenuScreen() {
         response = await apiClient.updateOrder(existingOrderId, orderData);
         orderId = existingOrderId;
       } else {
-        // Create new order
+        // Create new order — include full billing data from WaiterCartModal
         const orderData = {
           restaurantId,
           tableNumber: tableNumber,
@@ -800,6 +834,24 @@ export default function MenuScreen() {
             waiterName: user?.name || 'Waiter',
           },
           ...(customerPhone && { customerPhone }),
+          ...(discountData.customerId && { customerId: discountData.customerId }),
+          ...(discountData.selectedOfferIds?.length > 0 && { offerIds: discountData.selectedOfferIds }),
+          ...(discountData.selectedOfferNames?.length > 0 && { selectedOfferName: discountData.selectedOfferNames.join(', ') }),
+          ...(discountData.appliedOffers?.length > 0 && { appliedOffers: discountData.appliedOffers }),
+          ...(discountData.offerDiscount > 0 && { discountAmount: discountData.offerDiscount }),
+          ...(discountData.totalDiscount > 0 && { totalDiscount: discountData.totalDiscount }),
+          ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
+          ...(discountData.loyaltyDiscount > 0 && { loyaltyDiscount: discountData.loyaltyDiscount }),
+          ...(discountData.serviceChargeAmount > 0 && {
+            serviceChargeAmount: discountData.serviceChargeAmount,
+            serviceChargeRate: discountData.serviceChargeRate,
+            serviceChargeLabel: discountData.serviceChargeLabel,
+          }),
+          ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
+          ...(discountData.totalTax > 0 && { taxAmount: discountData.totalTax }),
+          ...(discountData.roundOffAmount && { roundOffAmount: discountData.roundOffAmount }),
+          ...(discountData.grandTotal && { finalAmount: discountData.grandTotal }),
+          ...(specialInstructions && { specialInstructions }),
           pricingRuleId: activePricingRuleId || null,
         };
 
@@ -842,14 +894,14 @@ export default function MenuScreen() {
     }
   };
 
-  const handlePlaceOrder = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}) => {
+  const handlePlaceOrder = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
     // For admin/manager - full billing flow with discount support
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
     }
 
-    if (!existingOrderId && !selectedTable && !params.tableNumber) {
+    if (!existingOrderId && !selectedTable && !params.tableNumber && !tableNumberFromModal) {
       Alert.alert('Select Table', 'Please select a table first.');
       return;
     }
@@ -985,7 +1037,7 @@ export default function MenuScreen() {
       } else {
         const orderData = {
           restaurantId,
-          tableNumber: selectedTable?.name || params.tableNumber,
+          tableNumber: selectedTable?.name || params.tableNumber || tableNumberFromModal,
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
           paymentMethod: billingFields.paymentMethod || paymentMethod,
@@ -1056,7 +1108,7 @@ export default function MenuScreen() {
   };
 
   // Cashier/Sales - Counter sales without table requirement
-  const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}) => {
+  const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -1106,6 +1158,7 @@ export default function MenuScreen() {
 
       const orderData = {
         restaurantId,
+        ...(tableNumberFromModal ? { tableNumber: tableNumberFromModal } : {}),
         items: cart.map(item => ({
           menuItemId: item.menuItemId || item.id,
           name: item.name,
@@ -1170,6 +1223,7 @@ export default function MenuScreen() {
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
         orderType: orderType,
+        ...(tableNumberFromModal ? { tableNumber: tableNumberFromModal } : {}),
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         timestamp: new Date(),
         staffName: user?.name || 'Cashier',
@@ -1436,6 +1490,15 @@ export default function MenuScreen() {
   };
 
   const handleBack = () => {
+    // Clear table order state before going back
+    setSelectedTable(null);
+    setCart([]);
+    setExistingOrderId(null);
+    setIsBarTabMode(false);
+    setAutoSelectedRule(false);
+    setActivePricingRuleId(null);
+    tableParamsStampRef.current = null;
+    lastAppliedStampRef.current = null;
     router.back();
   };
 
@@ -1730,6 +1793,11 @@ export default function MenuScreen() {
                     setSelectedTable(null);
                     setCart([]);
                     setExistingOrderId(null);
+                    setIsBarTabMode(false);
+                    setAutoSelectedRule(false);
+                    setActivePricingRuleId(null);
+                    tableParamsStampRef.current = null;
+                    lastAppliedStampRef.current = null;
                   }}
                   style={styles.clearTableButton}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -1753,8 +1821,8 @@ export default function MenuScreen() {
               </View>
             </View>
             {/* Search bar for table order mode */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, gap: 8 }}>
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 4, gap: 8 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
                 <Ionicons name="search" size={16} color="#9ca3af" />
                 <TextInput
                   style={{ flex: 1, fontSize: 14, color: '#1f2937', padding: 0, fontWeight: '500' }}
@@ -1819,8 +1887,8 @@ export default function MenuScreen() {
                 <Ionicons name="search" size={18} color="#9ca3af" />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search menu items..."
-                  placeholderTextColor="#9ca3af"
+                  placeholder="Search by name or code..."
+                  placeholderTextColor="#94a3b8"
                   value={searchTerm || shortCodeSearch}
                   onChangeText={(text) => {
                     if (text.length <= 5 && text === text.toUpperCase()) {
@@ -2005,10 +2073,11 @@ export default function MenuScreen() {
       {/* Menu Items - 2 Column Grid */}
       <FlatList
         ref={menuFlatListRef}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
-        )}
+        onScroll={(e) => {
+          const y = e.nativeEvent.contentOffset.y;
+          scrollY.setValue(y);
+          tabBar?.handleScroll(y);
+        }}
         scrollEventThrottle={16}
         data={filteredItems}
         renderItem={renderMenuItem}
@@ -2033,7 +2102,7 @@ export default function MenuScreen() {
 
       {/* Unified Bottom Checkout Bar - all roles */}
       {cart.length > 0 && (
-        <View style={styles.checkoutBar}>
+        <View style={[styles.checkoutBar, { bottom: tabBarHeight }]}>
           <View style={styles.checkoutBarLeft}>
             <View style={styles.checkoutBadge}>
               <Text style={styles.checkoutBadgeText}>{cart.length}</Text>
@@ -2134,6 +2203,13 @@ export default function MenuScreen() {
           total={getCartTotal()}
           tableNumber={selectedTable?.name || params.tableNumber}
           sending={sendingOrder}
+          restaurantId={restaurantId}
+          countryCode="IN"
+          taxSettings={taxSettings}
+          billingSettings={billingSettings}
+          floors={floors}
+          onTableSelect={handleCashierTableSelect}
+          selectedTable={selectedTable}
         />
       ) : isCashier ? (
         <CashierCartModal
@@ -2157,6 +2233,9 @@ export default function MenuScreen() {
           activePricingRuleId={activePricingRuleId}
           setActivePricingRuleId={setActivePricingRuleId}
           autoSelectedRule={autoSelectedRule}
+          floors={floors}
+          onTableSelect={handleCashierTableSelect}
+          selectedTable={selectedTable}
         />
       ) : (
         <CartModal
@@ -2183,6 +2262,9 @@ export default function MenuScreen() {
           setActivePricingRuleId={setActivePricingRuleId}
           autoSelectedRule={autoSelectedRule}
           isUpdateOrder={!!existingOrderId}
+          floors={floors}
+          onTableSelect={handleCashierTableSelect}
+          selectedTable={selectedTable}
         />
       )}
 
@@ -2192,20 +2274,16 @@ export default function MenuScreen() {
         onClose={() => {
           setShowKOTModal(false);
           setKotOrderData(null);
+          setSelectedTable(null);
+          setExistingOrderId(null);
+          setActivePricingRuleId(null);
+          setAutoSelectedRule(false);
           if (isBarTabMode) {
             // Bar tab mode: go back to bar billing
             router.back();
-          } else if (selectedTable || params.tableId) {
-            // Redirect to tables screen after closing KOT
-            router.replace({
-              pathname: '/(tabs)/tables',
-              params: {
-                tableId: selectedTable?.id || params.tableId,
-                orderId: kotOrderData?.orderId,
-                tableStatus: 'occupied',
-                tableNumber: selectedTable?.name || params.tableNumber,
-              },
-            });
+          } else {
+            // Always redirect to tables screen after closing KOT
+            router.replace('/(tabs)/tables');
           }
         }}
         orderData={kotOrderData}
@@ -2217,28 +2295,31 @@ export default function MenuScreen() {
         onClose={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);
-          // Navigate back to tables if came from table view (Complete Bill flow)
-          if (selectedTable || params.tableId) {
-            router.replace({
-              pathname: '/(tabs)/tables',
-              params: {
-                tableId: selectedTable?.id || params.tableId,
-                tableStatus: 'available',
-                tableNumber: selectedTable?.name || params.tableNumber,
-              },
-            });
-          }
+          setCart([]);
+          setSelectedTable(null);
+          setExistingOrderId(null);
+          setActivePricingRuleId(null);
+          setAutoSelectedRule(false);
+          // Navigate back to tables page
+          router.replace('/(tabs)/tables');
         }}
         invoiceData={lastOrderData}
         onNewOrder={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);
+          setCart([]);
+          setSelectedTable(null);
+          setExistingOrderId(null);
+          setActivePricingRuleId(null);
+          setAutoSelectedRule(false);
+          // Navigate to Tables page for fresh table selection
+          router.replace('/(tabs)/tables');
         }}
       />
       {/* Floating Category FAB - bottom right, above checkout bar */}
       {categories.length > 1 && (
         <TouchableOpacity
-          style={[styles.categoryFAB, cart.length > 0 && { bottom: 90 + (Platform.OS === 'android' ? 16 : 0) }]}
+          style={[styles.categoryFAB, { bottom: tabBarHeight + (cart.length > 0 ? 60 : 8) }]}
           onPress={() => setShowCategorySheet(true)}
           activeOpacity={0.8}
         >
@@ -2536,10 +2617,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     gap: 10,
   },
   searchInput: {
@@ -2547,13 +2628,14 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1f2937',
     padding: 0,
-    fontWeight: '500',
+    fontWeight: '400',
+    letterSpacing: 0,
   },
   searchFilterBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#f3f4f6',
+    borderRadius: 14,
+    backgroundColor: '#f1f5f9',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2623,7 +2705,7 @@ const styles = StyleSheet.create({
   menuList: {
     paddingHorizontal: 16,
     paddingTop: 0,
-    paddingBottom: Platform.OS === 'android' ? 120 : 100,
+    paddingBottom: Platform.OS === 'android' ? 200 : 180,
   },
   menuRow: {
     justifyContent: 'space-between',
@@ -2881,7 +2963,7 @@ const styles = StyleSheet.create({
   // Category FAB
   categoryFAB: {
     position: 'absolute',
-    bottom: 24 + (Platform.OS === 'android' ? 16 : 0),
+    bottom: 24,
     right: 16,
     height: 52,
     borderRadius: 26,
@@ -2981,8 +3063,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#ffffff',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'android' ? 40 : 28,
+    paddingTop: 10,
+    paddingBottom: 10,
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     shadowColor: '#000',

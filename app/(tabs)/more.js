@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,28 +7,47 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  ActionSheetIOS,
+  Animated,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
-import { Colors } from '../../constants/Theme';
+import { clearCache } from '../../services/cacheManager';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import SyncDetailsSheet from '../../components/SyncDetailsSheet';
+import BusinessSettings from '../../components/BusinessSettings';
+import { hasPin, setPin, clearPin } from '../../services/pinLock';
 
 export default function MoreScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
-  const { effectivelyOffline, pendingCount, failedCount } = useOffline();
+  const { isOnline, isOfflineMode, effectivelyOffline, pendingCount, failedCount, lastSyncAt, toggleOfflineMode, triggerSync } = useOffline();
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [businessInfoExpanded, setBusinessInfoExpanded] = useState(false);
+  const [connectivityExpanded, setConnectivityExpanded] = useState(false);
+  const chevronAnim = useRef(new Animated.Value(0)).current;
+  const bizChevronAnim = useRef(new Animated.Value(0)).current;
+  const connChevronAnim = useRef(new Animated.Value(0)).current;
+  const [showSyncSheet, setShowSyncSheet] = useState(false);
+  const [seedingData, setSeedingData] = useState(false);
+  const [pinEnabled, setPinEnabled] = useState(false);
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [restaurants, setRestaurants] = useState([]);
+  const [switchingRestaurant, setSwitchingRestaurant] = useState(false);
 
   useEffect(() => {
     loadUserData();
+    hasPin().then(setPinEnabled);
   }, []);
 
-  // Listen for restaurant switch from other tabs
   useEffect(() => {
     const unsub = restaurantEvents.on('switch', ({ restaurant: newRest }) => {
       setRestaurant(newRest);
@@ -44,113 +63,135 @@ export default function MoreScreen() {
         setUser(userData);
         setRestaurant(userData.restaurant);
       }
+      // Fetch restaurants list for switcher
+      try {
+        const restResponse = await apiClient.getRestaurants();
+        const restList = restResponse?.restaurants || [];
+        if (restList.length > 0) setRestaurants(restList);
+      } catch (e) {
+        console.log('Could not fetch restaurants:', e.message);
+      }
     } catch (error) {
       console.error('Error loading user data:', error);
     }
   };
 
+  const handleSwitchRestaurant = async (newRestaurantId) => {
+    const currentId = getRestaurantId();
+    if (newRestaurantId === currentId) return;
+    try {
+      setSwitchingRestaurant(true);
+      // Clear all caches (AsyncStorage + in-memory API cache)
+      await clearCache('cache_');
+      apiClient.clearAllCache?.();
+      // Update backend preference
+      await apiClient.updateUserPreferences({ defaultRestaurantId: newRestaurantId });
+      // Fetch fresh restaurant data
+      const res = await apiClient.getRestaurant(newRestaurantId);
+      const freshData = res?.restaurant || res;
+      const newRestaurant = freshData?.name ? { id: newRestaurantId, ...freshData } : null;
+      // Update stored user
+      const updatedUser = { ...user, restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant };
+      await apiClient.setUser(updatedUser);
+      setUser(updatedUser);
+      setRestaurant(newRestaurant || user?.restaurant);
+      // Broadcast switch to all tabs
+      restaurantEvents.emit('switch', { restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant });
+    } catch (error) {
+      console.error('Error switching restaurant:', error);
+      Alert.alert('Error', 'Failed to switch restaurant. Please try again.');
+    } finally {
+      setSwitchingRestaurant(false);
+    }
+  };
+
+  const showRestaurantPicker = () => {
+    if (restaurants.length <= 1) return;
+    const currentId = getRestaurantId();
+    if (Platform.OS === 'ios') {
+      const options = [...restaurants.map(r => {
+        const name = r.name || r.id;
+        const rid = r.id || r._id;
+        return rid === currentId ? `${name} (current)` : name;
+      }), 'Cancel'];
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
+        (idx) => {
+          if (idx < restaurants.length) {
+            handleSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Switch Restaurant',
+        'Select which restaurant to manage',
+        [
+          ...restaurants.map(r => ({
+            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
+            onPress: () => handleSwitchRestaurant(r.id || r._id),
+          })),
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    }
+  };
+
   const role = user?.role?.toLowerCase() || '';
   const businessType = restaurant?.businessType || user?.restaurant?.businessType || 'restaurant';
-  const isOwnerOrManager = ['owner', 'manager', 'admin'].includes(role);
+  const isOwnerOrAdmin = ['owner', 'admin'].includes(role);
   const isHotelType = businessType === 'hotel';
   const initials = (user?.name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  const getRestaurantId = () => user?.restaurantId || user?.restaurant?.id || restaurant?.id;
 
   const menuSections = [
     {
       title: 'Management',
       items: [
-        {
-          title: 'Headquarters',
-          icon: 'analytics-outline',
-          route: '/(tabs)/headquarters',
-          roles: ['owner'],
-        },
-        {
-          title: 'Menu Management',
-          icon: 'restaurant-outline',
-          route: '/(tabs)/menu-management',
-          roles: ['owner', 'manager', 'admin', 'cashier'],
-        },
-        {
-          title: 'Customers',
-          icon: 'people-outline',
-          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } },
-          roles: ['owner', 'manager', 'admin'],
-        },
-        {
-          title: 'Inventory',
-          icon: 'cube-outline',
-          route: '/(tabs)/inventory',
-          roles: ['owner', 'manager', 'admin'],
-        },
-        {
-          title: 'Kitchen Display',
-          icon: 'flame-outline',
-          route: '/(tabs)/kitchen',
-          roles: ['owner', 'manager', 'admin', 'waiter', 'employee'],
-        },
-        {
-          title: 'Google Reviews',
-          icon: 'star-outline',
-          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/admin?tab=google-reviews`, title: 'Google Reviews' } },
-          roles: ['owner', 'manager', 'admin'],
-        },
+        { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner'] },
+        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'] },
+        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'] },
+        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'] },
+        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'] },
+        { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
       ],
     },
     {
       title: 'Finance',
       items: [
-        {
-          title: 'Books',
-          icon: 'book-outline',
-          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } },
-          roles: ['owner', 'manager', 'admin'],
-        },
-        {
-          title: 'Invoices',
-          icon: 'document-text-outline',
-          route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } },
-          roles: ['owner', 'manager', 'admin'],
-        },
+        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'] },
+        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'] },
       ],
     },
     {
       title: 'History',
       items: [
-        {
-          title: 'Order History',
-          icon: 'time-outline',
-          route: '/(tabs)/order-history',
-          roles: null,
-        },
+        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null },
       ],
     },
-    ...(isHotelType
-      ? [
-          {
-            title: 'Hotel',
-            items: [
-              {
-                title: 'Hotel Management',
-                icon: 'bed-outline',
-                route: '/(tabs)/hotel',
-                roles: null,
-              },
-            ],
-          },
-        ]
-      : []),
-    {
-      title: 'Account',
+    ...(isHotelType ? [{
+      title: 'Hotel',
       items: [
-        {
-          title: 'Settings',
-          icon: 'settings-outline',
-          route: '/(tabs)/profile',
-          roles: null,
-        },
+        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: null },
       ],
-    },
+    }] : []),
+  ];
+
+  const adminTabs = [
+    { title: 'General', icon: 'settings-outline', tabId: 'settings', color: '#6366f1' },
+    { title: 'Restaurants', icon: 'storefront-outline', tabId: 'restaurants', color: '#ec4899' },
+    { title: 'Staff', icon: 'people-outline', tabId: 'staff', color: '#8b5cf6' },
+    { title: 'Tax', icon: 'receipt-outline', tabId: 'tax', color: '#f59e0b' },
+    { title: 'Pricing', icon: 'pricetag-outline', tabId: 'pricing', color: '#10b981' },
+    { title: 'Payments', icon: 'card-outline', tabId: 'payments', color: '#3b82f6' },
+    { title: 'Billing', icon: 'document-text-outline', tabId: 'billing-settings', color: '#ef4444' },
+    { title: 'Currency', icon: 'cash-outline', tabId: 'currency', color: '#14b8a6' },
+    { title: 'Print', icon: 'print-outline', tabId: 'print', color: '#64748b' },
+    { title: 'Orders', icon: 'clipboard-outline', tabId: 'order-management', color: '#f97316' },
+    { title: 'Features', icon: 'toggle-outline', tabId: 'features', color: '#a855f7' },
+    { title: 'Offers', icon: 'gift-outline', tabId: 'offers', color: '#e11d48' },
+    { title: 'Loyalty', icon: 'star-outline', tabId: 'loyalty', color: '#eab308' },
   ];
 
   const shouldShowItem = (item) => {
@@ -158,6 +199,28 @@ export default function MoreScreen() {
     if (!role) return false;
     return item.roles.includes(role);
   };
+
+  const toggleSettings = () => {
+    const toValue = settingsExpanded ? 0 : 1;
+    Animated.spring(chevronAnim, { toValue, useNativeDriver: true, tension: 200, friction: 15 }).start();
+    setSettingsExpanded(!settingsExpanded);
+  };
+
+  const toggleBusinessInfo = () => {
+    const toValue = businessInfoExpanded ? 0 : 1;
+    Animated.spring(bizChevronAnim, { toValue, useNativeDriver: true, tension: 200, friction: 15 }).start();
+    setBusinessInfoExpanded(!businessInfoExpanded);
+  };
+
+  const toggleConnectivity = () => {
+    const toValue = connectivityExpanded ? 0 : 1;
+    Animated.spring(connChevronAnim, { toValue, useNativeDriver: true, tension: 200, friction: 15 }).start();
+    setConnectivityExpanded(!connectivityExpanded);
+  };
+
+  const chevronRotation = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+  const bizChevronRotation = bizChevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+  const connChevronRotation = connChevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 
   const handleNavigate = (route) => {
     router.push(route);
@@ -181,12 +244,18 @@ export default function MoreScreen() {
     );
   };
 
+  const lastSyncText = lastSyncAt ? (() => {
+    const diff = Date.now() - lastSyncAt;
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    return `${Math.floor(diff / 3600000)}h ago`;
+  })() : null;
+
   return (
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        {/* ── Branded Header Banner ──────────────────── */}
+        {/* ── Header Banner ──────────────────────────── */}
         <View style={styles.headerBanner}>
-          {/* Brand row */}
           <View style={styles.brandRow}>
             <View style={styles.brandIcon}>
               <Ionicons name="restaurant" size={18} color="#fff" />
@@ -194,69 +263,363 @@ export default function MoreScreen() {
             <Text style={styles.brandName}>DineOpen</Text>
           </View>
 
-          {/* Avatar */}
           <View style={styles.avatarContainer}>
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
-
-          {/* User info */}
           <Text style={styles.userName}>{user?.name || 'Staff Member'}</Text>
-          <Text style={styles.userSubtitle}>
-            {restaurant?.name || 'Your Restaurant'}
-          </Text>
+          <View style={styles.rolePill}>
+            <Text style={styles.rolePillText}>{role || 'Staff'}</Text>
+          </View>
         </View>
 
-        {/* ── Sync Status (conditional) ──────────────── */}
-        {(effectivelyOffline || pendingCount > 0 || failedCount > 0) && (
-          <View style={styles.syncCard}>
-            <View style={[styles.syncIcon, { backgroundColor: effectivelyOffline ? '#fef3c7' : '#ecfdf5' }]}>
-              <Ionicons
-                name={effectivelyOffline ? 'cloud-offline-outline' : 'cloud-done-outline'}
-                size={20}
-                color={effectivelyOffline ? '#d97706' : '#10b981'}
-              />
+        {/* ── Profile Info Card ──────────────────────── */}
+        <View style={styles.profileCard}>
+          {/* Restaurant Info + Switcher */}
+          <View style={styles.profileRow}>
+            <View style={[styles.profileIconBg, { backgroundColor: '#fef3c7' }]}>
+              <Ionicons name="storefront-outline" size={16} color="#d97706" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.syncTitle}>
-                {effectivelyOffline ? 'Offline Mode' : 'Online'}
-              </Text>
-              {(pendingCount > 0 || failedCount > 0) && (
-                <Text style={styles.syncSubtitle}>
-                  {pendingCount > 0 ? `${pendingCount} pending` : ''}{pendingCount > 0 && failedCount > 0 ? ' · ' : ''}{failedCount > 0 ? `${failedCount} failed` : ''}
-                </Text>
-              )}
+              <Text style={styles.profileLabel}>Restaurant</Text>
+              <Text style={styles.profileValue}>{restaurant?.name || 'Not set'}</Text>
             </View>
-            {pendingCount > 0 && (
-              <View style={styles.syncBadge}>
-                <Text style={styles.syncBadgeText}>{pendingCount}</Text>
+            {restaurants.length > 1 && (
+              <TouchableOpacity
+                style={styles.switchRestaurantBtn}
+                onPress={showRestaurantPicker}
+                activeOpacity={0.7}
+                disabled={switchingRestaurant}
+              >
+                {switchingRestaurant ? (
+                  <ActivityIndicator size="small" color="#10b981" />
+                ) : (
+                  <>
+                    <Ionicons name="swap-horizontal" size={14} color="#10b981" />
+                    <Text style={styles.switchRestaurantText}>Switch</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+          {restaurant?.address && (
+            <View style={styles.profileRow}>
+              <View style={[styles.profileIconBg, { backgroundColor: '#ede9fe' }]}>
+                <Ionicons name="location-outline" size={16} color="#7c3aed" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileLabel}>Address</Text>
+                <Text style={styles.profileValue} numberOfLines={2}>{restaurant.address}</Text>
+              </View>
+            </View>
+          )}
+          {user?.email && (
+            <View style={styles.profileRow}>
+              <View style={[styles.profileIconBg, { backgroundColor: '#dbeafe' }]}>
+                <Ionicons name="mail-outline" size={16} color="#2563eb" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileLabel}>Email</Text>
+                <Text style={styles.profileValue}>{user.email}</Text>
+              </View>
+            </View>
+          )}
+          {user?.phone && (
+            <View style={styles.profileRow}>
+              <View style={[styles.profileIconBg, { backgroundColor: '#dcfce7' }]}>
+                <Ionicons name="call-outline" size={16} color="#16a34a" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileLabel}>Phone</Text>
+                <Text style={styles.profileValue}>{user.phone}</Text>
+              </View>
+            </View>
+          )}
+          {restaurant?.phone && !user?.phone && (
+            <View style={styles.profileRow}>
+              <View style={[styles.profileIconBg, { backgroundColor: '#dcfce7' }]}>
+                <Ionicons name="call-outline" size={16} color="#16a34a" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileLabel}>Restaurant Phone</Text>
+                <Text style={styles.profileValue}>{restaurant.phone}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* ── Business Info (owner/admin only) — collapsible ── */}
+        {isOwnerOrAdmin && getRestaurantId() && (
+          <View style={styles.sectionContainer}>
+            <TouchableOpacity onPress={toggleBusinessInfo} activeOpacity={0.7} style={styles.collapsibleHeader}>
+              <Ionicons name="business-outline" size={18} color="#8b7355" />
+              <Text style={styles.collapsibleHeaderText}>Business Info</Text>
+              <View style={{ flex: 1 }} />
+              <Animated.View style={{ transform: [{ rotate: bizChevronRotation }] }}>
+                <Ionicons name="chevron-down" size={18} color="#9ca3af" />
+              </Animated.View>
+            </TouchableOpacity>
+            {businessInfoExpanded && (
+              <View style={{ marginTop: 10 }}>
+                <BusinessSettings restaurantId={getRestaurantId()} />
               </View>
             )}
           </View>
         )}
 
-        {/* ── Menu Sections ──────────────────────────── */}
-        {menuSections.map((section, sectionIndex) => {
+        {/* ── Connectivity — collapsible ──────────────── */}
+        <View style={styles.sectionContainer}>
+          <TouchableOpacity onPress={toggleConnectivity} activeOpacity={0.7} style={styles.collapsibleHeader}>
+            <Ionicons name="wifi-outline" size={18} color="#8b7355" />
+            <Text style={styles.collapsibleHeaderText}>Connectivity</Text>
+            <View style={{ flex: 1 }} />
+            <View style={[styles.statusDot, { backgroundColor: isOnline ? '#22c55e' : '#ef4444', marginRight: 6 }]} />
+            <Text style={{ fontSize: 11, color: '#9ca3af', marginRight: 8 }}>{isOnline ? 'Online' : 'Offline'}</Text>
+            <Animated.View style={{ transform: [{ rotate: connChevronRotation }] }}>
+              <Ionicons name="chevron-down" size={18} color="#9ca3af" />
+            </Animated.View>
+          </TouchableOpacity>
+          {connectivityExpanded && (
+          <View style={[styles.card, { marginTop: 10 }]}>
+            {/* Online/Offline Status */}
+            <View style={styles.connectRow}>
+              <View style={styles.connectLeft}>
+                <View style={[styles.statusDot, { backgroundColor: isOnline ? '#22c55e' : '#ef4444' }]} />
+                <Text style={styles.connectLabel}>{isOnline ? 'Online' : 'Offline'}</Text>
+              </View>
+              {lastSyncText && (
+                <Text style={styles.connectMeta}>Synced {lastSyncText}</Text>
+              )}
+            </View>
+
+            {/* Offline Toggle */}
+            <TouchableOpacity style={styles.connectRow} onPress={() => toggleOfflineMode()}>
+              <View style={styles.connectLeft}>
+                <Ionicons name={isOfflineMode ? 'cloud-offline' : 'cloud-done'} size={18} color={isOfflineMode ? '#f59e0b' : '#22c55e'} />
+                <View>
+                  <Text style={styles.connectLabel}>Offline Mode</Text>
+                  <Text style={styles.connectHint}>Work without internet</Text>
+                </View>
+              </View>
+              <View style={[styles.toggle, isOfflineMode && styles.toggleOn]}>
+                <View style={[styles.toggleKnob, isOfflineMode && styles.toggleKnobOn]} />
+              </View>
+            </TouchableOpacity>
+
+            {/* Download Data */}
+            {getRestaurantId() && (
+              <TouchableOpacity
+                style={styles.connectRow}
+                disabled={seedingData || !isOnline}
+                onPress={async () => {
+                  setSeedingData(true);
+                  try {
+                    const result = await apiClient.seedOfflineData(getRestaurantId());
+                    Alert.alert(
+                      result.success ? 'Data Downloaded' : 'Partial Download',
+                      result.success ? 'All data saved for offline use.' : `Some data failed: ${result.errors.join(', ')}`
+                    );
+                  } catch (e) {
+                    Alert.alert('Error', 'Failed to download: ' + e.message);
+                  } finally {
+                    setSeedingData(false);
+                  }
+                }}
+              >
+                <View style={styles.connectLeft}>
+                  <Ionicons name="download-outline" size={18} color="#8b7355" />
+                  <View>
+                    <Text style={styles.connectLabel}>Download Data</Text>
+                    <Text style={styles.connectHint}>Pre-load for offline use</Text>
+                  </View>
+                </View>
+                {seedingData ? (
+                  <ActivityIndicator size="small" color="#8b7355" />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+                )}
+              </TouchableOpacity>
+            )}
+
+            {/* Sync Status */}
+            <TouchableOpacity style={styles.connectRow} onPress={() => setShowSyncSheet(true)}>
+              <View style={styles.connectLeft}>
+                <Ionicons
+                  name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'sync' : 'checkmark-circle'}
+                  size={18}
+                  color={failedCount > 0 ? '#ef4444' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
+                />
+                <View>
+                  <Text style={styles.connectLabel}>Sync Status</Text>
+                  <Text style={styles.connectHint}>
+                    {failedCount > 0 ? `${failedCount} failed, ${pendingCount} pending`
+                      : pendingCount > 0 ? `${pendingCount} pending`
+                      : 'All synced'}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+            </TouchableOpacity>
+
+            {/* Manual Sync */}
+            {(pendingCount > 0 || failedCount > 0) && (
+              <TouchableOpacity
+                style={[styles.connectRow, { backgroundColor: failedCount > 0 ? '#fef2f2' : '#f0f9ff' }]}
+                onPress={async () => {
+                  try {
+                    await triggerSync();
+                    Alert.alert('Sync Started', 'Syncing pending changes...');
+                  } catch (e) {
+                    Alert.alert('Sync Error', e.message);
+                  }
+                }}
+              >
+                <View style={styles.connectLeft}>
+                  <Ionicons name="refresh" size={18} color={failedCount > 0 ? '#ef4444' : '#3b82f6'} />
+                  <Text style={[styles.connectLabel, { color: failedCount > 0 ? '#ef4444' : '#3b82f6' }]}>
+                    {failedCount > 0 ? 'Retry Failed' : 'Sync Now'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* PIN Lock */}
+            <TouchableOpacity
+              style={[styles.connectRow, { borderBottomWidth: 0 }]}
+              onPress={() => {
+                if (pinEnabled) {
+                  Alert.alert('Remove PIN?', 'This will disable offline PIN lock.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Remove', style: 'destructive', onPress: async () => { await clearPin(); setPinEnabled(false); } },
+                  ]);
+                } else {
+                  setShowPinSetup(true);
+                  setPinInput('');
+                }
+              }}
+            >
+              <View style={styles.connectLeft}>
+                <Ionicons name="lock-closed-outline" size={18} color={pinEnabled ? '#f59e0b' : '#9ca3af'} />
+                <View>
+                  <Text style={styles.connectLabel}>PIN Lock</Text>
+                  <Text style={styles.connectHint}>{pinEnabled ? 'PIN active — tap to remove' : 'Set 4-digit PIN for offline'}</Text>
+                </View>
+              </View>
+              {pinEnabled ? (
+                <View style={[styles.toggle, styles.toggleOn]}>
+                  <View style={[styles.toggleKnob, styles.toggleKnobOn]} />
+                </View>
+              ) : (
+                <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+              )}
+            </TouchableOpacity>
+
+            {/* PIN Setup */}
+            {showPinSetup && (
+              <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+                <Text style={{ fontSize: 13, color: '#9ca3af', marginBottom: 8 }}>Enter a 4-digit PIN:</Text>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                  <TextInput
+                    style={styles.pinInput}
+                    value={pinInput}
+                    onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    secureTextEntry
+                    placeholder="····"
+                    autoFocus
+                  />
+                  <TouchableOpacity
+                    style={[styles.pinButton, pinInput.length === 4 && styles.pinButtonActive]}
+                    disabled={pinInput.length !== 4}
+                    onPress={async () => {
+                      await setPin(pinInput);
+                      setPinEnabled(true);
+                      setShowPinSetup(false);
+                      setPinInput('');
+                      Alert.alert('PIN Set', 'Offline PIN lock is now active.');
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Set</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setShowPinSetup(false); setPinInput(''); }}>
+                    <Ionicons name="close-circle" size={22} color="#d1d5db" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+          )}
+        </View>
+
+        {/* ── Menu Sections + Admin Settings after Management ── */}
+        {menuSections.map((section) => {
           const visibleItems = section.items.filter(shouldShowItem);
           if (visibleItems.length === 0) return null;
 
           return (
-            <View key={section.title}>
-              <View style={styles.section}>
-                <Text style={styles.sectionLabel}>{section.title}</Text>
-                {visibleItems.map((item) => (
-                  <TouchableOpacity
-                    key={item.title}
-                    style={styles.menuItem}
-                    onPress={() => handleNavigate(item.route)}
-                    activeOpacity={0.6}
-                  >
-                    <Ionicons name={item.icon} size={20} color="#6b7280" />
-                    <Text style={styles.menuItemText}>{item.title}</Text>
-                  </TouchableOpacity>
-                ))}
+            <React.Fragment key={section.title}>
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionTitle}>{section.title}</Text>
+                <View style={styles.card}>
+                  {visibleItems.map((item, i) => (
+                    <TouchableOpacity
+                      key={item.title}
+                      style={[styles.menuItem, i === visibleItems.length - 1 && { borderBottomWidth: 0 }]}
+                      onPress={() => handleNavigate(item.route)}
+                      activeOpacity={0.6}
+                    >
+                      <View style={styles.menuIconBg}>
+                        <Ionicons name={item.icon} size={18} color="#8b7355" />
+                      </View>
+                      <Text style={styles.menuItemText}>{item.title}</Text>
+                      <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-              <View style={styles.sectionDivider} />
-            </View>
+
+              {/* Admin Settings — right after Management */}
+              {section.title === 'Management' && isOwnerOrAdmin && (
+                <View style={styles.sectionContainer}>
+                  <TouchableOpacity
+                    onPress={toggleSettings}
+                    activeOpacity={0.7}
+                    style={styles.collapsibleHeader}
+                  >
+                    <Ionicons name="settings-outline" size={18} color="#8b7355" />
+                    <Text style={styles.collapsibleHeaderText}>Admin Settings</Text>
+                    <View style={{ flex: 1 }} />
+                    <View style={styles.adminBadge}>
+                      <Text style={styles.adminBadgeText}>{adminTabs.length}</Text>
+                    </View>
+                    <Animated.View style={{ transform: [{ rotate: chevronRotation }] }}>
+                      <Ionicons name="chevron-down" size={18} color="#9ca3af" />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {settingsExpanded && (
+                    <View style={styles.adminGrid}>
+                      {adminTabs.map((tab) => (
+                        <TouchableOpacity
+                          key={tab.tabId}
+                          style={styles.adminTile}
+                          activeOpacity={0.7}
+                          onPress={() => handleNavigate({
+                            pathname: '/(tabs)/webview',
+                            params: { url: `${WEB_BASE_URL}/mobile/admin?tab=${tab.tabId}`, title: tab.title },
+                          })}
+                        >
+                          <View style={[styles.adminTileIcon, { backgroundColor: tab.color + '15' }]}>
+                            <Ionicons name={tab.icon} size={20} color={tab.color} />
+                          </View>
+                          <Text style={styles.adminTileLabel} numberOfLines={1}>{tab.title}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+            </React.Fragment>
           );
         })}
 
@@ -266,7 +629,7 @@ export default function MoreScreen() {
           onPress={handleLogout}
           activeOpacity={0.7}
         >
-          <Ionicons name="log-out-outline" size={20} color="#e5484d" />
+          <Ionicons name="log-out-outline" size={18} color="#e5484d" />
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -281,6 +644,8 @@ export default function MoreScreen() {
           <Text style={styles.footerVersionText}>v1.6.0</Text>
         </TouchableOpacity>
       </View>
+
+      <SyncDetailsSheet visible={showSyncSheet} onClose={() => setShowSyncSheet(false)} />
     </View>
   );
 }
@@ -288,7 +653,7 @@ export default function MoreScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f3ef',
   },
 
   // ── Header Banner ───────────────────────────────
@@ -343,86 +708,193 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 4,
+    marginBottom: 8,
     letterSpacing: -0.3,
   },
-  userSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
-    fontWeight: '500',
+  rolePill: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  rolePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+    textTransform: 'capitalize',
   },
 
-  // ── Sync Card ───────────────────────────────────
-  syncCard: {
+  // ── Profile Card ──────────────────────────────────
+  profileCard: {
+    marginHorizontal: 16,
+    marginTop: -12,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 20,
-    marginTop: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
     gap: 12,
-    backgroundColor: '#faf8f5',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#f0ece6',
   },
-  syncIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+  profileIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  syncTitle: {
+  profileLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  profileValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 1,
+  },
+  switchRestaurantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ecfdf5',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  switchRestaurantText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#10b981',
+  },
+
+  // ── Sections ──────────────────────────────────────
+  sectionContainer: {
+    marginTop: 20,
+    marginHorizontal: 16,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8b7355',
+    marginBottom: 8,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  // ── Connectivity ──────────────────────────────────
+  connectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f3ef',
+  },
+  connectLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  connectLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
   },
-  syncSubtitle: {
-    fontSize: 12,
+  connectHint: {
+    fontSize: 11,
     color: '#9ca3af',
     marginTop: 1,
   },
-  syncBadge: {
-    backgroundColor: '#8b7355',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  syncBadgeText: {
-    color: '#fff',
+  connectMeta: {
     fontSize: 11,
+    color: '#9ca3af',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  toggle: {
+    width: 42,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#e5e7eb',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  toggleOn: {
+    backgroundColor: '#f59e0b',
+  },
+  toggleKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+  },
+  toggleKnobOn: {
+    alignSelf: 'flex-end',
+  },
+  pinInput: {
+    flex: 1,
+    backgroundColor: '#f5f3ef',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 18,
+    letterSpacing: 8,
+    textAlign: 'center',
     fontWeight: '700',
   },
-
-  // ── Sections ────────────────────────────────────
-  section: {
-    paddingTop: 20,
-    paddingBottom: 4,
+  pinButton: {
+    backgroundColor: '#d1d5db',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#9ca3af',
-    paddingHorizontal: 22,
-    marginBottom: 6,
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: '#f3f4f6',
-    marginHorizontal: 22,
-    marginTop: 8,
+  pinButtonActive: {
+    backgroundColor: '#8b7355',
   },
 
-  // ── Menu Items ──────────────────────────────────
+  // ── Menu Items ────────────────────────────────────
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 22,
+    paddingHorizontal: 14,
     paddingVertical: 13,
-    gap: 14,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f3ef',
+  },
+  menuIconBg: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#f5f3ef',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   menuItemText: {
     flex: 1,
@@ -431,32 +903,125 @@ const styles = StyleSheet.create({
     color: '#374151',
   },
 
-  // ── Sign Out ────────────────────────────────────
+  // ── Collapsible Headers ───────────────────────────
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  collapsibleHeaderText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#8b7355',
+  },
+
+  // ── Admin Settings Grid ───────────────────────────
+  adminHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  adminHeaderText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#8b7355',
+  },
+  adminBadge: {
+    backgroundColor: '#f5f3ef',
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginRight: 4,
+  },
+  adminBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8b7355',
+  },
+  adminGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 10,
+    gap: 10,
+  },
+  adminTile: {
+    width: '31%',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  adminTileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  adminTileLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
+  },
+
+  // ── Sign Out ──────────────────────────────────────
   signOutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 22,
-    paddingVertical: 13,
-    marginTop: 8,
-    gap: 14,
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginTop: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#fecaca',
+    gap: 8,
   },
   signOutText: {
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#e5484d',
   },
 
-  // ── Footer ──────────────────────────────────────
+  // ── Footer ────────────────────────────────────────
   footer: {
     paddingVertical: 16,
     paddingHorizontal: 22,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: '#ece8e1',
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 10,
     paddingBottom: Platform.OS === 'android' ? 16 : 28,
+    backgroundColor: '#f5f3ef',
   },
   footerRolePill: {
     flexDirection: 'row',
@@ -484,7 +1049,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: '#e5e7eb',
+    borderColor: '#d4c5a9',
   },
   footerVersionText: {
     fontSize: 13,

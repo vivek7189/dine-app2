@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  TextInput,
   ActivityIndicator,
   ScrollView,
-  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, BorderRadius } from '../constants/Theme';
@@ -72,6 +70,8 @@ export default function OfferSelector({
 
   const {
     applicableOffers,
+    genericOffers,
+    personalizedOffers,
     selectedOfferId,
     setSelectedOfferId,
     selectedOfferIds,
@@ -80,6 +80,7 @@ export default function OfferSelector({
     selectedOfferName,
     freeItems,
     isLoadingOffers,
+    customerGroups: customerOfferGroups,
     recomputeWithPhone,
     autoApplied,
     offerSettings,
@@ -92,11 +93,6 @@ export default function OfferSelector({
     customerContext: resolvedCustomerContext,
     options: { autoApply: true },
   });
-
-  // Login-to-unlock inline modal state
-  const [loginModalVisible, setLoginModalVisible] = useState(false);
-  const [pendingPhone, setPendingPhone] = useState('');
-  const [pendingOfferId, setPendingOfferId] = useState(null);
 
   // Notify parent when offer settings are loaded from API
   const settingsNotifiedRef = useRef(false);
@@ -148,19 +144,13 @@ export default function OfferSelector({
 
   // Compute per-offer discount for chip display (previewing each offer).
   const discountFor = useCallback((offer) => {
-    if (!offer || offer._requiresLogin) return 0;
+    if (!offer) return 0;
     const res = calculateOfferResult(offer, subtotal, cartItems, resolvedCustomerContext || {});
     return res?.discount || 0;
   }, [subtotal, cartItems, resolvedCustomerContext]);
 
   const handleChipPress = useCallback((offer) => {
     const offerId = offer.id || offer._id;
-    if (offer._requiresLogin) {
-      setPendingOfferId(offerId);
-      setPendingPhone('');
-      setLoginModalVisible(true);
-      return;
-    }
     if (offerSettings?.allowMultipleOffers) {
       toggleOffer(offerId);
     } else {
@@ -172,21 +162,57 @@ export default function OfferSelector({
     }
   }, [selectedOfferId, setSelectedOfferId, toggleOffer, offerSettings?.allowMultipleOffers]);
 
-  const handlePhoneSubmit = useCallback(() => {
-    const phone = (pendingPhone || '').trim();
-    if (!phone) return;
-    recomputeWithPhone(phone);
-    setLoginModalVisible(false);
-    // Note: after group lookup completes, the offer may become eligible.
-    // Auto-apply will re-pick; user can then tap again if needed.
-    setPendingOfferId(null);
-    setPendingPhone('');
-  }, [pendingPhone, recomputeWithPhone]);
+  const renderOfferChip = (offer, isPersonalized = false) => {
+    const offerId = offer.id || offer._id;
+    const preview = discountFor(offer);
+    const isMulti = offerSettings?.allowMultipleOffers;
+    const isSelected = isMulti ? selectedOfferIds.includes(offerId) : selectedOfferId === offerId;
+    const offerGroupIds = offer.audience?.groupIds || [];
+    const matchedGroup = isPersonalized ? customerOfferGroups?.find(g => offerGroupIds.includes(g.id)) : null;
+
+    return (
+      <TouchableOpacity
+        key={offerId}
+        style={[
+          styles.chip,
+          isSelected && (isPersonalized ? styles.chipSelectedPersonalized : styles.chipSelected),
+          !isSelected && isPersonalized && styles.chipPersonalized,
+        ]}
+        onPress={() => handleChipPress(offer)}
+        activeOpacity={0.7}
+      >
+        {isSelected ? (
+          <Ionicons name="close-circle" size={16} color={isPersonalized ? '#d97706' : '#7c3aed'} style={styles.chipCheckmark} />
+        ) : (
+          <Ionicons name={isPersonalized ? 'gift-outline' : 'pricetag-outline'} size={13} color={isPersonalized ? '#b45309' : '#9ca3af'} style={styles.chipCheckmark} />
+        )}
+        <View style={styles.chipTextContainer}>
+          <Text
+            style={[
+              styles.chipName,
+              isSelected && (isPersonalized ? styles.chipNameSelectedPersonalized : styles.chipNameSelected),
+              !isSelected && isPersonalized && styles.chipNamePersonalized,
+            ]}
+            numberOfLines={1}
+          >
+            {offer.name}
+          </Text>
+          {preview > 0 ? (
+            <Text style={[styles.chipSaves, isSelected && styles.chipSavesSelected]}>
+              saves ₹{preview.toFixed(0)}{matchedGroup ? ` · ${matchedGroup.name}` : ''}
+            </Text>
+          ) : matchedGroup ? (
+            <Text style={styles.chipSaves}>{matchedGroup.name}</Text>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
       {/* Offer Chips */}
-      {applicableOffers.length > 0 && (
+      {(genericOffers.length > 0 || personalizedOffers.length > 0) && (
         <View style={styles.offerSection}>
           <View style={styles.offerHeader}>
             <Ionicons name="pricetag-outline" size={14} color="#8b5cf6" />
@@ -206,53 +232,8 @@ export default function OfferSelector({
             style={styles.chipsScroll}
             contentContainerStyle={styles.chipsContainer}
           >
-            {applicableOffers.map((offer) => {
-              const offerId = offer.id || offer._id;
-              const isLocked = !!offer._requiresLogin;
-              const preview = discountFor(offer);
-              const isMulti = offerSettings?.allowMultipleOffers;
-              const isSelected = !isLocked && (isMulti ? selectedOfferIds.includes(offerId) : selectedOfferId === offerId);
-
-              return (
-                <TouchableOpacity
-                  key={offerId}
-                  style={[
-                    styles.chip,
-                    isSelected && styles.chipSelected,
-                    isLocked && styles.chipLocked,
-                  ]}
-                  onPress={() => handleChipPress(offer)}
-                  activeOpacity={0.7}
-                >
-                  {isLocked ? (
-                    <Text style={styles.chipLockIcon}>🔒</Text>
-                  ) : isSelected ? (
-                    <Ionicons name="close-circle" size={16} color="#7c3aed" style={styles.chipCheckmark} />
-                  ) : (
-                    <Ionicons name="pricetag-outline" size={13} color="#9ca3af" style={styles.chipCheckmark} />
-                  )}
-                  <View style={styles.chipTextContainer}>
-                    <Text
-                      style={[
-                        styles.chipName,
-                        isSelected && styles.chipNameSelected,
-                        isLocked && styles.chipNameLocked,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {offer.name}
-                    </Text>
-                    {isLocked ? (
-                      <Text style={styles.chipLockedHint}>Tap to unlock</Text>
-                    ) : preview > 0 ? (
-                      <Text style={[styles.chipSaves, isSelected && styles.chipSavesSelected]}>
-                        saves ₹{preview.toFixed(0)}
-                      </Text>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+            {genericOffers.map(offer => renderOfferChip(offer, false))}
+            {personalizedOffers.map(offer => renderOfferChip(offer, true))}
           </ScrollView>
         </View>
       )}
@@ -263,46 +244,6 @@ export default function OfferSelector({
           <Text style={styles.loadingText}>Loading offers...</Text>
         </View>
       )}
-
-      {/* Inline login-to-unlock modal */}
-      <Modal
-        visible={loginModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLoginModalVisible(false)}
-      >
-        <View style={styles.loginBackdrop}>
-          <View style={styles.loginCard}>
-            <Text style={styles.loginTitle}>Unlock this offer</Text>
-            <Text style={styles.loginSubtitle}>
-              Enter your phone number to check if you qualify.
-            </Text>
-            <TextInput
-              style={styles.loginInput}
-              placeholder="Phone number"
-              placeholderTextColor="#9ca3af"
-              keyboardType="phone-pad"
-              value={pendingPhone}
-              onChangeText={setPendingPhone}
-              autoFocus
-            />
-            <View style={styles.loginActions}>
-              <TouchableOpacity
-                style={[styles.loginBtn, styles.loginBtnCancel]}
-                onPress={() => setLoginModalVisible(false)}
-              >
-                <Text style={styles.loginBtnCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.loginBtn, styles.loginBtnSubmit]}
-                onPress={handlePhoneSubmit}
-              >
-                <Text style={styles.loginBtnSubmitText}>Unlock</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -359,16 +300,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f3ff',
     borderColor: '#c4b5fd',
   },
-  chipLocked: {
-    borderColor: '#f59e0b',
-    borderStyle: 'dashed',
+  chipPersonalized: {
+    borderColor: '#fbbf24',
     backgroundColor: '#fffbeb',
   },
-  chipCheckmark: {
-    marginRight: 2,
+  chipSelectedPersonalized: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#d97706',
   },
-  chipLockIcon: {
-    fontSize: 12,
+  chipCheckmark: {
     marginRight: 2,
   },
   chipTextContainer: {
@@ -382,8 +322,11 @@ const styles = StyleSheet.create({
   chipNameSelected: {
     color: '#6d28d9',
   },
-  chipNameLocked: {
+  chipNamePersonalized: {
     color: '#b45309',
+  },
+  chipNameSelectedPersonalized: {
+    color: '#92400e',
   },
   chipSaves: {
     fontSize: 10,
@@ -394,12 +337,6 @@ const styles = StyleSheet.create({
   chipSavesSelected: {
     color: '#7c3aed',
   },
-  chipLockedHint: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#b45309',
-    marginTop: 1,
-  },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -409,68 +346,5 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 12,
     color: Colors.textLight,
-  },
-  // Login modal
-  loginBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  loginCard: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
-  },
-  loginTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 4,
-  },
-  loginSubtitle: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 14,
-  },
-  loginInput: {
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#1f2937',
-    marginBottom: 14,
-  },
-  loginActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  loginBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  loginBtnCancel: {
-    backgroundColor: '#f3f4f6',
-  },
-  loginBtnCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  loginBtnSubmit: {
-    backgroundColor: '#e11d48',
-  },
-  loginBtnSubmitText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
   },
 });

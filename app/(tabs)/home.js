@@ -9,6 +9,9 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  Alert,
+  Platform,
+  ActionSheetIOS,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,11 +21,9 @@ import apiClient from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache, clearCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
-import AppDrawer from '../../components/AppDrawer';
-// SyncIndicator moved to settings page
-import { HeadquartersContent } from './headquarters';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import { HeadquartersContent } from './headquarters';
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
 
@@ -67,15 +68,12 @@ export default function HomeScreen() {
   const router = useRouter();
   const { effectivelyOffline, pendingCount } = useOffline();
   const { width: SCREEN_WIDTH, isTablet } = useResponsive();
-  const statCols = isTablet ? 4 : 2;
-  const statMinWidth = (SCREEN_WIDTH - 42) / statCols - 5;
   const tabCols = isTablet ? 3 : 2;
   const tabCardWidth = (SCREEN_WIDTH - 42 - 10 * (tabCols - 1)) / tabCols;
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [drawerVisible, setDrawerVisible] = useState(false);
 
   // Daily summary
   const [dailySummary, setDailySummary] = useState(null);
@@ -342,15 +340,27 @@ export default function HomeScreen() {
     setShowDailySummary(prev => !prev);
   }, [showDailySummary, dailySummary, fetchDailySummary]);
 
-  const handleLogout = async () => {
-    await apiClient.logout();
-    router.replace('/(auth)/login');
-  };
-
   const handleSwitchRestaurant = async (newRestaurantId) => {
+    const currentId = getRestaurantId();
+    if (newRestaurantId === currentId) return;
+
     try {
+      // Show loading while switching
+      setLoading(true);
+
+      // Reset stats so old restaurant data doesn't flash
+      setTodayStats({ totalOrders: 0, totalRevenue: 0, avgOrderValue: 0, pendingOrders: 0, completedOrders: 0 });
+      setTableStats({ total: 0, occupied: 0, available: 0 });
+      setTodayOrders([]);
+      setOpenTabs([]);
+      setDailySummary(null);
+      setShowDailySummary(false);
+
       // Clear all tab caches so new restaurant loads fresh
       await clearCache('cache_');
+
+      // Invalidate all in-memory API caches
+      apiClient.clearAllCache?.();
 
       // Update backend preference
       await apiClient.updateUserPreferences({ defaultRestaurantId: newRestaurantId });
@@ -373,6 +383,40 @@ export default function HomeScreen() {
       restaurantEvents.emit('switch', { restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant });
     } catch (error) {
       console.error('Error switching restaurant:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showRestaurantPicker = () => {
+    if (restaurants.length <= 1) return;
+    const currentId = getRestaurantId();
+    if (Platform.OS === 'ios') {
+      const options = [...restaurants.map(r => {
+        const name = r.name || r.id;
+        const rid = r.id || r._id;
+        return rid === currentId ? `${name} (current)` : name;
+      }), 'Cancel'];
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
+        (idx) => {
+          if (idx < restaurants.length) {
+            handleSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Switch Restaurant',
+        'Select which restaurant to manage',
+        [
+          ...restaurants.map(r => ({
+            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
+            onPress: () => handleSwitchRestaurant(r.id || r._id),
+          })),
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
     }
   };
 
@@ -401,90 +445,157 @@ export default function HomeScreen() {
   };
 
   const formatCurrency = (amount) => {
-    return `₹${(amount || 0).toLocaleString('en-IN')}`;
+    return `\u20B9${(amount || 0).toLocaleString('en-IN')}`;
   };
 
   if (loading) {
     return <HomeLoader />;
   }
 
-  // ==================== Owner/Admin: Show HQ Dashboard (like web) ====================
+  // Owner/Admin: Render full dashboard as home with quick actions + sales summary embedded
   if (isOwnerOrManager && hasRestaurant) {
-    return (
-      <>
-        <HeadquartersContent embedded drawerToggle={() => setDrawerVisible(true)} initialUser={user} />
-        <AppDrawer
-          visible={drawerVisible}
-          onClose={() => setDrawerVisible(false)}
-          user={user}
-          restaurants={restaurants}
-          currentRestaurant={restaurant}
-          onSwitchRestaurant={handleSwitchRestaurant}
-          onLogout={handleLogout}
-        />
-      </>
+    const renderHomeExtras = () => (
+      <View style={{ paddingTop: 8 }}>
+        {/* Quick Actions */}
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.actionsRow}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => router.push(newOrderRoute)}>
+            <View style={[styles.actionIcon, { backgroundColor: '#fef2f2' }]}>
+              <Ionicons name="add-circle" size={26} color="#ef4444" />
+            </View>
+            <Text style={styles.actionText}>{isBarType ? 'Open Tab' : 'New Order'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/tables')}>
+            <View style={[styles.actionIcon, { backgroundColor: '#eff6ff' }]}>
+              <Ionicons name="restaurant" size={24} color="#3b82f6" />
+            </View>
+            <Text style={styles.actionText}>Tables</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/orders')}>
+            <View style={[styles.actionIcon, { backgroundColor: '#fef3c7' }]}>
+              <Ionicons name="receipt" size={24} color="#f59e0b" />
+            </View>
+            <Text style={styles.actionText}>Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/more')}>
+            <View style={[styles.actionIcon, { backgroundColor: '#f0fdf4' }]}>
+              <Ionicons name="settings" size={24} color="#10b981" />
+            </View>
+            <Text style={styles.actionText}>Manage</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Sales Summary */}
+        {todayStats.totalOrders > 0 && (
+          <View style={summaryStyles.container}>
+            <TouchableOpacity style={summaryStyles.header} onPress={toggleDailySummary} activeOpacity={0.7}>
+              <View style={summaryStyles.headerLeft}>
+                <View style={summaryStyles.headerIcon}>
+                  <Ionicons name="analytics-outline" size={18} color="#fff" />
+                </View>
+                <View>
+                  <Text style={summaryStyles.headerTitle}>Today&apos;s Sales Summary</Text>
+                  {dailySummary && (
+                    <Text style={summaryStyles.headerSubtitle}>{dailySummary.items?.length || 0} items sold</Text>
+                  )}
+                </View>
+              </View>
+              <View style={summaryStyles.headerRight}>
+                {dailySummary && (
+                  <Text style={summaryStyles.headerAmount}>
+                    {formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}
+                  </Text>
+                )}
+                <Ionicons name={showDailySummary ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.textMedium} />
+              </View>
+            </TouchableOpacity>
+            {showDailySummary && (
+              <View style={summaryStyles.body}>
+                {dailySummaryLoading ? (
+                  <ActivityIndicator size="small" color={Colors.primary} style={{ paddingVertical: 20 }} />
+                ) : dailySummary && dailySummary.items?.length > 0 ? (
+                  <>
+                    <View style={summaryStyles.statsRow}>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Revenue</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#10b981' }]}>{formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}</Text>
+                      </View>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Orders</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#3b82f6' }]}>{dailySummary.totalOrders}</Text>
+                      </View>
+                      <View style={summaryStyles.statPill}>
+                        <Text style={summaryStyles.statPillLabel}>Items</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#f59e0b' }]}>{dailySummary.items.length}</Text>
+                      </View>
+                    </View>
+                    <View style={summaryStyles.tableHeader}>
+                      <Text style={[summaryStyles.tableHeaderText, { flex: 1 }]}>Item</Text>
+                      <Text style={[summaryStyles.tableHeaderText, { width: 50, textAlign: 'center' }]}>Qty</Text>
+                      <Text style={[summaryStyles.tableHeaderText, { width: 80, textAlign: 'right' }]}>Amount</Text>
+                    </View>
+                    {[...dailySummary.items].sort((a, b) => b.quantity - a.quantity).map((item, idx) => (
+                      <View key={item.originalKey || item.name} style={[summaryStyles.itemRow, idx % 2 === 0 && summaryStyles.itemRowAlt]}>
+                        <Text style={summaryStyles.itemName} numberOfLines={1}>{item.name}</Text>
+                        <View style={summaryStyles.qtyBadge}><Text style={summaryStyles.qtyText}>{item.quantity}</Text></View>
+                        <Text style={summaryStyles.itemAmount}>{formatCurrency(item.revenue)}</Text>
+                      </View>
+                    ))}
+                    <View style={summaryStyles.totalRow}>
+                      <Text style={summaryStyles.totalLabel}>Total</Text>
+                      <View style={summaryStyles.qtyBadge}><Text style={summaryStyles.qtyText}>{dailySummary.items.reduce((s, i) => s + i.quantity, 0)}</Text></View>
+                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#10b981' }]}>{formatCurrency(dailySummary.items.reduce((s, i) => s + i.revenue, 0))}</Text>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={summaryStyles.emptyText}>No sales data for today yet</Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Pending Orders */}
+        {todayStats.pendingOrders > 0 && (
+          <TouchableOpacity style={styles.pendingAlert} onPress={() => router.push('/(tabs)/orders')}>
+            <View style={styles.pendingAlertLeft}>
+              <View style={styles.pendingDot} />
+              <Text style={styles.pendingAlertText}>{todayStats.pendingOrders} order{todayStats.pendingOrders > 1 ? 's' : ''} pending</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#f59e0b" />
+          </TouchableOpacity>
+        )}
+
+        {/* Recent Orders */}
+        {todayOrders.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Orders</Text>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/orders')}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+            {todayOrders.map((order) => (
+              <View key={order.id || order._id} style={styles.orderCard}>
+                <View style={styles.orderCardLeft}>
+                  <Text style={styles.orderNumber}>#{order.orderNumber || order.id?.slice(-6)}</Text>
+                  <Text style={styles.orderMeta}>{order.items?.length || 0} item{(order.items?.length || 0) !== 1 ? 's' : ''}{order.tableName ? ` · ${order.tableName}` : ''}</Text>
+                </View>
+                <View style={styles.orderCardRight}>
+                  <Text style={styles.orderAmount}>{formatCurrency(order.finalAmount || order.totalAmount || order.total || 0)}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) + '20' }]}>
+                    <Text style={[styles.statusText, { color: getStatusColor(order.status) }]}>{order.status?.charAt(0).toUpperCase() + order.status?.slice(1)}</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </View>
     );
+
+    return <HeadquartersContent embedded initialUser={user} extraContent={renderHomeExtras} restaurants={restaurants} onSwitchRestaurant={handleSwitchRestaurant} />;
   }
-
-  // ==================== First-time owner (no restaurant) ====================
-  const renderSetupCard = () => (
-    <View style={styles.setupCard}>
-      <View style={styles.setupIconCircle}>
-        <Ionicons name="restaurant-outline" size={32} color={Colors.primary} />
-      </View>
-      <Text style={styles.setupTitle}>Welcome to DineOpen!</Text>
-      <Text style={styles.setupSubtitle}>
-        Set up your restaurant to start taking orders, managing tables, and growing your business.
-      </Text>
-      <TouchableOpacity
-        style={styles.setupButton}
-        onPress={() => router.push('/(tabs)/profile')}
-      >
-        <Ionicons name="add-circle-outline" size={20} color="#fff" />
-        <Text style={styles.setupButtonText}>Set Up Restaurant</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // ==================== Cashier hero action ====================
-  const renderCashierHero = () => (
-    <TouchableOpacity
-      style={styles.heroAction}
-      onPress={() => router.push(newOrderRoute)}
-      activeOpacity={0.8}
-    >
-      <View style={styles.heroActionInner}>
-        <View style={styles.heroIconCircle}>
-          <Ionicons name="calculator-outline" size={28} color="#fff" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.heroActionTitle}>Start Billing</Text>
-          <Text style={styles.heroActionSubtitle}>Open the billing screen to take orders</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={24} color="#fff" />
-      </View>
-    </TouchableOpacity>
-  );
-
-  // ==================== Waiter hero action ====================
-  const renderWaiterHero = () => (
-    <TouchableOpacity
-      style={[styles.heroAction, { backgroundColor: '#3b82f6' }]}
-      onPress={() => router.push(newOrderRoute)}
-      activeOpacity={0.8}
-    >
-      <View style={styles.heroActionInner}>
-        <View style={[styles.heroIconCircle, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-          <Ionicons name="add-circle-outline" size={28} color="#fff" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.heroActionTitle}>{isBarType ? 'Open Tab' : 'New Order'}</Text>
-          <Text style={styles.heroActionSubtitle}>{isBarType ? 'Open a new bar tab' : 'Take a new order for a table'}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={24} color="#fff" />
-      </View>
-    </TouchableOpacity>
-  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -495,103 +606,117 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Clean Header with Avatar */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={() => setDrawerVisible(true)} style={styles.avatarCircle}>
-              <Ionicons name="person" size={20} color="#fff" />
-            </TouchableOpacity>
+        {/* Header */}
+        <View style={styles.headerSection}>
+          <View style={styles.headerTopRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.greeting}>{getGreeting()}</Text>
-              <Text style={styles.userName}>{user?.name || 'Staff'}</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <TouchableOpacity style={styles.aiButton} onPress={() => router.push('/(tabs)/headquarters')} activeOpacity={0.7}>
+                <Ionicons name="sparkles" size={14} color="#fff" />
+                <Text style={styles.aiButtonText}>AI</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerIconBtn} onPress={onRefresh} activeOpacity={0.7}>
+                <Ionicons name={refreshing ? 'sync' : 'refresh-outline'} size={14} color="#64748b" />
+              </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.headerRight}>
-            {hasRestaurant && (
-              <View style={styles.businessBadge}>
-                <Text style={styles.businessBadgeText}>{getBusinessTypeLabel()}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Restaurant Name — tap to switch */}
-        {hasRestaurant && (
-          <TouchableOpacity onPress={() => setDrawerVisible(true)} activeOpacity={0.7}>
-            <View style={styles.restaurantNameRow}>
-              <Ionicons name="storefront-outline" size={14} color={Colors.textMedium} />
-              <Text style={styles.restaurantName}>
+          {/* Restaurant selector — always show current restaurant name */}
+          {hasRestaurant && (
+            <TouchableOpacity
+              style={styles.restaurantChip}
+              onPress={restaurants.length > 1 ? showRestaurantPicker : undefined}
+              activeOpacity={restaurants.length > 1 ? 0.7 : 1}
+            >
+              <Ionicons name="storefront-outline" size={14} color="#10b981" />
+              <Text style={styles.restaurantChipText} numberOfLines={1}>
                 {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
               </Text>
               {restaurants.length > 1 && (
-                <Ionicons name="chevron-down" size={14} color={Colors.textLight} />
+                <Ionicons name="swap-horizontal" size={14} color="#94a3b8" />
               )}
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Big CTA — Start Taking Order */}
+        {hasRestaurant && (
+          <TouchableOpacity
+            style={styles.bigCta}
+            onPress={() => router.push(newOrderRoute)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.bigCtaInner}>
+              <View style={styles.bigCtaIconWrap}>
+                <Ionicons name={isBarType ? 'beer-outline' : 'restaurant-outline'} size={24} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bigCtaTitle}>{isBarType ? 'Open New Tab' : 'Start Taking Order'}</Text>
+                <Text style={styles.bigCtaSub}>{isBarType ? 'Tap to open a new bar tab' : 'Tap to create a new order'}</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color="rgba(255,255,255,0.7)" />
             </View>
           </TouchableOpacity>
         )}
 
+        {/* Stats — 2x2 grid like web dashboard */}
+        {hasRestaurant && (
+          <View style={styles.snapshotSection}>
+            <View style={styles.snapshotGrid}>
+              <View style={[styles.snapshotCard, { backgroundColor: '#fef2f2' }]}>
+                <View style={[styles.snapshotCardIcon, { backgroundColor: '#ef4444' }]}>
+                  <Ionicons name="storefront-outline" size={18} color="#fff" />
+                </View>
+                <Text style={styles.snapshotCardValue}>{todayStats.totalOrders}</Text>
+                <Text style={styles.snapshotCardLabel}>Total Orders</Text>
+              </View>
+              <View style={[styles.snapshotCard, { backgroundColor: '#ecfdf5' }]}>
+                <View style={[styles.snapshotCardIcon, { backgroundColor: '#10b981' }]}>
+                  <Ionicons name="cash-outline" size={18} color="#fff" />
+                </View>
+                <Text style={styles.snapshotCardValue}>{formatCurrency(todayStats.totalRevenue)}</Text>
+                <Text style={styles.snapshotCardLabel}>Revenue</Text>
+              </View>
+              <View style={[styles.snapshotCard, { backgroundColor: '#eff6ff' }]}>
+                <View style={[styles.snapshotCardIcon, { backgroundColor: '#3b82f6' }]}>
+                  <Ionicons name="restaurant-outline" size={18} color="#fff" />
+                </View>
+                <Text style={styles.snapshotCardValue}>{tableStats.occupied}/{tableStats.total}</Text>
+                <Text style={styles.snapshotCardLabel}>Tables Busy</Text>
+              </View>
+              <View style={[styles.snapshotCard, { backgroundColor: '#fef9c3' }]}>
+                <View style={[styles.snapshotCardIcon, { backgroundColor: '#f59e0b' }]}>
+                  <Ionicons name="trending-up-outline" size={18} color="#fff" />
+                </View>
+                <Text style={styles.snapshotCardValue}>{formatCurrency(todayStats.avgOrderValue)}</Text>
+                <Text style={styles.snapshotCardLabel}>Avg Order Value</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* First-time owner without restaurant */}
-        {isOwnerOrManager && !hasRestaurant && renderSetupCard()}
-
-        {/* Cashier: Hero billing button */}
-        {isCashier && hasRestaurant && renderCashierHero()}
-
-        {/* Waiter: Hero new order button */}
-        {isWaiterOrEmployee && hasRestaurant && renderWaiterHero()}
-
-        {/* Cashier Stats */}
-        {isCashier && hasRestaurant && (
-          <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#eff6ff' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#3b82f6' }]}>
-                <Ionicons name="receipt-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{todayStats.completedOrders}</Text>
-              <Text style={styles.statLabel}>Bills Today</Text>
+        {isOwnerOrManager && !hasRestaurant && (
+          <View style={styles.setupCard}>
+            <View style={styles.setupIconCircle}>
+              <Ionicons name="restaurant-outline" size={32} color={Colors.primary} />
             </View>
-
-            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#f0fdf4' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#10b981' }]}>
-                <Ionicons name="cash-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{formatCurrency(todayStats.totalRevenue)}</Text>
-              <Text style={styles.statLabel}>Collected</Text>
-            </View>
+            <Text style={styles.setupTitle}>Welcome to DineOpen!</Text>
+            <Text style={styles.setupSubtitle}>
+              Set up your restaurant to start taking orders, managing tables, and growing your business.
+            </Text>
+            <TouchableOpacity
+              style={styles.setupButton}
+              onPress={() => router.push('/(tabs)/profile')}
+            >
+              <Ionicons name="add-circle-outline" size={20} color="#fff" />
+              <Text style={styles.setupButtonText}>Set Up Restaurant</Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Waiter/Employee — Quick Stats */}
-        {isWaiterOrEmployee && hasRestaurant && (
-          <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#fef3c7' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#f59e0b' }]}>
-                <Ionicons name="time-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{todayStats.pendingOrders}</Text>
-              <Text style={styles.statLabel}>Pending</Text>
-            </View>
-
-            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#f0fdf4' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#10b981' }]}>
-                <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>{todayStats.completedOrders}</Text>
-              <Text style={styles.statLabel}>Completed</Text>
-            </View>
-
-            <View style={[styles.statCard, { minWidth: statMinWidth }, { backgroundColor: '#eff6ff' }]}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#3b82f6' }]}>
-                <Ionicons name="restaurant-outline" size={20} color="#fff" />
-              </View>
-              <Text style={styles.statValue}>
-                {tableStats.occupied}/{tableStats.total}
-              </Text>
-              <Text style={styles.statLabel}>Tables Busy</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Quick Actions — circular icons */}
+        {/* Quick Actions */}
         {hasRestaurant && (
           <>
             <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -628,15 +753,15 @@ export default function HomeScreen() {
                 <Text style={styles.actionText}>Orders</Text>
               </TouchableOpacity>
 
-              {role === 'owner' && (
+              {isOwnerOrManager && (
                 <TouchableOpacity
                   style={styles.actionButton}
                   onPress={() => router.push('/(tabs)/headquarters')}
                 >
-                  <View style={[styles.actionIcon, { backgroundColor: '#eef2ff' }]}>
-                    <Ionicons name="business" size={24} color="#6366f1" />
+                  <View style={[styles.actionIcon, { backgroundColor: '#f0fdf4' }]}>
+                    <Ionicons name="bar-chart" size={24} color="#10b981" />
                   </View>
-                  <Text style={styles.actionText}>HQ</Text>
+                  <Text style={styles.actionText}>Dashboard</Text>
                 </TouchableOpacity>
               )}
 
@@ -645,8 +770,8 @@ export default function HomeScreen() {
                   style={styles.actionButton}
                   onPress={() => router.push('/(tabs)/more')}
                 >
-                  <View style={[styles.actionIcon, { backgroundColor: '#f5f3ff' }]}>
-                    <Ionicons name="settings" size={24} color="#8b5cf6" />
+                  <View style={[styles.actionIcon, { backgroundColor: '#f1f5f9' }]}>
+                    <Ionicons name="settings" size={24} color="#64748b" />
                   </View>
                   <Text style={styles.actionText}>Manage</Text>
                 </TouchableOpacity>
@@ -712,7 +837,7 @@ export default function HomeScreen() {
                       </View>
                       <View style={summaryStyles.statPill}>
                         <Text style={summaryStyles.statPillLabel}>Items</Text>
-                        <Text style={[summaryStyles.statPillValue, { color: '#8b5cf6' }]}>
+                        <Text style={[summaryStyles.statPillValue, { color: '#f59e0b' }]}>
                           {dailySummary.items.length}
                         </Text>
                       </View>
@@ -896,16 +1021,6 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      {/* App Drawer */}
-      <AppDrawer
-        visible={drawerVisible}
-        onClose={() => setDrawerVisible(false)}
-        user={user}
-        onLogout={handleLogout}
-        restaurants={restaurants}
-        currentRestaurantId={getRestaurantId()}
-        onSwitchRestaurant={handleSwitchRestaurant}
-      />
     </SafeAreaView>
   );
 }
@@ -941,127 +1056,154 @@ function getStatusColor(status) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#fff',
   },
   scrollContent: {
     paddingBottom: 100,
   },
-  header: {
+  // Header
+  headerSection: {
+    backgroundColor: '#fff',
+    paddingHorizontal: Spacing.md,
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: '#fff',
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#1f2937',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  greeting: {
-    fontSize: 13,
-    color: Colors.textLight,
-    fontWeight: '400',
-  },
-  userName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  headerRight: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  offlineBadge: {
+  aiButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fef2f2',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  offlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    gap: 5,
     backgroundColor: '#ef4444',
-    marginRight: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
-  offlineText: {
-    fontSize: 11,
-    color: '#ef4444',
-    fontWeight: '600',
+  aiButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
   },
-  businessBadge: {
-    backgroundColor: '#f0fdf4',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: BorderRadius.full,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-  },
-  businessBadgeText: {
-    fontSize: 12,
-    color: '#10b981',
-    fontWeight: '600',
-  },
-  restaurantNameRow: {
-    flexDirection: 'row',
+  headerIconBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.md,
-    paddingBottom: 12,
-    backgroundColor: '#fff',
   },
-  restaurantName: {
-    fontSize: 14,
-    color: Colors.textMedium,
-    fontWeight: '500',
-  },
-  // Snapshot header (owner/admin)
-  snapshotHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  snapshotTitle: {
-    fontSize: 22,
+  greeting: {
+    fontSize: 24,
     fontWeight: '800',
     color: '#0f172a',
     letterSpacing: -0.5,
   },
-  snapshotSubtitle: {
-    fontSize: 12,
-    color: Colors.textLight,
+  headerSubtitle: {
+    fontSize: 13,
+    color: '#94a3b8',
     marginTop: 2,
+    fontWeight: '500',
   },
-  todayBadge: {
+  restaurantChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primary,
+    alignSelf: 'flex-start',
+    gap: 5,
+    backgroundColor: '#f1f5f9',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.full,
+    paddingVertical: 7,
+    borderRadius: 20,
+    marginTop: 10,
   },
-  todayBadgeText: {
+  restaurantChipText: {
     fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+    flexShrink: 1,
+  },
+  // Big CTA button
+  bigCta: {
+    marginHorizontal: Spacing.md,
+    marginTop: 12,
+    marginBottom: 4,
+    borderRadius: 16,
+    backgroundColor: '#dc2626',
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  bigCtaInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 14,
+  },
+  bigCtaIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bigCtaTitle: {
+    fontSize: 17,
     fontWeight: '700',
     color: '#fff',
+    letterSpacing: -0.3,
+  },
+  bigCtaSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.75)',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  // Stats section
+  snapshotSection: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: 6,
+    marginBottom: 8,
+  },
+  snapshotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  snapshotCard: {
+    flex: 1,
+    minWidth: '46%',
+    borderRadius: 20,
+    padding: 16,
+  },
+  snapshotCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  snapshotCardValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#1f2937',
+    marginBottom: 2,
+  },
+  snapshotCardLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
   },
   // Setup Card (first-time owner)
   setupCard: {
@@ -1110,89 +1252,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  // Hero Action (cashier/waiter)
-  heroAction: {
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.lg,
-    backgroundColor: Colors.primary,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  heroActionInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    gap: 14,
-  },
-  heroIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  heroActionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  heroActionSubtitle: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
-  },
-  // Stats Grid
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: Spacing.md,
-    gap: 10,
-    marginBottom: Spacing.lg,
-  },
-  statCard: {
-    flex: 1,
-    borderRadius: 16,
-    padding: 16,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    borderLeftWidth: 3,
-  },
-  statIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  statValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: Colors.textDark,
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: Colors.textLight,
-    fontWeight: '500',
-  },
+  // (stats in snapshot section)
+  // (hero action removed)
   // Section
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#1f2937',
+    color: '#1c1c1e',
     paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
+    marginBottom: 10,
     marginTop: 4,
   },
   sectionHeader: {
@@ -1207,12 +1275,12 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '600',
   },
-  // Quick Actions — circular icon style
+  // Quick Actions
   actionsRow: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.md,
     gap: 8,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   actionButton: {
     flex: 1,
@@ -1220,30 +1288,75 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 54,
+    height: 54,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },
   actionText: {
     fontSize: 11,
-    color: Colors.textMedium,
+    color: '#8e8e93',
     fontWeight: '600',
     textAlign: 'center',
+  },
+  // Management Dashboard Card
+  dashboardCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ecfdf5',
+    marginHorizontal: Spacing.md,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 20,
+  },
+  dashboardCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  dashboardCardIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#10b981',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  dashboardCardText: {
+    flex: 1,
+  },
+  dashboardCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#065f46',
+    marginBottom: 2,
+  },
+  dashboardCardSubtitle: {
+    fontSize: 12,
+    color: '#059669',
+    fontWeight: '400',
+  },
+  dashboardArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#10b981',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Pending Alert
   pendingAlert: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#fff7ed',
     marginHorizontal: Spacing.md,
     padding: 14,
-    borderRadius: BorderRadius.large,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: '#fde68a',
+    borderRadius: 20,
+    marginBottom: 12,
   },
   pendingAlertLeft: {
     flexDirection: 'row',
@@ -1261,7 +1374,7 @@ const styles = StyleSheet.create({
     color: '#92400e',
     fontWeight: '600',
   },
-  // Order Cards — clean with subtle shadow
+  // Order Cards
   orderCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1269,13 +1382,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginHorizontal: Spacing.md,
     padding: 16,
-    borderRadius: 14,
+    borderRadius: 16,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
   },
   orderCardLeft: {
     flex: 1,
@@ -1334,14 +1442,13 @@ const styles = StyleSheet.create({
     ...Typography.bodyBold,
     color: '#fff',
   },
-
   // Open Bar Tabs Grid
   openTabsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: Spacing.md,
     gap: 10,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   openTabCard: {
     borderRadius: 12,
@@ -1405,13 +1512,9 @@ const styles = StyleSheet.create({
 const summaryStyles = StyleSheet.create({
   container: {
     marginHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    backgroundColor: '#fff',
-    borderRadius: BorderRadius.large,
-    overflow: 'hidden',
-    ...Shadows.small,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
+    marginBottom: 12,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 20,
   },
   header: {
     flexDirection: 'row',
@@ -1419,7 +1522,6 @@ const summaryStyles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    backgroundColor: '#fffbeb',
   },
   headerLeft: {
     flexDirection: 'row',
@@ -1429,19 +1531,19 @@ const summaryStyles = StyleSheet.create({
   headerIcon: {
     width: 32,
     height: 32,
-    borderRadius: 8,
-    backgroundColor: '#f59e0b',
+    borderRadius: 10,
+    backgroundColor: '#10b981',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: Colors.textDark,
+    color: '#065f46',
   },
   headerSubtitle: {
     fontSize: 11,
-    color: Colors.textMedium,
+    color: '#059669',
     marginTop: 1,
   },
   headerRight: {
@@ -1452,13 +1554,16 @@ const summaryStyles = StyleSheet.create({
   headerAmount: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#10b981',
+    color: '#065f46',
   },
   body: {
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: '#a7f3d0',
+    backgroundColor: '#fff',
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
   },
   statsRow: {
     flexDirection: 'row',

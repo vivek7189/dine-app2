@@ -1,15 +1,28 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { View, Platform } from 'react-native';
+import { View, Platform, Animated, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
 import apiClient from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
-
 import { useOffline } from '../../hooks/useOffline';
+import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
+import { BottomTabBar } from '@react-navigation/bottom-tabs';
 
-export default function TabsLayout() {
+function AnimatedTabBar(props) {
+  const { translateY } = useTabBar();
+  return (
+    <Animated.View style={[
+      styles.tabBarWrapper,
+      { transform: [{ translateY }] },
+    ]}>
+      <BottomTabBar {...props} />
+    </Animated.View>
+  );
+}
+
+function TabsNavigator() {
   const router = useRouter();
   const segments = useSegments();
   const [userRole, setUserRole] = useState(null);
@@ -57,15 +70,13 @@ export default function TabsLayout() {
   const { pendingCount } = useOffline();
   const insets = useSafeAreaInsets();
   // Add bottom safe area so tab bar sits above Android nav bar / iOS home indicator
-  // With edge-to-edge enabled in MainActivity, Android now reports real insets.
-  // Fallback of 24px for devices that still misreport (Xiaomi gesture nav, etc.)
   const bottomInset = Platform.OS === 'android'
     ? Math.max(insets.bottom, 24)
     : insets.bottom;
 
   return (
-    <View style={{ flex: 1 }}>
     <Tabs
+      tabBar={(props) => <AnimatedTabBar {...props} />}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#10b981',
@@ -188,84 +199,36 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* === Hidden tabs — accessible via More screen navigation but not shown in tab bar === */}
-
-      {/* Hotel — accessed from More screen */}
-      <Tabs.Screen
-        name="hotel"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Menu Management — accessed from More screen */}
-      <Tabs.Screen
-        name="menu-management"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Offers — accessed from More screen */}
-      <Tabs.Screen
-        name="offers"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Profile/Settings — accessed from More screen */}
-      <Tabs.Screen
-        name="profile"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Customers — accessed from More screen */}
-      <Tabs.Screen
-        name="customers"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Inventory — accessed from More screen */}
-      <Tabs.Screen
-        name="inventory"
-        options={{
-          href: null,
-        }}
-      />
-
-      {/* Headquarters — accessed from Home/More screen (owner only) */}
-      <Tabs.Screen
-        name="headquarters"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-
-      {/* Kitchen Display — accessed from More screen */}
-      <Tabs.Screen
-        name="kitchen"
-        options={{
-          href: null, // Always hidden from tab bar
-        }}
-      />
-      <Tabs.Screen
-        name="order-history"
-        options={{
-          href: null, // Always hidden from tab bar — accessed via More screen
-        }}
-      />
-      <Tabs.Screen
-        name="webview"
-        options={{
-          href: null,
-        }}
-      />
+      {/* === Hidden tabs === */}
+      <Tabs.Screen name="hotel" options={{ href: null }} />
+      <Tabs.Screen name="menu-management" options={{ href: null }} />
+      <Tabs.Screen name="offers" options={{ href: null }} />
+      <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen name="customers" options={{ href: null }} />
+      <Tabs.Screen name="inventory" options={{ href: null }} />
+      <Tabs.Screen name="headquarters" options={{ href: null }} />
+      <Tabs.Screen name="kitchen" options={{ href: null }} />
+      <Tabs.Screen name="order-history" options={{ href: null }} />
+      <Tabs.Screen name="webview" options={{ href: null }} />
     </Tabs>
-    </View>
   );
 }
+
+export default function TabsLayout() {
+  return (
+    <TabBarProvider>
+      <View style={{ flex: 1 }}>
+        <TabsNavigator />
+      </View>
+    </TabBarProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  tabBarWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+});

@@ -93,8 +93,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingVertical: 5,
+    borderRadius: 16,
     backgroundColor: '#f3f4f6',
   },
   label: {

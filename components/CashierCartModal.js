@@ -16,15 +16,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
 import CustomerLookup from './CustomerLookup';
-import OfferSelector from './OfferSelector';
 import CustomerDetailModal from './CustomerDetailModal';
 import useBillingCalculation from '../hooks/useBillingCalculation';
-import BillingSummaryBar from './billing/BillingSummaryBar';
+import useOfferEngine from '../hooks/useOfferEngine';
+import { calculateOfferResult } from '../services/offerEngine';
 import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
-import { calculateOfferResult } from '../services/offerEngine';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 
@@ -49,6 +48,9 @@ export default function CashierCartModal({
   activePricingRuleId,
   setActivePricingRuleId,
   autoSelectedRule = false,
+  floors = [],
+  onTableSelect,
+  selectedTable,
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -58,23 +60,60 @@ export default function CashierCartModal({
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [showKitchenNotes, setShowKitchenNotes] = useState(false);
+  const [tableNumber, setTableNumber] = useState(selectedTable?.name || '');
+  const [showTableInput, setShowTableInput] = useState(false);
+
+  // Sync table number if selectedTable prop changes (e.g. navigated from tables view or cleared)
+  useEffect(() => {
+    if (selectedTable?.name) {
+      if (selectedTable.name !== tableNumber) setTableNumber(selectedTable.name);
+    } else {
+      // Parent cleared selectedTable — clear local table number too
+      if (tableNumber) setTableNumber('');
+      setShowTableInput(false);
+    }
+  }, [selectedTable]);
+
+  // Lookup table in floors to find zone
+  const matchedFloor = useMemo(() => {
+    if (!tableNumber.trim() || floors.length === 0) return null;
+    const tNum = tableNumber.trim().toLowerCase();
+    for (const floor of floors) {
+      const tables = floor.tables || [];
+      const found = tables.find(t => {
+        const name = (t.name || '').toLowerCase();
+        const num = String(t.number || '').toLowerCase();
+        return name === tNum || num === tNum;
+      });
+      if (found) return { floorName: floor.name, table: found };
+    }
+    return null;
+  }, [tableNumber, floors]);
+
+  // When table number changes and a floor match is found, notify parent for pricing rule auto-selection
+  useEffect(() => {
+    if (!onTableSelect) return;
+    if (matchedFloor) {
+      onTableSelect(tableNumber.trim(), matchedFloor.floorName);
+    } else if (tableNumber.trim()) {
+      onTableSelect(tableNumber.trim(), '');
+    } else {
+      onTableSelect('', '');
+    }
+  }, [matchedFloor, tableNumber]);
 
   // Loyalty state
   const [customerData, setCustomerData] = useState(null);
   const [redeemPoints, setRedeemPoints] = useState(0);
   const [loyaltySettings, setLoyaltySettings] = useState(null);
 
-  // Offer/discount state
-  const [selectedOfferId, setSelectedOfferId] = useState(null);
-  const [selectedOfferIds, setSelectedOfferIds] = useState([]);
-  const [offerDiscount, setOfferDiscount] = useState(0);
-  const [selectedOffer, setSelectedOffer] = useState(null);
-  const [selectedOffers, setSelectedOffers] = useState([]);
-  const [freeItems, setFreeItems] = useState([]);
+  // Manual discount state
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
+  const [showOffersModal, setShowOffersModal] = useState(false);
+  const [showBreakdownModal, setShowBreakdownModal] = useState(false);
 
   // Billing state
   const [activeBillingPanel, setActiveBillingPanel] = useState(null);
@@ -131,18 +170,6 @@ export default function CashierCartModal({
   // Comp items reduce subtotal
   const compAmount = selectedCompItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  // Use shared billing calculation hook (includes tax!)
-  const billing = useBillingCalculation({
-    subtotal,
-    offerDiscount,
-    manualDiscountAmount,
-    loyaltyDiscount,
-    compAmount,
-    taxSettings,
-    billingSettings,
-    tipAmount,
-  });
-
   const handleCustomerFound = useCallback((customer, settings) => {
     setCustomerData(customer);
     setLoyaltySettings(settings);
@@ -153,30 +180,27 @@ export default function CashierCartModal({
     setRedeemPoints(0);
   }, []);
 
-  const handleOfferSelected = useCallback((offerId, discount, offer) => {
-    setSelectedOfferId(offerId);
-    setOfferDiscount(discount);
-    setSelectedOffer(offer);
-  }, []);
+  // Loyalty max redeemable calculation (for modal)
+  const loyaltyMaxRedeemable = useMemo(() => {
+    if (!customerData?.loyaltyPoints || !loyaltySettings) return 0;
+    const redemptionRate = loyaltySettings.redemptionRate || 10;
+    const maxPct = loyaltySettings.maxRedemptionPercent || 20;
+    const afterOtherDisc = Math.max(0, subtotal - offerDiscount - manualDiscountAmount);
+    const maxDiscByPct = (afterOtherDisc * maxPct) / 100;
+    const maxPointsByPct = Math.floor(maxDiscByPct * redemptionRate);
+    return Math.min(customerData.loyaltyPoints, maxPointsByPct);
+  }, [customerData, loyaltySettings, subtotal, offerDiscount, manualDiscountAmount]);
 
-  const handleOffersChanged = useCallback((ids, totalDiscount, offers) => {
-    setSelectedOfferIds(ids);
-    setOfferDiscount(totalDiscount);
-    setSelectedOffers(offers);
-    // Also update single-offer state for backward compat
-    if (ids.length > 0) {
-      setSelectedOfferId(ids[0]);
-      setSelectedOffer(offers[0] || null);
-    } else {
-      setSelectedOfferId(null);
-      setSelectedOffer(null);
-    }
-  }, []);
-
-  const handleManualDiscountChange = useCallback((value, type) => {
-    setManualDiscount(value);
-    setManualDiscountType(type);
-  }, []);
+  // Loyalty points to earn
+  const loyaltyPointsToEarn = useMemo(() => {
+    if (!loyaltySettings?.enabled) return 0;
+    const earnPerAmount = loyaltySettings.earnPerAmount || 100;
+    const pointsRate = loyaltySettings.pointsEarned || 4;
+    const discTotal = offerDiscount + manualDiscountAmount;
+    if (redeemPoints > 0 && !loyaltySettings.earnPointsOnRedemption) return 0;
+    const base = loyaltySettings.earnOnFullAmount ? subtotal : Math.max(0, subtotal - discTotal - loyaltyDiscount);
+    return Math.floor(base / earnPerAmount) * pointsRate;
+  }, [loyaltySettings, subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, redeemPoints]);
 
   const buildDiscountData = () => ({
     offerDiscount,
@@ -236,6 +260,57 @@ export default function CashierCartModal({
     };
   }, [customerMobile, customerData]);
 
+  // Direct offer engine hook (replaces OfferSelector component)
+  const {
+    applicableOffers,
+    genericOffers,
+    personalizedOffers,
+    selectedOfferId,
+    setSelectedOfferId,
+    selectedOfferIds,
+    toggleOffer,
+    offerDiscount,
+    selectedOfferName,
+    freeItems,
+    isLoadingOffers,
+    customerGroups: customerOfferGroups,
+    autoApplied,
+    offerSettings,
+    calculateDiscountForOffer,
+    resetOffers,
+  } = useOfferEngine({
+    restaurantId,
+    cart,
+    subtotal,
+    customerContext,
+    options: { autoApply: true },
+  });
+
+  // Derive selectedOffer/selectedOffers for buildDiscountData
+  const selectedOffer = useMemo(() => {
+    if (!selectedOfferId) return null;
+    return applicableOffers.find(o => (o.id || o._id) === selectedOfferId) || null;
+  }, [selectedOfferId, applicableOffers]);
+
+  const selectedOffers = useMemo(() => {
+    if (selectedOfferIds.length === 0) return [];
+    return selectedOfferIds
+      .map(id => applicableOffers.find(o => (o.id || o._id) === id))
+      .filter(Boolean);
+  }, [selectedOfferIds, applicableOffers]);
+
+  // Use shared billing calculation hook — MUST be after useOfferEngine so offerDiscount is defined
+  const billing = useBillingCalculation({
+    subtotal,
+    offerDiscount,
+    manualDiscountAmount,
+    loyaltyDiscount,
+    compAmount,
+    taxSettings,
+    billingSettings,
+    tipAmount,
+  });
+
   const freeItemsForDisplay = useMemo(() => {
     return (freeItems || []).map(fi => {
       const id = fi.itemId || fi.menuItemId || fi.id;
@@ -249,7 +324,7 @@ export default function CashierCartModal({
   }, [freeItems, cart]);
 
   const handlePlaceOrder = () => {
-    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
+    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
   };
 
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
@@ -309,6 +384,48 @@ export default function CashierCartModal({
               <Text style={styles.title}>New Bill</Text>
               <Text style={styles.subtitle}>{itemCount} items</Text>
             </View>
+
+            {/* Table Number — inline input or chip */}
+            {selectedTable?.name ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(16,185,129,0.2)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6 }}>
+                <Ionicons name="restaurant-outline" size={13} color="#34d399" />
+                <Text style={{ color: '#34d399', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable.name}</Text>
+              </View>
+            ) : showTableInput ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingHorizontal: 6, marginRight: 6, height: 32 }}>
+                <Ionicons name="restaurant-outline" size={13} color="rgba(255,255,255,0.7)" />
+                <TextInput
+                  style={{ color: '#fff', fontSize: 13, fontWeight: '600', paddingHorizontal: 6, minWidth: 50, maxWidth: 80, paddingVertical: 0 }}
+                  placeholder="Table"
+                  placeholderTextColor="rgba(255,255,255,0.4)"
+                  value={tableNumber}
+                  onChangeText={setTableNumber}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={() => { if (!tableNumber.trim()) setShowTableInput(false); }}
+                />
+                {tableNumber ? (
+                  matchedFloor ? (
+                    <Ionicons name="checkmark-circle" size={14} color="#34d399" />
+                  ) : (
+                    <Ionicons name="alert-circle-outline" size={14} color="#fbbf24" />
+                  )
+                ) : (
+                  <TouchableOpacity onPress={() => { setTableNumber(''); setShowTableInput(false); }}>
+                    <Ionicons name="close" size={14} color="rgba(255,255,255,0.5)" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, marginRight: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                onPress={() => setShowTableInput(true)}
+              >
+                <Ionicons name="add" size={13} color="rgba(255,255,255,0.7)" />
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600' }}>Table</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Kitchen Notes toggle */}
             <TouchableOpacity
               style={[styles.headerActionBtn, showKitchenNotes && styles.headerActionBtnActive]}
@@ -337,6 +454,20 @@ export default function CashierCartModal({
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Zone/Pricing auto-select indicator */}
+          {tableNumber.trim() && matchedFloor && autoSelectedRule && activePricingRuleId && (() => {
+            const activeRule = pricingRules.find(r => r.id === activePricingRuleId);
+            if (!activeRule) return null;
+            return (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: 'rgba(16,185,129,0.15)', gap: 4 }}>
+                <Ionicons name="lock-closed" size={10} color="#34d399" />
+                <Text style={{ fontSize: 11, color: '#34d399', fontWeight: '600' }}>{activeRule.name}</Text>
+                <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>·</Text>
+                <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{matchedFloor.floorName}</Text>
+              </View>
+            );
+          })()}
         </SafeAreaView>
 
         <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -408,46 +539,7 @@ export default function CashierCartModal({
 
           {cart.length > 0 && (
             <>
-              {/* Customer Lookup with Loyalty */}
-              {restaurantId && (
-                <View style={styles.sectionCard}>
-                  <CustomerLookup
-                    restaurantId={restaurantId}
-                    countryCode={countryCode}
-                    subtotal={subtotal}
-                    onCustomerFound={handleCustomerFound}
-                    onPhoneChange={(phone) => setCustomerMobile(phone)}
-                    onRedeemChange={setRedeemPoints}
-                    onCustomerChipPress={(customer) => {
-                      setDetailCustomerId(customer?.id || customer?._id);
-                      setShowCustomerDetail(true);
-                    }}
-                    redeemPoints={redeemPoints}
-                    compact
-                  />
-                </View>
-              )}
-
-              {/* Offers & Manual Discount */}
-              {restaurantId && (
-                <OfferSelector
-                  restaurantId={restaurantId}
-                  cartItems={cart}
-                  subtotal={subtotal}
-                  onOfferSelected={handleOfferSelected}
-                  onOffersChanged={handleOffersChanged}
-                  onManualDiscountChange={handleManualDiscountChange}
-                  selectedOfferId={selectedOfferId}
-                  selectedOfferIds={selectedOfferIds}
-                  manualDiscount={manualDiscount}
-                  manualDiscountType={manualDiscountType}
-                  customerInfo={{ isFirstOrder: customerData?.totalOrders === 0 }}
-                  customerContext={customerContext}
-                  onFreeItemsChange={setFreeItems}
-                />
-              )}
-
-              {/* Billing Toolbar + Panels */}
+              {/* Billing Toolbar + Panels — compact chips at top */}
               <View style={styles.billingSection}>
                 <BillingToolbar
                   billingSettings={billingSettings}
@@ -495,38 +587,115 @@ export default function CashierCartModal({
                 />
               </View>
 
-              {/* Billing Summary Bar */}
-              <BillingSummaryBar
-                subtotal={subtotal}
-                totalDiscount={billing.totalDiscount}
-                discountedSubtotal={billing.discountedSubtotal}
-                serviceChargeAmount={billing.serviceChargeAmount}
-                serviceChargeLabel={billingSettings.serviceChargeLabel || 'Service Charge'}
-                serviceChargeRate={billing.serviceChargeRate}
-                taxBreakdown={billing.taxBreakdown}
-                totalTax={billing.totalTax}
-                tipAmount={tipAmount}
-                tipPercentage={tipPercentage}
-                roundOffAmount={billing.roundOffAmount}
-                grandTotal={billing.grandTotal}
-                offerDiscount={offerDiscount}
-                offerName={selectedOffers.length > 0 ? selectedOffers.map(o => o.name).join(', ') : (selectedOffer?.name || null)}
-                appliedOffers={selectedOffers.length > 0
-                  ? selectedOffers.map(offer => ({
-                      name: offer.name,
-                      discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
-                    }))
-                  : []}
-                manualDiscount={manualDiscountAmount}
-                loyaltyDiscount={loyaltyDiscount}
-              />
-              {billing.totalDiscount > 0 && (
-                <Text style={styles.savingsText}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
-              )}
+              {/* Spacer for bottom fixed section */}
+              <View style={{ height: 10 }} />
+            </>
+          )}
+        </ScrollView>
 
-              {/* Payment Method Pills (hidden when split payment active) */}
+        {/* Fixed Bottom Section — customer + offers inline, total, payment */}
+        {cart.length > 0 && (
+          <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+              {/* Customer Phone + Offers — same line */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 }}>
+                {/* Phone input (flex) */}
+                {restaurantId && (
+                  <View style={{ flex: 1 }}>
+                    <CustomerLookup
+                      restaurantId={restaurantId}
+                      countryCode={countryCode}
+                      subtotal={subtotal}
+                      onCustomerFound={handleCustomerFound}
+                      onPhoneChange={(phone) => setCustomerMobile(phone)}
+                      onRedeemChange={setRedeemPoints}
+                      onCustomerChipPress={(customer) => {
+                        setDetailCustomerId(customer?.id || customer?._id);
+                        setShowCustomerDetail(true);
+                      }}
+                      redeemPoints={redeemPoints}
+                      hideLoyalty
+                      compact
+                      coolStyle
+                    />
+                  </View>
+                )}
+
+                {/* Offers badge — compact, inline */}
+                {(() => {
+                  const hasOffers = genericOffers.length > 0 || personalizedOffers.length > 0;
+                  const hasLoyalty = loyaltySettings?.enabled && customerData;
+                  const hasAnything = hasOffers || hasLoyalty || billing.totalDiscount > 0 || specialInstructions;
+                  if (!hasAnything) return null;
+
+                  const activeOfferCount = (offerSettings?.allowMultipleOffers ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : [])).length;
+                  const hasApplied = activeOfferCount > 0 || loyaltyDiscount > 0 || manualDiscountAmount > 0;
+
+                  return (
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#f0fdf4' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#bbf7d0' : '#e0e7ff' }}
+                      onPress={() => setShowOffersModal(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#16a34a' : '#6366f1'} />
+                      {hasApplied ? (
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>
+                          -₹{billing.totalDiscount.toFixed(0)}
+                        </Text>
+                      ) : (
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#6366f1' }}>
+                          {applicableOffers.length}
+                        </Text>
+                      )}
+                      <Ionicons name="chevron-forward" size={12} color={hasApplied ? '#86efac' : '#a5b4fc'} />
+                    </TouchableOpacity>
+                  );
+                })()}
+              </View>
+
+              {/* Compact Total Strip */}
+              <View style={styles.compactTotalStrip}>
+                <View style={styles.compactTotalRow}>
+                  <Text style={styles.compactTotalLabel}>TOTAL</Text>
+                  <Text style={styles.compactTotalValue}>₹{billing.grandTotal.toFixed(0)}</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breakdownChipsRow}>
+                  <View style={styles.breakdownChip}>
+                    <Text style={styles.breakdownChipText}>Sub ₹{subtotal.toFixed(0)}</Text>
+                  </View>
+                  {billing.totalDiscount > 0 && (
+                    <View style={[styles.breakdownChip, styles.breakdownChipGreen]}>
+                      <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-₹{billing.totalDiscount.toFixed(0)}</Text>
+                    </View>
+                  )}
+                  {billing.serviceChargeAmount > 0 && (
+                    <View style={styles.breakdownChip}>
+                      <Text style={styles.breakdownChipText}>SC ₹{billing.serviceChargeAmount.toFixed(0)}</Text>
+                    </View>
+                  )}
+                  {billing.totalTax > 0 && (
+                    <View style={styles.breakdownChip}>
+                      <Text style={styles.breakdownChipText}>Tax ₹{billing.totalTax.toFixed(0)}</Text>
+                    </View>
+                  )}
+                  {tipAmount > 0 && (
+                    <View style={styles.breakdownChip}>
+                      <Text style={styles.breakdownChipText}>Tip ₹{tipAmount.toFixed(0)}</Text>
+                    </View>
+                  )}
+                  {billing.roundOffAmount !== 0 && (
+                    <View style={styles.breakdownChip}>
+                      <Text style={styles.breakdownChipText}>Round {billing.roundOffAmount > 0 ? '+' : ''}₹{billing.roundOffAmount.toFixed(1)}</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity onPress={() => setShowBreakdownModal(true)} style={styles.breakdownInfoBtn}>
+                    <Ionicons name="information-circle-outline" size={16} color="rgba(255,255,255,0.8)" />
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+
+              {/* Payment Method Pills */}
               {splitPayments.length === 0 && (
-                <View style={styles.paymentRow}>
+                <View style={[styles.paymentRow, { paddingHorizontal: 12 }]}>
                   <Ionicons name="card-outline" size={14} color="#6b7280" />
                   <Text style={styles.paymentLabel}>Pay</Text>
                   {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
@@ -544,14 +713,10 @@ export default function CashierCartModal({
                 </View>
               )}
               {effectivelyOffline && (
-                <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, marginLeft: 4 }}>UPI/Card unavailable offline</Text>
+                <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, marginLeft: 12 }}>UPI/Card unavailable offline</Text>
               )}
-
-              {/* Spacer for bottom button */}
-              <View style={{ height: 80 }} />
-            </>
-          )}
-        </ScrollView>
+          </View>
+        )}
 
         {/* Bottom Action */}
         {cart.length > 0 && (
@@ -574,6 +739,415 @@ export default function CashierCartModal({
           </View>
         )}
       </View>
+      {/* Offers & Rewards Modal */}
+      <Modal
+        visible={showOffersModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowOffersModal(false)}
+      >
+        <View style={styles.offersOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowOffersModal(false)} />
+          <View style={styles.offersCard}>
+            {/* Header */}
+            <View style={styles.offersHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#6366f1', justifyContent: 'center', alignItems: 'center' }}>
+                  <Ionicons name="pricetag" size={14} color="#fff" />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Order Details</Text>
+                  <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · ₹{subtotal.toFixed(0)}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowOffersModal(false)}
+                style={styles.offersCloseBtn}
+              >
+                <Ionicons name="close" size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Body */}
+            <ScrollView style={styles.offersBody} showsVerticalScrollIndicator={false}>
+              {/* CUSTOMER INFO Section */}
+              {customerData && (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={styles.modalSectionLabel}>Customer</Text>
+                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#a5f3fc' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#06b6d4', justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="person" size={16} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0e7490' }}>{customerData.name}</Text>
+                        <Text style={{ fontSize: 11, color: '#64748b' }}>{customerData.phone || customerMobile}</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDetailCustomerId(customerData?.id || customerData?._id);
+                          setShowCustomerDetail(true);
+                        }}
+                        style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#a5f3fc' }}
+                      >
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#0e7490' }}>View</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#0e7490' }}>{customerData.totalOrders || 0}</Text>
+                        <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Orders</Text>
+                      </View>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#d97706' }}>{customerData.loyaltyPoints || 0}</Text>
+                        <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Points</Text>
+                      </View>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#16a34a' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
+                        <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Spent</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              )}
+              {/* OFFERS Section */}
+              {(genericOffers.length > 0 || personalizedOffers.length > 0) && (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={styles.modalSectionLabel}>Offers</Text>
+                  {genericOffers.map(offer => {
+                    const oid = offer.id || offer._id;
+                    const isMulti = offerSettings?.allowMultipleOffers;
+                    const isSelected = isMulti ? selectedOfferIds.includes(oid) : selectedOfferId === oid;
+                    const saves = calculateDiscountForOffer(offer, subtotal, cart);
+                    return (
+                      <TouchableOpacity
+                        key={oid}
+                        style={[styles.offerCard, isSelected && styles.offerCardSelected]}
+                        onPress={() => {
+                          if (isMulti) { toggleOffer(oid); } else { setSelectedOfferId(isSelected ? null : oid); }
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.offerCheckbox, isSelected && styles.offerCheckboxActive]}>
+                          {isSelected && <Ionicons name="checkmark" size={12} color="#fff" />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.offerCardName, isSelected && { color: '#4338ca' }]}>{offer.name}</Text>
+                          {offer.description ? (
+                            <Text style={styles.offerCardDesc} numberOfLines={1}>{offer.description}</Text>
+                          ) : null}
+                        </View>
+                        {saves > 0 && (
+                          <Text style={[styles.offerCardSaves, isSelected && { color: '#16a34a' }]}>
+                            -₹{saves.toFixed(2)}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Personalized offers */}
+                  {personalizedOffers.length > 0 && (
+                    <>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8, marginBottom: 8 }}>
+                        <Ionicons name="gift" size={10} color="#b45309" />
+                        <Text style={[styles.modalSectionLabel, { color: '#b45309', marginBottom: 0 }]}>For You</Text>
+                      </View>
+                      {personalizedOffers.map(offer => {
+                        const oid = offer.id || offer._id;
+                        const isMulti = offerSettings?.allowMultipleOffers;
+                        const isSelected = isMulti ? selectedOfferIds.includes(oid) : selectedOfferId === oid;
+                        const saves = calculateDiscountForOffer(offer, subtotal, cart);
+                        const offerGroupIds = offer.audience?.groupIds || [];
+                        const matchedGroup = customerOfferGroups?.find(g => offerGroupIds.includes(g.id));
+                        return (
+                          <TouchableOpacity
+                            key={oid}
+                            style={[styles.offerCard, styles.offerCardPersonalized, isSelected && styles.offerCardPersonalizedSelected]}
+                            onPress={() => {
+                              if (isMulti) { toggleOffer(oid); } else { setSelectedOfferId(isSelected ? null : oid); }
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={[styles.offerCheckbox, { borderColor: '#fbbf24' }, isSelected && { backgroundColor: '#d97706', borderColor: '#d97706' }]}>
+                              {isSelected && <Ionicons name="checkmark" size={12} color="#fff" />}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.offerCardName, { color: '#b45309' }, isSelected && { color: '#92400e' }]}>{offer.name}</Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                {offer.description ? (
+                                  <Text style={[styles.offerCardDesc, { color: '#d97706' }]} numberOfLines={1}>{offer.description}</Text>
+                                ) : null}
+                                {matchedGroup && (
+                                  <View style={{ backgroundColor: matchedGroup.color || '#6366f1', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
+                                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#fff' }}>{matchedGroup.name}</Text>
+                                  </View>
+                                )}
+                              </View>
+                            </View>
+                            {saves > 0 && (
+                              <Text style={[styles.offerCardSaves, isSelected && { color: '#16a34a' }]}>
+                                -₹{saves.toFixed(2)}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {freeItems && freeItems.length > 0 && (
+                    <View style={{ marginTop: 8, padding: 8, borderRadius: 8, backgroundColor: '#fef3c7', borderWidth: 1, borderStyle: 'dashed', borderColor: '#f59e0b', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Ionicons name="gift" size={12} color="#78350f" />
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#78350f' }}>
+                        Free: {freeItemsForDisplay.map(f => `${f.quantity}× ${f.name}`).join(', ')}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {isLoadingOffers && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <ActivityIndicator size="small" color="#6366f1" />
+                  <Text style={{ fontSize: 11, color: '#9ca3af' }}>Loading offers...</Text>
+                </View>
+              )}
+
+              {/* LOYALTY POINTS Section */}
+              {loyaltySettings?.enabled && customerData && (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={styles.modalSectionLabel}>Loyalty Points</Text>
+                  <View style={styles.loyaltyCard}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#b45309' }}>
+                        {customerData.loyaltyPoints || 0} points available
+                      </Text>
+                      {loyaltyPointsToEarn > 0 && (
+                        <View style={styles.earnBadge}>
+                          <Text style={styles.earnBadgeText}>Will earn +{loyaltyPointsToEarn} pts</Text>
+                        </View>
+                      )}
+                    </View>
+                    {loyaltyMaxRedeemable > 0 ? (
+                      <>
+                        {/* Slider bar — tappable to set redemption */}
+                        <TouchableOpacity
+                          activeOpacity={1}
+                          onPress={(e) => {
+                            const { locationX } = e.nativeEvent;
+                            // Approximate bar width from layout
+                            const barWidth = e.nativeEvent.target ? 280 : 280;
+                            const fraction = Math.max(0, Math.min(1, locationX / barWidth));
+                            const pts = Math.round(loyaltyMaxRedeemable * fraction);
+                            setRedeemPoints(pts);
+                          }}
+                          style={styles.sliderContainer}
+                        >
+                          <View style={styles.sliderTrack}>
+                            <View style={[styles.sliderFill, { width: `${Math.min(100, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
+                            <View style={[styles.sliderThumb, { left: `${Math.min(96, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
+                          </View>
+                        </TouchableOpacity>
+
+                        {/* Quick-select pills below slider */}
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                          {[
+                            { label: '25%', value: 0.25 },
+                            { label: '50%', value: 0.50 },
+                            { label: '75%', value: 0.75 },
+                            { label: 'Max', value: 1 },
+                          ].map((opt) => {
+                            const pillPts = Math.floor(loyaltyMaxRedeemable * opt.value);
+                            const isActive = redeemPoints > 0 && redeemPoints === pillPts;
+                            return (
+                              <TouchableOpacity
+                                key={opt.label}
+                                style={[styles.loyaltyPill, isActive && styles.loyaltyPillActive]}
+                                onPress={() => setRedeemPoints(pillPts)}
+                              >
+                                <Text style={[styles.loyaltyPillText, isActive && styles.loyaltyPillTextActive]}>
+                                  {opt.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                          {redeemPoints > 0 && (
+                            <TouchableOpacity
+                              style={[styles.loyaltyPill, { borderColor: '#fecaca', backgroundColor: '#fee2e2' }]}
+                              onPress={() => setRedeemPoints(0)}
+                            >
+                              <Ionicons name="close" size={12} color="#ef4444" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        {/* Value labels */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#b45309' }}>
+                            {redeemPoints > 0 ? `${redeemPoints} pts = -₹${loyaltyDiscount.toFixed(0)}` : 'Tap or slide to redeem'}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: '#92400e' }}>
+                            Max: {loyaltyMaxRedeemable} pts ({loyaltySettings.maxRedemptionPercent || 20}%)
+                          </Text>
+                        </View>
+                      </>
+                    ) : (customerData.loyaltyPoints || 0) > 0 ? (
+                      <Text style={{ fontSize: 11, color: '#92400e' }}>
+                        Cannot redeem on current order (max {loyaltySettings.maxRedemptionPercent || 20}% of bill)
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              )}
+
+              {/* KITCHEN NOTES Section */}
+              <View style={{ marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                  <Ionicons name="document-text-outline" size={10} color="#94a3b8" />
+                  <Text style={styles.modalSectionLabel}>Kitchen Notes</Text>
+                </View>
+                <TextInput
+                  style={styles.notesInput}
+                  placeholder="E.g., No onions, extra spicy, birthday celebration..."
+                  placeholderTextColor="#9ca3af"
+                  value={specialInstructions}
+                  onChangeText={setSpecialInstructions}
+                  multiline
+                  numberOfLines={2}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+
+            {/* Footer — full breakdown */}
+            <View style={styles.offersFooter}>
+              <View style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>₹{subtotal.toFixed(0)}</Text>
+                </View>
+                {offerDiscount > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#16a34a' }}>Offers</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#16a34a' }}>-₹{offerDiscount.toFixed(0)}</Text>
+                  </View>
+                )}
+                {loyaltyDiscount > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#b45309' }}>Loyalty ({redeemPoints} pts)</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#b45309' }}>-₹{loyaltyDiscount.toFixed(0)}</Text>
+                  </View>
+                )}
+                {billing.serviceChargeAmount > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{billingSettings.serviceChargeLabel || 'Service Charge'} ({billing.serviceChargeRate}%)</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{billing.serviceChargeAmount.toFixed(0)}</Text>
+                  </View>
+                )}
+                {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
+                  <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%)</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{tax.amount.toFixed(0)}</Text>
+                  </View>
+                ))}
+                {billing.roundOffAmount !== 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Round off</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{billing.roundOffAmount > 0 ? '+' : ''}₹{billing.roundOffAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>Total</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>₹{billing.grandTotal.toFixed(0)}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.doneBtn, billing.totalDiscount > 0 && { backgroundColor: '#10b981' }]}
+                onPress={() => setShowOffersModal(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.doneBtnText}>
+                  {billing.totalDiscount > 0 ? `Apply & Save ₹${billing.totalDiscount.toFixed(0)}` : 'Done'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bill Breakdown Modal */}
+      <Modal
+        visible={showBreakdownModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowBreakdownModal(false)}
+      >
+        <TouchableOpacity style={styles.breakdownOverlay} activeOpacity={1} onPress={() => setShowBreakdownModal(false)}>
+          <View style={styles.breakdownCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.breakdownHeader}>
+              <Text style={styles.breakdownTitle}>Bill Breakdown</Text>
+              <TouchableOpacity onPress={() => setShowBreakdownModal(false)}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.breakdownBody}>
+              <View style={styles.breakdownRow}>
+                <Text style={styles.breakdownLabel}>Subtotal</Text>
+                <Text style={styles.breakdownAmount}>₹{subtotal.toFixed(2)}</Text>
+              </View>
+              {offerDiscount > 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Offers</Text>
+                  <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{offerDiscount.toFixed(2)}</Text>
+                </View>
+              )}
+              {loyaltyDiscount > 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Loyalty ({redeemPoints} pts)</Text>
+                  <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{loyaltyDiscount.toFixed(2)}</Text>
+                </View>
+              )}
+              {manualDiscountAmount > 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Manual Discount</Text>
+                  <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{manualDiscountAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {billing.serviceChargeAmount > 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>{billingSettings.serviceChargeLabel || 'Service Charge'}{billing.serviceChargeRate ? ` ${billing.serviceChargeRate}%` : ''}</Text>
+                  <Text style={styles.breakdownAmount}>₹{billing.serviceChargeAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {billing.taxBreakdown.map((tax, i) => (
+                <View key={`tax-${i}`} style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}</Text>
+                  <Text style={styles.breakdownAmount}>₹{tax.amount.toFixed(2)}</Text>
+                </View>
+              ))}
+              {tipAmount > 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Tip{tipPercentage ? ` ${tipPercentage}%` : ''}</Text>
+                  <Text style={styles.breakdownAmount}>₹{tipAmount.toFixed(2)}</Text>
+                </View>
+              )}
+              {billing.roundOffAmount !== 0 && (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Round-off</Text>
+                  <Text style={styles.breakdownAmount}>{billing.roundOffAmount > 0 ? '+' : '-'}₹{Math.abs(billing.roundOffAmount).toFixed(2)}</Text>
+                </View>
+              )}
+              <View style={styles.breakdownDivider} />
+              <View style={styles.breakdownRow}>
+                <Text style={styles.breakdownGrandLabel}>Grand Total</Text>
+                <Text style={styles.breakdownGrandValue}>₹{billing.grandTotal.toFixed(2)}</Text>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <CustomerDetailModal
         visible={showCustomerDetail}
         customerId={detailCustomerId}
@@ -687,11 +1261,12 @@ const styles = StyleSheet.create({
   cartSection: {
     backgroundColor: '#fff',
     marginTop: 8,
+    paddingTop: 4,
   },
   cartItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
@@ -764,6 +1339,126 @@ const styles = StyleSheet.create({
     color: '#10b981',
     textAlign: 'center',
     marginTop: 4,
+  },
+  // Compact Total Strip
+  compactTotalStrip: {
+    marginHorizontal: 12,
+    marginTop: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  compactTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  compactTotalLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.8)',
+    letterSpacing: 1,
+  },
+  compactTotalValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  breakdownChipsRow: {
+    flexDirection: 'row',
+    gap: 5,
+    marginTop: 5,
+    alignItems: 'center',
+  },
+  breakdownChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  breakdownChipGreen: {
+    backgroundColor: 'rgba(134,239,172,0.25)',
+  },
+  breakdownChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  breakdownChipTextGreen: {
+    color: '#bbf7d0',
+  },
+  breakdownInfoBtn: {
+    padding: 2,
+  },
+  // Breakdown Modal
+  breakdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+  breakdownCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 340,
+    overflow: 'hidden',
+  },
+  breakdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  breakdownTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  breakdownBody: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  breakdownLabel: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  breakdownAmount: {
+    fontSize: 13,
+    color: '#1e293b',
+    fontWeight: '600',
+  },
+  breakdownDiscount: {
+    color: '#16a34a',
+  },
+  breakdownDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 6,
+  },
+  breakdownGrandLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  breakdownGrandValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#dc2626',
   },
   // Payment
   paymentRow: {
@@ -840,5 +1535,299 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#9ca3af',
+  },
+  // Summary Row — tappable card with visual affordance
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    marginHorizontal: 12,
+    marginTop: 6,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#eef2ff',
+    gap: 8,
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  summaryRowActive: {
+    borderColor: '#86efac',
+    backgroundColor: '#f0fdf4',
+    shadowColor: '#22c55e',
+  },
+  earnBadge: {
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  earnBadgeText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#16a34a',
+  },
+  // Offers Modal
+  offersOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  offersCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  offersHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+    backgroundColor: '#f8fafc',
+  },
+  offersCloseBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  offersBody: {
+    padding: 16,
+  },
+  offersFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    backgroundColor: '#f8fafc',
+  },
+  modalSectionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  offerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+    marginBottom: 6,
+  },
+  offerCardSelected: {
+    borderColor: '#6366f1',
+    backgroundColor: '#eef2ff',
+    borderLeftWidth: 4,
+    borderLeftColor: '#6366f1',
+  },
+  offerCardPersonalized: {
+    borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+  },
+  offerCardPersonalizedSelected: {
+    borderColor: '#d97706',
+    backgroundColor: '#fef3c7',
+    borderLeftWidth: 4,
+    borderLeftColor: '#d97706',
+  },
+  offerCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  offerCheckboxActive: {
+    backgroundColor: '#6366f1',
+    borderColor: '#6366f1',
+  },
+  offerCardName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  offerCardDesc: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  offerCardSaves: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6b7280',
+  },
+  // Loyalty in modal
+  loyaltyCard: {
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  loyaltyInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1.5,
+    borderColor: '#fde68a',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#fff',
+    minWidth: 70,
+  },
+  loyaltyInput: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#b45309',
+    minWidth: 40,
+    padding: 0,
+  },
+  loyaltyPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  loyaltyPillActive: {
+    borderColor: '#f59e0b',
+    backgroundColor: '#fef3c7',
+  },
+  loyaltyPillText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  loyaltyPillTextActive: {
+    color: '#b45309',
+  },
+  loyaltyBarTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#e5e7eb',
+  },
+  loyaltyBarFill: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#f59e0b',
+  },
+  // Slider for loyalty redemption
+  sliderContainer: {
+    paddingVertical: 8,
+  },
+  sliderTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#e5e7eb',
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  sliderFill: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#f59e0b',
+    position: 'absolute',
+    left: 0,
+    top: 0,
+  },
+  sliderThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#f59e0b',
+    position: 'absolute',
+    top: -7,
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  // Manual discount in modal
+  discountToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+  },
+  discountToggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#f9fafb',
+  },
+  discountToggleBtnActive: {
+    backgroundColor: '#6366f1',
+  },
+  discountToggleTxt: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  discountToggleTxtActive: {
+    color: '#fff',
+  },
+  discountInput: {
+    flex: 1,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    fontSize: 13,
+    color: '#1f2937',
+  },
+  discountClearBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  notesInput: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
+    fontSize: 12,
+    color: '#1f2937',
+    minHeight: 50,
+  },
+  doneBtn: {
+    backgroundColor: '#6366f1',
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+  },
+  doneBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
   },
 });
