@@ -96,6 +96,7 @@ export default function MenuScreen() {
   const [activePricingRuleId, setActivePricingRuleId] = useState(null);
   const [autoSelectedRule, setAutoSelectedRule] = useState(false);
   const [floors, setFloors] = useState([]);
+  const [upiSettings, setUpiSettings] = useState({});
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -127,6 +128,7 @@ export default function MenuScreen() {
       setActivePricingRuleId(null);
       setAutoSelectedRule(false);
       setBillingSettings({});
+      setUpiSettings({});
       setTaxSettings({ enabled: false, rate: 0, taxes: [] });
       setCart([]);
       setSelectedTable(null);
@@ -228,6 +230,14 @@ export default function MenuScreen() {
           if (bRes) setBillingSettings(bRes.settings || bRes.billingSettings || {});
         } catch (e) {
           console.log('Billing settings fetch error:', e);
+        }
+
+        // Load UPI settings from customer app settings
+        try {
+          const csRes = await apiClient.getCustomerAppSettings(restaurantId);
+          if (csRes?.paymentSettings) setUpiSettings(csRes.paymentSettings);
+        } catch (e) {
+          console.log('Customer app settings fetch error:', e);
         }
       };
 
@@ -2236,6 +2246,7 @@ export default function MenuScreen() {
           floors={floors}
           onTableSelect={handleCashierTableSelect}
           selectedTable={selectedTable}
+          upiSettings={upiSettings}
         />
       ) : (
         <CartModal
@@ -2265,6 +2276,8 @@ export default function MenuScreen() {
           floors={floors}
           onTableSelect={handleCashierTableSelect}
           selectedTable={selectedTable}
+          upiSettings={upiSettings}
+          restaurantName={restaurantName}
         />
       )}
 

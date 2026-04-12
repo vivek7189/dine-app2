@@ -26,6 +26,7 @@ import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
+import UpiQrModal from './UpiQrModal';
 
 export default function CashierCartModal({
   visible,
@@ -51,6 +52,7 @@ export default function CashierCartModal({
   floors = [],
   onTableSelect,
   selectedTable,
+  upiSettings = {},
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -114,6 +116,7 @@ export default function CashierCartModal({
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
+  const [showUpiQr, setShowUpiQr] = useState(false);
 
   // Billing state
   const [activeBillingPanel, setActiveBillingPanel] = useState(null);
@@ -323,7 +326,18 @@ export default function CashierCartModal({
     });
   }, [freeItems, cart]);
 
+  const upiConfigured = upiSettings?.upiEnabled && upiSettings?.upiId;
+
   const handlePlaceOrder = () => {
+    if (paymentMethod === 'upi' && upiConfigured) {
+      setShowUpiQr(true);
+      return;
+    }
+    onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
+  };
+
+  const handleUpiConfirm = () => {
+    setShowUpiQr(false);
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
   };
 
@@ -1153,6 +1167,16 @@ export default function CashierCartModal({
         customerId={detailCustomerId}
         restaurantId={restaurantId}
         onClose={() => setShowCustomerDetail(false)}
+      />
+      <UpiQrModal
+        visible={showUpiQr}
+        onClose={() => setShowUpiQr(false)}
+        onConfirmPayment={handleUpiConfirm}
+        amount={billing.grandTotal}
+        restaurantName={restaurantName}
+        upiId={upiSettings?.upiId}
+        upiQrCodeUrl={upiSettings?.upiQrCodeUrl}
+        upiDisplayName={upiSettings?.upiDisplayName}
       />
     </Modal>
   );

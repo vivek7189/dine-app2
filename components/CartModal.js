@@ -29,6 +29,7 @@ import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
+import UpiQrModal from './UpiQrModal';
 
 export default function CartModal({
   visible,
@@ -57,6 +58,8 @@ export default function CartModal({
   floors = [],
   onTableSelect,
   selectedTable,
+  upiSettings = {},
+  restaurantName = '',
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -336,16 +339,36 @@ export default function CartModal({
 
   const insets = useSafeAreaInsets();
   const [activeAction, setActiveAction] = useState(null); // 'place' | 'complete'
+  const [showUpiQr, setShowUpiQr] = useState(false);
+
+  const upiConfigured = upiSettings?.upiEnabled && upiSettings?.upiId;
 
   const handlePlaceOrder = () => {
     setActiveAction('place');
+    if (paymentMethod === 'upi' && upiConfigured) {
+      setShowUpiQr(true);
+      return;
+    }
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
   };
 
   const handleCompleteBill = () => {
     if (onCompleteBill) {
       setActiveAction('complete');
+      if (paymentMethod === 'upi' && upiConfigured) {
+        setShowUpiQr(true);
+        return;
+      }
       onCompleteBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
+    }
+  };
+
+  const handleUpiConfirm = () => {
+    setShowUpiQr(false);
+    if (activeAction === 'complete' && onCompleteBill) {
+      onCompleteBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
+    } else {
+      onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
     }
   };
 
@@ -1082,6 +1105,16 @@ export default function CartModal({
         customerId={detailCustomerId}
         restaurantId={restaurantId}
         onClose={() => setShowCustomerDetail(false)}
+      />
+      <UpiQrModal
+        visible={showUpiQr}
+        onClose={() => { setShowUpiQr(false); setActiveAction(null); }}
+        onConfirmPayment={handleUpiConfirm}
+        amount={billing.grandTotal}
+        restaurantName={restaurantName}
+        upiId={upiSettings?.upiId}
+        upiQrCodeUrl={upiSettings?.upiQrCodeUrl}
+        upiDisplayName={upiSettings?.upiDisplayName}
       />
     </Modal>
   );
