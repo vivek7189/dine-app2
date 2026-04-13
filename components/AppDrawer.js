@@ -68,7 +68,7 @@ export default function AppDrawer({
       title: 'Menu Management',
       icon: 'construct-outline',
       route: '/(tabs)/menu-management',
-      requiresRole: ['owner', 'manager'],
+      requiresRole: ['owner', 'admin', 'manager'],
     },
     {
       title: 'Settings',

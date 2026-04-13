@@ -103,7 +103,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
     try {
       const userData = initialUser || await apiClient.getUser();
       if (!userData) { router.replace('/(auth)/login'); return; }
-      if (!embedded && userData.role !== 'owner') {
+      if (!embedded && userData.role !== 'owner' && userData.role !== 'admin') {
         Alert.alert('Access Denied', 'Headquarters is available for restaurant owners only.');
         router.back();
         return;

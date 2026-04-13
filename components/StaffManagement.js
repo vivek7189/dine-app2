@@ -16,23 +16,34 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import { Colors, Spacing } from '../constants/Theme';
+import { ADMIN_TAB_OPS, ADMIN_TAB_LABELS } from '../utils/permissions';
 
 const STORAGE_KEY = 'dine_staff_list';
 
-const ROLES = ['waiter', 'cashier', 'manager', 'employee'];
+const ROLES = ['admin', 'manager', 'waiter', 'cashier', 'employee'];
 const ROLE_FILTERS = ['all', ...ROLES];
 
-const DEFAULT_PAGE_ACCESS = {
-  dashboard: true,
-  history: true,
-  tables: true,
-  menu: true,
-  analytics: false,
-  inventory: false,
-  kot: false,
-  admin: false,
-  completeBill: false,
+// SYNC: Keep in sync with dine-backend/index.js and dine-frontend/src/app/(dashboard)/admin/page.js
+const ROLE_DEFAULT_PAGE_ACCESS = {
+  admin:    { dashboard:true, history:true, tables:true, menu:true, analytics:true, inventory:true, kot:true, admin:{ settings:true, tax:true, pricing:true, payments:true, billingSettings:true, currency:true, print:true, features:true, restaurants:true, staff:true, orderManagement:true, offers:true, loyalty:true, googleReviews:true, whatsapp:true }, completeBill:true, invoice:true, customers:true, offers:true },
+  manager:  { dashboard:true, history:true, tables:true, menu:true, analytics:true, inventory:true, kot:true, admin:false, completeBill:true, invoice:true, customers:true, offers:true },
+  waiter:   { dashboard:true, history:true, tables:true, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false },
+  cashier:  { dashboard:true, history:true, tables:false, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:true, invoice:true, customers:false, offers:false },
+  employee: { dashboard:true, history:true, tables:true, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false },
+  sales:    { dashboard:true, history:true, tables:false, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:true, offers:true },
 };
+
+const ROLE_DESCRIPTIONS = {
+  admin:    'Full access like owner. Can manage multiple locations. Owner can restrict.',
+  manager:  'Elevated staff. Most features except admin settings.',
+  waiter:   'Service staff. Tables, orders, and menu access.',
+  cashier:  'Billing staff. POS, orders, and invoices.',
+  employee: 'Basic staff. Only granted access.',
+  sales:    'Sales staff. Customers and offers.',
+};
+
+const DEFAULT_PAGE_ACCESS = ROLE_DEFAULT_PAGE_ACCESS.employee;
+const ALL_ADMIN_TABS = Object.fromEntries(ADMIN_TAB_OPS.map(k => [k, true]));
 
 const PAGE_ACCESS_OPTIONS = [
   { key: 'dashboard', label: 'Dashboard', icon: 'grid-outline' },
@@ -44,6 +55,9 @@ const PAGE_ACCESS_OPTIONS = [
   { key: 'kot', label: 'KOT / Kitchen', icon: 'flame-outline' },
   { key: 'admin', label: 'Admin', icon: 'settings-outline' },
   { key: 'completeBill', label: 'Complete Bill', icon: 'checkmark-circle-outline' },
+  { key: 'invoice', label: 'Invoices', icon: 'document-text-outline' },
+  { key: 'customers', label: 'Customers', icon: 'people-outline' },
+  { key: 'offers', label: 'Offers', icon: 'pricetag-outline' },
 ];
 
 export default function StaffManagement({ restaurantId }) {
@@ -289,7 +303,27 @@ export default function StaffManagement({ restaurantId }) {
   };
 
   const togglePageAccess = (key) => {
+    if (key === 'admin') {
+      setFormPageAccess((prev) => {
+        const cur = prev.admin;
+        if (typeof cur === 'object' && cur !== null) {
+          const anyTrue = Object.values(cur).some(Boolean);
+          return { ...prev, admin: anyTrue ? false : { ...ALL_ADMIN_TABS } };
+        }
+        return { ...prev, admin: cur ? false : { ...ALL_ADMIN_TABS } };
+      });
+      return;
+    }
     setFormPageAccess((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleAdminSubTab = (tabKey) => {
+    setFormPageAccess((prev) => {
+      const cur = typeof prev.admin === 'object' && prev.admin !== null ? prev.admin : { ...ALL_ADMIN_TABS };
+      const updated = { ...cur, [tabKey]: !cur[tabKey] };
+      const anyChecked = Object.values(updated).some(Boolean);
+      return { ...prev, admin: anyChecked ? updated : false };
+    });
   };
 
   const renderStaffItem = ({ item }) => {
@@ -505,7 +539,12 @@ export default function StaffManagement({ restaurantId }) {
                   <TouchableOpacity
                     key={role}
                     style={[styles.roleChip, formRole === role && styles.roleChipActive]}
-                    onPress={() => setFormRole(role)}
+                    onPress={() => {
+                      setFormRole(role);
+                      // Auto-select role-appropriate page access defaults
+                      const defaults = ROLE_DEFAULT_PAGE_ACCESS[role];
+                      if (defaults) setFormPageAccess({ ...defaults });
+                    }}
                   >
                     <Text style={[styles.roleChipText, formRole === role && styles.roleChipTextActive]}>
                       {role.charAt(0).toUpperCase() + role.slice(1)}
@@ -514,25 +553,62 @@ export default function StaffManagement({ restaurantId }) {
                 ))}
               </View>
 
+              {ROLE_DESCRIPTIONS[formRole] && (
+                <View style={{ marginTop: 10, padding: 12, backgroundColor: '#f0f9ff', borderLeftWidth: 3, borderLeftColor: '#3b82f6', borderRadius: 8 }}>
+                  <Text style={{ fontSize: 13, color: '#475569', lineHeight: 18 }}>
+                    <Text style={{ fontWeight: '700', color: '#1e40af' }}>{formRole.charAt(0).toUpperCase() + formRole.slice(1)}: </Text>
+                    {ROLE_DESCRIPTIONS[formRole]}
+                  </Text>
+                </View>
+              )}
+
               <Text style={[styles.inputLabel, { marginTop: 18 }]}>Page Access Permissions</Text>
               <Text style={styles.permissionHint}>Select which pages this staff member can access</Text>
               <View style={styles.permissionsGrid}>
                 {PAGE_ACCESS_OPTIONS.map((perm) => {
-                  const isChecked = !!formPageAccess[perm.key];
+                  const val = formPageAccess[perm.key];
+                  const isChecked = perm.key === 'admin'
+                    ? (typeof val === 'object' && val !== null ? Object.values(val).some(Boolean) : !!val)
+                    : !!val;
+                  const adminExpanded = perm.key === 'admin' && typeof formPageAccess.admin === 'object' && formPageAccess.admin !== null;
                   return (
-                    <TouchableOpacity
-                      key={perm.key}
-                      style={[styles.permissionItem, isChecked && styles.permissionItemActive]}
-                      onPress={() => togglePageAccess(perm.key)}
-                    >
-                      <Ionicons
-                        name={isChecked ? 'checkbox' : 'square-outline'}
-                        size={20}
-                        color={isChecked ? Colors.primary : Colors.textLight}
-                      />
-                      <Ionicons name={perm.icon} size={16} color={isChecked ? Colors.primary : Colors.textMedium} />
-                      <Text style={[styles.permissionLabel, isChecked && styles.permissionLabelActive]}>{perm.label}</Text>
-                    </TouchableOpacity>
+                    <View key={perm.key} style={{ width: adminExpanded ? '100%' : '48%' }}>
+                      <TouchableOpacity
+                        style={[styles.permissionItem, isChecked && styles.permissionItemActive, { width: '100%' }]}
+                        onPress={() => togglePageAccess(perm.key)}
+                      >
+                        <Ionicons
+                          name={isChecked ? 'checkbox' : 'square-outline'}
+                          size={20}
+                          color={isChecked ? Colors.primary : Colors.textLight}
+                        />
+                        <Ionicons name={perm.icon} size={16} color={isChecked ? Colors.primary : Colors.textMedium} />
+                        <Text style={[styles.permissionLabel, isChecked && styles.permissionLabelActive]}>{perm.label}</Text>
+                      </TouchableOpacity>
+                      {perm.key === 'admin' && typeof formPageAccess.admin === 'object' && formPageAccess.admin !== null && (
+                        <View style={styles.adminSubTabs}>
+                          {ADMIN_TAB_OPS.map((tabKey) => {
+                            const tabChecked = !!formPageAccess.admin[tabKey];
+                            return (
+                              <TouchableOpacity
+                                key={tabKey}
+                                style={[styles.adminSubTabItem, tabChecked && styles.adminSubTabItemActive]}
+                                onPress={() => toggleAdminSubTab(tabKey)}
+                              >
+                                <Ionicons
+                                  name={tabChecked ? 'checkbox' : 'square-outline'}
+                                  size={16}
+                                  color={tabChecked ? Colors.primary : Colors.textLight}
+                                />
+                                <Text style={[styles.adminSubTabLabel, tabChecked && { color: Colors.primary }]}>
+                                  {ADMIN_TAB_LABELS[tabKey] || tabKey}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
                   );
                 })}
               </View>
@@ -936,7 +1012,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    width: '48%',
     paddingHorizontal: 10,
     paddingVertical: 10,
     borderRadius: 10,
@@ -955,6 +1030,39 @@ const styles = StyleSheet.create({
   },
   permissionLabelActive: {
     color: Colors.primary,
+  },
+  adminSubTabs: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+    marginLeft: 8,
+    padding: 10,
+    backgroundColor: Colors.primary + '08',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary + '15',
+    width: '100%',
+  },
+  adminSubTabItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  adminSubTabItemActive: {
+    backgroundColor: Colors.primary + '10',
+    borderColor: Colors.primary + '30',
+  },
+  adminSubTabLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: Colors.textMedium,
   },
   modalActions: {
     flexDirection: 'row',

@@ -97,6 +97,7 @@ export default function MenuScreen() {
   const [autoSelectedRule, setAutoSelectedRule] = useState(false);
   const [floors, setFloors] = useState([]);
   const [upiSettings, setUpiSettings] = useState({});
+  const [whatsappConnected, setWhatsappConnected] = useState(false);
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -129,6 +130,7 @@ export default function MenuScreen() {
       setAutoSelectedRule(false);
       setBillingSettings({});
       setUpiSettings({});
+      setWhatsappConnected(false);
       setTaxSettings({ enabled: false, rate: 0, taxes: [] });
       setCart([]);
       setSelectedTable(null);
@@ -239,6 +241,14 @@ export default function MenuScreen() {
         } catch (e) {
           console.log('Customer app settings fetch error:', e);
         }
+
+        // Load WhatsApp connection status
+        try {
+          const waRes = await apiClient.getWhatsAppSettings(restaurantId);
+          setWhatsappConnected(waRes?.connected || false);
+        } catch (e) {
+          console.log('WhatsApp settings fetch error:', e);
+        }
       };
 
       refreshTaxSettings();
@@ -305,38 +315,31 @@ export default function MenuScreen() {
   // Track table params stamp so we know when to clear stale table selection
   const tableParamsStampRef = useRef(null);
   const lastAppliedStampRef = useRef(null);
+  // Tracks whether we just received fresh navigation params (prevents useFocusEffect from clearing them)
+  const freshParamsRef = useRef(false);
 
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
       const stamp = `${params.tableId}_${params.tableNumber}_${params.orderId || ''}_${Date.now()}`;
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
+      freshParamsRef.current = true;
       setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '' });
     } else if (params.tableNumber && params.barTabMode === 'true') {
       const stamp = `bartab_${params.tableNumber}_${Date.now()}`;
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
+      freshParamsRef.current = true;
       setSelectedTable({ id: null, name: params.tableNumber });
       setIsBarTabMode(true);
     }
 
-    // Handle existing order items from params
-    if (params.existingOrder === 'true' && params.cartItems) {
-      try {
-        const existingItems = JSON.parse(params.cartItems);
-        setCart(existingItems);
-        if (params.orderId) {
-          setExistingOrderId(params.orderId);
-        }
-      } catch (error) {
-        console.error('Error parsing cart items:', error);
-      }
-    }
+    // Note: existing order items are now loaded via useFocusEffect from AsyncStorage (pendingAddItems)
 
     if (params.barTabMode === 'true') {
       setIsBarTabMode(true);
     }
-  }, [params.tableId, params.tableNumber, params.existingOrder, params.cartItems, params.orderId, params.barTabMode]);
+  }, [params.tableId, params.tableNumber, params.existingOrder, params.orderId, params.barTabMode]);
 
   // When menu tab regains focus WITHOUT fresh table params, clear stale table selection
   // This handles: user taps "Menu" tab directly (no table context) or navigates back
@@ -347,18 +350,44 @@ export default function MenuScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // On focus: if we blurred before and had a table selected, clear it
-      if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
-        setSelectedTable(null);
-        setExistingOrderId(null);
-        setCart([]);
-        setIsBarTabMode(false);
-        setAutoSelectedRule(false);
-        setActivePricingRuleId(null);
-        tableParamsStampRef.current = null;
-        lastAppliedStampRef.current = null;
-      }
-      hasBlurredRef.current = false;
+      // Check for pending "Add Items" data from tables page (stored in AsyncStorage)
+      AsyncStorage.getItem('pendingAddItems').then(stored => {
+        if (stored) {
+          AsyncStorage.removeItem('pendingAddItems');
+          try {
+            const data = JSON.parse(stored);
+            // Only use if recent (within 10 seconds) to avoid stale data
+            if (data.timestamp && Date.now() - data.timestamp < 10000) {
+              const stamp = `${data.tableId}_${data.tableNumber}_${data.orderId || ''}_${Date.now()}`;
+              tableParamsStampRef.current = stamp;
+              lastAppliedStampRef.current = stamp;
+              freshParamsRef.current = true;
+              setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '' });
+              if (data.orderId) setExistingOrderId(data.orderId);
+              if (data.cartItems) setCart(data.cartItems);
+            }
+          } catch (e) {
+            console.error('Error parsing pendingAddItems:', e);
+          }
+          hasBlurredRef.current = false;
+          return;
+        }
+
+        // No pending add-items — normal focus behavior: clear stale table selection
+        if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
+          setSelectedTable(null);
+          setExistingOrderId(null);
+          setCart([]);
+          setIsBarTabMode(false);
+          setAutoSelectedRule(false);
+          setActivePricingRuleId(null);
+          tableParamsStampRef.current = null;
+          lastAppliedStampRef.current = null;
+        }
+        hasBlurredRef.current = false;
+      }).catch(() => {
+        hasBlurredRef.current = false;
+      });
 
       // On blur: mark that we left this screen
       return () => {
@@ -2317,6 +2346,8 @@ export default function MenuScreen() {
           router.replace('/(tabs)/tables');
         }}
         invoiceData={lastOrderData}
+        restaurantId={restaurantId}
+        whatsappConnected={whatsappConnected}
         onNewOrder={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);

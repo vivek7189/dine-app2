@@ -12,7 +12,9 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
+import { resetDatabase } from '../../services/db';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import SettingsHub from '../../components/SettingsHub';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -98,18 +100,47 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleClearDataAndLogout = () => {
+    Alert.alert(
+      'Clear All Data & Logout',
+      'This will delete all locally stored data including cached menus, orders, offline data, and log you out. This cannot be undone.\n\nAre you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear & Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // 1. Clear in-memory API cache
+              apiClient.clearAllCache?.();
+              // 2. Clear SQLite offline database
+              await resetDatabase();
+              // 3. Clear ALL AsyncStorage (auth, cache, preferences, everything)
+              await AsyncStorage.clear();
+              // 4. Navigate to login
+              router.replace('/(auth)/login');
+            } catch (e) {
+              console.error('Clear data error:', e);
+              // Fallback: at least try to logout normally
+              await apiClient.logout();
+              router.replace('/(auth)/login');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const getRoleDisplayName = (role) => {
     switch (role?.toLowerCase()) {
-      case 'owner':
-        return 'Owner';
-      case 'manager':
-        return 'Manager';
-      case 'waiter':
-        return 'Waiter';
-      case 'employee':
-        return 'Employee';
-      default:
-        return role || 'Staff';
+      case 'owner': return 'Owner';
+      case 'admin': return 'Admin';
+      case 'manager': return 'Manager';
+      case 'waiter': return 'Waiter';
+      case 'employee': return 'Employee';
+      case 'cashier': return 'Cashier';
+      case 'sales': return 'Sales';
+      default: return role || 'Staff';
     }
   };
 
@@ -118,7 +149,7 @@ export default function ProfileScreen() {
     if (!user) return false;
     const role = user.role?.toLowerCase();
     const hasLoginId = !!user.loginId;
-    const isStaffRole = ['waiter', 'manager', 'employee', 'cashier', 'sales'].includes(role);
+    const isStaffRole = ['admin', 'waiter', 'manager', 'employee', 'cashier', 'sales'].includes(role);
     return hasLoginId && isStaffRole;
   };
 
@@ -633,6 +664,10 @@ export default function ProfileScreen() {
 
         {/* Actions */}
         <View style={styles.section}>
+          <TouchableOpacity style={styles.clearDataButton} onPress={handleClearDataAndLogout}>
+            <Ionicons name="trash-outline" size={20} color={Colors.error} />
+            <Text style={styles.clearDataButtonText}>Clear Data & Logout</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={20} color="#fff" />
             <Text style={styles.logoutButtonText}>Logout</Text>
@@ -770,6 +805,23 @@ const styles = StyleSheet.create({
   },
   toggleThumbActive: {
     alignSelf: 'flex-end',
+  },
+  clearDataButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    gap: Spacing.sm,
+    borderWidth: 1.5,
+    borderColor: Colors.error,
+    backgroundColor: '#fff',
+    marginBottom: Spacing.sm,
+  },
+  clearDataButtonText: {
+    color: Colors.error,
+    fontSize: Typography.bodyBold.fontSize,
+    fontWeight: Typography.bodyBold.fontWeight,
   },
   logoutButton: {
     backgroundColor: Colors.error,

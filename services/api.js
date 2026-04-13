@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 
 // Get API URL from environment or use deployed backend
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-lake.vercel.app';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2.vercel.app';
 
 // Frontend web URL for WebView embeds (mobile layout)
 export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
@@ -544,6 +544,8 @@ class ApiClient {
 
     if (response.token) {
       await this.setToken(response.token);
+      // Clear any stale caches from previous user session
+      this._cache.clear();
       if (response.user) {
         await this.setUser({
           ...response.user,
@@ -1580,6 +1582,18 @@ class ApiClient {
     return this.request(`/api/restaurants/${restaurantId}/customer-app-settings`, {
       method: 'PUT',
       data: settings,
+    });
+  }
+
+  // WhatsApp APIs
+  async getWhatsAppSettings(restaurantId) {
+    return this.request(`/api/automation/${restaurantId}/whatsapp`);
+  }
+
+  async sendBillOnWhatsApp(restaurantId, { customerPhone, customerName, amount, orderId, invoiceText, restaurantName }) {
+    return this.request(`/api/automation/${restaurantId}/whatsapp/send-bill`, {
+      method: 'POST',
+      data: { customerPhone, customerName, amount, orderId, invoiceText, restaurantName },
     });
   }
 

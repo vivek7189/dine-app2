@@ -1,12 +1,37 @@
 // Granular feature permission utilities for dine-app
 
+const ADMIN_TAB_OPS = [
+  'settings', 'tax', 'pricing', 'payments', 'billingSettings',
+  'currency', 'print', 'features', 'restaurants', 'staff',
+  'orderManagement', 'offers', 'loyalty', 'googleReviews', 'whatsapp'
+];
+
 const FEATURE_OPS = {
   inventory: ['read', 'add', 'update', 'delete'],
   menu: ['read', 'add', 'update', 'delete', 'markOutOfStock'],
   orders: ['read', 'update', 'cancel', 'refund', 'completeBill'],
   tables: ['read', 'add', 'update', 'delete', 'reset'],
   customers: ['read', 'add', 'update', 'delete'],
-  offers: ['read', 'add', 'update', 'delete']
+  offers: ['read', 'add', 'update', 'delete'],
+  admin: ADMIN_TAB_OPS
+};
+
+const ADMIN_TAB_LABELS = {
+  settings: 'General',
+  tax: 'Tax Management',
+  pricing: 'Pricing Rules',
+  payments: 'Payment Settings',
+  billingSettings: 'Billing',
+  currency: 'Currency',
+  print: 'Print Settings',
+  features: 'Features',
+  restaurants: 'Restaurants',
+  staff: 'Staff',
+  orderManagement: 'Order Management',
+  offers: 'Offers & Discounts',
+  loyalty: 'Loyalty Program',
+  googleReviews: 'Google Reviews',
+  whatsapp: 'WhatsApp',
 };
 
 function resolveFeaturePermissions(pageAccess, feature) {
@@ -38,10 +63,7 @@ function canPerform(user, pageAccess, feature, operation) {
   const perms = resolveFeaturePermissions(pageAccess, feature);
   if (perms[operation]) return true;
 
-  // Manager fallback: if feature key not present at all, allow
-  if (role === 'manager' && pageAccess?.[feature] === undefined) return true;
-
   return false;
 }
 
-module.exports = { FEATURE_OPS, resolveFeaturePermissions, canPerform };
+module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform };

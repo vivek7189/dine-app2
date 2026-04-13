@@ -175,17 +175,24 @@ export default function HomeScreen() {
         console.log('Could not fetch restaurants list:', e.message);
       }
 
-      // Resolve the correct restaurant — match web Sidebar behavior:
-      // Priority: defaultRestaurantId (from API or user) → stored restaurantId → first restaurant
+      // Resolve the correct restaurant
       const storedRestaurantId = userData.restaurantId || userData.restaurant?.id;
-      const defaultId = apiDefaultId || userData.defaultRestaurantId;
+      const userRole = (userData.role || '').toLowerCase();
+      // Admin can have multiple restaurants (like owner); other staff are single-restaurant
+      const isMultiRestaurantRole = userRole === 'owner' || userRole === 'customer' || userRole === 'admin';
+      const isStaff = !isMultiRestaurantRole;
+
       let restaurantId = storedRestaurantId;
 
-      if (restList.length > 0) {
+      if (isStaff) {
+        // Non-admin staff always use their assigned restaurant — no switching allowed
+        restaurantId = storedRestaurantId;
+      } else if (restList.length > 0) {
+        // Owners & admin: Priority: defaultRestaurantId → stored restaurantId → first restaurant
+        const defaultId = apiDefaultId || userData.defaultRestaurantId;
         const defaultInList = defaultId ? restList.find(r => (r.id || r._id) === defaultId) : null;
         const currentInList = storedRestaurantId ? restList.find(r => (r.id || r._id) === storedRestaurantId) : null;
 
-        // defaultRestaurantId always takes priority (user explicitly set this in admin settings)
         if (defaultInList) {
           restaurantId = defaultInList.id || defaultInList._id;
         } else if (currentInList) {
@@ -389,6 +396,9 @@ export default function HomeScreen() {
   };
 
   const showRestaurantPicker = () => {
+    // Only owner and admin can switch restaurants (admin can be assigned to multiple)
+    const userRole = (user?.role || '').toLowerCase();
+    if (userRole !== 'owner' && userRole !== 'admin') return;
     if (restaurants.length <= 1) return;
     const currentId = getRestaurantId();
     if (Platform.OS === 'ios') {
@@ -421,7 +431,8 @@ export default function HomeScreen() {
   };
 
   const role = user?.role?.toLowerCase() || '';
-  const isOwnerOrManager = ['owner', 'manager', 'admin'].includes(role);
+  // Owner and admin (co-owner) both see the full Headquarters dashboard.
+  const isOwnerOrManager = role === 'owner' || role === 'admin';
   const isCashier = role === 'cashier' || role === 'sales';
   const isWaiterOrEmployee = !isOwnerOrManager && !isCashier;
   const hasRestaurant = !!getRestaurantId();
@@ -626,14 +637,14 @@ export default function HomeScreen() {
           {hasRestaurant && (
             <TouchableOpacity
               style={styles.restaurantChip}
-              onPress={restaurants.length > 1 ? showRestaurantPicker : undefined}
-              activeOpacity={restaurants.length > 1 ? 0.7 : 1}
+              onPress={restaurants.length > 1 && (role === 'owner' || role === 'admin') ? showRestaurantPicker : undefined}
+              activeOpacity={restaurants.length > 1 && (role === 'owner' || role === 'admin') ? 0.7 : 1}
             >
               <Ionicons name="storefront-outline" size={14} color="#10b981" />
               <Text style={styles.restaurantChipText} numberOfLines={1}>
                 {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
               </Text>
-              {restaurants.length > 1 && (
+              {restaurants.length > 1 && (role === 'owner' || role === 'admin') && (
                 <Ionicons name="swap-horizontal" size={14} color="#94a3b8" />
               )}
             </TouchableOpacity>

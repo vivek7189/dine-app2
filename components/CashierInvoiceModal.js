@@ -23,8 +23,17 @@ export default function CashierInvoiceModal({
   onClose,
   invoiceData,
   onNewOrder,
+  restaurantId,
+  whatsappConnected = false,
 }) {
   const { isTablet } = useResponsive();
+  const [waSending, setWaSending] = React.useState(false);
+  const [waSent, setWaSent] = React.useState(false);
+
+  // Reset sent state when modal opens with new data
+  React.useEffect(() => {
+    if (visible) setWaSent(false);
+  }, [visible, invoiceData?.orderNumber]);
 
   if (!invoiceData) return null;
 
@@ -394,6 +403,36 @@ Thank you for your visit!
     }
   };
 
+  const handleSendWhatsAppBusiness = async () => {
+    if (!restaurantId || !invoiceData.customerMobile) {
+      Alert.alert('Missing Info', invoiceData.customerMobile ? 'Restaurant ID not available' : 'Customer phone number not available. Add customer phone to send bill on WhatsApp.');
+      return;
+    }
+    setWaSending(true);
+    try {
+      const apiClient = require('../services/api').default;
+      const invoiceText = generateInvoiceText();
+      const res = await apiClient.sendBillOnWhatsApp(restaurantId, {
+        customerPhone: invoiceData.customerMobile,
+        customerName: invoiceData.customerName || '',
+        amount: invoiceData.grandTotal,
+        orderId: invoiceData.orderNumber || invoiceData.dailyOrderId || '',
+        invoiceText: invoiceText,
+        restaurantName: invoiceData.restaurantName || '',
+      });
+      if (res?.success) {
+        setWaSent(true);
+        Alert.alert('Sent!', 'Bill sent on WhatsApp successfully');
+      } else {
+        Alert.alert('Error', res?.error || 'Failed to send bill');
+      }
+    } catch (error) {
+      Alert.alert('Error', error?.error || error?.message || 'Failed to send bill on WhatsApp');
+    } finally {
+      setWaSending(false);
+    }
+  };
+
   const handlePrint = async () => {
     try {
       const html = generateInvoiceHTML();
@@ -587,6 +626,26 @@ Thank you for your visit!
               {/* Dashed border bottom */}
               <View style={styles.dashedBorder} />
             </View>
+
+            {/* Send Bill via WhatsApp Business (API) */}
+            {whatsappConnected && invoiceData.customerMobile && (
+              <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={handleSendWhatsAppBusiness}
+                  disabled={waSending || waSent}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    backgroundColor: waSent ? '#22c55e' : '#25D366', paddingVertical: 12, borderRadius: 10,
+                    opacity: waSending ? 0.7 : 1
+                  }}
+                >
+                  <Ionicons name={waSent ? 'checkmark-circle' : 'logo-whatsapp'} size={20} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                    {waSent ? 'Bill Sent on WhatsApp!' : waSending ? 'Sending...' : 'Send Bill on WhatsApp'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Share Section */}
             <View style={styles.shareSection}>

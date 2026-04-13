@@ -275,13 +275,9 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
           </ScrollView>
 
           {/* Footer Actions */}
-          {order && !loading && !error && (
+          {order && !loading && !error && order.status !== 'completed' && order.status !== 'cancelled' && (
             <View style={styles.footer}>
-              <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.7}>
-                <Text style={styles.cancelButtonText}>Close</Text>
-              </TouchableOpacity>
-
-              {order.status !== 'completed' && order.status !== 'cancelled' && typeof onAddItems === 'function' && (
+              {typeof onAddItems === 'function' && (
                 <TouchableOpacity
                   style={styles.addButton}
                   activeOpacity={0.85}
@@ -305,7 +301,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 </TouchableOpacity>
               )}
 
-              {order.status !== 'completed' && order.status !== 'cancelled' && canCompleteBill && typeof onCompleteBill === 'function' && (
+              {canCompleteBill && typeof onCompleteBill === 'function' && (
                 <TouchableOpacity
                   style={styles.completeBillButton}
                   activeOpacity={0.85}
@@ -588,30 +584,17 @@ const styles = StyleSheet.create({
   // Footer
   footer: {
     flexDirection: 'row',
-    padding: 14,
-    gap: 10,
+    padding: 16,
+    gap: 12,
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
     backgroundColor: '#fff',
   },
-  cancelButton: {
-    paddingVertical: 13,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#6b7280',
-  },
   addButton: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: 12,
     backgroundColor: '#fff',
     borderWidth: 1.5,
@@ -626,10 +609,10 @@ const styles = StyleSheet.create({
     color: '#dc2626',
   },
   completeBillButton: {
-    flex: 1.2,
+    flex: 1,
     flexDirection: 'row',
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     borderRadius: 12,
     backgroundColor: '#059669',
     alignItems: 'center',

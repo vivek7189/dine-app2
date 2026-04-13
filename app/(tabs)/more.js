@@ -22,6 +22,7 @@ import { useOffline } from '../../hooks/useOffline';
 import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import BusinessSettings from '../../components/BusinessSettings';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
+import { resolveFeaturePermissions } from '../../utils/permissions';
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -149,7 +150,7 @@ export default function MoreScreen() {
     {
       title: 'Management',
       items: [
-        { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner'] },
+        { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'] },
         { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'] },
         { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'] },
         { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'] },
@@ -193,6 +194,29 @@ export default function MoreScreen() {
     { title: 'Offers', icon: 'gift-outline', tabId: 'offers', color: '#e11d48' },
     { title: 'Loyalty', icon: 'star-outline', tabId: 'loyalty', color: '#eab308' },
   ];
+
+  const TAB_ID_TO_PERM_KEY = {
+    'settings': 'settings', 'tax': 'tax', 'pricing': 'pricing', 'payments': 'payments',
+    'billing-settings': 'billingSettings', 'currency': 'currency', 'print': 'print',
+    'features': 'features', 'restaurants': 'restaurants', 'staff': 'staff',
+    'order-management': 'orderManagement', 'offers': 'offers', 'loyalty': 'loyalty',
+    'google-reviews': 'googleReviews',
+  };
+
+  const filteredAdminTabs = (() => {
+    if (role === 'owner' || role === 'admin') return adminTabs;
+    const adminPerms = resolveFeaturePermissions(user?.pageAccess || {}, 'admin');
+    return adminTabs.filter(tab => {
+      const permKey = TAB_ID_TO_PERM_KEY[tab.tabId];
+      return permKey ? !!adminPerms[permKey] : true;
+    });
+  })();
+
+  const hasAnyAdminAccess = role === 'owner' || role === 'admin' || (() => {
+    const pa = user?.pageAccess?.admin;
+    if (typeof pa === 'object' && pa !== null) return Object.values(pa).some(Boolean);
+    return !!pa;
+  })();
 
   const shouldShowItem = (item) => {
     if (!item.roles) return true;
@@ -579,7 +603,7 @@ export default function MoreScreen() {
               </View>
 
               {/* Admin Settings — right after Management */}
-              {section.title === 'Management' && isOwnerOrAdmin && (
+              {section.title === 'Management' && hasAnyAdminAccess && filteredAdminTabs.length > 0 && (
                 <View style={styles.sectionContainer}>
                   <TouchableOpacity
                     onPress={toggleSettings}
@@ -590,7 +614,7 @@ export default function MoreScreen() {
                     <Text style={styles.collapsibleHeaderText}>Admin Settings</Text>
                     <View style={{ flex: 1 }} />
                     <View style={styles.adminBadge}>
-                      <Text style={styles.adminBadgeText}>{adminTabs.length}</Text>
+                      <Text style={styles.adminBadgeText}>{filteredAdminTabs.length}</Text>
                     </View>
                     <Animated.View style={{ transform: [{ rotate: chevronRotation }] }}>
                       <Ionicons name="chevron-down" size={18} color="#9ca3af" />
@@ -599,7 +623,7 @@ export default function MoreScreen() {
 
                   {settingsExpanded && (
                     <View style={styles.adminGrid}>
-                      {adminTabs.map((tab) => (
+                      {filteredAdminTabs.map((tab) => (
                         <TouchableOpacity
                           key={tab.tabId}
                           style={styles.adminTile}

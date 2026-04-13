@@ -21,6 +21,7 @@ import {
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
@@ -605,29 +606,12 @@ export default function TablesScreen() {
       return;
     }
 
-    // Allow adding to order for occupied or cleaning tables
+    // Allow adding to order for occupied or cleaning tables — open order detail modal directly
     if ((table.status === 'occupied' || table.status === 'cleaning') && table.currentOrderId) {
-      Alert.alert(
-        `Table ${table.name}`,
-        'What would you like to do?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Update Order',
-            onPress: () => {
-              setSelectedOrderId(table.currentOrderId);
-              setSelectedTableForOrder(table);
-              setOrderModalMode('add');
-              setShowOrderModal(true);
-            },
-          },
-          {
-            text: 'Mark Complete',
-            style: 'destructive',
-            onPress: () => handleMarkTableComplete(table),
-          },
-        ]
-      );
+      setSelectedOrderId(table.currentOrderId);
+      setSelectedTableForOrder(table);
+      setOrderModalMode('view');
+      setShowOrderModal(true);
     }
   };
 
@@ -672,21 +656,23 @@ export default function TablesScreen() {
     }
   };
 
-  const handleAddItemsToOrder = (order, cartItems) => {
-    // Navigate to menu with existing order items
+  const handleAddItemsToOrder = async (order, cartItems) => {
+    // Store full add-items context in AsyncStorage for reliable cross-tab navigation
     const tableFloor = selectedTableForOrder ? getFloorForTable(selectedTableForOrder) : null;
     const floorName = tableFloor?.name || tableFloor?.floorName || '';
-    router.push({
-      pathname: '/(tabs)/menu',
-      params: {
+    try {
+      await AsyncStorage.setItem('pendingAddItems', JSON.stringify({
         tableId: selectedTableForOrder?.id,
         tableNumber: selectedTableForOrder?.name,
         floorName,
         orderId: order.id,
-        existingOrder: 'true',
-        cartItems: JSON.stringify(cartItems),
-      },
-    });
+        cartItems,
+        timestamp: Date.now(),
+      }));
+    } catch (e) {
+      console.error('Error storing add-items data:', e);
+    }
+    router.navigate({ pathname: '/(tabs)/menu' });
   };
 
   const getTimeElapsed = (createdAt) => {
