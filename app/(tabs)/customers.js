@@ -1179,7 +1179,7 @@ export default function CustomersScreen() {
                 Customer spends ₹1,000 → Earns {Math.floor(1000 / (ls.earnPerAmount || 100)) * (ls.pointsEarned || 0)} points
               </Text>
               <Text style={styles.exampleText}>
-                With {(ls.redemptionRate || 100) * 100} points → Can redeem ₹{Math.floor(((ls.redemptionRate || 100) * 100) / (ls.redemptionRate || 100))}
+                1 point = ₹{(1 / (ls.redemptionRate || 1)).toFixed(2)} redemption value
               </Text>
               <Text style={styles.exampleText}>
                 Max redemption per order: {ls.maxRedemptionPercent || 20}% of order value

@@ -1,14 +1,15 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { View, Platform, Animated, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
-import apiClient from '../../services/api';
+import apiClient, { WEB_BASE_URL } from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
+import { WebView } from 'react-native-webview';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -210,7 +211,48 @@ function TabsNavigator() {
       <Tabs.Screen name="kitchen" options={{ href: null }} />
       <Tabs.Screen name="order-history" options={{ href: null }} />
       <Tabs.Screen name="webview" options={{ href: null }} />
+      <Tabs.Screen name="billing-webview" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
+  );
+}
+
+// Hidden 0-size WebView that pre-loads the billing page shell on app start.
+// This caches JS/CSS assets so the actual billing WebView opens much faster.
+function BillingPrewarmer() {
+  const [url, setUrl] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await apiClient.getToken();
+        const userData = await apiClient.getUser();
+        const rid = userData?.restaurantId || userData?.restaurant?.id;
+        const u = new URL(`${WEB_BASE_URL}/mobile/billing?mode=preload`);
+        if (token) u.searchParams.set('token', token);
+        if (rid) u.searchParams.set('restaurantId', rid);
+        // Delay slightly so it doesn't compete with app startup
+        setTimeout(() => setUrl(u.toString()), 3000);
+      } catch {}
+    })();
+  }, []);
+
+  if (!url) return null;
+  return (
+    <View style={{ width: 0, height: 0, overflow: 'hidden', position: 'absolute' }}>
+      <WebView
+        source={{ uri: url }}
+        style={{ width: 0, height: 0 }}
+        javaScriptEnabled
+        domStorageEnabled
+        cacheEnabled
+        startInLoadingState={false}
+        injectedJavaScriptBeforeContentLoaded={`
+          window.__DINEOPEN_MOBILE_EMBED__ = true;
+          window.__DINEOPEN_BILLING_MODE__ = true;
+          true;
+        `}
+      />
+    </View>
   );
 }
 
@@ -219,6 +261,7 @@ export default function TabsLayout() {
     <TabBarProvider>
       <View style={{ flex: 1 }}>
         <TabsNavigator />
+        <BillingPrewarmer />
       </View>
     </TabBarProvider>
   );

@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
-  ActionSheetIOS,
   Animated,
   ActivityIndicator,
   TextInput,
@@ -23,6 +22,7 @@ import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import BusinessSettings from '../../components/BusinessSettings';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
 import { resolveFeaturePermissions } from '../../utils/permissions';
+import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -43,6 +43,8 @@ export default function MoreScreen() {
   const [pinInput, setPinInput] = useState('');
   const [restaurants, setRestaurants] = useState([]);
   const [switchingRestaurant, setSwitchingRestaurant] = useState(false);
+  const [showRestaurantModal, setShowRestaurantModal] = useState(false);
+  const [switchingRestaurantId, setSwitchingRestaurantId] = useState(null);
 
   useEffect(() => {
     loadUserData();
@@ -82,6 +84,7 @@ export default function MoreScreen() {
     if (newRestaurantId === currentId) return;
     try {
       setSwitchingRestaurant(true);
+      setSwitchingRestaurantId(newRestaurantId);
       // Clear all caches (AsyncStorage + in-memory API cache)
       await clearCache('cache_');
       apiClient.clearAllCache?.();
@@ -98,44 +101,19 @@ export default function MoreScreen() {
       setRestaurant(newRestaurant || user?.restaurant);
       // Broadcast switch to all tabs
       restaurantEvents.emit('switch', { restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant });
+      setShowRestaurantModal(false);
     } catch (error) {
       console.error('Error switching restaurant:', error);
       Alert.alert('Error', 'Failed to switch restaurant. Please try again.');
     } finally {
       setSwitchingRestaurant(false);
+      setSwitchingRestaurantId(null);
     }
   };
 
   const showRestaurantPicker = () => {
     if (restaurants.length <= 1) return;
-    const currentId = getRestaurantId();
-    if (Platform.OS === 'ios') {
-      const options = [...restaurants.map(r => {
-        const name = r.name || r.id;
-        const rid = r.id || r._id;
-        return rid === currentId ? `${name} (current)` : name;
-      }), 'Cancel'];
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
-        (idx) => {
-          if (idx < restaurants.length) {
-            handleSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
-          }
-        }
-      );
-    } else {
-      Alert.alert(
-        'Switch Restaurant',
-        'Select which restaurant to manage',
-        [
-          ...restaurants.map(r => ({
-            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
-            onPress: () => handleSwitchRestaurant(r.id || r._id),
-          })),
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    }
+    setShowRestaurantModal(true);
   };
 
   const role = user?.role?.toLowerCase() || '';
@@ -315,10 +293,10 @@ export default function MoreScreen() {
                 disabled={switchingRestaurant}
               >
                 {switchingRestaurant ? (
-                  <ActivityIndicator size="small" color="#10b981" />
+                  <ActivityIndicator size="small" color="#dc2626" />
                 ) : (
                   <>
-                    <Ionicons name="swap-horizontal" size={14} color="#10b981" />
+                    <Ionicons name="swap-horizontal" size={14} color="#dc2626" />
                     <Text style={styles.switchRestaurantText}>Switch</Text>
                   </>
                 )}
@@ -670,6 +648,15 @@ export default function MoreScreen() {
       </View>
 
       <SyncDetailsSheet visible={showSyncSheet} onClose={() => setShowSyncSheet(false)} />
+      <RestaurantPickerModal
+        visible={showRestaurantModal}
+        onClose={() => setShowRestaurantModal(false)}
+        restaurants={restaurants}
+        currentRestaurantId={getRestaurantId()}
+        onSelect={handleSwitchRestaurant}
+        switching={!!switchingRestaurantId}
+        switchingId={switchingRestaurantId}
+      />
     </View>
   );
 }
@@ -799,7 +786,7 @@ const styles = StyleSheet.create({
   switchRestaurantText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#10b981',
+    color: '#dc2626',
   },
 
   // ── Sections ──────────────────────────────────────

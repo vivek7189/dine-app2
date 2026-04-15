@@ -20,7 +20,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import apiClient from '../../services/api';
+import apiClient, { WEB_BASE_URL } from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
@@ -325,12 +325,14 @@ export default function MenuScreen() {
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '' });
+      setExistingOrderId(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
       const stamp = `bartab_${params.tableNumber}_${Date.now()}`;
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: null, name: params.tableNumber });
+      setExistingOrderId(null);
       setIsBarTabMode(true);
     }
 
@@ -350,6 +352,23 @@ export default function MenuScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Check if returning from billing-webview — clear stale order state
+      AsyncStorage.getItem('billingWebViewResult').then(result => {
+        if (result) {
+          AsyncStorage.removeItem('billingWebViewResult');
+          setExistingOrderId(null);
+          setCart([]);
+          setSelectedTable(null);
+          setIsBarTabMode(false);
+          setAutoSelectedRule(false);
+          setActivePricingRuleId(null);
+          tableParamsStampRef.current = null;
+          lastAppliedStampRef.current = null;
+          hasBlurredRef.current = false;
+          freshParamsRef.current = false;
+        }
+      }).catch(() => {});
+
       // Check for pending "Add Items" data from tables page (stored in AsyncStorage)
       AsyncStorage.getItem('pendingAddItems').then(stored => {
         if (stored) {
@@ -821,6 +840,118 @@ export default function MenuScreen() {
     return subtotal + taxAmount;
   };
 
+  // --- WebView Billing ---
+  const shouldUseWebViewBilling = billingSettings.useWebViewBilling && !effectivelyOffline;
+
+  const ensureOrderExists = async () => {
+    if (existingOrderId) return existingOrderId;
+    // Create order WITHOUT tableNumber — backend auto-sets table to 'occupied' if tableNumber is present.
+    // We don't want that yet; table status should only change when billing completes.
+    // The tableNumber is passed via billingPayload and gets added during updateOrder on completion.
+    const orderData = {
+      restaurantId,
+      items: cart.map(item => ({
+        menuItemId: item.menuItemId || item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      })),
+      orderType: selectedTable || params.tableNumber ? 'dine-in' : (isCashier ? 'counter' : 'dine-in'),
+      paymentMethod: 'cash',
+      status: 'pending',
+      staffInfo: {
+        waiterId: user?.id,
+        waiterName: user?.name || 'Staff',
+      },
+      ...(activePricingRuleId && { pricingRuleId: activePricingRuleId }),
+    };
+
+    const response = await apiClient.createOrder(orderData);
+    const newOrderId = response?.order?.id || response?.id;
+    if (newOrderId) {
+      setExistingOrderId(newOrderId);
+    }
+    return newOrderId;
+  };
+
+  const handleOpenWebViewBilling = (orderId) => {
+    const returnTo = selectedTable || params.tableNumber ? 'tables' : 'orders';
+
+    // Build billing data payload — pass everything the web page needs
+    const billingPayload = JSON.stringify({
+      type: 'BILLING_DATA',
+      payload: {
+        orderId,
+        restaurantId,
+        cart: cart.map(item => ({
+          menuItemId: item.menuItemId || item.id,
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          originalPrice: item.originalPrice || item.price,
+          pricingRules: item.pricingRules || {},
+        })),
+        orderType: selectedTable || params.tableNumber ? 'dine-in' : (isCashier ? 'counter' : 'dine-in'),
+        paymentMethod: 'cash',
+        tableNumber: selectedTable?.name || params.tableNumber || '',
+        customerName: '',
+        customerMobile: '',
+        taxSettings,
+        billingSettings,
+        menuItems: menuItems.map(m => ({
+          id: m.id, name: m.name, price: m.price,
+          pricingRules: m.pricingRules || {},
+          category: m.category,
+        })),
+        multiPricingEnabled,
+        pricingRules,
+        activePricingRuleId,
+        upiSettings,
+        restaurant: {
+          name: restaurantName,
+          businessType,
+          countryCode: 'IN',
+        },
+      },
+    });
+
+    router.push({
+      pathname: '/(tabs)/billing-webview',
+      params: {
+        billingData: billingPayload,
+        returnTo,
+        tableId: selectedTable?.id || params.tableId || '',
+        tableNumber: selectedTable?.name || params.tableNumber || '',
+      },
+    });
+  };
+
+  const handleCartButtonPress = async () => {
+    if (!shouldUseWebViewBilling) {
+      setShowCart(true);
+      return;
+    }
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to cart first.');
+      return;
+    }
+    setSendingOrder(true);
+    try {
+      const orderId = await ensureOrderExists();
+      if (orderId) {
+        handleOpenWebViewBilling(orderId);
+      } else {
+        Alert.alert('Error', 'Failed to create order. Please try again.');
+      }
+    } catch (e) {
+      console.error('WebView billing error:', e);
+      Alert.alert('Error', 'Failed to open billing. ' + (e.message || ''));
+    } finally {
+      setSendingOrder(false);
+    }
+  };
+
   const handleSendToKitchen = async (customerPhone = '', specialInstructions = null, discountData = {}, tableNumberFromModal = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before sending to kitchen.');
@@ -1286,6 +1417,12 @@ export default function MenuScreen() {
       setShowInvoiceModal(true);
       setCart([]);
       setShowCart(false);
+      setSelectedTable(null);
+      setExistingOrderId(null);
+      setAutoSelectedRule(false);
+      setActivePricingRuleId(null);
+      tableParamsStampRef.current = null;
+      lastAppliedStampRef.current = null;
     } catch (error) {
       console.error('Error placing order:', error);
       toast.error(error.message || 'Failed to place order. Please try again.');
@@ -1455,7 +1592,12 @@ export default function MenuScreen() {
       setShowInvoiceModal(true);
       setCart([]);
       setShowCart(false);
+      setSelectedTable(null);
       setExistingOrderId(null);
+      setAutoSelectedRule(false);
+      setActivePricingRuleId(null);
+      tableParamsStampRef.current = null;
+      lastAppliedStampRef.current = null;
     } catch (error) {
       console.error('Error completing bill:', error);
       toast.error(error.message || 'Failed to complete bill. Please try again.');
@@ -2109,6 +2251,46 @@ export default function MenuScreen() {
         </View>
       )}
 
+      {/* Active Order Info Bar — table indicator + clear button */}
+      {(cart.length > 0 || selectedTable) && (
+        <View style={styles.orderInfoBar}>
+          <View style={styles.orderInfoLeft}>
+            {selectedTable && (
+              <View style={styles.orderInfoTableChip}>
+                <Ionicons name="restaurant-outline" size={13} color="#dc2626" />
+                <Text style={styles.orderInfoTableText}>{selectedTable.name}</Text>
+                {selectedTable.floor ? (
+                  <Text style={styles.orderInfoFloorText}>{selectedTable.floor}</Text>
+                ) : null}
+              </View>
+            )}
+            {cart.length > 0 && (
+              <View style={styles.orderInfoCartChip}>
+                <Ionicons name="cart-outline" size={13} color="#6366f1" />
+                <Text style={styles.orderInfoCartText}>{cart.length} items · ₹{getCartTotal().toFixed(0)}</Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity
+            style={styles.orderInfoClearBtn}
+            onPress={() => {
+              setSelectedTable(null);
+              setCart([]);
+              setExistingOrderId(null);
+              setIsBarTabMode(false);
+              setAutoSelectedRule(false);
+              setActivePricingRuleId(null);
+              tableParamsStampRef.current = null;
+              lastAppliedStampRef.current = null;
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={16} color="#ef4444" />
+            <Text style={styles.orderInfoClearText}>Clear</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Menu Items - 2 Column Grid */}
       <FlatList
         ref={menuFlatListRef}
@@ -2172,7 +2354,7 @@ export default function MenuScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.checkoutBtn, styles.checkoutBtnGreen, sendingOrder && styles.orderButtonDisabled]}
-                  onPress={() => setShowCart(true)}
+                  onPress={handleCartButtonPress}
                   disabled={sendingOrder}
                 >
                   <Ionicons name="checkmark-circle" size={16} color="#fff" />
@@ -2195,7 +2377,7 @@ export default function MenuScreen() {
             ) : isCashier ? (
               <TouchableOpacity
                 style={[styles.checkoutBtn, styles.checkoutBtnGreen, sendingOrder && styles.orderButtonDisabled]}
-                onPress={() => setShowCart(true)}
+                onPress={handleCartButtonPress}
                 disabled={sendingOrder}
               >
                 {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
@@ -2207,12 +2389,17 @@ export default function MenuScreen() {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
-                style={[styles.checkoutBtn, styles.checkoutBtnPrimary]}
-                onPress={() => setShowCart(true)}
+                style={[styles.checkoutBtn, styles.checkoutBtnPrimary, sendingOrder && styles.orderButtonDisabled]}
+                onPress={handleCartButtonPress}
+                disabled={sendingOrder}
               >
-                <Ionicons name="cart" size={16} color="#fff" />
-                <Text style={styles.checkoutBtnText}>View Cart</Text>
-                <Ionicons name="chevron-forward" size={16} color="#fff" />
+                {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
+                  <>
+                    <Ionicons name="cart" size={16} color="#fff" />
+                    <Text style={styles.checkoutBtnText}>View Cart</Text>
+                    <Ionicons name="chevron-forward" size={16} color="#fff" />
+                  </>
+                )}
               </TouchableOpacity>
             )}
           </View>
@@ -3176,5 +3363,75 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  // Active Order Info Bar
+  orderInfoBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  orderInfoLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  orderInfoTableChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  orderInfoTableText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#dc2626',
+  },
+  orderInfoFloorText: {
+    fontSize: 10,
+    color: '#9ca3af',
+    marginLeft: 2,
+  },
+  orderInfoCartChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+  },
+  orderInfoCartText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6366f1',
+  },
+  orderInfoClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  orderInfoClearText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ef4444',
   },
 });

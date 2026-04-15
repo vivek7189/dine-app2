@@ -54,6 +54,8 @@ export default function CustomerLookup({
   subtotal = 0,
   hideLoyalty = false,
   coolStyle = false,
+  webDesign = false,
+  hideExtras = false,
 }) {
   const [phone, setPhone] = useState('');
   const [lookupStatus, setLookupStatus] = useState('idle'); // idle | loading | found | not_found | error
@@ -166,6 +168,9 @@ export default function CustomerLookup({
           setCustomer(response.customer);
           setLookupStatus('found');
           setError('');
+          // Sync local name so it's editable
+          setCustomerNameLocal(response.customer.name || '');
+          if (onCustomerNameChange) onCustomerNameChange(response.customer.name || '');
           if (onCustomerFound) onCustomerFound(response.customer, settings);
         } else {
           setCustomer(null);
@@ -234,6 +239,53 @@ export default function CustomerLookup({
   const hasRedeemablePoints = loyaltyEnabled && maxRedeemable > 0;
   const discountValue = pointsToRupees(redeemPoints);
 
+  // ---------- webDesign mode: clean stacked full-width inputs ----------
+  if (webDesign) {
+    const phoneValid = lookupStatus === 'found' && customer;
+    const nameValid = customerNameLocal.length > 2;
+    return (
+      <View style={styles.webContainer}>
+        {/* Phone input — full width */}
+        <View style={[styles.webInput, phoneValid && styles.webInputValid]}>
+          <TextInput
+            style={styles.webInputText}
+            placeholder="Customer phone"
+            placeholderTextColor="#9ca3af"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={handlePhoneChange}
+            maxLength={minLength + 3}
+          />
+          {lookupStatus === 'loading' && (
+            <ActivityIndicator size="small" color="#ef4444" />
+          )}
+          {phoneValid && (
+            <Ionicons name="checkmark-circle" size={18} color="#dc2626" />
+          )}
+        </View>
+        {/* Name input — full width, always visible */}
+        <View style={[styles.webInput, nameValid && styles.webInputValid]}>
+          <TextInput
+            style={styles.webInputText}
+            placeholder="Customer name"
+            placeholderTextColor="#9ca3af"
+            value={customerNameLocal}
+            onChangeText={(text) => {
+              setCustomerNameLocal(text);
+              if (onCustomerNameChange) onCustomerNameChange(text);
+            }}
+            autoCapitalize="words"
+          />
+          {nameValid && (
+            <Ionicons name="checkmark-circle" size={18} color="#0891b2" />
+          )}
+        </View>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+    );
+  }
+
+  // ---------- Default mode ----------
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
       {/* Phone + Add button row */}
@@ -244,7 +296,7 @@ export default function CustomerLookup({
           lookupStatus === 'found' && (coolStyle ? styles.phoneRowCoolFound : styles.phoneRowFound),
           { flex: 1 },
         ]}>
-          <Ionicons name="phone-portrait-outline" size={15} color={lookupStatus === 'found' ? '#22c55e' : '#9ca3af'} />
+          <Ionicons name="phone-portrait-outline" size={15} color={lookupStatus === 'found' ? '#dc2626' : '#9ca3af'} />
           <TextInput
             style={[styles.phoneInput, coolStyle && styles.phoneInputCool]}
             placeholder={coolStyle ? 'Enter phone number' : 'Customer phone'}
@@ -258,22 +310,22 @@ export default function CustomerLookup({
             <ActivityIndicator size="small" color="#ef4444" />
           )}
           {lookupStatus === 'found' && customer && (
-            <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
+            <Ionicons name="checkmark-circle" size={16} color="#dc2626" />
           )}
         </View>
-        {!customer && (
+        {!hideExtras && !customer && (
           <TouchableOpacity
             style={[styles.addFieldsBtn, showExtraFields && styles.addFieldsBtnActive]}
             onPress={() => setShowExtraFields(!showExtraFields)}
             activeOpacity={0.7}
           >
-            <Ionicons name={showExtraFields ? 'chevron-up' : 'add'} size={18} color={showExtraFields ? '#0d9488' : '#6b7280'} />
+            <Ionicons name={showExtraFields ? 'chevron-up' : 'add'} size={18} color={showExtraFields ? '#dc2626' : '#6b7280'} />
           </TouchableOpacity>
         )}
       </View>
 
       {/* Extra fields: Name & Email */}
-      {showExtraFields && !customer && (
+      {!hideExtras && showExtraFields && !customer && (
         <View style={styles.extraFields}>
           <View style={styles.extraFieldRow}>
             <Ionicons name="person-outline" size={16} color="#9ca3af" />
@@ -308,7 +360,7 @@ export default function CustomerLookup({
       )}
 
       {/* Customer Info Chip */}
-      {customer && lookupStatus === 'found' && (
+      {!hideExtras && customer && lookupStatus === 'found' && (
         <View style={styles.customerInfo}>
           {/* Top row: name, orders, points — tappable for detail modal */}
           <TouchableOpacity
@@ -337,6 +389,25 @@ export default function CustomerLookup({
             </View>
           </TouchableOpacity>
 
+          {/* Editable customer name */}
+          <View style={styles.editNameRow}>
+            <Ionicons name="person-outline" size={14} color="#dc2626" />
+            <TextInput
+              style={styles.editNameInput}
+              value={customerNameLocal}
+              onChangeText={(text) => {
+                setCustomerNameLocal(text);
+                if (onCustomerNameChange) onCustomerNameChange(text);
+              }}
+              placeholder="Customer name"
+              placeholderTextColor="#9ca3af"
+              autoCapitalize="words"
+            />
+            {customerNameLocal.length > 2 && (
+              <Ionicons name="checkmark-circle" size={14} color="#dc2626" />
+            )}
+          </View>
+
           {/* Loyalty Redemption Slider */}
           {!hideLoyalty && hasRedeemablePoints && (
             <View style={styles.redeemSection}>
@@ -358,7 +429,7 @@ export default function CustomerLookup({
                     value={redeemPoints > 0 ? String(redeemPoints) : ''}
                     onChangeText={handleRedeemInputChange}
                     placeholder="0"
-                    placeholderTextColor="#5eead4"
+                    placeholderTextColor="#fca5a5"
                     maxLength={8}
                   />
                   <Text style={styles.redeemInputSuffix}>pts</Text>
@@ -427,7 +498,7 @@ export default function CustomerLookup({
                 </View>
               ) : earningInfo.points > 0 ? (
                 <View style={styles.earnRow}>
-                  <Ionicons name="gift-outline" size={14} color="#22c55e" />
+                  <Ionicons name="gift-outline" size={14} color="#dc2626" />
                   <Text style={styles.earnText}>
                     You'll earn <Text style={styles.earnHighlight}>{earningInfo.points} pts</Text> on this order
                   </Text>
@@ -444,6 +515,32 @@ export default function CustomerLookup({
 }
 
 const styles = StyleSheet.create({
+  // --- webDesign mode styles ---
+  webContainer: {
+    gap: 6,
+  },
+  webInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderWidth: 2,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
+  webInputValid: {
+    borderColor: '#dc2626',
+    backgroundColor: '#fff',
+  },
+  webInputText: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1f2937',
+  },
+
+  // --- default mode styles ---
   container: {
     backgroundColor: '#fff',
     marginTop: 8,
@@ -508,8 +605,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   addFieldsBtnActive: {
-    backgroundColor: '#f0fdfa',
-    borderColor: '#5eead4',
+    backgroundColor: '#fef2f2',
+    borderColor: '#fca5a5',
   },
   extraFields: {
     marginTop: 8,
@@ -534,11 +631,11 @@ const styles = StyleSheet.create({
   },
   customerInfo: {
     marginTop: 10,
-    backgroundColor: '#f0fdfa',
+    backgroundColor: '#fef2f2',
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: '#fecaca',
   },
   customerRow: {
     flexDirection: 'row',
@@ -557,7 +654,7 @@ const styles = StyleSheet.create({
     color: '#0f766e',
   },
   ordersBadge: {
-    backgroundColor: '#ccfbf1',
+    backgroundColor: '#fee2e2',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
@@ -565,7 +662,7 @@ const styles = StyleSheet.create({
   ordersBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#0d9488',
+    color: '#dc2626',
   },
   chipRight: {
     flexDirection: 'row',
@@ -589,12 +686,32 @@ const styles = StyleSheet.create({
     color: '#92400e',
   },
 
+  // --- Editable name row (when customer found) ---
+  editNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#fecaca',
+  },
+  editNameInput: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#0f766e',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#fecaca',
+  },
+
   // --- Redemption section ---
   redeemSection: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#99f6e4',
+    borderTopColor: '#fecaca',
   },
   redeemHeader: {
     flexDirection: 'row',
@@ -610,7 +727,7 @@ const styles = StyleSheet.create({
   redeemValue: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#0d9488',
+    color: '#dc2626',
   },
   redeemControls: {
     gap: 8,
@@ -618,11 +735,11 @@ const styles = StyleSheet.create({
   redeemInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ccfbf1',
+    backgroundColor: '#fee2e2',
     borderRadius: 8,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: '#5eead4',
+    borderColor: '#fca5a5',
   },
   redeemInput: {
     flex: 1,
@@ -633,7 +750,7 @@ const styles = StyleSheet.create({
   },
   redeemInputSuffix: {
     fontSize: 12,
-    color: '#0d9488',
+    color: '#dc2626',
     fontWeight: '500',
   },
   quickPills: {
@@ -645,13 +762,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
-    backgroundColor: '#ccfbf1',
+    backgroundColor: '#fee2e2',
     borderWidth: 1,
-    borderColor: '#5eead4',
+    borderColor: '#fca5a5',
   },
   pillActive: {
-    backgroundColor: '#0d9488',
-    borderColor: '#0d9488',
+    backgroundColor: '#dc2626',
+    borderColor: '#dc2626',
   },
   pillClear: {
     backgroundColor: '#fef2f2',
@@ -673,13 +790,13 @@ const styles = StyleSheet.create({
   },
   barTrack: {
     height: 4,
-    backgroundColor: '#99f6e4',
+    backgroundColor: '#fecaca',
     borderRadius: 2,
     overflow: 'hidden',
   },
   barFill: {
     height: 4,
-    backgroundColor: '#0d9488',
+    backgroundColor: '#dc2626',
     borderRadius: 2,
   },
   barLabel: {
@@ -693,7 +810,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#99f6e4',
+    borderTopColor: '#fecaca',
   },
   earnRow: {
     flexDirection: 'row',
@@ -706,7 +823,7 @@ const styles = StyleSheet.create({
   },
   earnHighlight: {
     fontWeight: '700',
-    color: '#22c55e',
+    color: '#dc2626',
   },
   earnPausedText: {
     fontSize: 12,

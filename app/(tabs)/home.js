@@ -11,7 +11,6 @@ import {
   Easing,
   Alert,
   Platform,
-  ActionSheetIOS,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +23,7 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../consta
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { HeadquartersContent } from './headquarters';
+import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
 
@@ -101,6 +101,8 @@ export default function HomeScreen() {
   // Multi-restaurant
   const [restaurants, setRestaurants] = useState([]);
   const [syncing, setSyncing] = useState(false);
+  const [showRestaurantModal, setShowRestaurantModal] = useState(false);
+  const [switchingRestaurantId, setSwitchingRestaurantId] = useState(null);
   const loadStatsRef = useRef(null);
 
   useEffect(() => {
@@ -354,6 +356,7 @@ export default function HomeScreen() {
     try {
       // Show loading while switching
       setLoading(true);
+      setSwitchingRestaurantId(newRestaurantId);
 
       // Reset stats so old restaurant data doesn't flash
       setTodayStats({ totalOrders: 0, totalRevenue: 0, avgOrderValue: 0, pendingOrders: 0, completedOrders: 0 });
@@ -388,10 +391,13 @@ export default function HomeScreen() {
 
       // Broadcast switch to all other tabs so they reload immediately
       restaurantEvents.emit('switch', { restaurantId: newRestaurantId, restaurant: newRestaurant || user?.restaurant });
+
+      setShowRestaurantModal(false);
     } catch (error) {
       console.error('Error switching restaurant:', error);
     } finally {
       setLoading(false);
+      setSwitchingRestaurantId(null);
     }
   };
 
@@ -400,34 +406,7 @@ export default function HomeScreen() {
     const userRole = (user?.role || '').toLowerCase();
     if (userRole !== 'owner' && userRole !== 'admin') return;
     if (restaurants.length <= 1) return;
-    const currentId = getRestaurantId();
-    if (Platform.OS === 'ios') {
-      const options = [...restaurants.map(r => {
-        const name = r.name || r.id;
-        const rid = r.id || r._id;
-        return rid === currentId ? `${name} (current)` : name;
-      }), 'Cancel'];
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
-        (idx) => {
-          if (idx < restaurants.length) {
-            handleSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
-          }
-        }
-      );
-    } else {
-      Alert.alert(
-        'Switch Restaurant',
-        'Select which restaurant to manage',
-        [
-          ...restaurants.map(r => ({
-            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
-            onPress: () => handleSwitchRestaurant(r.id || r._id),
-          })),
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    }
+    setShowRestaurantModal(true);
   };
 
   const role = user?.role?.toLowerCase() || '';
@@ -529,7 +508,7 @@ export default function HomeScreen() {
                     <View style={summaryStyles.statsRow}>
                       <View style={summaryStyles.statPill}>
                         <Text style={summaryStyles.statPillLabel}>Revenue</Text>
-                        <Text style={[summaryStyles.statPillValue, { color: '#10b981' }]}>{formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}</Text>
+                        <Text style={[summaryStyles.statPillValue, { color: '#dc2626' }]}>{formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}</Text>
                       </View>
                       <View style={summaryStyles.statPill}>
                         <Text style={summaryStyles.statPillLabel}>Orders</Text>
@@ -555,7 +534,7 @@ export default function HomeScreen() {
                     <View style={summaryStyles.totalRow}>
                       <Text style={summaryStyles.totalLabel}>Total</Text>
                       <View style={summaryStyles.qtyBadge}><Text style={summaryStyles.qtyText}>{dailySummary.items.reduce((s, i) => s + i.quantity, 0)}</Text></View>
-                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#10b981' }]}>{formatCurrency(dailySummary.items.reduce((s, i) => s + i.revenue, 0))}</Text>
+                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#dc2626' }]}>{formatCurrency(dailySummary.items.reduce((s, i) => s + i.revenue, 0))}</Text>
                     </View>
                   </>
                 ) : (
@@ -640,7 +619,7 @@ export default function HomeScreen() {
               onPress={restaurants.length > 1 && (role === 'owner' || role === 'admin') ? showRestaurantPicker : undefined}
               activeOpacity={restaurants.length > 1 && (role === 'owner' || role === 'admin') ? 0.7 : 1}
             >
-              <Ionicons name="storefront-outline" size={14} color="#10b981" />
+              <Ionicons name="storefront-outline" size={14} color="#dc2626" />
               <Text style={styles.restaurantChipText} numberOfLines={1}>
                 {restaurant?.name || user?.restaurant?.name || 'My Restaurant'}
               </Text>
@@ -836,7 +815,7 @@ export default function HomeScreen() {
                     <View style={summaryStyles.statsRow}>
                       <View style={summaryStyles.statPill}>
                         <Text style={summaryStyles.statPillLabel}>Revenue</Text>
-                        <Text style={[summaryStyles.statPillValue, { color: '#10b981' }]}>
+                        <Text style={[summaryStyles.statPillValue, { color: '#dc2626' }]}>
                           {formatCurrency(dailySummary.totalRevenueWithTax || dailySummary.totalRevenue || 0)}
                         </Text>
                       </View>
@@ -885,7 +864,7 @@ export default function HomeScreen() {
                           {dailySummary.items.reduce((s, i) => s + i.quantity, 0)}
                         </Text>
                       </View>
-                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#10b981' }]}>
+                      <Text style={[summaryStyles.itemAmount, { fontWeight: '700', color: '#dc2626' }]}>
                         {formatCurrency(dailySummary.items.reduce((s, i) => s + i.revenue, 0))}
                       </Text>
                     </View>
@@ -1032,6 +1011,15 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
+      <RestaurantPickerModal
+        visible={showRestaurantModal}
+        onClose={() => setShowRestaurantModal(false)}
+        restaurants={restaurants}
+        currentRestaurantId={getRestaurantId()}
+        onSelect={handleSwitchRestaurant}
+        switching={!!switchingRestaurantId}
+        switchingId={switchingRestaurantId}
+      />
     </SafeAreaView>
   );
 }

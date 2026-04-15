@@ -26,6 +26,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 let GoogleSignin = null;
 let firebaseAuth = null;
 let GoogleAuthProvider = null;
+let OAuthProvider = null;
 let signInWithCredential = null;
 let googleSignInAvailable = false;
 
@@ -35,14 +36,24 @@ try {
   const fb = require('../../config/firebase');
   firebaseAuth = fb.auth;
   GoogleAuthProvider = fb.GoogleAuthProvider;
+  OAuthProvider = fb.OAuthProvider;
   signInWithCredential = fb.signInWithCredential;
-
-  GoogleSignin.configure({
-    webClientId: '1087929121342-22v55s7oqhgnt93q8118t4ltdlo53lcq.apps.googleusercontent.com',
-  });
   googleSignInAvailable = true;
 } catch (e) {
   console.log('Google Sign-In not available (Expo Go). Use a development build for Google login.');
+}
+
+// Lazy-load Apple Authentication
+let AppleAuthentication = null;
+let appleAuthAvailable = false;
+
+try {
+  if (Platform.OS === 'ios') {
+    AppleAuthentication = require('expo-apple-authentication');
+    appleAuthAvailable = !!AppleAuthentication?.AppleAuthentication?.isAvailableAsync;
+  }
+} catch (e) {
+  console.log('Apple Authentication not available.');
 }
 
 // Lazy-load @react-native-firebase/auth for phone OTP
@@ -173,6 +184,16 @@ export default function LoginScreen() {
   };
 
   useEffect(() => {
+    // Configure Google Sign-In after component mounts (avoids modal presentation crash at module load)
+    if (googleSignInAvailable && GoogleSignin) {
+      try {
+        GoogleSignin.configure({
+          webClientId: '1087929121342-22v55s7oqhgnt93q8118t4ltdlo53lcq.apps.googleusercontent.com',
+        });
+      } catch (e) {
+        console.log('Google Sign-In configure failed:', e.message);
+      }
+    }
     checkAuth();
   }, []);
 
@@ -245,6 +266,77 @@ export default function LoginScreen() {
       if (err.code !== 'SIGN_IN_CANCELLED' && err.code !== 'sign_in_cancelled') {
         console.error('Google sign-in error:', err);
         setError(err.message || 'Google sign-in failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ==================== OWNER: Apple Sign-In ====================
+  const handleAppleSignIn = async () => {
+    if (!AppleAuthentication?.AppleAuthentication) {
+      Alert.alert(
+        'Not Available',
+        'Sign in with Apple requires a development build on iOS.',
+      );
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      // Check runtime availability (device must support Apple ID)
+      const isAvailable = await AppleAuthentication.AppleAuthentication.isAvailableAsync();
+      if (!isAvailable) {
+        setError('Sign in with Apple is not available on this device.');
+        setLoading(false);
+        return;
+      }
+
+      const credential = await AppleAuthentication.AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      const { identityToken, fullName, email: appleEmail } = credential;
+      if (!identityToken) {
+        throw new Error('Could not get Apple credentials');
+      }
+
+      // Build display name from Apple's fullName (only provided on first sign-in)
+      let displayName = '';
+      if (fullName) {
+        displayName = [fullName.givenName, fullName.familyName].filter(Boolean).join(' ');
+      }
+
+      // Create Firebase credential and sign in
+      const provider = new OAuthProvider('apple.com');
+      const oauthCredential = provider.credential({
+        idToken: identityToken,
+        rawNonce: undefined,
+      });
+      const result = await signInWithCredential(firebaseAuth, oauthCredential);
+      const user = result.user;
+
+      // Exchange with DineOpen backend
+      const backendResponse = await apiClient.appleLogin(
+        user.uid,
+        appleEmail || user.email,
+        displayName || user.displayName || user.email?.split('@')[0],
+        user.photoURL
+      );
+
+      if (backendResponse.token) {
+        router.replace('/(tabs)/home');
+      } else {
+        setError('Login failed. Please try again.');
+      }
+    } catch (err) {
+      if (err.code !== 'ERR_REQUEST_CANCELED') {
+        console.error('Apple sign-in error:', err);
+        setError(err.message || 'Apple sign-in failed. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -558,6 +650,23 @@ export default function LoginScreen() {
       </TouchableOpacity>
       {!googleSignInAvailable && (
         <Text style={styles.nativeHint}>Requires development build</Text>
+      )}
+
+      {/* Apple Sign-In (iOS only) */}
+      {Platform.OS === 'ios' && (
+        <>
+          <TouchableOpacity
+            style={[styles.socialButton, styles.appleButton, !appleAuthAvailable && styles.buttonDisabledLight]}
+            onPress={handleAppleSignIn}
+            disabled={loading}
+          >
+            <Ionicons name="logo-apple" size={20} color="#fff" />
+            <Text style={styles.socialButtonText}>Continue with Apple</Text>
+          </TouchableOpacity>
+          {!appleAuthAvailable && (
+            <Text style={styles.nativeHint}>Requires development build</Text>
+          )}
+        </>
       )}
 
       <View style={styles.dividerRow}>
@@ -1306,6 +1415,11 @@ const styles = StyleSheet.create({
   googleButton: {
     backgroundColor: '#4285F4',
     shadowColor: '#4285F4',
+  },
+  appleButton: {
+    backgroundColor: '#000',
+    shadowColor: '#000',
+    marginTop: 10,
   },
   socialButtonText: {
     color: '#fff',

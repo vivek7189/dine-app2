@@ -5,10 +5,12 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   FlatList,
   ScrollView,
   TextInput,
   ActivityIndicator,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -96,13 +98,31 @@ export default function WaiterCartModal({
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
 
+  // Build customer context for offer engine (audience targeting)
+  const customerContext = useMemo(() => {
+    const phone = customerMobile || customerData?.phone || null;
+    if (!phone && !customerData?.id && !customerData?._id) return null;
+    return {
+      customerPhone: phone,
+      customerId: customerData?.id || customerData?._id || null,
+      isFirstOrder: customerData ? customerData.totalOrders === 0 : undefined,
+    };
+  }, [customerMobile, customerData]);
+
   // Offers state
   const [showOffersModal, setShowOffersModal] = useState(false);
 
-  // Manual discount (kept minimal)
+  // Manual discount
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
-  const manualDiscountAmount = 0; // Waiters don't apply manual discounts
+  const [sliderWidth, setSliderWidth] = useState(280);
+
+  const manualDiscountAmount = useMemo(() => {
+    const val = parseFloat(manualDiscount) || 0;
+    if (val <= 0) return 0;
+    if (manualDiscountType === 'percentage') return Math.round((subtotal * Math.min(val, 100) / 100) * 100) / 100;
+    return Math.min(val, subtotal);
+  }, [manualDiscount, manualDiscountType, subtotal]);
 
   // Offer engine
   const {
@@ -111,15 +131,31 @@ export default function WaiterCartModal({
     selectedOfferIds, setSelectedOfferIds,
     offerDiscount, loyaltyDiscount, freeItems,
     offerSettings,
+    autoApplied,
+    loyaltySettings: hookLoyaltySettings,
+    customerGroups: customerOfferGroups,
+    calculateDiscountForOffer,
   } = useOfferEngine({
     restaurantId,
     subtotal,
     cart,
-    customerData,
-    redeemPoints,
-    loyaltySettings,
+    customerContext,
     options: { autoApply: true },
   });
+
+  // Merge loyaltySettings — prefer hook source
+  const effectiveLoyaltySettings = hookLoyaltySettings || loyaltySettings;
+
+  // Max redeemable points
+  const loyaltyMaxRedeemable = useMemo(() => {
+    if (!customerData?.loyaltyPoints || !effectiveLoyaltySettings) return 0;
+    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 10;
+    const maxPct = effectiveLoyaltySettings.maxRedemptionPercent || 20;
+    const afterOtherDisc = Math.max(0, subtotal - offerDiscount - manualDiscountAmount);
+    const maxDiscByPct = (afterOtherDisc * maxPct) / 100;
+    const maxPointsByPct = Math.floor(maxDiscByPct * redemptionRate);
+    return Math.min(customerData.loyaltyPoints, maxPointsByPct);
+  }, [customerData, effectiveLoyaltySettings, subtotal, offerDiscount, manualDiscountAmount]);
 
   const selectedOffer = useMemo(() => {
     if (!selectedOfferId) return null;
@@ -144,12 +180,21 @@ export default function WaiterCartModal({
   });
 
   const loyaltyPointsToEarn = useMemo(() => {
-    if (!loyaltySettings?.enabled || !customerData) return 0;
-    const earnPerAmount = loyaltySettings.earnPerAmount || 100;
-    const pointsRate = loyaltySettings.pointsPerUnit || 1;
+    if (!effectiveLoyaltySettings?.enabled || !customerData) return 0;
+    const earnPerAmount = effectiveLoyaltySettings.earnPerAmount || 100;
+    const pointsRate = effectiveLoyaltySettings.pointsPerUnit || 1;
     const base = Math.max(0, subtotal - offerDiscount - manualDiscountAmount - loyaltyDiscount);
     return Math.floor(base / earnPerAmount) * pointsRate;
-  }, [loyaltySettings, subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, redeemPoints]);
+  }, [effectiveLoyaltySettings, subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, redeemPoints]);
+
+  // Build free items for display
+  const freeItemsForDisplay = useMemo(() => {
+    return (freeItems || []).map(fi => {
+      const id = fi.itemId || fi.menuItemId || fi.id;
+      const match = cart.find(c => (c.menuItemId || c.id) === id);
+      return { id, name: fi.name || match?.name || `Item ${id}`, quantity: fi.quantity || 1 };
+    });
+  }, [freeItems, cart]);
 
   const handleCustomerFound = useCallback((customer, settings) => {
     setCustomerData(customer);
@@ -181,6 +226,7 @@ export default function WaiterCartModal({
             ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]
             : []),
       customerPhone: customerMobile || customerData?.phone || '',
+      customerName: customerName || customerData?.name || '',
       customerId: customerData?.id || customerData?._id || null,
       serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
       serviceChargeAmount: billing.serviceChargeAmount || null,
@@ -240,6 +286,7 @@ export default function WaiterCartModal({
       animationType="slide"
       onRequestClose={onClose}
     >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={styles.overlay}>
         <View style={styles.modalContent}>
           {/* Header */}
@@ -254,9 +301,9 @@ export default function WaiterCartModal({
 
               {/* Table Number — inline input or chip */}
               {(selectedTable?.name || tableNumberProp) ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ecfdf5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 8 }}>
-                  <Ionicons name="restaurant-outline" size={13} color="#10b981" />
-                  <Text style={{ color: '#10b981', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable?.name || tableNumberProp}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 8 }}>
+                  <Ionicons name="restaurant-outline" size={13} color="#dc2626" />
+                  <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable?.name || tableNumberProp}</Text>
                 </View>
               ) : showTableInput ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 8, paddingHorizontal: 6, marginRight: 8, height: 32, borderWidth: 1, borderColor: '#d1d5db' }}>
@@ -273,7 +320,7 @@ export default function WaiterCartModal({
                   />
                   {tableNumber ? (
                     matchedFloor ? (
-                      <Ionicons name="checkmark-circle" size={14} color="#10b981" />
+                      <Ionicons name="checkmark-circle" size={14} color="#dc2626" />
                     ) : (
                       <Ionicons name="alert-circle-outline" size={14} color="#f59e0b" />
                     )
@@ -307,14 +354,14 @@ export default function WaiterCartModal({
             {/* Zone/Pricing auto-select indicator */}
             {tableNumber.trim() && matchedFloor && (
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 4, gap: 4 }}>
-                <Ionicons name="location-outline" size={11} color="#10b981" />
-                <Text style={{ fontSize: 11, color: '#10b981', fontWeight: '600' }}>{matchedFloor.floorName}</Text>
+                <Ionicons name="location-outline" size={11} color="#dc2626" />
+                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '600' }}>{matchedFloor.floorName}</Text>
               </View>
             )}
           </View>
 
           {/* Cart Items */}
-          <ScrollView style={styles.cartList} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.cartList} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {cart.length === 0 ? (
               <View style={styles.emptyCart}>
                 <Ionicons name="cart-outline" size={64} color={Colors.textLight} />
@@ -329,6 +376,16 @@ export default function WaiterCartModal({
                   keyExtractor={(item) => item.id}
                   scrollEnabled={false}
                 />
+
+                {/* Free items from offers */}
+                {freeItemsForDisplay.length > 0 && (
+                  <View style={{ marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 8, backgroundColor: '#fef3c7', borderWidth: 1, borderStyle: 'dashed', borderColor: '#f59e0b', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="gift" size={14} color="#78350f" />
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#78350f', flex: 1 }}>
+                      Free: {freeItemsForDisplay.map(f => `${f.quantity}x ${f.name}`).join(', ')}
+                    </Text>
+                  </View>
+                )}
 
                 {/* Kitchen Notes — collapsible */}
                 {showKitchenNotes && (
@@ -356,11 +413,11 @@ export default function WaiterCartModal({
           {/* Fixed Bottom — customer + offers inline, total, action */}
           {cart.length > 0 && (
             <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#f3f4f6', paddingBottom: Math.max(insets.bottom, 10) }}>
-              {/* Customer Phone + Offers — same line */}
+              {/* Customer Phone + Name + Offers — same line */}
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 }}>
-                {/* Phone input (flex) */}
+                {/* Phone input */}
                 {restaurantId && (
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 2 }}>
                     <CustomerLookup
                       restaurantId={restaurantId}
                       countryCode={countryCode}
@@ -376,9 +433,23 @@ export default function WaiterCartModal({
                       hideLoyalty
                       compact
                       coolStyle
+                      hideExtras
                     />
                   </View>
                 )}
+
+                {/* Name input — side by side */}
+                <View style={styles.nameInputWrap}>
+                  <Ionicons name="person-outline" size={14} color={customerName ? '#dc2626' : '#9ca3af'} />
+                  <TextInput
+                    style={styles.nameInput}
+                    placeholder="Name"
+                    placeholderTextColor="#9ca3af"
+                    value={customerName}
+                    onChangeText={setCustomerName}
+                    autoCapitalize="words"
+                  />
+                </View>
 
                 {/* Offers badge — compact */}
                 {(() => {
@@ -392,13 +463,13 @@ export default function WaiterCartModal({
 
                   return (
                     <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#f0fdf4' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#bbf7d0' : '#e0e7ff' }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#fef2f2' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#fecaca' : '#e0e7ff' }}
                       onPress={() => setShowOffersModal(true)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#16a34a' : '#6366f1'} />
+                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#dc2626' : '#6366f1'} />
                       {hasApplied ? (
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>
                           -₹{(offerDiscount + loyaltyDiscount).toFixed(0)}
                         </Text>
                       ) : (
@@ -406,7 +477,7 @@ export default function WaiterCartModal({
                           {applicableOffers.length}
                         </Text>
                       )}
-                      <Ionicons name="chevron-forward" size={12} color={hasApplied ? '#86efac' : '#a5b4fc'} />
+                      <Ionicons name="chevron-forward" size={12} color={hasApplied ? '#fca5a5' : '#a5b4fc'} />
                     </TouchableOpacity>
                   );
                 })()}
@@ -420,10 +491,10 @@ export default function WaiterCartModal({
                 </View>
                 {billing.totalDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#16a34a' }}>
+                    <Text style={{ fontSize: 12, color: '#dc2626' }}>
                       {offerDiscount > 0 && loyaltyDiscount > 0 ? 'Offers + Loyalty' : offerDiscount > 0 ? 'Offers' : 'Loyalty'}
                     </Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#16a34a' }}>-₹{billing.totalDiscount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{billing.totalDiscount.toFixed(0)}</Text>
                   </View>
                 )}
                 {billing.serviceChargeAmount > 0 && (
@@ -448,7 +519,12 @@ export default function WaiterCartModal({
 
               {/* Grand Total */}
               <View style={styles.totalContainer}>
-                <Text style={[styles.totalLabel, { fontSize: fs(16) }]}>Total</Text>
+                <View>
+                  <Text style={[styles.totalLabel, { fontSize: fs(16) }]}>Total</Text>
+                  {billing.totalDiscount > 0 && (
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#dc2626', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                  )}
+                </View>
                 <Text style={[styles.totalAmount, { fontSize: fs(20) }]}>₹{billing.grandTotal.toFixed(2)}</Text>
               </View>
 
@@ -476,6 +552,7 @@ export default function WaiterCartModal({
           )}
         </View>
       </View>
+      </TouchableWithoutFeedback>
 
       {/* Offers Modal */}
       <Modal visible={showOffersModal} transparent animationType="slide" onRequestClose={() => setShowOffersModal(false)}>
@@ -500,40 +577,49 @@ export default function WaiterCartModal({
             <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
               {/* Customer Info Card */}
               {customerData && (
-                <View style={{ backgroundColor: '#f0fdf4', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#dcfce7', justifyContent: 'center', alignItems: 'center' }}>
-                    <Ionicons name="person" size={18} color="#16a34a" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{customerData.name || 'Customer'}</Text>
-                    <Text style={{ fontSize: 11, color: '#6b7280' }}>{customerData.phone}</Text>
+                <View style={{ backgroundColor: '#fef2f2', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fee2e2', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="person" size={18} color="#dc2626" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{customerData.name || 'Customer'}</Text>
+                      <Text style={{ fontSize: 11, color: '#6b7280' }}>{customerData.phone}</Text>
+                    </View>
                   </View>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{customerData.totalOrders || 0}</Text>
-                      <Text style={{ fontSize: 9, color: '#9ca3af' }}>Orders</Text>
+                    <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 8, padding: 8 }}>
+                      <Ionicons name="receipt-outline" size={14} color="#dc2626" />
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b', marginTop: 2 }}>{customerData.totalOrders || 0}</Text>
+                      <Text style={{ fontSize: 9, color: '#6b7280' }}>Orders</Text>
                     </View>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#b45309' }}>{customerData.loyaltyPoints || 0}</Text>
-                      <Text style={{ fontSize: 9, color: '#9ca3af' }}>Points</Text>
+                    <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#fffbeb', borderRadius: 8, padding: 8 }}>
+                      <Ionicons name="star" size={14} color="#f59e0b" />
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#b45309', marginTop: 2 }}>{customerData.loyaltyPoints || 0}</Text>
+                      <Text style={{ fontSize: 9, color: '#6b7280' }}>Points</Text>
+                    </View>
+                    <View style={{ flex: 1, alignItems: 'center', backgroundColor: '#fef2f2', borderRadius: 8, padding: 8 }}>
+                      <Ionicons name="wallet-outline" size={14} color="#dc2626" />
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#dc2626', marginTop: 2 }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
+                      <Text style={{ fontSize: 9, color: '#6b7280' }}>Spent</Text>
                     </View>
                   </View>
                 </View>
               )}
 
-              {/* Offers List */}
-              {applicableOffers.length > 0 && (
+              {/* Generic Offers */}
+              {genericOffers.length > 0 && (
                 <View style={{ marginBottom: 12 }}>
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b', marginBottom: 8 }}>Available Offers</Text>
-                  {applicableOffers.map((offer) => {
+                  {genericOffers.map((offer) => {
                     const oid = offer.id || offer._id;
                     const isMulti = offerSettings?.allowMultipleOffers;
                     const isSelected = isMulti ? selectedOfferIds.includes(oid) : selectedOfferId === oid;
-                    const result = calculateOfferResult(offer, subtotal, cart, {});
+                    const saves = calculateDiscountForOffer ? calculateDiscountForOffer(offer, subtotal, cart) : (calculateOfferResult(offer, subtotal, cart, {})?.discount || 0);
                     return (
                       <TouchableOpacity
                         key={oid}
-                        style={{ flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 6, backgroundColor: isSelected ? '#f0fdf4' : '#f9fafb', borderWidth: 1, borderColor: isSelected ? '#86efac' : '#f3f4f6' }}
+                        style={{ flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 6, backgroundColor: isSelected ? '#eff6ff' : '#f9fafb', borderWidth: 1, borderColor: isSelected ? '#93c5fd' : '#f3f4f6' }}
                         onPress={() => {
                           if (isMulti) {
                             setSelectedOfferIds(prev => prev.includes(oid) ? prev.filter(id => id !== oid) : [...prev, oid]);
@@ -542,33 +628,183 @@ export default function WaiterCartModal({
                           }
                         }}
                       >
-                        <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#16a34a' : '#d1d5db'} />
+                        <View style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: isSelected ? '#3b82f6' : '#e5e7eb', justifyContent: 'center', alignItems: 'center' }}>
+                          {isSelected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                        </View>
                         <View style={{ flex: 1, marginLeft: 8 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }}>{offer.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }}>{offer.name}</Text>
+                            {isSelected && autoApplied && (
+                              <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                <Text style={{ fontSize: 8, fontWeight: '700', color: '#3b82f6' }}>Auto</Text>
+                              </View>
+                            )}
+                          </View>
                           {offer.description ? <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }} numberOfLines={1}>{offer.description}</Text> : null}
                         </View>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#16a34a' }}>-₹{(result?.discount || 0).toFixed(0)}</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>-₹{saves.toFixed(0)}</Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
               )}
 
-              {/* Loyalty Section */}
-              {loyaltySettings?.enabled && customerData && (
-                <View style={{ backgroundColor: '#fffbeb', borderRadius: 12, padding: 12, marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Ionicons name="star" size={16} color="#f59e0b" />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#92400e' }}>Loyalty Points</Text>
-                    </View>
-                    <Text style={{ fontSize: 12, color: '#b45309' }}>{customerData.loyaltyPoints || 0} available</Text>
+              {/* Personalized Offers */}
+              {personalizedOffers.length > 0 && customerData && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <Ionicons name="gift" size={14} color="#d97706" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e' }}>For You</Text>
                   </View>
-                  {loyaltyPointsToEarn > 0 && (
-                    <Text style={{ fontSize: 11, color: '#16a34a', marginTop: 6 }}>+{loyaltyPointsToEarn} points will be earned on this order</Text>
+                  {personalizedOffers.map((offer) => {
+                    const oid = offer.id || offer._id;
+                    const isMulti = offerSettings?.allowMultipleOffers;
+                    const isSelected = isMulti ? selectedOfferIds.includes(oid) : selectedOfferId === oid;
+                    const saves = calculateDiscountForOffer ? calculateDiscountForOffer(offer, subtotal, cart) : (calculateOfferResult(offer, subtotal, cart, {})?.discount || 0);
+                    const offerGroupIds = offer.audience?.groupIds || [];
+                    const matchedGroup = customerOfferGroups?.find(g => offerGroupIds.includes(g.id));
+                    return (
+                      <TouchableOpacity
+                        key={oid}
+                        style={{ flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 6, backgroundColor: isSelected ? '#fffbeb' : '#f9fafb', borderWidth: 1, borderColor: isSelected ? '#fbbf24' : '#f3f4f6' }}
+                        onPress={() => {
+                          if (isMulti) {
+                            setSelectedOfferIds(prev => prev.includes(oid) ? prev.filter(id => id !== oid) : [...prev, oid]);
+                          } else {
+                            setSelectedOfferId(selectedOfferId === oid ? null : oid);
+                          }
+                        }}
+                      >
+                        <View style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: isSelected ? '#f59e0b' : '#e5e7eb', justifyContent: 'center', alignItems: 'center' }}>
+                          {isSelected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }}>{offer.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                            {offer.description ? <Text style={{ fontSize: 10, color: '#6b7280' }} numberOfLines={1}>{offer.description}</Text> : null}
+                            {matchedGroup && (
+                              <View style={{ backgroundColor: matchedGroup.color || '#6366f1', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
+                                <Text style={{ fontSize: 8, fontWeight: '700', color: '#fff' }}>{matchedGroup.name}</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#dc2626' }}>-₹{saves.toFixed(0)}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Free Items from offers */}
+              {freeItemsForDisplay.length > 0 && (
+                <View style={{ marginBottom: 12, padding: 10, borderRadius: 8, backgroundColor: '#fef3c7', borderWidth: 1, borderStyle: 'dashed', borderColor: '#f59e0b', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="gift" size={14} color="#78350f" />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#78350f', flex: 1 }}>
+                    Free: {freeItemsForDisplay.map(f => `${f.quantity}x ${f.name}`).join(', ')}
+                  </Text>
+                </View>
+              )}
+
+              {/* Loyalty Section */}
+              {effectiveLoyaltySettings?.enabled && customerData && (
+                <View style={{ backgroundColor: '#fffbeb', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#b45309' }}>
+                      {customerData.loyaltyPoints || 0} points available
+                    </Text>
+                    {loyaltyPointsToEarn > 0 && (
+                      <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: '#fecaca' }}>
+                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>Will earn +{loyaltyPointsToEarn} pts</Text>
+                      </View>
+                    )}
+                  </View>
+                  {loyaltyMaxRedeemable > 0 ? (
+                    <>
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={(e) => {
+                          const { locationX } = e.nativeEvent;
+                          const fraction = Math.max(0, Math.min(1, locationX / sliderWidth));
+                          const pts = Math.round(loyaltyMaxRedeemable * fraction);
+                          setRedeemPoints(pts);
+                        }}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <View style={{ height: 8, borderRadius: 4, backgroundColor: '#e5e7eb', overflow: 'hidden' }} onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}>
+                          <View style={{ height: '100%', borderRadius: 4, backgroundColor: '#f59e0b', width: `${Math.min(100, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }} />
+                        </View>
+                        <View style={{ position: 'absolute', top: -4, width: 16, height: 16, borderRadius: 8, backgroundColor: '#f59e0b', borderWidth: 2, borderColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 3, left: `${Math.min(96, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }} />
+                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {[{ label: '25%', value: 0.25 }, { label: '50%', value: 0.50 }, { label: '75%', value: 0.75 }, { label: 'Max', value: 1 }].map((opt) => {
+                          const pillPts = Math.floor(loyaltyMaxRedeemable * opt.value);
+                          const isActive = redeemPoints > 0 && redeemPoints === pillPts;
+                          return (
+                            <TouchableOpacity key={opt.label} style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: isActive ? '#f59e0b' : '#fff', borderWidth: 1, borderColor: isActive ? '#f59e0b' : '#d1d5db' }} onPress={() => setRedeemPoints(pillPts)}>
+                              <Text style={{ fontSize: 10, fontWeight: '600', color: isActive ? '#fff' : '#6b7280' }}>{opt.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        {redeemPoints > 0 && (
+                          <TouchableOpacity style={{ paddingHorizontal: 6, paddingVertical: 4, borderRadius: 12, backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fecaca' }} onPress={() => setRedeemPoints(0)}>
+                            <Ionicons name="close" size={12} color="#ef4444" />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#b45309' }}>
+                          {redeemPoints > 0 ? `${redeemPoints} pts = -₹${loyaltyDiscount.toFixed(0)}` : 'Tap or slide to redeem'}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#92400e' }}>Max: {loyaltyMaxRedeemable} pts ({effectiveLoyaltySettings.maxRedemptionPercent || 20}%)</Text>
+                      </View>
+                    </>
+                  ) : (customerData.loyaltyPoints || 0) > 0 ? (
+                    <Text style={{ fontSize: 11, color: '#92400e' }}>Cannot redeem on current order (max {effectiveLoyaltySettings.maxRedemptionPercent || 20}% of bill)</Text>
+                  ) : null}
+                </View>
+              )}
+
+              {/* Manual Discount */}
+              {billingSettings?.manualDiscountEnabled !== false && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Ionicons name="pricetag-outline" size={10} color="#94a3b8" />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Manual Discount</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb' }}>
+                      <TouchableOpacity style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'flat' ? '#4f46e5' : '#f9fafb' }} onPress={() => setManualDiscountType('flat')}>
+                        <Text style={{ color: manualDiscountType === 'flat' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>Flat</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'percentage' ? '#4f46e5' : '#f9fafb' }} onPress={() => setManualDiscountType('percentage')}>
+                        <Text style={{ color: manualDiscountType === 'percentage' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>%</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput style={{ flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, fontWeight: '600', color: '#1f2937' }} placeholder={manualDiscountType === 'percentage' ? '0%' : '₹0'} placeholderTextColor="#9ca3af" keyboardType="numeric" value={manualDiscount} onChangeText={setManualDiscount} />
+                  </View>
+                  {manualDiscountAmount > 0 && (
+                    <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '500' }}>Discount: -₹{manualDiscountAmount.toFixed(0)}</Text>
                   )}
                 </View>
               )}
+
+              {/* Kitchen Notes */}
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                  <Ionicons name="document-text-outline" size={10} color="#94a3b8" />
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Kitchen Notes</Text>
+                </View>
+                <TextInput
+                  style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10, fontSize: 13, color: '#374151', minHeight: 60, textAlignVertical: 'top' }}
+                  placeholder="E.g., No onions, extra spicy, birthday celebration..."
+                  placeholderTextColor="#9ca3af"
+                  value={specialInstructions}
+                  onChangeText={setSpecialInstructions}
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
             </ScrollView>
 
             {/* Modal Footer — billing breakdown */}
@@ -580,8 +816,14 @@ export default function WaiterCartModal({
                 </View>
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#16a34a' }}>Offers</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#16a34a' }}>-₹{offerDiscount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, color: '#dc2626' }}>Offers</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{offerDiscount.toFixed(0)}</Text>
+                  </View>
+                )}
+                {manualDiscountAmount > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#7c3aed' }}>Manual Discount</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#7c3aed' }}>-₹{manualDiscountAmount.toFixed(0)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (
@@ -608,7 +850,7 @@ export default function WaiterCartModal({
                 </View>
               </View>
               <TouchableOpacity
-                style={{ backgroundColor: billing.totalDiscount > 0 ? '#10b981' : '#4f46e5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                style={{ backgroundColor: billing.totalDiscount > 0 ? '#dc2626' : '#4f46e5', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
                 onPress={() => setShowOffersModal(false)}
               >
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
@@ -788,8 +1030,8 @@ const styles = StyleSheet.create({
     borderColor: '#e0e7ff',
   },
   summaryRowActive: {
-    backgroundColor: '#f0fdf4',
-    borderColor: '#bbf7d0',
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
   },
   earnBadge: {
     backgroundColor: '#fef3c7',
@@ -827,13 +1069,19 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   sendButton: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#16a34a',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.medium,
+    paddingVertical: 16,
+    paddingHorizontal: Spacing.md,
+    borderRadius: 12,
     gap: Spacing.sm,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   sendButtonDisabled: {
     opacity: 0.6,
@@ -842,5 +1090,29 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: Typography.bodyBold.fontSize,
     fontWeight: Typography.bodyBold.fontWeight,
+  },
+  // Name input (side by side with phone)
+  nameInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  nameInput: {
+    flex: 1,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: '#1e293b',
+    fontWeight: '500',
   },
 });

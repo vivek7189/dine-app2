@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, Alert, ActivityIndicator, RefreshControl,
-  FlatList, Switch, Image, Platform, ActionSheetIOS,
+  FlatList, Switch, Image, Platform,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
+import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 const TABS = [
   { key: 'overview', label: 'Overview', icon: 'bar-chart' },
   { key: 'staff', label: 'Staff', icon: 'people' },
@@ -47,6 +48,8 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
   const [datePreset, setDatePreset] = useState(embedded ? 'today' : '7d');
   const [selectedRestaurants, setSelectedRestaurants] = useState([]);
   const [showRestaurantFilter, setShowRestaurantFilter] = useState(false);
+
+  const [showRestaurantPickerModal, setShowRestaurantPickerModal] = useState(false);
 
   // Dashboard/analytics
   const [dashboardData, setDashboardData] = useState(null);
@@ -307,34 +310,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
 
   const showRestaurantPickerHQ = () => {
     if (!onSwitchRestaurant || restaurants.length <= 1) return;
-    const currentId = user?.restaurantId || user?.restaurant?.id;
-    if (Platform.OS === 'ios') {
-      const options = [...restaurants.map(r => {
-        const name = r.name || r.id;
-        const rid = r.id || r._id;
-        return rid === currentId ? `${name} (current)` : name;
-      }), 'Cancel'];
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: options.length - 1, title: 'Switch Restaurant' },
-        (idx) => {
-          if (idx < restaurants.length) {
-            onSwitchRestaurant(restaurants[idx].id || restaurants[idx]._id);
-          }
-        }
-      );
-    } else {
-      Alert.alert(
-        'Switch Restaurant',
-        'Select which restaurant to manage',
-        [
-          ...restaurants.map(r => ({
-            text: (r.id || r._id) === currentId ? `${r.name || r.id} (current)` : (r.name || r.id),
-            onPress: () => onSwitchRestaurant(r.id || r._id),
-          })),
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    }
+    setShowRestaurantPickerModal(true);
   };
 
   const renderHeader = () => (
@@ -498,7 +474,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
                 return (
                   <View key={i} style={styles.barChartCol}>
                     <Text style={styles.barChartValue}>{day.revenue > 0 ? formatCurrency(day.revenue) : ''}</Text>
-                    <View style={[styles.barChartBar, { height, backgroundColor: '#10b981' }]} />
+                    <View style={[styles.barChartBar, { height, backgroundColor: '#dc2626' }]} />
                     <Text style={styles.barChartLabel}>{label}</Text>
                   </View>
                 );
@@ -1076,6 +1052,16 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
       />
       {renderInsightsModal()}
       {renderRestaurantFilterModal()}
+      <RestaurantPickerModal
+        visible={showRestaurantPickerModal}
+        onClose={() => setShowRestaurantPickerModal(false)}
+        restaurants={restaurants}
+        currentRestaurantId={user?.restaurantId || user?.restaurant?.id}
+        onSelect={(rid) => {
+          setShowRestaurantPickerModal(false);
+          onSwitchRestaurant?.(rid);
+        }}
+      />
     </SafeAreaView>
   );
 }

@@ -53,7 +53,7 @@ const useOfferEngine = ({
     enabled: false,
     earnPerAmount: 100,
     pointsEarned: 4,
-    redemptionRate: 100,
+    redemptionRate: 1,
     maxRedemptionPercent: 20,
     earnPointsOnRedemption: false,
     earnOnFullAmount: false,
@@ -67,34 +67,37 @@ const useOfferEngine = ({
   const settingsLoadedRef = useRef(false);
 
   // -------- load offers --------
+  const isFirstOrder = customerContext?.isFirstOrder;
+  const loadOffers = useCallback(async (cancelled = { value: false }) => {
+    setIsLoadingOffers(true);
+    try {
+      let resp = null;
+      try {
+        resp = await apiClient.getOffers(restaurantId);
+      } catch (_) {
+        try {
+          resp = await apiClient.getActiveOffersForPOS(restaurantId, isFirstOrder);
+        } catch (__) {
+          resp = await apiClient.getActiveOffers(restaurantId);
+        }
+      }
+      const offers = (resp?.offers || (Array.isArray(resp) ? resp : []))
+        .filter(o => o && o.isActive !== false);
+      if (!cancelled.value) setAllOffers(offers);
+    } catch (err) {
+      if (!cancelled.value) setAllOffers([]);
+      if (__DEV__) console.warn('[useOfferEngine] load offers failed:', err?.message);
+    } finally {
+      if (!cancelled.value) setIsLoadingOffers(false);
+    }
+  }, [restaurantId, isFirstOrder]);
+
   useEffect(() => {
     if (!restaurantId) return;
-    let cancelled = false;
-    (async () => {
-      setIsLoadingOffers(true);
-      try {
-        let resp = null;
-        try {
-          resp = await apiClient.getOffers(restaurantId);
-        } catch (_) {
-          try {
-            resp = await apiClient.getActiveOffersForPOS(restaurantId);
-          } catch (__) {
-            resp = await apiClient.getActiveOffers(restaurantId);
-          }
-        }
-        const offers = (resp?.offers || (Array.isArray(resp) ? resp : []))
-          .filter(o => o && o.isActive !== false);
-        if (!cancelled) setAllOffers(offers);
-      } catch (err) {
-        if (!cancelled) setAllOffers([]);
-        if (__DEV__) console.warn('[useOfferEngine] load offers failed:', err?.message);
-      } finally {
-        if (!cancelled) setIsLoadingOffers(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [restaurantId]);
+    const cancelled = { value: false };
+    loadOffers(cancelled);
+    return () => { cancelled.value = true; };
+  }, [loadOffers]);
 
   // -------- load offerSettings + loyaltySettings --------
   useEffect(() => {
@@ -132,10 +135,11 @@ const useOfferEngine = ({
 
   // -------- customer group lookup --------
   useEffect(() => {
+    if (__DEV__) console.warn('[useOfferEngine] group lookup effect - restaurantId:', restaurantId, 'resolvedContext:', JSON.stringify(resolvedContext));
     if (!restaurantId) { setCustomerGroupIds(prev => prev.length ? [] : prev); return; }
     const phone = resolvedContext?.customerPhone;
     const cid = resolvedContext?.customerId;
-    if (!phone && !cid) { setCustomerGroupIds(prev => prev.length ? [] : prev); setCustomerGroups(prev => prev.length ? [] : prev); return; }
+    if (!phone && !cid) { if (__DEV__) console.warn('[useOfferEngine] no phone/cid, skipping group lookup'); setCustomerGroupIds(prev => prev.length ? [] : prev); setCustomerGroups(prev => prev.length ? [] : prev); return; }
 
     const cacheKey = `${restaurantId}|${normalizePhone(phone) || ''}|${cid || ''}`;
     if (groupLookupCacheRef.current[cacheKey]) {
@@ -153,7 +157,11 @@ const useOfferEngine = ({
         const res = await apiClient.request(
           `/api/customer-groups/lookup/${restaurantId}${qs}`,
           { method: 'GET' }
-        ).catch(() => null);
+        ).catch((err) => {
+          if (__DEV__) console.warn('[useOfferEngine] group lookup failed:', err?.message, 'URL:', `/api/customer-groups/lookup/${restaurantId}${qs}`);
+          return null;
+        });
+        if (__DEV__) console.warn('[useOfferEngine] group lookup result:', JSON.stringify(res));
         const groups = res?.groups || [];
         const ids = groups.map(g => g.id).filter(Boolean);
         const groupObjs = groups.map(g => ({ id: g.id, name: g.name, color: g.color })).filter(g => g.id);
@@ -180,28 +188,37 @@ const useOfferEngine = ({
     const now = new Date();
     const ctxForFilter = resolvedContext || {};
 
+    if (__DEV__) console.warn('[useOfferEngine] allOffers:', allOffers.length, 'hasContext:', hasContext, 'resolvedContext:', JSON.stringify(resolvedContext));
+    if (__DEV__) allOffers.forEach(o => console.log('[useOfferEngine] offer:', o.name, 'audience:', JSON.stringify(o.audience), 'isFirstOrderOnly:', o.isFirstOrderOnly));
+
     // First pass: base filter (schedule/date/minOrder/scope) ignoring audience.
     const baseFiltered = filterApplicableOffers(
       allOffers.map(o => ({ ...o, audience: { type: 'all' } })), // bypass audience
-      { subtotal, cart, context: {}, now }
+      { subtotal, cart, context: ctxForFilter, now }
     );
     // Re-map to original offers
     const baseIds = new Set(baseFiltered.map(o => getOfferId(o)));
     const base = allOffers.filter(o => baseIds.has(getOfferId(o)));
 
+    if (__DEV__) console.warn('[useOfferEngine] baseFiltered:', baseFiltered.length, 'base:', base.length);
+
     const out = [];
     for (const offer of base) {
+      // Skip first-order-only offers for repeat customers
+      if (offer.isFirstOrderOnly && hasContext && resolvedContext?.isFirstOrder === false) continue;
+
       const audienceType = offer.audience?.type || (offer.isFirstOrderOnly ? 'first_order' : 'all');
       const isPublicAudience = audienceType === 'all' || audienceType === 'first_order';
 
       if (hasContext) {
-        if (matchesAudience(offer, ctxForFilter)) out.push(offer);
-        // targeted offer that doesn't match: simply exclude
+        const matches = matchesAudience(offer, ctxForFilter);
+        if (__DEV__) console.warn('[useOfferEngine] offer:', offer.name, 'audienceType:', audienceType, 'matches:', matches);
+        if (matches) out.push(offer);
       } else {
         if (isPublicAudience) out.push(offer);
-        // targeted audience without context: exclude (shown after customer identified)
       }
     }
+    if (__DEV__) console.warn('[useOfferEngine] applicable:', out.length, out.map(o => o.name));
     return out;
   }, [allOffers, subtotal, cart, resolvedContext]);
 
@@ -217,8 +234,9 @@ const useOfferEngine = ({
         personalized.push(offer);
       }
     }
+    if (__DEV__) console.warn('[useOfferEngine] generic:', generic.length, 'personalized:', personalized.length, 'total applicable:', applicableOffers.length, 'customerGroupIds:', customerGroupIds);
     return { genericOffers: generic, personalizedOffers: personalized };
-  }, [applicableOffers]);
+  }, [applicableOffers, customerGroupIds]);
 
   // -------- helper: calculate discount for a single offer --------
   const calculateDiscountForOffer = useCallback((offer, sub, c, ctx) => {

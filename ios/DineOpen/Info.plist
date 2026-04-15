@@ -58,11 +58,11 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>DineOpen uses your camera to scan QR codes for table orders, capture menu item photos, and scan supplier invoices for inventory management.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>This app needs access to microphone for voice order taking.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your photos</string>
+    <string>DineOpen accesses your photo library to upload menu item images, restaurant logos, and supplier invoice photos for inventory tracking.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>This app needs speech recognition for voice order taking.</string>
     <key>NSUserActivityTypes</key>

@@ -84,6 +84,7 @@ export default function TablesScreen() {
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
+  const lastProcessedTableParamRef = useRef(null);
 
   useEffect(() => {
     loadInitialData();
@@ -321,13 +322,17 @@ export default function TablesScreen() {
       }
 
       // Check if we have table update params (from menu screen)
+      // Only process once per unique param combination to avoid stale re-applies on every focus
       if (params.tableId && params.tableStatus) {
-        const tableIdToUpdate = params.tableId;
-        updateTableStatusOptimistically(
-          tableIdToUpdate,
-          params.tableStatus,
-          params.orderId
-        );
+        const paramKey = `${params.tableId}_${params.tableStatus}_${params.orderId || ''}`;
+        if (lastProcessedTableParamRef.current !== paramKey) {
+          lastProcessedTableParamRef.current = paramKey;
+          updateTableStatusOptimistically(
+            params.tableId,
+            params.tableStatus,
+            params.orderId
+          );
+        }
       }
 
       // Re-check restaurant ID (user may have switched on home)

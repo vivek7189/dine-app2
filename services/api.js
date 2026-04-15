@@ -580,6 +580,24 @@ class ApiClient {
     return response;
   }
 
+  // Apple login (owner)
+  async appleLogin(uid, email, name, picture) {
+    const response = await this.request('/api/auth/apple', {
+      method: 'POST',
+      data: { uid, email, name, picture },
+    });
+
+    if (response.token) {
+      await this.setToken(response.token);
+      if (response.user) {
+        await this.setUser(response.user);
+        this._triggerBackgroundSeed(response.user.restaurantId || response.user.restaurant?.id);
+      }
+    }
+
+    return response;
+  }
+
   // Email login (owner)
   async emailLogin(email, password) {
     const response = await this.request('/api/auth/email/login', {

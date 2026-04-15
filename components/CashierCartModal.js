@@ -5,12 +5,14 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   FlatList,
   ScrollView,
   TextInput,
   ActivityIndicator,
   StatusBar,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -116,6 +118,7 @@ export default function CashierCartModal({
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
+  const [sliderWidth, setSliderWidth] = useState(280);
   const [showUpiQr, setShowUpiQr] = useState(false);
 
   // Billing state
@@ -157,17 +160,11 @@ export default function CashierCartModal({
   })();
 
   // Calculate loyalty discount
-  // Supports both old `redemptionValue` (e.g. 0.1 = 1pt = ₹0.10)
-  // and new `redemptionRate` (e.g. 100 = 100pts per ₹1 → 1pt = ₹0.01)
+  // Dynamic: points / redemptionRate = discount amount
   const loyaltyDiscount = (() => {
     if (!redeemPoints || !loyaltySettings) return 0;
-    let ratePerPoint;
-    if (loyaltySettings.redemptionRate) {
-      ratePerPoint = 1 / loyaltySettings.redemptionRate;
-    } else {
-      ratePerPoint = loyaltySettings.redemptionValue || 0.1;
-    }
-    return Math.round(redeemPoints * ratePerPoint * 100) / 100;
+    const redemptionRate = loyaltySettings.redemptionRate || 1;
+    return Math.round((redeemPoints / redemptionRate) * 100) / 100;
   })();
 
   // Comp items reduce subtotal
@@ -225,6 +222,7 @@ export default function CashierCartModal({
           ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]
           : []),
     customerPhone: customerMobile || customerData?.phone || '',
+    customerName: customerName || customerData?.name || '',
     customerId: customerData?.id || customerData?._id || null,
     serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
     serviceChargeAmount: billing.serviceChargeAmount || null,
@@ -385,6 +383,7 @@ export default function CashierCartModal({
       animationType="slide"
       onRequestClose={onClose}
     >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" />
 
@@ -401,9 +400,9 @@ export default function CashierCartModal({
 
             {/* Table Number — inline input or chip */}
             {selectedTable?.name ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(16,185,129,0.2)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6 }}>
-                <Ionicons name="restaurant-outline" size={13} color="#34d399" />
-                <Text style={{ color: '#34d399', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(220,38,38,0.15)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6 }}>
+                <Ionicons name="restaurant-outline" size={13} color="#f87171" />
+                <Text style={{ color: '#f87171', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable.name}</Text>
               </View>
             ) : showTableInput ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingHorizontal: 6, marginRight: 6, height: 32 }}>
@@ -420,7 +419,7 @@ export default function CashierCartModal({
                 />
                 {tableNumber ? (
                   matchedFloor ? (
-                    <Ionicons name="checkmark-circle" size={14} color="#34d399" />
+                    <Ionicons name="checkmark-circle" size={14} color="#f87171" />
                   ) : (
                     <Ionicons name="alert-circle-outline" size={14} color="#fbbf24" />
                   )
@@ -445,7 +444,7 @@ export default function CashierCartModal({
               style={[styles.headerActionBtn, showKitchenNotes && styles.headerActionBtnActive]}
               onPress={() => setShowKitchenNotes(!showKitchenNotes)}
             >
-              <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? '#10b981' : '#fff'} />
+              <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? '#dc2626' : '#fff'} />
             </TouchableOpacity>
           </View>
 
@@ -461,7 +460,7 @@ export default function CashierCartModal({
                 style={[styles.orderTypeTab, orderType === t.key && styles.orderTypeTabActive]}
                 onPress={() => { setOrderType(t.key); onOrderTypeChange?.(t.key); }}
               >
-                <Ionicons name={t.icon} size={14} color={orderType === t.key ? '#10b981' : 'rgba(255,255,255,0.8)'} />
+                <Ionicons name={t.icon} size={14} color={orderType === t.key ? '#dc2626' : 'rgba(255,255,255,0.8)'} />
                 <Text style={[styles.orderTypeText, orderType === t.key && styles.orderTypeTextActive]}>
                   {t.label}
                 </Text>
@@ -474,9 +473,9 @@ export default function CashierCartModal({
             const activeRule = pricingRules.find(r => r.id === activePricingRuleId);
             if (!activeRule) return null;
             return (
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: 'rgba(16,185,129,0.15)', gap: 4 }}>
-                <Ionicons name="lock-closed" size={10} color="#34d399" />
-                <Text style={{ fontSize: 11, color: '#34d399', fontWeight: '600' }}>{activeRule.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: 'rgba(220,38,38,0.1)', gap: 4 }}>
+                <Ionicons name="lock-closed" size={10} color="#f87171" />
+                <Text style={{ fontSize: 11, color: '#f87171', fontWeight: '600' }}>{activeRule.name}</Text>
                 <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>·</Text>
                 <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{matchedFloor.floorName}</Text>
               </View>
@@ -484,7 +483,7 @@ export default function CashierCartModal({
           })()}
         </SafeAreaView>
 
-        <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
           {/* Kitchen Notes — collapsible */}
           {showKitchenNotes && (
             <View style={styles.kitchenNotesBar}>
@@ -531,14 +530,14 @@ export default function CashierCartModal({
                         <View style={styles.cartItemLeft}>
                           <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                            <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
-                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#16a34a' }}>FREE</Text>
+                            <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>FREE</Text>
                             </View>
                             <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
                           </View>
                         </View>
                         <View style={styles.cartItemRight}>
-                          <Text style={[styles.cartItemTotal, { color: '#16a34a' }]}>₹0</Text>
+                          <Text style={[styles.cartItemTotal, { color: '#dc2626' }]}>₹0</Text>
                         </View>
                       </View>
                     ))}
@@ -610,11 +609,11 @@ export default function CashierCartModal({
         {/* Fixed Bottom Section — customer + offers inline, total, payment */}
         {cart.length > 0 && (
           <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
-              {/* Customer Phone + Offers — same line */}
+              {/* Customer Phone + Name + Offers — same line */}
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 }}>
-                {/* Phone input (flex) */}
+                {/* Phone input */}
                 {restaurantId && (
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 2 }}>
                     <CustomerLookup
                       restaurantId={restaurantId}
                       countryCode={countryCode}
@@ -630,9 +629,23 @@ export default function CashierCartModal({
                       hideLoyalty
                       compact
                       coolStyle
+                      hideExtras
                     />
                   </View>
                 )}
+
+                {/* Name input — side by side with phone */}
+                <View style={styles.nameInputWrap}>
+                  <Ionicons name="person-outline" size={14} color={customerName ? '#dc2626' : '#9ca3af'} />
+                  <TextInput
+                    style={styles.nameInput}
+                    placeholder="Name"
+                    placeholderTextColor="#9ca3af"
+                    value={customerName}
+                    onChangeText={setCustomerName}
+                    autoCapitalize="words"
+                  />
+                </View>
 
                 {/* Offers badge — compact, inline */}
                 {(() => {
@@ -646,13 +659,13 @@ export default function CashierCartModal({
 
                   return (
                     <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#f0fdf4' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#bbf7d0' : '#e0e7ff' }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#fef2f2' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#fecaca' : '#e0e7ff' }}
                       onPress={() => setShowOffersModal(true)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#16a34a' : '#6366f1'} />
+                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#dc2626' : '#6366f1'} />
                       {hasApplied ? (
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>
                           -₹{billing.totalDiscount.toFixed(0)}
                         </Text>
                       ) : (
@@ -660,7 +673,7 @@ export default function CashierCartModal({
                           {applicableOffers.length}
                         </Text>
                       )}
-                      <Ionicons name="chevron-forward" size={12} color={hasApplied ? '#86efac' : '#a5b4fc'} />
+                      <Ionicons name="chevron-forward" size={12} color={hasApplied ? '#f87171' : '#a5b4fc'} />
                     </TouchableOpacity>
                   );
                 })()}
@@ -669,7 +682,12 @@ export default function CashierCartModal({
               {/* Compact Total Strip */}
               <View style={styles.compactTotalStrip}>
                 <View style={styles.compactTotalRow}>
-                  <Text style={styles.compactTotalLabel}>TOTAL</Text>
+                  <View>
+                    <Text style={styles.compactTotalLabel}>TOTAL</Text>
+                    {billing.totalDiscount > 0 && (
+                      <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                    )}
+                  </View>
                   <Text style={styles.compactTotalValue}>₹{billing.grandTotal.toFixed(0)}</Text>
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breakdownChipsRow}>
@@ -753,6 +771,7 @@ export default function CashierCartModal({
           </View>
         )}
       </View>
+      </TouchableWithoutFeedback>
       {/* Offers & Rewards Modal */}
       <Modal
         visible={showOffersModal}
@@ -817,7 +836,7 @@ export default function CashierCartModal({
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Points</Text>
                       </View>
                       <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#16a34a' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#dc2626' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Spent</Text>
                       </View>
                     </View>
@@ -846,13 +865,20 @@ export default function CashierCartModal({
                           {isSelected && <Ionicons name="checkmark" size={12} color="#fff" />}
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.offerCardName, isSelected && { color: '#4338ca' }]}>{offer.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={[styles.offerCardName, isSelected && { color: '#4338ca' }]}>{offer.name}</Text>
+                            {isSelected && autoApplied && (
+                              <View style={{ backgroundColor: '#e0e7ff', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                <Text style={{ fontSize: 8, fontWeight: '700', color: '#4f46e5' }}>Auto</Text>
+                              </View>
+                            )}
+                          </View>
                           {offer.description ? (
                             <Text style={styles.offerCardDesc} numberOfLines={1}>{offer.description}</Text>
                           ) : null}
                         </View>
                         {saves > 0 && (
-                          <Text style={[styles.offerCardSaves, isSelected && { color: '#16a34a' }]}>
+                          <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>
                             -₹{saves.toFixed(2)}
                           </Text>
                         )}
@@ -900,7 +926,7 @@ export default function CashierCartModal({
                               </View>
                             </View>
                             {saves > 0 && (
-                              <Text style={[styles.offerCardSaves, isSelected && { color: '#16a34a' }]}>
+                              <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>
                                 -₹{saves.toFixed(2)}
                               </Text>
                             )}
@@ -951,14 +977,13 @@ export default function CashierCartModal({
                           onPress={(e) => {
                             const { locationX } = e.nativeEvent;
                             // Approximate bar width from layout
-                            const barWidth = e.nativeEvent.target ? 280 : 280;
-                            const fraction = Math.max(0, Math.min(1, locationX / barWidth));
+                            const fraction = Math.max(0, Math.min(1, locationX / sliderWidth));
                             const pts = Math.round(loyaltyMaxRedeemable * fraction);
                             setRedeemPoints(pts);
                           }}
                           style={styles.sliderContainer}
                         >
-                          <View style={styles.sliderTrack}>
+                          <View style={styles.sliderTrack} onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}>
                             <View style={[styles.sliderFill, { width: `${Math.min(100, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                             <View style={[styles.sliderThumb, { left: `${Math.min(96, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                           </View>
@@ -1015,6 +1040,45 @@ export default function CashierCartModal({
                 </View>
               )}
 
+              {/* MANUAL DISCOUNT Section */}
+              {billingSettings.manualDiscountEnabled !== false && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Ionicons name="pricetag-outline" size={10} color="#94a3b8" />
+                    <Text style={styles.modalSectionLabel}>Manual Discount</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb' }}>
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'flat' ? '#6366f1' : '#f9fafb' }}
+                        onPress={() => setManualDiscountType('flat')}
+                      >
+                        <Text style={{ color: manualDiscountType === 'flat' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>Flat</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'percentage' ? '#6366f1' : '#f9fafb' }}
+                        onPress={() => setManualDiscountType('percentage')}
+                      >
+                        <Text style={{ color: manualDiscountType === 'percentage' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>%</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={{ flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, fontWeight: '600', color: '#1f2937' }}
+                      placeholder={manualDiscountType === 'percentage' ? '0%' : '₹0'}
+                      placeholderTextColor="#9ca3af"
+                      keyboardType="numeric"
+                      value={manualDiscount}
+                      onChangeText={setManualDiscount}
+                    />
+                  </View>
+                  {manualDiscountAmount > 0 && (
+                    <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '500' }}>
+                      Discount: -₹{manualDiscountAmount.toFixed(0)}
+                    </Text>
+                  )}
+                </View>
+              )}
+
               {/* KITCHEN NOTES Section */}
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
@@ -1043,8 +1107,8 @@ export default function CashierCartModal({
                 </View>
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#16a34a' }}>Offers</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#16a34a' }}>-₹{offerDiscount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, color: '#dc2626' }}>Offers</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{offerDiscount.toFixed(0)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (
@@ -1077,7 +1141,7 @@ export default function CashierCartModal({
                 </View>
               </View>
               <TouchableOpacity
-                style={[styles.doneBtn, billing.totalDiscount > 0 && { backgroundColor: '#10b981' }]}
+                style={[styles.doneBtn, billing.totalDiscount > 0 && { backgroundColor: '#dc2626' }]}
                 onPress={() => setShowOffersModal(false)}
                 activeOpacity={0.85}
               >
@@ -1188,7 +1252,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   headerSafeArea: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#1e293b',
   },
   header: {
     flexDirection: 'row',
@@ -1256,7 +1320,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.9)',
   },
   orderTypeTextActive: {
-    color: '#10b981',
+    color: '#dc2626',
   },
   scrollContent: {
     flex: 1,
@@ -1328,7 +1392,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   qtyBtnAdd: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#dc2626',
   },
   qtyText: {
     fontSize: 13,
@@ -1340,7 +1404,7 @@ const styles = StyleSheet.create({
   cartItemTotal: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#10b981',
+    color: '#1e293b',
     minWidth: 48,
     textAlign: 'right',
   },
@@ -1360,7 +1424,7 @@ const styles = StyleSheet.create({
   savingsText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#10b981',
+    color: '#dc2626',
     textAlign: 'center',
     marginTop: 4,
   },
@@ -1404,7 +1468,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.15)',
   },
   breakdownChipGreen: {
-    backgroundColor: 'rgba(134,239,172,0.25)',
+    backgroundColor: 'rgba(252,165,165,0.25)',
   },
   breakdownChipText: {
     fontSize: 10,
@@ -1412,7 +1476,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.9)',
   },
   breakdownChipTextGreen: {
-    color: '#bbf7d0',
+    color: '#fecaca',
   },
   breakdownInfoBtn: {
     padding: 2,
@@ -1467,7 +1531,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   breakdownDiscount: {
-    color: '#16a34a',
+    color: '#dc2626',
   },
   breakdownDivider: {
     height: 1,
@@ -1510,7 +1574,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
   },
   paymentPillActive: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#dc2626',
   },
   paymentPillText: {
     fontSize: 12,
@@ -1529,17 +1593,22 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
   },
   completeButton: {
-    backgroundColor: '#059669',
+    backgroundColor: '#16a34a',
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   completeButtonText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#fff',
   },
   completeButtonAmount: {
@@ -1579,22 +1648,22 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   summaryRowActive: {
-    borderColor: '#86efac',
-    backgroundColor: '#f0fdf4',
-    shadowColor: '#22c55e',
+    borderColor: '#fca5a5',
+    backgroundColor: '#fef2f2',
+    shadowColor: '#ef4444',
   },
   earnBadge: {
-    backgroundColor: '#f0fdf4',
+    backgroundColor: '#fef2f2',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: '#fecaca',
   },
   earnBadgeText: {
     fontSize: 9,
     fontWeight: '600',
-    color: '#16a34a',
+    color: '#dc2626',
   },
   // Offers Modal
   offersOverlay: {
@@ -1853,5 +1922,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#fff',
+  },
+  // Name input (side by side with phone)
+  nameInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  nameInput: {
+    flex: 1,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: '#1e293b',
+    fontWeight: '500',
   },
 });
