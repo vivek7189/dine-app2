@@ -119,6 +119,7 @@ export default function CashierCartModal({
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(280);
+  const [lookupKey, setLookupKey] = useState(0);
   const [showUpiQr, setShowUpiQr] = useState(false);
 
   // Billing state
@@ -135,15 +136,27 @@ export default function CashierCartModal({
   const [voidReason, setVoidReason] = useState('');
   const [billingManagerPin, setBillingManagerPin] = useState('');
 
-  // Reset billing state when modal closes
+  // Reset all state when modal closes
   useEffect(() => {
     if (!visible) {
+      // Billing state
       setActiveBillingPanel(null);
       setCashReceived(''); setChangeAmount(0);
       setSplitPayments([]); setTipAmount(0); setTipPercentage(null);
       setPartialPayAmount(''); setSelectedCompItems([]); setSelectedVoidItems([]);
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
       setSpecialInstructions(''); setShowKitchenNotes(false);
+      // Customer & offer state
+      setCustomerData(null);
+      setCustomerName('');
+      setCustomerMobile('');
+      setRedeemPoints(0);
+      setManualDiscount('');
+      setManualDiscountType('flat');
+      setShowOffersModal(false);
+      setShowBreakdownModal(false);
+      resetOffers();
+      setLookupKey(k => k + 1);
     }
   }, [visible]);
 
@@ -157,14 +170,6 @@ export default function CashierCartModal({
       return Math.round((subtotal * val / 100) * 100) / 100;
     }
     return Math.min(val, subtotal);
-  })();
-
-  // Calculate loyalty discount
-  // Dynamic: points / redemptionRate = discount amount
-  const loyaltyDiscount = (() => {
-    if (!redeemPoints || !loyaltySettings) return 0;
-    const redemptionRate = loyaltySettings.redemptionRate || 1;
-    return Math.round((redeemPoints / redemptionRate) * 100) / 100;
   })();
 
   // Comp items reduce subtotal
@@ -182,25 +187,25 @@ export default function CashierCartModal({
 
   // Loyalty max redeemable calculation (for modal)
   const loyaltyMaxRedeemable = useMemo(() => {
-    if (!customerData?.loyaltyPoints || !loyaltySettings) return 0;
-    const redemptionRate = loyaltySettings.redemptionRate || 10;
-    const maxPct = loyaltySettings.maxRedemptionPercent || 20;
+    if (!customerData?.loyaltyPoints || !effectiveLoyaltySettings) return 0;
+    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 1;
+    const maxPct = effectiveLoyaltySettings.maxRedemptionPercent || 20;
     const afterOtherDisc = Math.max(0, subtotal - offerDiscount - manualDiscountAmount);
     const maxDiscByPct = (afterOtherDisc * maxPct) / 100;
     const maxPointsByPct = Math.floor(maxDiscByPct * redemptionRate);
     return Math.min(customerData.loyaltyPoints, maxPointsByPct);
-  }, [customerData, loyaltySettings, subtotal, offerDiscount, manualDiscountAmount]);
+  }, [customerData, effectiveLoyaltySettings, subtotal, offerDiscount, manualDiscountAmount]);
 
   // Loyalty points to earn
   const loyaltyPointsToEarn = useMemo(() => {
-    if (!loyaltySettings?.enabled) return 0;
-    const earnPerAmount = loyaltySettings.earnPerAmount || 100;
-    const pointsRate = loyaltySettings.pointsEarned || 4;
+    if (!effectiveLoyaltySettings?.enabled) return 0;
+    const earnPerAmount = effectiveLoyaltySettings.earnPerAmount || 100;
+    const pointsRate = effectiveLoyaltySettings.pointsEarned || 4;
     const discTotal = offerDiscount + manualDiscountAmount;
-    if (redeemPoints > 0 && !loyaltySettings.earnPointsOnRedemption) return 0;
-    const base = loyaltySettings.earnOnFullAmount ? subtotal : Math.max(0, subtotal - discTotal - loyaltyDiscount);
+    if (redeemPoints > 0 && !effectiveLoyaltySettings.earnPointsOnRedemption) return 0;
+    const base = effectiveLoyaltySettings.earnOnFullAmount ? subtotal : Math.max(0, subtotal - discTotal - loyaltyDiscount);
     return Math.floor(base / earnPerAmount) * pointsRate;
-  }, [loyaltySettings, subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, redeemPoints]);
+  }, [effectiveLoyaltySettings, subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, redeemPoints]);
 
   const buildDiscountData = () => ({
     offerDiscount,
@@ -277,6 +282,7 @@ export default function CashierCartModal({
     customerGroups: customerOfferGroups,
     autoApplied,
     offerSettings,
+    loyaltySettings: hookLoyaltySettings,
     calculateDiscountForOffer,
     resetOffers,
   } = useOfferEngine({
@@ -286,6 +292,16 @@ export default function CashierCartModal({
     customerContext,
     options: { autoApply: true },
   });
+
+  // Merge loyaltySettings — prefer hook source (loads from API on mount), fall back to local state
+  const effectiveLoyaltySettings = hookLoyaltySettings || loyaltySettings;
+
+  // Calculate loyalty discount (points / redemptionRate = discount amount)
+  const loyaltyDiscount = useMemo(() => {
+    if (!redeemPoints || !effectiveLoyaltySettings) return 0;
+    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 1;
+    return Math.round((redeemPoints / redemptionRate) * 100) / 100;
+  }, [redeemPoints, effectiveLoyaltySettings]);
 
   // Derive selectedOffer/selectedOffers for buildDiscountData
   const selectedOffer = useMemo(() => {
@@ -520,7 +536,7 @@ export default function CashierCartModal({
               <Text style={styles.emptyText}>No items in cart</Text>
             </View>
           ) : (
-            <View style={styles.cartSection}>
+            <View style={[styles.cartSection, { maxHeight: 280 }]}>
               <FlatList
                 data={cart}
                 ListFooterComponent={freeItemsForDisplay.length > 0 ? (
@@ -545,7 +561,8 @@ export default function CashierCartModal({
                 ) : null}
                 renderItem={renderCartItem}
                 keyExtractor={(item) => item.id}
-                scrollEnabled={false}
+                scrollEnabled={true}
+                nestedScrollEnabled={true}
               />
             </View>
           )}
@@ -615,6 +632,7 @@ export default function CashierCartModal({
                 {restaurantId && (
                   <View style={{ flex: 2 }}>
                     <CustomerLookup
+                      key={`inline-${lookupKey}`}
                       restaurantId={restaurantId}
                       countryCode={countryCode}
                       subtotal={subtotal}
@@ -650,7 +668,7 @@ export default function CashierCartModal({
                 {/* Offers badge — compact, inline */}
                 {(() => {
                   const hasOffers = genericOffers.length > 0 || personalizedOffers.length > 0;
-                  const hasLoyalty = loyaltySettings?.enabled && customerData;
+                  const hasLoyalty = effectiveLoyaltySettings?.enabled && customerData;
                   const hasAnything = hasOffers || hasLoyalty || billing.totalDiscount > 0 || specialInstructions;
                   if (!hasAnything) return null;
 
@@ -659,17 +677,17 @@ export default function CashierCartModal({
 
                   return (
                     <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#fef2f2' : '#eef2ff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#fecaca' : '#e0e7ff' }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: hasApplied ? '#fef2f2' : '#fef2f2', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, borderWidth: 1, borderColor: hasApplied ? '#fecaca' : '#fee2e2' }}
                       onPress={() => setShowOffersModal(true)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#dc2626' : '#6366f1'} />
+                      <Ionicons name="pricetag" size={13} color={hasApplied ? '#dc2626' : '#dc2626'} />
                       {hasApplied ? (
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>
                           -₹{billing.totalDiscount.toFixed(0)}
                         </Text>
                       ) : (
-                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#6366f1' }}>
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#dc2626' }}>
                           {applicableOffers.length}
                         </Text>
                       )}
@@ -780,12 +798,16 @@ export default function CashierCartModal({
         onRequestClose={() => setShowOffersModal(false)}
       >
         <View style={styles.offersOverlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowOffersModal(false)} />
+          <TouchableOpacity style={{ flex: 0.05 }} activeOpacity={1} onPress={() => setShowOffersModal(false)} />
           <View style={styles.offersCard}>
+            {/* Handle */}
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#e2e8f0' }} />
+            </View>
             {/* Header */}
             <View style={styles.offersHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#6366f1', justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
                   <Ionicons name="pricetag" size={14} color="#fff" />
                 </View>
                 <View>
@@ -807,13 +829,13 @@ export default function CashierCartModal({
               {customerData && (
                 <View style={{ marginBottom: 16 }}>
                   <Text style={styles.modalSectionLabel}>Customer</Text>
-                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#a5f3fc' }}>
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => setShowOffersModal(true)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#06b6d4', justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="person" size={16} color="#fff" />
+                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#dcfce7', justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="person" size={16} color="#15803d" />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0e7490' }}>{customerData.name}</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>{customerData.name}</Text>
                         <Text style={{ fontSize: 11, color: '#64748b' }}>{customerData.phone || customerMobile}</Text>
                       </View>
                       <TouchableOpacity
@@ -821,26 +843,26 @@ export default function CashierCartModal({
                           setDetailCustomerId(customerData?.id || customerData?._id);
                           setShowCustomerDetail(true);
                         }}
-                        style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#a5f3fc' }}
+                        style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#fecaca' }}
                       >
-                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#0e7490' }}>View</Text>
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#dc2626' }}>View</Text>
                       </TouchableOpacity>
                     </View>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#0e7490' }}>{customerData.totalOrders || 0}</Text>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#dcfce7' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b' }}>{customerData.totalOrders || 0}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Orders</Text>
                       </View>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fffbeb', alignItems: 'center', borderWidth: 1, borderColor: '#fef3c7' }}>
                         <Text style={{ fontSize: 15, fontWeight: '700', color: '#d97706' }}>{customerData.loyaltyPoints || 0}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Points</Text>
                       </View>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#dc2626' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#dcfce7' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#15803d' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Spent</Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 </View>
               )}
               {/* OFFERS Section */}
@@ -866,10 +888,10 @@ export default function CashierCartModal({
                         </View>
                         <View style={{ flex: 1 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={[styles.offerCardName, isSelected && { color: '#4338ca' }]}>{offer.name}</Text>
+                            <Text style={[styles.offerCardName, isSelected && { color: '#991b1b' }]}>{offer.name}</Text>
                             {isSelected && autoApplied && (
-                              <View style={{ backgroundColor: '#e0e7ff', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
-                                <Text style={{ fontSize: 8, fontWeight: '700', color: '#4f46e5' }}>Auto</Text>
+                              <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                                <Text style={{ fontSize: 8, fontWeight: '700', color: '#dc2626' }}>Auto</Text>
                               </View>
                             )}
                           </View>
@@ -919,7 +941,7 @@ export default function CashierCartModal({
                                   <Text style={[styles.offerCardDesc, { color: '#d97706' }]} numberOfLines={1}>{offer.description}</Text>
                                 ) : null}
                                 {matchedGroup && (
-                                  <View style={{ backgroundColor: matchedGroup.color || '#6366f1', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
+                                  <View style={{ backgroundColor: matchedGroup.color || '#dc2626', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
                                     <Text style={{ fontSize: 8, fontWeight: '700', color: '#fff' }}>{matchedGroup.name}</Text>
                                   </View>
                                 )}
@@ -949,13 +971,13 @@ export default function CashierCartModal({
 
               {isLoadingOffers && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <ActivityIndicator size="small" color="#6366f1" />
+                  <ActivityIndicator size="small" color="#dc2626" />
                   <Text style={{ fontSize: 11, color: '#9ca3af' }}>Loading offers...</Text>
                 </View>
               )}
 
               {/* LOYALTY POINTS Section */}
-              {loyaltySettings?.enabled && customerData && (
+              {effectiveLoyaltySettings?.enabled && customerData && (
                 <View style={{ marginBottom: 16 }}>
                   <Text style={styles.modalSectionLabel}>Loyalty Points</Text>
                   <View style={styles.loyaltyCard}>
@@ -971,23 +993,28 @@ export default function CashierCartModal({
                     </View>
                     {loyaltyMaxRedeemable > 0 ? (
                       <>
-                        {/* Slider bar — tappable to set redemption */}
-                        <TouchableOpacity
-                          activeOpacity={1}
-                          onPress={(e) => {
-                            const { locationX } = e.nativeEvent;
-                            // Approximate bar width from layout
-                            const fraction = Math.max(0, Math.min(1, locationX / sliderWidth));
-                            const pts = Math.round(loyaltyMaxRedeemable * fraction);
-                            setRedeemPoints(pts);
-                          }}
+                        {/* Smooth draggable slider */}
+                        <View
                           style={styles.sliderContainer}
+                          onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}
+                          onStartShouldSetResponder={() => true}
+                          onMoveShouldSetResponder={() => true}
+                          onResponderGrant={(e) => {
+                            const x = e.nativeEvent.locationX;
+                            const fraction = Math.max(0, Math.min(1, x / sliderWidth));
+                            setRedeemPoints(Math.round(loyaltyMaxRedeemable * fraction));
+                          }}
+                          onResponderMove={(e) => {
+                            const x = e.nativeEvent.locationX;
+                            const fraction = Math.max(0, Math.min(1, x / sliderWidth));
+                            setRedeemPoints(Math.round(loyaltyMaxRedeemable * fraction));
+                          }}
                         >
-                          <View style={styles.sliderTrack} onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}>
+                          <View style={styles.sliderTrack}>
                             <View style={[styles.sliderFill, { width: `${Math.min(100, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                             <View style={[styles.sliderThumb, { left: `${Math.min(96, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                           </View>
-                        </TouchableOpacity>
+                        </View>
 
                         {/* Quick-select pills below slider */}
                         <View style={{ flexDirection: 'row', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1027,13 +1054,13 @@ export default function CashierCartModal({
                             {redeemPoints > 0 ? `${redeemPoints} pts = -₹${loyaltyDiscount.toFixed(0)}` : 'Tap or slide to redeem'}
                           </Text>
                           <Text style={{ fontSize: 10, color: '#92400e' }}>
-                            Max: {loyaltyMaxRedeemable} pts ({loyaltySettings.maxRedemptionPercent || 20}%)
+                            Max: {loyaltyMaxRedeemable} pts ({effectiveLoyaltySettings.maxRedemptionPercent || 20}%)
                           </Text>
                         </View>
                       </>
                     ) : (customerData.loyaltyPoints || 0) > 0 ? (
                       <Text style={{ fontSize: 11, color: '#92400e' }}>
-                        Cannot redeem on current order (max {loyaltySettings.maxRedemptionPercent || 20}% of bill)
+                        Cannot redeem on current order (max {effectiveLoyaltySettings.maxRedemptionPercent || 20}% of bill)
                       </Text>
                     ) : null}
                   </View>
@@ -1050,13 +1077,13 @@ export default function CashierCartModal({
                   <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                     <View style={{ flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb' }}>
                       <TouchableOpacity
-                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'flat' ? '#6366f1' : '#f9fafb' }}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'flat' ? '#dc2626' : '#f9fafb' }}
                         onPress={() => setManualDiscountType('flat')}
                       >
                         <Text style={{ color: manualDiscountType === 'flat' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>Flat</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'percentage' ? '#6366f1' : '#f9fafb' }}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: manualDiscountType === 'percentage' ? '#dc2626' : '#f9fafb' }}
                         onPress={() => setManualDiscountType('percentage')}
                       >
                         <Text style={{ color: manualDiscountType === 'percentage' ? '#fff' : '#6b7280', fontWeight: '600', fontSize: 12 }}>%</Text>
@@ -1638,10 +1665,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#c7d2fe',
-    backgroundColor: '#eef2ff',
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
     gap: 8,
-    shadowColor: '#6366f1',
+    shadowColor: '#dc2626',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 3,
@@ -1668,14 +1695,14 @@ const styles = StyleSheet.create({
   // Offers Modal
   offersOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'flex-end',
   },
   offersCard: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    maxHeight: '95%',
     overflow: 'hidden',
   },
   offersHeader: {
@@ -1683,10 +1710,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: '#f1f5f9',
   },
   offersCloseBtn: {
     width: 30,
@@ -1727,10 +1753,10 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   offerCardSelected: {
-    borderColor: '#6366f1',
-    backgroundColor: '#eef2ff',
+    borderColor: '#dc2626',
+    backgroundColor: '#fef2f2',
     borderLeftWidth: 4,
-    borderLeftColor: '#6366f1',
+    borderLeftColor: '#dc2626',
   },
   offerCardPersonalized: {
     borderColor: '#fde68a',
@@ -1753,8 +1779,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   offerCheckboxActive: {
-    backgroundColor: '#6366f1',
-    borderColor: '#6366f1',
+    backgroundColor: '#dc2626',
+    borderColor: '#dc2626',
   },
   offerCardName: {
     fontSize: 13,
@@ -1876,7 +1902,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fafb',
   },
   discountToggleBtnActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#dc2626',
   },
   discountToggleTxt: {
     fontSize: 12,
@@ -1913,7 +1939,7 @@ const styles = StyleSheet.create({
     minHeight: 50,
   },
   doneBtn: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#dc2626',
     borderRadius: 12,
     padding: 14,
     alignItems: 'center',

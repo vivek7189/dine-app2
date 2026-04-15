@@ -628,7 +628,54 @@ export default function TablesScreen() {
     updateTableStatusOptimistically(table.id, 'available', null);
 
     try {
-      await apiClient.updateOrderStatus(table.currentOrderId, 'completed', rid);
+      // Fetch the order to get customer data for stats update
+      let order = null;
+      try {
+        const orderRes = await apiClient.getOrderById(rid, table.currentOrderId);
+        order = orderRes?.order || orderRes;
+      } catch (_) {}
+
+      // Send full update (matching web flow) so backend updates customer stats
+      const updateData = {
+        status: 'completed',
+        paymentStatus: order?.paymentStatus === 'partial' ? 'partial' : 'paid',
+        paymentMethod: order?.paymentMethod || 'cash',
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        ...(order?.totalAmount && { totalAmount: order.totalAmount }),
+        ...(order?.finalAmount && { finalAmount: order.finalAmount }),
+        ...(order?.taxAmount && { taxAmount: order.taxAmount }),
+        customerId: order?.customerId || null,
+        customerInfo: {
+          name: order?.customerInfo?.name || '',
+          phone: order?.customerInfo?.phone || order?.customerInfo?.mobile || order?.customerPhone || null,
+          tableNumber: order?.tableNumber || table.name || null,
+        },
+        ...(order?.customerPhone && { customerPhone: order.customerPhone }),
+        ...(order?.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: order.redeemLoyaltyPoints }),
+        ...(order?.loyaltyDiscount > 0 && { loyaltyDiscount: order.loyaltyDiscount }),
+        ...(order?.discountAmount > 0 && { discountAmount: order.discountAmount }),
+        lastUpdatedBy: {
+          name: user?.name || 'Staff',
+          id: user?.id,
+          role: user?.role || 'waiter',
+        },
+      };
+
+      await apiClient.updateOrder(table.currentOrderId, updateData);
+
+      // Verify payment
+      try {
+        await apiClient.verifyPayment({
+          orderId: table.currentOrderId,
+          paymentMethod: order?.paymentMethod || 'cash',
+          amount: order?.finalAmount || order?.totalAmount || 0,
+          userId: user?.id,
+          restaurantId: rid,
+          paymentStatus: 'completed',
+        });
+      } catch (_) {}
+
       if (table.id) {
         try {
           await apiClient.updateTableStatus(table.id, 'available', null, rid);
@@ -1490,7 +1537,61 @@ export default function TablesScreen() {
           }
 
           try {
-            await apiClient.updateOrderStatus(order.id, 'completed', rid);
+            // Build full update payload matching web's DashboardTablesPanel flow
+            // so the backend can update customer stats (totalOrders, totalSpent, loyaltyPoints)
+            const updateData = {
+              status: 'completed',
+              paymentStatus: order.paymentStatus === 'partial' ? 'partial' : 'paid',
+              paymentMethod: order.paymentMethod || 'cash',
+              completedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              // Preserve existing amounts
+              ...(order.totalAmount && { totalAmount: order.totalAmount }),
+              ...(order.finalAmount && { finalAmount: order.finalAmount }),
+              ...(order.taxAmount && { taxAmount: order.taxAmount }),
+              ...(order.taxBreakdown && { taxBreakdown: order.taxBreakdown }),
+              // Customer data — critical for customer stats update
+              customerId: order.customerId || null,
+              customerInfo: {
+                name: order.customerInfo?.name || '',
+                phone: order.customerInfo?.phone || order.customerInfo?.mobile || order.customerPhone || null,
+                tableNumber: order.tableNumber || tableForOrder?.name || null,
+              },
+              ...(order.customerPhone && { customerPhone: order.customerPhone }),
+              // Loyalty data
+              ...(order.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: order.redeemLoyaltyPoints }),
+              ...(order.loyaltyDiscount > 0 && { loyaltyDiscount: order.loyaltyDiscount }),
+              // Discount/offer data
+              ...(order.discountAmount > 0 && { discountAmount: order.discountAmount }),
+              ...(order.manualDiscount > 0 && { manualDiscount: order.manualDiscount }),
+              ...(order.offerIds?.length > 0 && { offerIds: order.offerIds }),
+              ...(order.selectedOfferName && { selectedOfferName: order.selectedOfferName }),
+              // Billing fields
+              ...(order.serviceChargeAmount > 0 && { serviceChargeAmount: order.serviceChargeAmount, serviceChargeRate: order.serviceChargeRate }),
+              ...(order.tipAmount > 0 && { tipAmount: order.tipAmount }),
+              ...(order.roundOffAmount && { roundOffAmount: order.roundOffAmount }),
+              // Staff tracking
+              lastUpdatedBy: {
+                name: user?.name || 'Staff',
+                id: user?.id,
+                role: user?.role || 'waiter',
+              },
+            };
+
+            await apiClient.updateOrder(order.id, updateData);
+
+            // Verify payment (same as web flow)
+            try {
+              await apiClient.verifyPayment({
+                orderId: order.id,
+                paymentMethod: order.paymentMethod || 'cash',
+                amount: order.finalAmount || order.totalAmount || 0,
+                userId: user?.id,
+                restaurantId: rid,
+                paymentStatus: 'completed',
+              });
+            } catch (_) {}
+
             // Free the table on the server — await so failures surface
             if (tableForOrder?.id) {
               try {

@@ -968,6 +968,16 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
         </ScrollView>
         {renderInsightsModal()}
         {renderRestaurantFilterModal()}
+        <RestaurantPickerModal
+          visible={showRestaurantPickerModal}
+          onClose={() => setShowRestaurantPickerModal(false)}
+          restaurants={restaurants}
+          currentRestaurantId={user?.restaurantId || user?.restaurant?.id}
+          onSelect={(rid) => {
+            setShowRestaurantPickerModal(false);
+            onSwitchRestaurant?.(rid);
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -996,6 +1006,16 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
         />
         {renderInsightsModal()}
         {renderRestaurantFilterModal()}
+        <RestaurantPickerModal
+          visible={showRestaurantPickerModal}
+          onClose={() => setShowRestaurantPickerModal(false)}
+          restaurants={restaurants}
+          currentRestaurantId={user?.restaurantId || user?.restaurant?.id}
+          onSelect={(rid) => {
+            setShowRestaurantPickerModal(false);
+            onSwitchRestaurant?.(rid);
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -1024,6 +1044,16 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
         />
         {renderInsightsModal()}
         {renderRestaurantFilterModal()}
+        <RestaurantPickerModal
+          visible={showRestaurantPickerModal}
+          onClose={() => setShowRestaurantPickerModal(false)}
+          restaurants={restaurants}
+          currentRestaurantId={user?.restaurantId || user?.restaurant?.id}
+          onSelect={(rid) => {
+            setShowRestaurantPickerModal(false);
+            onSwitchRestaurant?.(rid);
+          }}
+        />
       </SafeAreaView>
     );
   }

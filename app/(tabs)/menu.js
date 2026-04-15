@@ -1338,6 +1338,8 @@ export default function MenuScreen() {
         orderType: orderType,
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         status: 'completed', // Counter sales are completed immediately
+        paymentStatus: partialFields.paymentStatus || 'paid',
+        completedAt: new Date().toISOString(),
         staffInfo: {
           waiterId: user?.id,
           waiterName: user?.name || 'Cashier',
@@ -1367,6 +1369,18 @@ export default function MenuScreen() {
 
       let response;
       response = await apiClient.createOrder(orderData);
+
+      // Verify payment — triggers customer stats update (totalOrders, totalSpent, loyaltyPoints)
+      if (response?.order?.id) {
+        await apiClient.verifyPayment({
+          orderId: response.order.id,
+          paymentMethod: billingFields.paymentMethod || paymentMethod,
+          amount: grandTotal,
+          userId: user?.id,
+          restaurantId,
+          paymentStatus: 'completed',
+        }).catch(() => {});
+      }
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
       const latestUserData = await apiClient.getUser();

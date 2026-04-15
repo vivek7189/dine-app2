@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Platform,
   Keyboard,
   Animated,
+  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -146,6 +147,7 @@ export default function CartModal({
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(280);
+  const [lookupKey, setLookupKey] = useState(0);
 
   // Billing state
   const [activeBillingPanel, setActiveBillingPanel] = useState(null);
@@ -161,9 +163,10 @@ export default function CartModal({
   const [voidReason, setVoidReason] = useState('');
   const [billingManagerPin, setBillingManagerPin] = useState('');
 
-  // Reset billing state when modal closes
+  // Reset all state when modal closes
   useEffect(() => {
     if (!visible) {
+      // Billing state
       setActiveBillingPanel(null);
       setCashReceived(''); setChangeAmount(0);
       setSplitPayments([]); setTipAmount(0); setTipPercentage(null);
@@ -171,6 +174,16 @@ export default function CartModal({
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
       setSpecialInstructions(''); setShowKitchenNotes(false);
       setActiveAction(null);
+      // Customer & offer state
+      setCustomerData(null);
+      setCustomerName('');
+      setCustomerMobile('');
+      setRedeemPoints(0);
+      setManualDiscount('');
+      setManualDiscountType('flat');
+      setShowOffersModal(false);
+      resetOffers();
+      setLookupKey(k => k + 1);
     }
   }, [visible]);
 
@@ -184,13 +197,6 @@ export default function CartModal({
       return Math.round((subtotal * val / 100) * 100) / 100;
     }
     return Math.min(val, subtotal);
-  })();
-
-  // Calculate loyalty discount (points / redemptionRate = discount amount)
-  const loyaltyDiscount = (() => {
-    if (!redeemPoints || !effectiveLoyaltySettings) return 0;
-    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 10;
-    return Math.round((redeemPoints / redemptionRate) * 100) / 100;
   })();
 
   // Comp items reduce subtotal
@@ -285,6 +291,13 @@ export default function CartModal({
   // Merge loyaltySettings — prefer hook source (loads from API on mount), fall back to local state
   const effectiveLoyaltySettings = hookLoyaltySettings || loyaltySettings;
 
+  // Calculate loyalty discount (points / redemptionRate = discount amount)
+  const loyaltyDiscount = useMemo(() => {
+    if (!redeemPoints || !effectiveLoyaltySettings) return 0;
+    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 1;
+    return Math.round((redeemPoints / redemptionRate) * 100) / 100;
+  }, [redeemPoints, effectiveLoyaltySettings]);
+
   // Derive selectedOffer/selectedOffers for buildDiscountData
   const selectedOffer = useMemo(() => {
     if (!selectedOfferId) return null;
@@ -313,7 +326,7 @@ export default function CartModal({
   // Loyalty max redeemable
   const loyaltyMaxRedeemable = useMemo(() => {
     if (!customerData?.loyaltyPoints || !effectiveLoyaltySettings) return 0;
-    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 10;
+    const redemptionRate = effectiveLoyaltySettings.redemptionRate || 1;
     const maxPct = effectiveLoyaltySettings.maxRedemptionPercent || 20;
     const afterOtherDisc = Math.max(0, subtotal - offerDiscount - manualDiscountAmount);
     const maxDiscByPct = (afterOtherDisc * maxPct) / 100;
@@ -576,32 +589,34 @@ export default function CartModal({
                 <Text style={styles.emptyText}>Your cart is empty</Text>
               </View>
             ) : (
-              <FlatList
-                data={cart}
-                renderItem={renderCartItem}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={true}
-                nestedScrollEnabled={true}
-                contentContainerStyle={styles.cartList}
-                ListFooterComponent={freeItemsForDisplay.length > 0 ? (
-                  <View>
-                    {freeItemsForDisplay.map((fi) => (
-                      <View key={`free-${fi.id}`} style={[styles.cartItemCard, { borderColor: '#fde68a', backgroundColor: '#fffbeb', flexDirection: 'row', alignItems: 'center' }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                            <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
-                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>FREE</Text>
+              <View style={{ maxHeight: 280 }}>
+                <FlatList
+                  data={cart}
+                  renderItem={renderCartItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={true}
+                  nestedScrollEnabled={true}
+                  contentContainerStyle={styles.cartList}
+                  ListFooterComponent={freeItemsForDisplay.length > 0 ? (
+                    <View>
+                      {freeItemsForDisplay.map((fi) => (
+                        <View key={`free-${fi.id}`} style={[styles.cartItemCard, { borderColor: '#fde68a', backgroundColor: '#fffbeb', flexDirection: 'row', alignItems: 'center' }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                              <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                                <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>FREE</Text>
+                              </View>
+                              <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
                             </View>
-                            <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
                           </View>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>₹0</Text>
                         </View>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>₹0</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              />
+                      ))}
+                    </View>
+                  ) : null}
+                />
+              </View>
             )}
 
             {cart.length > 0 && (
@@ -689,8 +704,8 @@ export default function CartModal({
 
               {/* Offers Badge — right below total */}
               <TouchableOpacity style={styles.offersInlineBadge} onPress={() => setShowOffersModal(true)} activeOpacity={0.7}>
-                <Ionicons name="pricetag" size={11} color="#6366f1" />
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#6366f1', flex: 1 }}>
+                <Ionicons name="pricetag" size={11} color="#dc2626" />
+                <Text style={{ fontSize: 11, fontWeight: '600', color: '#dc2626', flex: 1 }}>
                   Offers & Rewards {(selectedOfferIds.length > 0 || selectedOfferId) ? `(${selectedOfferIds.length || 1} applied)` : ''}
                 </Text>
                 <Ionicons name="chevron-forward" size={14} color="#a5b4fc" />
@@ -700,6 +715,7 @@ export default function CartModal({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <View style={{ flex: 2 }}>
                   <CustomerLookup
+                    key={`inline-${lookupKey}`}
                     restaurantId={restaurantId}
                     onPhoneChange={(phone) => setCustomerMobile(phone)}
                     onCustomerFound={(cust, settings) => {
@@ -728,16 +744,17 @@ export default function CartModal({
 
               {/* Customer Info Bar */}
               {customerData && (
-                <View style={styles.customerInfoBar}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => setShowOffersModal(true)} style={styles.customerInfoBar}>
                   <View style={styles.customerInfoAvatar}>
-                    <Ionicons name="person" size={10} color="#fff" />
+                    <Ionicons name="person" size={10} color="#15803d" />
                   </View>
-                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#fff', flex: 1 }} numberOfLines={1}>{customerData.name}</Text>
+                  <Text style={{ fontSize: 10, fontWeight: '600', color: '#15803d', flex: 1 }} numberOfLines={1}>{customerData.name}</Text>
                   <Text style={styles.customerInfoDivider}>·</Text>
                   <Text style={styles.customerInfoPoints}>{customerData.loyaltyPoints || 0} pts</Text>
                   <Text style={styles.customerInfoDivider}>·</Text>
                   <Text style={styles.customerInfoOrders}>{customerData.totalOrders || 0} orders</Text>
-                </View>
+                  <Ionicons name="chevron-forward" size={12} color="#16a34a" style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
               )}
 
               {/* Payment Method */}
@@ -814,12 +831,16 @@ export default function CartModal({
         onRequestClose={() => setShowOffersModal(false)}
       >
         <View style={styles.offersOverlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowOffersModal(false)} />
+          <TouchableOpacity style={{ flex: 0.05 }} activeOpacity={1} onPress={() => setShowOffersModal(false)} />
           <View style={styles.offersCard}>
+            {/* Handle */}
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#e2e8f0' }} />
+            </View>
             {/* Header */}
             <View style={styles.offersHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#dc2626', justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
                   <Ionicons name="pricetag" size={14} color="#fff" />
                 </View>
                 <View>
@@ -838,6 +859,7 @@ export default function CartModal({
               <View style={{ marginBottom: 16 }}>
                 <Text style={styles.modalSectionLabel}>Customer</Text>
                 <CustomerLookup
+                  key={`modal-${lookupKey}`}
                   restaurantId={restaurantId}
                   onPhoneChange={(phone) => setCustomerMobile(phone)}
                   onCustomerFound={(cust, settings) => {
@@ -853,26 +875,26 @@ export default function CartModal({
               {customerData && (
                 <View style={{ marginBottom: 16 }}>
                   <Text style={styles.modalSectionLabel}>Customer</Text>
-                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#a5f3fc' }}>
+                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#06b6d4', justifyContent: 'center', alignItems: 'center' }}>
+                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#1e293b', justifyContent: 'center', alignItems: 'center' }}>
                         <Ionicons name="person" size={16} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0e7490' }}>{customerData.name}</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>{customerData.name}</Text>
                         <Text style={{ fontSize: 11, color: '#64748b' }}>{customerData.phone || customerMobile}</Text>
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#0e7490' }}>{customerData.totalOrders || 0}</Text>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#fee2e2' }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b' }}>{customerData.totalOrders || 0}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Orders</Text>
                       </View>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#fee2e2' }}>
                         <Text style={{ fontSize: 15, fontWeight: '700', color: '#d97706' }}>{customerData.loyaltyPoints || 0}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Points</Text>
                       </View>
-                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#e0f2fe' }}>
+                      <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#fee2e2' }}>
                         <Text style={{ fontSize: 15, fontWeight: '700', color: '#dc2626' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Spent</Text>
                       </View>
@@ -1000,22 +1022,28 @@ export default function CartModal({
                     </View>
                     {loyaltyMaxRedeemable > 0 ? (
                       <>
-                        {/* Slider bar — tappable to set redemption */}
-                        <TouchableOpacity
-                          activeOpacity={1}
-                          onPress={(e) => {
-                            const { locationX } = e.nativeEvent;
-                            const fraction = Math.max(0, Math.min(1, locationX / sliderWidth));
-                            const pts = Math.round(loyaltyMaxRedeemable * fraction);
-                            setRedeemPoints(pts);
-                          }}
+                        {/* Smooth draggable slider */}
+                        <View
                           style={styles.sliderContainer}
+                          onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}
+                          onStartShouldSetResponder={() => true}
+                          onMoveShouldSetResponder={() => true}
+                          onResponderGrant={(e) => {
+                            const x = e.nativeEvent.locationX;
+                            const fraction = Math.max(0, Math.min(1, x / sliderWidth));
+                            setRedeemPoints(Math.round(loyaltyMaxRedeemable * fraction));
+                          }}
+                          onResponderMove={(e) => {
+                            const x = e.nativeEvent.locationX;
+                            const fraction = Math.max(0, Math.min(1, x / sliderWidth));
+                            setRedeemPoints(Math.round(loyaltyMaxRedeemable * fraction));
+                          }}
                         >
-                          <View style={styles.sliderTrack} onLayout={(e) => setSliderWidth(e.nativeEvent.layout.width)}>
+                          <View style={styles.sliderTrack}>
                             <View style={[styles.sliderFill, { width: `${Math.min(100, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                             <View style={[styles.sliderThumb, { left: `${Math.min(96, (redeemPoints / loyaltyMaxRedeemable) * 100)}%` }]} />
                           </View>
-                        </TouchableOpacity>
+                        </View>
 
                         {/* Quick-select pills below slider */}
                         <View style={{ flexDirection: 'row', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1537,37 +1565,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 6,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#1e293b',
-    shadowColor: '#1e293b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
   customerInfoAvatar: {
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: '#dcfce7',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 8,
   },
   customerInfoPoints: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#fff',
+    color: '#15803d',
     marginLeft: 4,
   },
   customerInfoDivider: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
+    color: '#86efac',
     marginHorizontal: 6,
   },
   customerInfoOrders: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
+    color: '#166534',
   },
   // Payment Section
   paymentSection: {
@@ -1776,14 +1802,14 @@ const styles = StyleSheet.create({
   // Offers Modal
   offersOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'flex-end',
   },
   offersCard: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    maxHeight: '95%',
     overflow: 'hidden',
   },
   offersHeader: {
@@ -1791,10 +1817,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: '#f1f5f9',
   },
   offersCloseBtn: {
     width: 30,
