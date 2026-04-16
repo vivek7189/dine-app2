@@ -5,8 +5,6 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
-  TouchableWithoutFeedback,
-  FlatList,
   ScrollView,
   TextInput,
   ActivityIndicator,
@@ -14,7 +12,6 @@ import {
   Platform,
   Keyboard,
   Animated,
-  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +30,7 @@ import { useOffline } from '../hooks/useOffline';
 import UpiQrModal from './UpiQrModal';
 
 export default function CartModal({
+  mode = 'owner',         // 'waiter' | 'cashier' | 'owner'
   visible,
   onClose,
   cart,
@@ -40,6 +38,7 @@ export default function CartModal({
   onRemoveItem,
   onPlaceOrder,
   onCompleteBill,
+  onSendToKitchen,        // waiter mode callback
   total,
   tableNumber: tableNumberProp,
   restaurantId,
@@ -61,10 +60,24 @@ export default function CartModal({
   selectedTable,
   upiSettings = {},
   restaurantName = '',
+  tableFromNavigation = false,
+  onClearTable,
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
-  const [orderType, setOrderType] = useState('dine-in');
+
+  // Mode-based feature flags
+  const isWaiterMode = mode === 'waiter';
+  const isCashierMode = mode === 'cashier';
+  const isOwnerMode = mode === 'owner';
+  const showPayment = !isWaiterMode;
+  const showBillingPanels = !isWaiterMode;
+  const showOrderTypes = !isWaiterMode;
+  const showPricingRules = !isWaiterMode;
+  // When table came from tables page navigation, lock order type to dine-in and hide tabs
+  const lockOrderTypeToDineIn = tableFromNavigation && (selectedTable?.name || hasTable);
+
+  const [orderType, setOrderType] = useState(isCashierMode ? 'counter' : 'dine-in');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -73,14 +86,12 @@ export default function CartModal({
   const [tableNumber, setTableNumber] = useState(selectedTable?.name || tableNumberProp || '');
   const [showTableInput, setShowTableInput] = useState(false);
 
-  // Keyboard-aware bottom offset for iOS
+  // Keyboard-aware bottom offset — lifts stickyBottom above keyboard
   const keyboardOffset = useRef(new Animated.Value(0)).current;
-  const tableInputFocusedRef = useRef(false);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const onShow = (e) => {
-      if (tableInputFocusedRef.current) return;
       Animated.timing(keyboardOffset, {
         toValue: e.endCoordinates.height,
         duration: Platform.OS === 'ios' ? e.duration || 250 : 200,
@@ -108,6 +119,14 @@ export default function CartModal({
       setShowTableInput(false);
     }
   }, [selectedTable]);
+
+  // Force dine-in when table came from tables page navigation
+  useEffect(() => {
+    if (lockOrderTypeToDineIn && orderType !== 'dine-in') {
+      setOrderType('dine-in');
+      onOrderTypeChange?.('dine-in');
+    }
+  }, [lockOrderTypeToDineIn]);
 
   // Lookup table in floors to find zone
   const matchedFloor = useMemo(() => {
@@ -146,6 +165,7 @@ export default function CartModal({
   const [manualDiscount, setManualDiscount] = useState('');
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showOffersModal, setShowOffersModal] = useState(false);
+  const [showBreakdownModal, setShowBreakdownModal] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(280);
   const [lookupKey, setLookupKey] = useState(0);
 
@@ -393,6 +413,41 @@ export default function CartModal({
     }
   };
 
+  const handleSendToKitchenAction = () => {
+    const discountData = {
+      offerDiscount,
+      manualDiscountAmount,
+      loyaltyDiscount,
+      totalDiscount: billing.totalDiscount,
+      redeemLoyaltyPoints: redeemPoints,
+      selectedOfferId,
+      selectedOfferIds: selectedOfferIds.length > 0 ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : []),
+      selectedOfferName: selectedOffer?.name || null,
+      selectedOfferNames: selectedOffers.length > 0 ? selectedOffers.map(o => o.name) : (selectedOffer ? [selectedOffer.name] : []),
+      appliedOffers: selectedOffers.length > 0
+        ? selectedOffers.map(offer => ({
+            id: offer.id || offer._id,
+            name: offer.name,
+            discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
+          }))
+        : (selectedOffer && offerDiscount > 0
+            ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]
+            : []),
+      customerPhone: customerMobile || customerData?.phone || '',
+      customerName: customerName || customerData?.name || '',
+      customerId: customerData?.id || customerData?._id || null,
+      serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
+      serviceChargeAmount: billing.serviceChargeAmount || null,
+      serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
+      taxBreakdown: billing.taxBreakdown.length > 0 ? billing.taxBreakdown : null,
+      totalTax: billing.totalTax || null,
+      roundOffAmount: billing.roundOffAmount || null,
+      grandTotal: billing.grandTotal,
+      specialInstructions: specialInstructions.trim() || null,
+    };
+    onSendToKitchen(customerMobile, specialInstructions.trim() || null, discountData, tableNumber.trim());
+  };
+
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
 
   const renderCartItem = ({ item }) => (
@@ -406,14 +461,6 @@ export default function CartModal({
             </View>
           )}
         </View>
-        <TouchableOpacity
-          onPress={() => onRemoveItem(item.id)}
-          disabled={sending}
-          style={styles.removeBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="close" size={10} color="#ef4444" />
-        </TouchableOpacity>
       </View>
       {getItemSubline(item) ? (
         <Text style={styles.cartItemSubline} numberOfLines={1}>{getItemSubline(item)}</Text>
@@ -423,21 +470,31 @@ export default function CartModal({
           <Text style={styles.cartItemSubtotalText}>₹{item.price} × {item.quantity}</Text>
           <Text style={styles.cartItemTotalPrice}>₹{(item.price * item.quantity).toFixed(0)}</Text>
         </View>
-        <View style={styles.quantityControls}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={styles.quantityControls}>
+            <TouchableOpacity
+              style={styles.qtyBtnMinus}
+              onPress={() => onUpdateQuantity(item.id, item.quantity - 1)}
+              disabled={sending}
+            >
+              <Ionicons name="remove" size={12} color="#ef4444" />
+            </TouchableOpacity>
+            <Text style={styles.qtyText}>{item.quantity}</Text>
+            <TouchableOpacity
+              style={styles.qtyBtnPlus}
+              onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
+              disabled={sending}
+            >
+              <Ionicons name="add" size={12} color="#dc2626" />
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
-            style={styles.qtyBtnMinus}
-            onPress={() => onUpdateQuantity(item.id, item.quantity - 1)}
+            onPress={() => onRemoveItem(item.id)}
             disabled={sending}
+            style={styles.removeBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="remove" size={12} color="#ef4444" />
-          </TouchableOpacity>
-          <Text style={styles.qtyText}>{item.quantity}</Text>
-          <TouchableOpacity
-            style={styles.qtyBtnPlus}
-            onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
-            disabled={sending}
-          >
-            <Ionicons name="add" size={12} color="#dc2626" />
+            <Ionicons name="trash-outline" size={13} color="#ef4444" />
           </TouchableOpacity>
         </View>
       </View>
@@ -451,7 +508,6 @@ export default function CartModal({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={[styles.modalContent, { paddingTop: insets.top }]}>
           {/* Header */}
           <View style={styles.header}>
@@ -468,9 +524,14 @@ export default function CartModal({
 
               {/* Table Number — inline input or chip */}
               {(selectedTable?.name || (hasTable && tableNumberProp)) ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6 }}>
-                  <Ionicons name="restaurant-outline" size={13} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginLeft: 4 }}>{selectedTable?.name || tableNumberProp}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: tableFromNavigation ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.15)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, gap: 4 }}>
+                  <Ionicons name={tableFromNavigation ? "lock-closed" : "restaurant-outline"} size={12} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{selectedTable?.name || tableNumberProp}</Text>
+                  {!tableFromNavigation && onClearTable && (
+                    <TouchableOpacity onPress={() => { setTableNumber(''); onClearTable(); }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                      <Ionicons name="close-circle" size={14} color="rgba(255,255,255,0.6)" />
+                    </TouchableOpacity>
+                  )}
                 </View>
               ) : showTableInput ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingHorizontal: 6, marginRight: 6, height: 32 }}>
@@ -483,8 +544,6 @@ export default function CartModal({
                     onChangeText={setTableNumber}
                     autoFocus
                     returnKeyType="done"
-                    onFocus={() => { tableInputFocusedRef.current = true; }}
-                    onBlur={() => { tableInputFocusedRef.current = false; }}
                     onSubmitEditing={() => { if (!tableNumber.trim()) setShowTableInput(false); }}
                   />
                   {tableNumber ? (
@@ -517,42 +576,57 @@ export default function CartModal({
                 <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? Colors.primary : '#fff'} />
               </TouchableOpacity>
             </View>
-            <View style={styles.orderTypeTabs}>
-              {[
-                { key: 'dine-in', label: 'DINE IN', icon: 'restaurant-outline' },
-                { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
-                { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
-              ].map((t) => (
-                <TouchableOpacity
-                  key={t.key}
-                  style={[styles.orderTypeTab, orderType === t.key && styles.orderTypeTabActive, hasTable && t.key !== 'dine-in' && { opacity: 0.4 }]}
-                  onPress={() => { if (hasTable && t.key !== 'dine-in') return; setOrderType(t.key); onOrderTypeChange?.(t.key); }}
-                  disabled={hasTable && t.key !== 'dine-in'}
-                >
-                  <Ionicons name={t.icon} size={14} color={orderType === t.key ? Colors.primary : '#fff'} />
-                  <Text style={[styles.orderTypeTabText, orderType === t.key && styles.orderTypeTabTextActive]}>
-                    {t.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {showOrderTypes && !lockOrderTypeToDineIn && (
+              <View style={styles.orderTypeTabs}>
+                {(isCashierMode
+                  ? [
+                      { key: 'counter', label: 'COUNTER', icon: 'storefront-outline' },
+                      { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
+                      { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
+                    ]
+                  : [
+                      { key: 'dine-in', label: 'DINE IN', icon: 'restaurant-outline' },
+                      { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
+                      { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
+                    ]
+                ).map((t) => (
+                  <TouchableOpacity
+                    key={t.key}
+                    style={[styles.orderTypeTab, orderType === t.key && styles.orderTypeTabActive]}
+                    onPress={() => { setOrderType(t.key); onOrderTypeChange?.(t.key); }}
+                  >
+                    <Ionicons name={t.icon} size={14} color={orderType === t.key ? Colors.primary : '#fff'} />
+                    <Text style={[styles.orderTypeTabText, orderType === t.key && styles.orderTypeTabTextActive]}>
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {/* Zone/Pricing auto-select indicator */}
-            {tableNumber.trim() && matchedFloor && autoSelectedRule && activePricingRuleId && (() => {
-              const activeRule = pricingRules.find(r => r.id === activePricingRuleId);
-              if (!activeRule) return null;
-              return (
-                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: 'rgba(220,38,38,0.15)', gap: 4 }}>
-                  <Ionicons name="lock-closed" size={10} color="#f87171" />
-                  <Text style={{ fontSize: 11, color: '#f87171', fontWeight: '600' }}>{activeRule.name}</Text>
-                  <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>·</Text>
-                  <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{matchedFloor.floorName}</Text>
+            {tableNumber.trim() && matchedFloor && (
+              isWaiterMode ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, gap: 4 }}>
+                  <Ionicons name="location-outline" size={11} color="#dc2626" />
+                  <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '600' }}>{matchedFloor.floorName}</Text>
                 </View>
-              );
-            })()}
+              ) : autoSelectedRule && activePricingRuleId ? (() => {
+                const activeRule = pricingRules.find(r => r.id === activePricingRuleId);
+                if (!activeRule) return null;
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: 'rgba(220,38,38,0.15)', gap: 4 }}>
+                    <Ionicons name="lock-closed" size={10} color="#f87171" />
+                    <Text style={{ fontSize: 11, color: '#f87171', fontWeight: '600' }}>{activeRule.name}</Text>
+                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>·</Text>
+                    <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{matchedFloor.floorName}</Text>
+                  </View>
+                );
+              })() : null
+            )}
           </View>
 
-          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" onScrollBeginDrag={Keyboard.dismiss}>
             {/* Kitchen Notes — collapsible */}
             {showKitchenNotes && (
               <View style={styles.kitchenNotesBar}>
@@ -574,13 +648,15 @@ export default function CartModal({
             )}
 
             {/* Pricing Rule Selector */}
-            <PricingRuleSelector
-              pricingRules={pricingRules}
-              activePricingRuleId={activePricingRuleId}
-              setActivePricingRuleId={setActivePricingRuleId}
-              autoSelectedRule={autoSelectedRule}
-              multiPricingEnabled={multiPricingEnabled}
-            />
+            {showPricingRules && (
+              <PricingRuleSelector
+                pricingRules={pricingRules}
+                activePricingRuleId={activePricingRuleId}
+                setActivePricingRuleId={setActivePricingRuleId}
+                autoSelectedRule={autoSelectedRule}
+                multiPricingEnabled={multiPricingEnabled}
+              />
+            )}
 
             {/* Cart Items */}
             {cart.length === 0 ? (
@@ -589,40 +665,33 @@ export default function CartModal({
                 <Text style={styles.emptyText}>Your cart is empty</Text>
               </View>
             ) : (
-              <View style={{ maxHeight: 280 }}>
-                <FlatList
-                  data={cart}
-                  renderItem={renderCartItem}
-                  keyExtractor={(item) => item.id}
-                  scrollEnabled={true}
-                  nestedScrollEnabled={true}
-                  contentContainerStyle={styles.cartList}
-                  ListFooterComponent={freeItemsForDisplay.length > 0 ? (
-                    <View>
-                      {freeItemsForDisplay.map((fi) => (
-                        <View key={`free-${fi.id}`} style={[styles.cartItemCard, { borderColor: '#fde68a', backgroundColor: '#fffbeb', flexDirection: 'row', alignItems: 'center' }]}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                              <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
-                                <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>FREE</Text>
-                              </View>
-                              <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
-                            </View>
-                          </View>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>₹0</Text>
+              <View style={styles.cartList}>
+                {cart.map((item) => (
+                  <View key={item.id}>
+                    {renderCartItem({ item })}
+                  </View>
+                ))}
+                {freeItemsForDisplay.length > 0 && freeItemsForDisplay.map((fi) => (
+                  <View key={`free-${fi.id}`} style={[styles.cartItemCard, { borderColor: '#fde68a', backgroundColor: '#fffbeb', flexDirection: 'row', alignItems: 'center' }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cartItemName} numberOfLines={1}>{fi.name}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#dc2626' }}>FREE</Text>
                         </View>
-                      ))}
+                        <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
+                      </View>
                     </View>
-                  ) : null}
-                />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>₹0</Text>
+                  </View>
+                ))}
               </View>
             )}
 
             {cart.length > 0 && (
               <>
                 {/* Billing Toolbar + Panels */}
-                <View style={styles.billingSection}>
+                {showBillingPanels && <View style={styles.billingSection}>
                   <BillingToolbar
                     billingSettings={billingSettings}
                     activeBillingPanel={activeBillingPanel}
@@ -667,7 +736,7 @@ export default function CartModal({
                     serviceChargeAmount={billing.serviceChargeAmount}
                     roundOffAmount={billing.roundOffAmount}
                   />
-                </View>
+                </View>}
 
                 {/* Spacer for sticky bottom */}
                 <View style={{ height: 4 }} />
@@ -678,29 +747,77 @@ export default function CartModal({
           {/* Fixed Bottom — payment, offers, buttons */}
           {cart.length > 0 && (
             <Animated.View style={[styles.stickyBottom, { paddingBottom: Math.max(insets.bottom, 10), bottom: keyboardOffset }]}>
-              {/* Total Card — compact red with savings inline */}
-              <View style={styles.totalCard}>
-                <View style={styles.totalCardTop}>
-                  <View>
-                    <Text style={styles.totalCardTitle}>Total</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
-                      <Text style={styles.totalCardLabel}>Sub: ₹{subtotal.toFixed(0)}</Text>
-                      {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{billing.totalDiscount.toFixed(0)}</Text>}
-                      {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{billing.totalTax.toFixed(0)}</Text>}
-                      {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{tipAmount.toFixed(0)}</Text>}
+            <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false} bounces={false}>
+              {/* Total Card — mode-specific */}
+              {isCashierMode ? (
+                <View style={styles.compactTotalStrip}>
+                  <View style={styles.compactTotalRow}>
+                    <View>
+                      <Text style={styles.compactTotalLabel}>TOTAL</Text>
+                      {billing.totalDiscount > 0 && (
+                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                      )}
+                    </View>
+                    <Text style={styles.compactTotalValue}>₹{billing.grandTotal.toFixed(0)}</Text>
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breakdownChipsRow}>
+                    <View style={styles.breakdownChip}>
+                      <Text style={styles.breakdownChipText}>Sub ₹{subtotal.toFixed(0)}</Text>
+                    </View>
+                    {billing.totalDiscount > 0 && (
+                      <View style={[styles.breakdownChip, styles.breakdownChipGreen]}>
+                        <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-₹{billing.totalDiscount.toFixed(0)}</Text>
+                      </View>
+                    )}
+                    {billing.serviceChargeAmount > 0 && (
+                      <View style={styles.breakdownChip}>
+                        <Text style={styles.breakdownChipText}>SC ₹{billing.serviceChargeAmount.toFixed(0)}</Text>
+                      </View>
+                    )}
+                    {billing.totalTax > 0 && (
+                      <View style={styles.breakdownChip}>
+                        <Text style={styles.breakdownChipText}>Tax ₹{billing.totalTax.toFixed(0)}</Text>
+                      </View>
+                    )}
+                    {tipAmount > 0 && (
+                      <View style={styles.breakdownChip}>
+                        <Text style={styles.breakdownChipText}>Tip ₹{tipAmount.toFixed(0)}</Text>
+                      </View>
+                    )}
+                    {billing.roundOffAmount !== 0 && (
+                      <View style={styles.breakdownChip}>
+                        <Text style={styles.breakdownChipText}>Round {billing.roundOffAmount > 0 ? '+' : ''}₹{billing.roundOffAmount.toFixed(1)}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity onPress={() => setShowBreakdownModal(true)} style={styles.breakdownInfoBtn}>
+                      <Ionicons name="information-circle-outline" size={16} color="rgba(255,255,255,0.8)" />
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+              ) : (
+                <View style={styles.totalCard}>
+                  <View style={styles.totalCardTop}>
+                    <View>
+                      <Text style={styles.totalCardTitle}>Total</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+                        <Text style={styles.totalCardLabel}>Sub: ₹{subtotal.toFixed(0)}</Text>
+                        {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{billing.totalDiscount.toFixed(0)}</Text>}
+                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{billing.totalTax.toFixed(0)}</Text>}
+                        {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{tipAmount.toFixed(0)}</Text>}
+                      </View>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.totalCardGrand}>₹{billing.grandTotal.toFixed(0)}</Text>
+                      {billing.totalDiscount > 0 && (
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                      )}
+                      {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && billing.loyaltyPointsToEarn > 0 && (
+                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{billing.loyaltyPointsToEarn} pts</Text>
+                      )}
                     </View>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.totalCardGrand}>₹{billing.grandTotal.toFixed(0)}</Text>
-                    {billing.totalDiscount > 0 && (
-                      <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
-                    )}
-                    {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && billing.loyaltyPointsToEarn > 0 && (
-                      <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{billing.loyaltyPointsToEarn} pts</Text>
-                    )}
-                  </View>
                 </View>
-              </View>
+              )}
 
               {/* Offers Badge — right below total */}
               <TouchableOpacity style={styles.offersInlineBadge} onPress={() => setShowOffersModal(true)} activeOpacity={0.7}>
@@ -738,6 +855,8 @@ export default function CartModal({
                     value={customerName}
                     onChangeText={setCustomerName}
                     autoCapitalize="words"
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
                   />
                 </View>
               </View>
@@ -757,72 +876,110 @@ export default function CartModal({
                 </TouchableOpacity>
               )}
 
-              {/* Payment Method */}
-              <View style={{ marginBottom: 8, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                  <Ionicons name="card-outline" size={12} color="#1f2937" />
-                  <Text style={styles.paymentSectionLabel}>Payment Method</Text>
-                </View>
-                {splitPayments.length === 0 && (
-                  <View style={styles.paymentBtnGroup}>
-                    {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
-                      <TouchableOpacity
-                        key={method}
-                        style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]}
-                        onPress={() => setPaymentMethod(method)}
-                      >
-                        <Ionicons name={paymentIcons[method]} size={13} color={paymentMethod === method ? '#fff' : '#6b7280'} />
-                        <Text style={[styles.paymentBtnText, paymentMethod === method && styles.paymentBtnTextActive]}>
-                          {method.charAt(0).toUpperCase() + method.slice(1)}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+              {/* Payment Method — hidden in waiter mode */}
+              {showPayment && (
+                <View style={{ marginBottom: 8, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                    <Ionicons name="card-outline" size={12} color="#1f2937" />
+                    <Text style={styles.paymentSectionLabel}>Payment Method</Text>
                   </View>
-                )}
-                {effectivelyOffline && (
-                  <Text style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>UPI/Card unavailable offline</Text>
-                )}
-              </View>
-
-              {/* Action Buttons — Place Order + Complete Bill */}
-              <View style={styles.actionBtnRow}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.placeOrderBtn, sending && { opacity: 0.6 }]}
-                  onPress={handlePlaceOrder}
-                  disabled={sending}
-                  activeOpacity={0.85}
-                >
-                  {sending && activeAction === 'place' ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name={isUpdateOrder ? "refresh" : "paper-plane"} size={14} color="#fff" />
-                      <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update' : 'Place Order'}</Text>
-                    </>
+                  {splitPayments.length === 0 && (
+                    <View style={styles.paymentBtnGroup}>
+                      {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
+                        <TouchableOpacity
+                          key={method}
+                          style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]}
+                          onPress={() => setPaymentMethod(method)}
+                        >
+                          <Ionicons name={paymentIcons[method]} size={13} color={paymentMethod === method ? '#fff' : '#6b7280'} />
+                          <Text style={[styles.paymentBtnText, paymentMethod === method && styles.paymentBtnTextActive]}>
+                            {method.charAt(0).toUpperCase() + method.slice(1)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   )}
-                </TouchableOpacity>
-                {onCompleteBill && (
+                  {effectivelyOffline && (
+                    <Text style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>UPI/Card unavailable offline</Text>
+                  )}
+                </View>
+              )}
+
+              {/* Action Buttons — mode-specific */}
+              <View style={styles.actionBtnRow}>
+                {isWaiterMode ? (
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.completeBillBtn, sending && { opacity: 0.6 }]}
-                    onPress={handleCompleteBill}
+                    style={[styles.actionBtn, styles.sendToKitchenBtn, sending && { opacity: 0.6 }]}
+                    onPress={handleSendToKitchenAction}
                     disabled={sending}
                     activeOpacity={0.85}
                   >
-                    {sending && activeAction === 'complete' ? (
+                    {sending ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
-                        <Ionicons name="checkmark-circle" size={14} color="#fff" />
-                        <Text style={styles.actionBtnText}>Complete Bill</Text>
+                        <Ionicons name="restaurant" size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>Send to Kitchen</Text>
                       </>
                     )}
                   </TouchableOpacity>
+                ) : isCashierMode ? (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.completeBillBtn, { flex: 1 }, sending && { opacity: 0.6 }]}
+                    onPress={handlePlaceOrder}
+                    disabled={sending}
+                    activeOpacity={0.85}
+                  >
+                    {sending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>Complete Billing</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.placeOrderBtn, sending && { opacity: 0.6 }]}
+                      onPress={handlePlaceOrder}
+                      disabled={sending}
+                      activeOpacity={0.85}
+                    >
+                      {sending && activeAction === 'place' ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name={isUpdateOrder ? "refresh" : "paper-plane"} size={14} color="#fff" />
+                          <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update' : 'Place Order'}</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    {onCompleteBill && (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.completeBillBtn, sending && { opacity: 0.6 }]}
+                        onPress={handleCompleteBill}
+                        disabled={sending}
+                        activeOpacity={0.85}
+                      >
+                        {sending && activeAction === 'complete' ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <>
+                            <Ionicons name="checkmark-circle" size={14} color="#fff" />
+                            <Text style={styles.actionBtnText}>Complete Bill</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </>
                 )}
               </View>
+            </ScrollView>
             </Animated.View>
           )}
       </View>
-      </TouchableWithoutFeedback>
       {/* Offers & Rewards Modal */}
       <Modal
         visible={showOffersModal}
@@ -1213,6 +1370,80 @@ export default function CartModal({
           </View>
         </View>
       </Modal>
+
+      {/* Bill Breakdown Modal — cashier mode */}
+      {isCashierMode && (
+        <Modal
+          visible={showBreakdownModal}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setShowBreakdownModal(false)}
+        >
+          <TouchableOpacity style={styles.breakdownOverlay} activeOpacity={1} onPress={() => setShowBreakdownModal(false)}>
+            <View style={styles.breakdownCard} onStartShouldSetResponder={() => true}>
+              <View style={styles.breakdownHeader}>
+                <Text style={styles.breakdownTitle}>Bill Breakdown</Text>
+                <TouchableOpacity onPress={() => setShowBreakdownModal(false)}>
+                  <Ionicons name="close" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.breakdownBody}>
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Subtotal</Text>
+                  <Text style={styles.breakdownAmount}>₹{subtotal.toFixed(2)}</Text>
+                </View>
+                {offerDiscount > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Offers</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{offerDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {loyaltyDiscount > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Loyalty ({redeemPoints} pts)</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{loyaltyDiscount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {manualDiscountAmount > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Manual Discount</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{manualDiscountAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {billing.serviceChargeAmount > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>{billingSettings.serviceChargeLabel || 'Service Charge'}{billing.serviceChargeRate ? ` ${billing.serviceChargeRate}%` : ''}</Text>
+                    <Text style={styles.breakdownAmount}>₹{billing.serviceChargeAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {billing.taxBreakdown.map((tax, i) => (
+                  <View key={`tax-${i}`} style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}</Text>
+                    <Text style={styles.breakdownAmount}>₹{tax.amount.toFixed(2)}</Text>
+                  </View>
+                ))}
+                {tipAmount > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Tip{tipPercentage ? ` ${tipPercentage}%` : ''}</Text>
+                    <Text style={styles.breakdownAmount}>₹{tipAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                {billing.roundOffAmount !== 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Round-off</Text>
+                    <Text style={styles.breakdownAmount}>{billing.roundOffAmount > 0 ? '+' : '-'}₹{Math.abs(billing.roundOffAmount).toFixed(2)}</Text>
+                  </View>
+                )}
+                <View style={styles.breakdownDivider} />
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownGrandLabel}>Grand Total</Text>
+                  <Text style={styles.breakdownGrandValue}>₹{billing.grandTotal.toFixed(2)}</Text>
+                </View>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
 
       <CustomerDetailModal
         visible={showCustomerDetail}
@@ -1667,7 +1898,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    maxHeight: '60%',
+    maxHeight: '65%',
     backgroundColor: '#fff',
     paddingHorizontal: 14,
     paddingTop: 8,
@@ -2079,5 +2310,135 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1e293b',
     fontWeight: '500',
+  },
+  // Send to Kitchen button (waiter mode)
+  sendToKitchenBtn: {
+    backgroundColor: '#16a34a',
+    flex: 1,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  // Compact Total Strip (cashier mode)
+  compactTotalStrip: {
+    marginHorizontal: 12,
+    marginTop: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  compactTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  compactTotalLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.8)',
+    letterSpacing: 1,
+  },
+  compactTotalValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  breakdownChipsRow: {
+    flexDirection: 'row',
+    gap: 5,
+    marginTop: 5,
+    alignItems: 'center',
+  },
+  breakdownChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  breakdownChipGreen: {
+    backgroundColor: 'rgba(252,165,165,0.25)',
+  },
+  breakdownChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  breakdownChipTextGreen: {
+    color: '#fecaca',
+  },
+  breakdownInfoBtn: {
+    padding: 2,
+  },
+  // Breakdown Modal (cashier mode)
+  breakdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+  breakdownCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 340,
+    overflow: 'hidden',
+  },
+  breakdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  breakdownTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  breakdownBody: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  breakdownLabel: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  breakdownAmount: {
+    fontSize: 13,
+    color: '#1e293b',
+    fontWeight: '600',
+  },
+  breakdownDiscount: {
+    color: '#dc2626',
+  },
+  breakdownDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 6,
+  },
+  breakdownGrandLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  breakdownGrandValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#dc2626',
   },
 });

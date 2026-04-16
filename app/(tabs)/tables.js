@@ -230,7 +230,7 @@ export default function TablesScreen() {
       // Final refresh to get authoritative server state
       const rid = restaurantIdRef.current;
       if (rid) refreshInBackground(rid);
-    }, 5000);
+    }, 3000);
   }, [refreshInBackground]);
 
   // Background refresh without blocking
@@ -251,42 +251,14 @@ export default function TablesScreen() {
         floorsData = response;
       }
 
-      // Merge: preserve optimistic state for tables that are still mid-update,
-      // so a stale server response doesn't overwrite a just-set status.
-      setUpdatingTables(prevUpdating => {
-        const pending = prevUpdating;
-        const mergeTable = (serverTable, localTable) => {
-          if (pending.has(String(serverTable.id)) && localTable) {
-            return {
-              ...serverTable,
-              status: localTable.status,
-              currentOrderId: localTable.currentOrderId,
-              lastOrderTime: localTable.lastOrderTime,
-            };
-          }
-          return serverTable;
-        };
-
-        setTables(prevTables => {
-          const byId = new Map(prevTables.map(t => [String(t.id), t]));
-          return floorsData
-            .flatMap(floor => floor.tables || [])
-            .map(t => mergeTable(t, byId.get(String(t.id))));
-        });
-
-        setFloors(prevFloors => {
-          const localById = new Map(
-            prevFloors.flatMap(f => f.tables || []).map(t => [String(t.id), t])
-          );
-          return floorsData.map(floor => ({
-            ...floor,
-            tables: (floor.tables || []).map(t => mergeTable(t, localById.get(String(t.id)))),
-          }));
-        });
-
-        // Don't wipe the set — per-table 3s timeout clears individual entries.
-        return prevUpdating;
+      // Accept server state as authoritative and clear all updating indicators
+      setTables(() => {
+        return floorsData.flatMap(floor => floor.tables || []);
       });
+
+      setFloors(() => floorsData);
+
+      setUpdatingTables(new Set());
 
       setSelectedFloor(prev => {
         if (prev) {
@@ -444,13 +416,23 @@ export default function TablesScreen() {
       debouncedRefresh();
     });
     channel.bind('order-updated', (data) => {
-      // Optimistic: when order is completed/cancelled via update, release the table
+      // When order is completed/cancelled, show loader on current state and let refresh set final status
+      // (avoids green→orange→green flicker from race between Pusher events and API refresh)
       if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
         setFloors(prevFloors => {
           for (const floor of prevFloors) {
             const match = floor.tables?.find(t => t.name === data.tableNumber);
             if (match) {
-              updateTableStatusOptimistically(match.id, 'available', null);
+              const tableIdStr = String(match.id);
+              setUpdatingTables(prev => new Set(prev).add(tableIdStr));
+              // Auto-clear updating state after 3s as safety net
+              setTimeout(() => {
+                setUpdatingTables(prev => {
+                  const next = new Set(prev);
+                  next.delete(tableIdStr);
+                  return next;
+                });
+              }, 3000);
               break;
             }
           }
@@ -460,13 +442,22 @@ export default function TablesScreen() {
       debouncedRefresh();
     });
     channel.bind('order-status-updated', (data) => {
-      // Optimistic: when order is completed/cancelled, release the table
+      // When order is completed/cancelled, show loader on current state and let refresh set final status
       if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
         setFloors(prevFloors => {
           for (const floor of prevFloors) {
             const match = floor.tables?.find(t => t.name === data.tableNumber);
             if (match) {
-              updateTableStatusOptimistically(match.id, 'available', null);
+              const tableIdStr = String(match.id);
+              setUpdatingTables(prev => new Set(prev).add(tableIdStr));
+              // Auto-clear updating state after 3s as safety net
+              setTimeout(() => {
+                setUpdatingTables(prev => {
+                  const next = new Set(prev);
+                  next.delete(tableIdStr);
+                  return next;
+                });
+              }, 3000);
               break;
             }
           }
@@ -542,7 +533,7 @@ export default function TablesScreen() {
     if (table.status === 'available') {
       router.push({
         pathname: '/(tabs)/menu',
-        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName },
+        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, navStamp: Date.now().toString() },
       });
     } else if (table.status === 'occupied' && table.currentOrderId) {
       // Keep user on tables page — open the order detail modal inline
@@ -560,7 +551,7 @@ export default function TablesScreen() {
       } else {
         router.push({
           pathname: '/(tabs)/menu',
-          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName },
+          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, navStamp: Date.now().toString() },
         });
       }
     } else {
@@ -855,8 +846,13 @@ export default function TablesScreen() {
                   <Ionicons name="restaurant-outline" size={15} color="#fff" />
                   <Text style={styles.takeOrderButtonText}>Take Order</Text>
                 </View>
+              ) : isReserved ? (
+                <View style={styles.reservedInfoContainer}>
+                  <Ionicons name="calendar-outline" size={14} color="#9333ea" />
+                  <Text style={styles.reservedInfoText}>Reserved</Text>
+                </View>
               ) : (
-                // Cleaning, occupied, or reserved - allow all operations
+                // Cleaning or occupied - allow view/add operations
                 <View style={styles.occupiedActions}>
                   <TouchableOpacity
                     style={styles.viewButton}
@@ -2493,6 +2489,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#9ca3af',
+  },
+  reservedInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(147, 51, 234, 0.08)',
+    borderRadius: 8,
+  },
+  reservedInfoText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9333ea',
   },
   loadingContainer: {
     flex: 1,

@@ -29,8 +29,7 @@ import { getDisplayImage } from '../../utils/placeholderImages';
 import { canPerform } from '../../utils/permissions';
 // import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
-import WaiterCartModal from '../../components/WaiterCartModal';
-import CashierCartModal from '../../components/CashierCartModal';
+// WaiterCartModal and CashierCartModal are deprecated — all modes now handled by CartModal with mode prop
 import CashierInvoiceModal from '../../components/CashierInvoiceModal';
 import KOTModal from '../../components/KOTModal';
 import { useToast } from '../../components/Toast';
@@ -88,6 +87,7 @@ export default function MenuScreen() {
   const [billingSettings, setBillingSettings] = useState({});
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
+  const [isFromTablesPage, setIsFromTablesPage] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Multi-tier pricing
@@ -134,9 +134,12 @@ export default function MenuScreen() {
       setTaxSettings({ enabled: false, rate: 0, taxes: [] });
       setCart([]);
       setSelectedTable(null);
+      setIsFromTablesPage(false);
       setExistingOrderId(null);
       setSearchTerm('');
       setShortCodeSearch('');
+      tableParamsStampRef.current = null;
+      lastAppliedStampRef.current = null;
       setSyncing(true);
       // Reload everything for the new restaurant
       loadInitialData();
@@ -317,17 +320,29 @@ export default function MenuScreen() {
   const lastAppliedStampRef = useRef(null);
   // Tracks whether we just received fresh navigation params (prevents useFocusEffect from clearing them)
   const freshParamsRef = useRef(false);
+  // Tracks which param combination we've already consumed (prevents re-applying stale URL params)
+  const consumedParamsKeyRef = useRef(null);
 
   useEffect(() => {
     if (params.tableId && params.tableNumber) {
-      const stamp = `${params.tableId}_${params.tableNumber}_${params.orderId || ''}_${Date.now()}`;
+      // Build a stable key from param values — skip if we already consumed these exact params
+      const paramsKey = `${params.tableId}_${params.tableNumber}_${params.orderId || ''}_${params.navStamp || ''}`;
+      if (consumedParamsKeyRef.current === paramsKey) return; // Already applied & consumed
+      consumedParamsKeyRef.current = paramsKey;
+
+      const stamp = `${paramsKey}_${Date.now()}`;
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '' });
+      setIsFromTablesPage(true);
       setExistingOrderId(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
-      const stamp = `bartab_${params.tableNumber}_${Date.now()}`;
+      const paramsKey = `bartab_${params.tableNumber}`;
+      if (consumedParamsKeyRef.current === paramsKey) return;
+      consumedParamsKeyRef.current = paramsKey;
+
+      const stamp = `${paramsKey}_${Date.now()}`;
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
@@ -341,7 +356,7 @@ export default function MenuScreen() {
     if (params.barTabMode === 'true') {
       setIsBarTabMode(true);
     }
-  }, [params.tableId, params.tableNumber, params.existingOrder, params.orderId, params.barTabMode]);
+  }, [params.tableId, params.tableNumber, params.existingOrder, params.orderId, params.barTabMode, params.navStamp]);
 
   // When menu tab regains focus WITHOUT fresh table params, clear stale table selection
   // This handles: user taps "Menu" tab directly (no table context) or navigates back
@@ -359,11 +374,13 @@ export default function MenuScreen() {
           setExistingOrderId(null);
           setCart([]);
           setSelectedTable(null);
+          setIsFromTablesPage(false);
           setIsBarTabMode(false);
           setAutoSelectedRule(false);
           setActivePricingRuleId(null);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+
           hasBlurredRef.current = false;
           freshParamsRef.current = false;
         }
@@ -382,6 +399,7 @@ export default function MenuScreen() {
               lastAppliedStampRef.current = stamp;
               freshParamsRef.current = true;
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '' });
+              setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
               if (data.cartItems) setCart(data.cartItems);
             }
@@ -395,6 +413,7 @@ export default function MenuScreen() {
         // No pending add-items — normal focus behavior: clear stale table selection
         if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
           setSelectedTable(null);
+          setIsFromTablesPage(false);
           setExistingOrderId(null);
           setCart([]);
           setIsBarTabMode(false);
@@ -402,6 +421,7 @@ export default function MenuScreen() {
           setActivePricingRuleId(null);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+
         }
         hasBlurredRef.current = false;
       }).catch(() => {
@@ -707,6 +727,7 @@ export default function MenuScreen() {
       setSelectedTable({ id: null, name: tableName, floor: '' });
     } else {
       setSelectedTable(null);
+      setIsFromTablesPage(false);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
     }
@@ -1346,7 +1367,7 @@ export default function MenuScreen() {
         },
         customerInfo: {
           name: customerName || 'Walk-in Customer',
-          mobile: customerMobile || '',
+          phone: customerMobile || '',
         },
         subtotal: subtotal,
         tax: taxAmount,
@@ -1432,6 +1453,7 @@ export default function MenuScreen() {
       setCart([]);
       setShowCart(false);
       setSelectedTable(null);
+      setIsFromTablesPage(false);
       setExistingOrderId(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
@@ -1514,7 +1536,7 @@ export default function MenuScreen() {
         },
         customerInfo: {
           name: customerName || 'Walk-in Customer',
-          mobile: customerMobile || '',
+          phone: customerMobile || '',
         },
         ...(customerMobile && { customerPhone: customerMobile }),
         subtotal,
@@ -1607,6 +1629,7 @@ export default function MenuScreen() {
       setCart([]);
       setShowCart(false);
       setSelectedTable(null);
+      setIsFromTablesPage(false);
       setExistingOrderId(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
@@ -1687,6 +1710,7 @@ export default function MenuScreen() {
   const handleBack = () => {
     // Clear table order state before going back
     setSelectedTable(null);
+    setIsFromTablesPage(false);
     setCart([]);
     setExistingOrderId(null);
     setIsBarTabMode(false);
@@ -1695,6 +1719,16 @@ export default function MenuScreen() {
     tableParamsStampRef.current = null;
     lastAppliedStampRef.current = null;
     router.back();
+  };
+
+  // Called from CartModal when user taps X on table chip to clear stale table
+  const handleClearTable = () => {
+    setSelectedTable(null);
+    setIsFromTablesPage(false);
+    setAutoSelectedRule(false);
+    setActivePricingRuleId(null);
+    tableParamsStampRef.current = null;
+    lastAppliedStampRef.current = null;
   };
 
   const getItemImage = (item) => {
@@ -1986,6 +2020,7 @@ export default function MenuScreen() {
                 <TouchableOpacity
                   onPress={() => {
                     setSelectedTable(null);
+                    setIsFromTablesPage(false);
                     setCart([]);
                     setExistingOrderId(null);
                     setIsBarTabMode(false);
@@ -1993,6 +2028,7 @@ export default function MenuScreen() {
                     setActivePricingRuleId(null);
                     tableParamsStampRef.current = null;
                     lastAppliedStampRef.current = null;
+          
                   }}
                   style={styles.clearTableButton}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -2289,6 +2325,7 @@ export default function MenuScreen() {
             style={styles.orderInfoClearBtn}
             onPress={() => {
               setSelectedTable(null);
+              setIsFromTablesPage(false);
               setCart([]);
               setExistingOrderId(null);
               setIsBarTabMode(false);
@@ -2296,6 +2333,7 @@ export default function MenuScreen() {
               setActivePricingRuleId(null);
               tableParamsStampRef.current = null;
               lastAppliedStampRef.current = null;
+    
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
@@ -2431,85 +2469,41 @@ export default function MenuScreen() {
         restaurantId={restaurantId}
       /> */}
 
-      {/* Cart Modal - Permission Based */}
-      {isWaiter && !canCompleteBill ? (
-        <WaiterCartModal
-          visible={showCart}
-          onClose={() => setShowCart(false)}
-          cart={cart}
-          onUpdateQuantity={updateCartQuantity}
-          onRemoveItem={removeFromCart}
-          onSendToKitchen={handleSendToKitchen}
-          total={getCartTotal()}
-          tableNumber={selectedTable?.name || params.tableNumber}
-          sending={sendingOrder}
-          restaurantId={restaurantId}
-          countryCode="IN"
-          taxSettings={taxSettings}
-          billingSettings={billingSettings}
-          floors={floors}
-          onTableSelect={handleCashierTableSelect}
-          selectedTable={selectedTable}
-        />
-      ) : isCashier ? (
-        <CashierCartModal
-          visible={showCart}
-          onClose={() => setShowCart(false)}
-          cart={cart}
-          onUpdateQuantity={updateCartQuantity}
-          onRemoveItem={removeFromCart}
-          onPlaceOrder={handleCashierPlaceOrder}
-          total={getCartTotal()}
-          restaurantName={restaurantName}
-          sending={sendingOrder}
-          taxSettings={taxSettings}
-          restaurantId={restaurantId}
-          countryCode="IN"
-          onOrderTypeChange={handleOrderTypeChange}
-          multiPricingEnabled={multiPricingEnabled}
-          activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
-          billingSettings={billingSettings}
-          pricingRules={pricingRules}
-          activePricingRuleId={activePricingRuleId}
-          setActivePricingRuleId={setActivePricingRuleId}
-          autoSelectedRule={autoSelectedRule}
-          floors={floors}
-          onTableSelect={handleCashierTableSelect}
-          selectedTable={selectedTable}
-          upiSettings={upiSettings}
-        />
-      ) : (
-        <CartModal
-          visible={showCart}
-          onClose={() => setShowCart(false)}
-          cart={cart}
-          onUpdateQuantity={updateCartQuantity}
-          onRemoveItem={removeFromCart}
-          onPlaceOrder={handlePlaceOrder}
-          onCompleteBill={handleCompleteBill}
-          total={getCartTotal()}
-          tableNumber={selectedTable?.name || params.tableNumber}
-          restaurantId={restaurantId}
-          sending={sendingOrder}
-          countryCode="IN"
-          onOrderTypeChange={handleOrderTypeChange}
-          hasTable={!!selectedTable?.name || !!params.tableNumber}
-          multiPricingEnabled={multiPricingEnabled}
-          activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
-          billingSettings={billingSettings}
-          taxSettings={taxSettings}
-          pricingRules={pricingRules}
-          activePricingRuleId={activePricingRuleId}
-          setActivePricingRuleId={setActivePricingRuleId}
-          autoSelectedRule={autoSelectedRule}
-          isUpdateOrder={!!existingOrderId}
-          floors={floors}
-          onTableSelect={handleCashierTableSelect}
-          selectedTable={selectedTable}
-          upiSettings={upiSettings}
-          restaurantName={restaurantName}
-        />
-      )}
+      {/* Cart Modal — unified with mode prop */}
+      <CartModal
+        mode={isWaiter && !canCompleteBill ? 'waiter' : isCashier ? 'cashier' : 'owner'}
+        visible={showCart}
+        onClose={() => setShowCart(false)}
+        cart={cart}
+        onUpdateQuantity={updateCartQuantity}
+        onRemoveItem={removeFromCart}
+        onPlaceOrder={isCashier ? handleCashierPlaceOrder : handlePlaceOrder}
+        onCompleteBill={handleCompleteBill}
+        onSendToKitchen={handleSendToKitchen}
+        total={getCartTotal()}
+        tableNumber={selectedTable?.name || params.tableNumber}
+        restaurantId={restaurantId}
+        restaurantName={restaurantName}
+        sending={sendingOrder}
+        countryCode="IN"
+        onOrderTypeChange={handleOrderTypeChange}
+        hasTable={!!selectedTable?.name || !!params.tableNumber}
+        multiPricingEnabled={multiPricingEnabled}
+        activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
+        billingSettings={billingSettings}
+        taxSettings={taxSettings}
+        pricingRules={pricingRules}
+        activePricingRuleId={activePricingRuleId}
+        setActivePricingRuleId={setActivePricingRuleId}
+        autoSelectedRule={autoSelectedRule}
+        isUpdateOrder={!!existingOrderId}
+        floors={floors}
+        onTableSelect={handleCashierTableSelect}
+        selectedTable={selectedTable}
+        upiSettings={upiSettings}
+        tableFromNavigation={isFromTablesPage}
+        onClearTable={handleClearTable}
+      />
 
       {/* KOT Modal - Shows after order is sent to kitchen */}
       <KOTModal
@@ -2518,9 +2512,13 @@ export default function MenuScreen() {
           setShowKOTModal(false);
           setKotOrderData(null);
           setSelectedTable(null);
+          setIsFromTablesPage(false);
           setExistingOrderId(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
+          tableParamsStampRef.current = null;
+          lastAppliedStampRef.current = null;
+
           if (isBarTabMode) {
             // Bar tab mode: go back to bar billing
             router.back();
@@ -2540,9 +2538,13 @@ export default function MenuScreen() {
           setLastOrderData(null);
           setCart([]);
           setSelectedTable(null);
+          setIsFromTablesPage(false);
           setExistingOrderId(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
+          tableParamsStampRef.current = null;
+          lastAppliedStampRef.current = null;
+
           // Navigate back to tables page
           router.replace('/(tabs)/tables');
         }}
@@ -2554,9 +2556,13 @@ export default function MenuScreen() {
           setLastOrderData(null);
           setCart([]);
           setSelectedTable(null);
+          setIsFromTablesPage(false);
           setExistingOrderId(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
+          tableParamsStampRef.current = null;
+          lastAppliedStampRef.current = null;
+
           // Navigate to Tables page for fresh table selection
           router.replace('/(tabs)/tables');
         }}

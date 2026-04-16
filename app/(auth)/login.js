@@ -44,13 +44,13 @@ try {
 }
 
 // Lazy-load Apple Authentication
-let AppleAuthentication = null;
+let AppleAuth = null;
 let appleAuthAvailable = false;
 
 try {
   if (Platform.OS === 'ios') {
-    AppleAuthentication = require('expo-apple-authentication');
-    appleAuthAvailable = !!AppleAuthentication?.AppleAuthentication?.isAvailableAsync;
+    AppleAuth = require('expo-apple-authentication');
+    appleAuthAvailable = !!AppleAuth?.isAvailableAsync;
   }
 } catch (e) {
   console.log('Apple Authentication not available.');
@@ -274,7 +274,7 @@ export default function LoginScreen() {
 
   // ==================== OWNER: Apple Sign-In ====================
   const handleAppleSignIn = async () => {
-    if (!AppleAuthentication?.AppleAuthentication) {
+    if (!AppleAuth?.isAvailableAsync) {
       Alert.alert(
         'Not Available',
         'Sign in with Apple requires a development build on iOS.',
@@ -286,17 +286,17 @@ export default function LoginScreen() {
     setError('');
     try {
       // Check runtime availability (device must support Apple ID)
-      const isAvailable = await AppleAuthentication.AppleAuthentication.isAvailableAsync();
+      const isAvailable = await AppleAuth.isAvailableAsync();
       if (!isAvailable) {
         setError('Sign in with Apple is not available on this device.');
         setLoading(false);
         return;
       }
 
-      const credential = await AppleAuthentication.AppleAuthentication.signInAsync({
+      const credential = await AppleAuth.signInAsync({
         requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+          AppleAuth.AppleAuthenticationScope.FULL_NAME,
+          AppleAuth.AppleAuthenticationScope.EMAIL,
         ],
       });
 

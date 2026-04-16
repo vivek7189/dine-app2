@@ -1,3 +1,5 @@
+// DEPRECATED: All cart functionality is now in CartModal.js with mode="cashier"|"waiter"|"owner".
+// This file is kept for reference only. Safe to delete after verifying unified CartModal.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,

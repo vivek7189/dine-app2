@@ -6,6 +6,9 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Platform,
+  Keyboard,
+  InputAccessoryView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
@@ -252,9 +255,11 @@ export default function CustomerLookup({
             placeholder="Customer phone"
             placeholderTextColor="#9ca3af"
             keyboardType="phone-pad"
+            returnKeyType="done"
             value={phone}
             onChangeText={handlePhoneChange}
             maxLength={minLength + 3}
+            inputAccessoryViewID={Platform.OS === 'ios' ? 'phoneDoneBtn' : undefined}
           />
           {lookupStatus === 'loading' && (
             <ActivityIndicator size="small" color="#ef4444" />
@@ -302,9 +307,11 @@ export default function CustomerLookup({
             placeholder={coolStyle ? 'Enter phone number' : 'Customer phone'}
             placeholderTextColor={coolStyle ? '#9ca3af' : '#9ca3af'}
             keyboardType="phone-pad"
+            returnKeyType="done"
             value={phone}
             onChangeText={handlePhoneChange}
             maxLength={minLength + 3}
+            inputAccessoryViewID={Platform.OS === 'ios' ? 'phoneDoneBtn' : undefined}
           />
           {lookupStatus === 'loading' && (
             <ActivityIndicator size="small" color="#ef4444" />
@@ -426,11 +433,13 @@ export default function CustomerLookup({
                   <TextInput
                     style={styles.redeemInput}
                     keyboardType="number-pad"
+                    returnKeyType="done"
                     value={redeemPoints > 0 ? String(redeemPoints) : ''}
                     onChangeText={handleRedeemInputChange}
                     placeholder="0"
                     placeholderTextColor="#fca5a5"
                     maxLength={8}
+                    inputAccessoryViewID={Platform.OS === 'ios' ? 'phoneDoneBtn' : undefined}
                   />
                   <Text style={styles.redeemInputSuffix}>pts</Text>
                 </View>
@@ -510,6 +519,18 @@ export default function CustomerLookup({
       )}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      {/* iOS Done button for phone-pad keyboard */}
+      {Platform.OS === 'ios' && (
+        <InputAccessoryView nativeID="phoneDoneBtn">
+          <View style={styles.keyboardDoneBar}>
+            <View style={{ flex: 1 }} />
+            <TouchableOpacity onPress={Keyboard.dismiss} style={styles.keyboardDoneBtn}>
+              <Text style={styles.keyboardDoneBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </InputAccessoryView>
+      )}
     </View>
   );
 }
@@ -835,5 +856,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textLight,
     marginTop: 6,
+  },
+  keyboardDoneBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    backgroundColor: '#f1f3f5',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#d1d5db',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  keyboardDoneBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  keyboardDoneBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
   },
 });
