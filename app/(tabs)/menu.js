@@ -380,6 +380,8 @@ export default function MenuScreen() {
           setActivePricingRuleId(null);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+          consumedParamsKeyRef.current = null;
+          router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           hasBlurredRef.current = false;
           freshParamsRef.current = false;
@@ -421,7 +423,9 @@ export default function MenuScreen() {
           setActivePricingRuleId(null);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
-
+          consumedParamsKeyRef.current = null;
+          // Clear stale URL params
+          router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
         }
         hasBlurredRef.current = false;
       }).catch(() => {
@@ -772,7 +776,14 @@ export default function MenuScreen() {
     }));
   }, [activePricingRuleId, multiPricingEnabled]);
 
-  const addToCart = (item) => {
+  // Cart lookup map for O(1) access instead of .find() per item
+  const cartMap = useMemo(() => {
+    const map = {};
+    cart.forEach(c => { map[c.id] = c; });
+    return map;
+  }, [cart]);
+
+  const addToCart = useCallback((item) => {
     // Block out-of-stock items
     if (item.isAvailable === false) {
       Alert.alert('Out of Stock', `"${item.name}" is currently out of stock`);
@@ -780,56 +791,59 @@ export default function MenuScreen() {
     }
     // Check stock limit
     if (item.isStockManaged && typeof item.stockQuantity === 'number') {
-      const currentInCart = cart.find(c => c.id === item.id)?.quantity || 0;
-      if (currentInCart >= item.stockQuantity) {
-        Alert.alert('Stock Limit', `Only ${item.stockQuantity} "${item.name}" in stock`);
-        return;
-      }
+      setCart(prev => {
+        const currentInCart = prev.find(c => c.id === item.id)?.quantity || 0;
+        if (currentInCart >= item.stockQuantity) {
+          Alert.alert('Stock Limit', `Only ${item.stockQuantity} "${item.name}" in stock`);
+          return prev;
+        }
+        const adjustedPrice = getItemDisplayPrice(item);
+        const existing = prev.find(c => c.id === item.id);
+        if (existing) {
+          return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+        }
+        return [...prev, {
+          id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
+          quantity: 1, menuItemId: item.id,
+          spiritCategory: item.spiritCategory || null, abv: item.abv || null,
+          servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
+          unit: item.unit || null, weight: item.weight || null,
+          servingSize: item.servingSize || null, scoopOptions: item.scoopOptions || null,
+        }];
+      });
+      return;
     }
 
     const adjustedPrice = getItemDisplayPrice(item);
-    const existingItem = cart.find(cartItem => cartItem.id === item.id);
+    setCart(prev => {
+      const existing = prev.find(c => c.id === item.id);
+      if (existing) {
+        return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, {
+        id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
+        quantity: 1, menuItemId: item.id,
+        spiritCategory: item.spiritCategory || null, abv: item.abv || null,
+        servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
+        unit: item.unit || null, weight: item.weight || null,
+        servingSize: item.servingSize || null, scoopOptions: item.scoopOptions || null,
+      }];
+    });
+  }, [getItemDisplayPrice]);
 
-    if (existingItem) {
-      setCart(cart.map(cartItem =>
-        cartItem.id === item.id
-          ? { ...cartItem, quantity: cartItem.quantity + 1 }
-          : cartItem
-      ));
-    } else {
-      setCart([...cart, {
-        id: item.id,
-        name: item.name,
-        price: adjustedPrice,
-        originalPrice: item.price,
-        quantity: 1,
-        menuItemId: item.id,
-        // Business-type fields for receipt display
-        spiritCategory: item.spiritCategory || null,
-        abv: item.abv || null,
-        servingUnit: item.servingUnit || null,
-        bottleSize: item.bottleSize || null,
-        unit: item.unit || null,
-        weight: item.weight || null,
-        servingSize: item.servingSize || null,
-        scoopOptions: item.scoopOptions || null,
-      }]);
-    }
-  };
+  const removeFromCart = useCallback((itemId) => {
+    setCart(prev => prev.filter(item => item.id !== itemId));
+  }, []);
 
-  const removeFromCart = (itemId) => {
-    setCart(cart.filter(item => item.id !== itemId));
-  };
-
-  const updateCartQuantity = (itemId, quantity) => {
+  const updateCartQuantity = useCallback((itemId, quantity) => {
     if (quantity <= 0) {
-      removeFromCart(itemId);
+      setCart(prev => prev.filter(item => item.id !== itemId));
     } else {
-      setCart(cart.map(item =>
+      setCart(prev => prev.map(item =>
         item.id === itemId ? { ...item, quantity } : item
       ));
     }
-  };
+  }, []);
 
   const getCartTotal = () => {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
@@ -979,16 +993,11 @@ export default function MenuScreen() {
       return;
     }
 
-    if (!selectedTable && !params.tableNumber && !tableNumberFromModal) {
-      Alert.alert('Select Table', 'Please select a table first.');
-      return;
-    }
-
     setSendingOrder(true);
 
     try {
-      const tableId = selectedTable?.id || params.tableId;
-      const tableNumber = selectedTable?.name || params.tableNumber || tableNumberFromModal;
+      const tableId = selectedTable?.id || null;
+      const tableNumber = selectedTable?.name || tableNumberFromModal || '';
       let response;
       let orderId;
 
@@ -1092,7 +1101,7 @@ export default function MenuScreen() {
       return;
     }
 
-    if (!existingOrderId && !selectedTable && !params.tableNumber && !tableNumberFromModal) {
+    if (!existingOrderId && !selectedTable && !tableNumberFromModal) {
       Alert.alert('Select Table', 'Please select a table first.');
       return;
     }
@@ -1212,14 +1221,14 @@ export default function MenuScreen() {
         setCart([]);
         setShowCart(false);
         setExistingOrderId(null);
-        if (selectedTable || params.tableId) {
+        if (selectedTable) {
           router.replace({
             pathname: '/(tabs)/tables',
             params: {
-              tableId: selectedTable?.id || params.tableId,
+              tableId: selectedTable?.id,
               orderId: existingOrderId,
               tableStatus: 'occupied',
-              tableNumber: selectedTable?.name || params.tableNumber,
+              tableNumber: selectedTable?.name,
             },
           });
         } else {
@@ -1228,7 +1237,7 @@ export default function MenuScreen() {
       } else {
         const orderData = {
           restaurantId,
-          tableNumber: selectedTable?.name || params.tableNumber || tableNumberFromModal,
+          tableNumber: selectedTable?.name || tableNumberFromModal || '',
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
           paymentMethod: billingFields.paymentMethod || paymentMethod,
@@ -1731,11 +1740,11 @@ export default function MenuScreen() {
     lastAppliedStampRef.current = null;
   };
 
-  const getItemImage = (item) => {
+  const getItemImage = useCallback((item) => {
     if (!showImages) return null;
     // Use the placeholder images utility which handles all cases
     return getDisplayImage(item, 'https://dineopen.com');
-  };
+  }, [showImages]);
 
   const getCategoryName = (categoryId) => {
     const category = categories.find(c => c.id === categoryId);
@@ -1743,7 +1752,7 @@ export default function MenuScreen() {
   };
 
   // Build type-specific subtitle for menu cards
-  const getTypeSubtitle = (item) => {
+  const getTypeSubtitle = useCallback((item) => {
     const parts = [];
     if (businessType === 'bar') {
       if (item.spiritCategory) parts.push(item.spiritCategory);
@@ -1756,7 +1765,7 @@ export default function MenuScreen() {
       if (item.servingSize) parts.push(item.servingSize);
     }
     return parts.length > 0 ? parts.join(' | ') : null;
-  };
+  }, [businessType]);
 
   const getExpiryStatus = (expiryDate) => {
     if (!expiryDate) return null;
@@ -1767,8 +1776,8 @@ export default function MenuScreen() {
     return null;
   };
 
-  const renderMenuItem = ({ item }) => {
-    const cartItem = cart.find(c => c.id === item.id);
+  const renderMenuItem = useCallback(({ item }) => {
+    const cartItem = cartMap[item.id];
     const quantity = cartItem?.quantity || 0;
     const imageUrl = showImages ? getItemImage(item) : null;
     const isVeg = item.isVeg !== false;
@@ -1957,7 +1966,7 @@ export default function MenuScreen() {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [cartMap, addToCart, updateCartQuantity, showImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
 
   const renderCategory = ({ item }) => {
     const isSelected = selectedCategory === item.id;
@@ -2359,6 +2368,11 @@ export default function MenuScreen() {
         numColumns={cols}
         contentContainerStyle={styles.menuList}
         columnWrapperStyle={styles.menuRow}
+        maxToRenderPerBatch={12}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={10}
+        windowSize={7}
+        removeClippedSubviews={true}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleMenuRefresh} tintColor={Colors.primary} />
         }
@@ -2416,15 +2430,12 @@ export default function MenuScreen() {
             ) : isWaiter && !canCompleteBill ? (
               <TouchableOpacity
                 style={[styles.checkoutBtn, styles.checkoutBtnPrimary, sendingOrder && styles.orderButtonDisabled]}
-                onPress={handleSendToKitchen}
+                onPress={() => setShowCart(true)}
                 disabled={sendingOrder}
               >
-                {sendingOrder ? <ActivityIndicator size="small" color="#fff" /> : (
-                  <>
-                    <Ionicons name="send" size={16} color="#fff" />
-                    <Text style={styles.checkoutBtnText}>Send to Kitchen</Text>
-                  </>
-                )}
+                <Ionicons name="cart" size={16} color="#fff" />
+                <Text style={styles.checkoutBtnText}>Send to Kitchen</Text>
+                <Ionicons name="chevron-forward" size={16} color="#fff" />
               </TouchableOpacity>
             ) : isCashier ? (
               <TouchableOpacity
@@ -2481,13 +2492,13 @@ export default function MenuScreen() {
         onCompleteBill={handleCompleteBill}
         onSendToKitchen={handleSendToKitchen}
         total={getCartTotal()}
-        tableNumber={selectedTable?.name || params.tableNumber}
+        tableNumber={selectedTable?.name || ''}
         restaurantId={restaurantId}
         restaurantName={restaurantName}
         sending={sendingOrder}
         countryCode="IN"
         onOrderTypeChange={handleOrderTypeChange}
-        hasTable={!!selectedTable?.name || !!params.tableNumber}
+        hasTable={!!selectedTable?.name}
         multiPricingEnabled={multiPricingEnabled}
         activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
         billingSettings={billingSettings}
@@ -2518,6 +2529,9 @@ export default function MenuScreen() {
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+          consumedParamsKeyRef.current = null;
+          // Clear stale URL params so they don't leak into next order
+          router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           if (isBarTabMode) {
             // Bar tab mode: go back to bar billing
@@ -2544,6 +2558,8 @@ export default function MenuScreen() {
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+          consumedParamsKeyRef.current = null;
+          router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           // Navigate back to tables page
           router.replace('/(tabs)/tables');
@@ -2562,6 +2578,8 @@ export default function MenuScreen() {
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
           lastAppliedStampRef.current = null;
+          consumedParamsKeyRef.current = null;
+          router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           // Navigate to Tables page for fresh table selection
           router.replace('/(tabs)/tables');

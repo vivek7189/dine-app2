@@ -155,7 +155,6 @@ export default function HomeScreen() {
 
   const businessType = restaurant?.businessType || user?.restaurant?.businessType || 'restaurant';
   const isBarType = businessType === 'bar';
-  const newOrderRoute = isBarType ? '/(tabs)/bar-billing' : '/(tabs)/menu';
 
   const loadInitialData = async () => {
     try {
@@ -415,6 +414,8 @@ export default function HomeScreen() {
   const isCashier = role === 'cashier' || role === 'sales';
   const isWaiterOrEmployee = !isOwnerOrManager && !isCashier;
   const hasRestaurant = !!getRestaurantId();
+  // Non-admin/owner roles go to Tables first; owners go directly to Menu
+  const newOrderRoute = isBarType ? '/(tabs)/bar-billing' : (isOwnerOrManager ? '/(tabs)/menu' : '/(tabs)/tables');
 
   const getGreeting = () => {
     const hour = new Date().getHours();
