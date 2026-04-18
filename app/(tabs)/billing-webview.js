@@ -217,6 +217,7 @@ export default function BillingWebViewScreen() {
           mixedContentMode="compatibility"
           allowsInlineMediaPlayback
           cacheEnabled
+          cacheMode="LOAD_CACHE_ELSE_NETWORK"
           scalesPageToFit={false}
           keyboardDisplayRequiresUserAction={false}
           onShouldStartLoadWithRequest={(request) => {

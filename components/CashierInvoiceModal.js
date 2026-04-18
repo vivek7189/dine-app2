@@ -95,7 +95,7 @@ Cash Received:   ₹${invoiceData.cashReceived.toFixed(2)}${invoiceData.changeRe
 Change:          ₹${invoiceData.changeReturned.toFixed(2)}` : ''}` : ''}
 Payment: ${(invoiceData.paymentMethod || 'cash').toUpperCase()}
 
-Thank you for your visit!
+Thank you for your order!
     `.trim();
 
     return invoiceText;
@@ -335,7 +335,7 @@ Thank you for your visit!
             </div>
 
             <div class="footer">
-              <div class="thanks">Thank you for your visit!</div>
+              <div class="thanks">Thank you for your order!</div>
               <div>Served by: ${invoiceData.staffName}</div>
             </div>
           </div>
@@ -619,7 +619,7 @@ Thank you for your visit!
 
               {/* Footer */}
               <View style={styles.receiptFooter}>
-                <Text style={styles.thankYouText}>Thank you for your visit!</Text>
+                <Text style={styles.thankYouText}>Thank you for your order!</Text>
                 <Text style={styles.staffText}>Served by: {invoiceData.staffName}</Text>
               </View>
 

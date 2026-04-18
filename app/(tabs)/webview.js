@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -14,6 +14,7 @@ export default function WebViewScreen() {
   const [authUrl, setAuthUrl] = useState(null);
   const [userData, setUserData] = useState(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(false);
 
   useEffect(() => {
     buildAuthUrl();
@@ -63,11 +64,19 @@ export default function WebViewScreen() {
     webViewRef.current?.reload();
   };
 
+  const handleBack = () => {
+    if (canGoBack) {
+      webViewRef.current?.goBack();
+    } else {
+      router.replace('/(tabs)/more');
+    }
+  };
+
   if (!authUrl) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#ef4444" />
+          <View style={styles.loadingDot} />
         </View>
       </SafeAreaView>
     );
@@ -75,28 +84,6 @@ export default function WebViewScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Minimal Header — back + refresh only */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => {
-          router.replace('/(tabs)/more');
-        }} style={styles.headerBtn}>
-          <Ionicons name="arrow-back" size={22} color="#374151" />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={handleRetry} style={styles.headerBtn}>
-          <Ionicons name="refresh" size={20} color="#6b7280" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Loading bar */}
-      {loading && (
-        <View style={styles.loadingBar}>
-          <ActivityIndicator size="small" color="#ef4444" />
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      )}
-
-      {/* WebView is ALWAYS mounted — never removed on error */}
       <View style={{ flex: 1 }}>
         <WebView
           ref={webViewRef}
@@ -105,11 +92,13 @@ export default function WebViewScreen() {
           injectedJavaScriptBeforeContentLoaded={injectedJS}
           onLoadStart={() => { setLoading(true); setLoadFailed(false); }}
           onLoadEnd={() => setLoading(false)}
+          onNavigationStateChange={(navState) => {
+            setCanGoBack(navState.canGoBack);
+          }}
           onError={(e) => {
             const desc = e.nativeEvent?.description || '';
             console.warn('WebView onError:', desc);
             setLoading(false);
-            // Ignore aborted/cancelled loads (caused by blocking /login nav)
             if (desc.includes('ERR_ABORTED') || desc.includes('cancelled') || e.nativeEvent?.code === -999) {
               return;
             }
@@ -117,7 +106,6 @@ export default function WebViewScreen() {
           }}
           onHttpError={(e) => {
             console.warn('WebView HTTP error:', e.nativeEvent?.statusCode, e.nativeEvent?.url);
-            // Only flag on actual server errors
             if (e.nativeEvent?.statusCode >= 500) setLoadFailed(true);
           }}
           javaScriptEnabled
@@ -129,20 +117,29 @@ export default function WebViewScreen() {
           mixedContentMode="compatibility"
           allowsInlineMediaPlayback
           cacheEnabled
-          // On Android, block /login navigations at the native level
+          cacheMode="LOAD_CACHE_ELSE_NETWORK"
+          pullToRefreshEnabled
           onShouldStartLoadWithRequest={(request) => {
-            // Block navigations to /login — the mobile embed should never redirect there
             if (request.url && request.url.includes('/login')) {
               return false;
             }
             return true;
           }}
-          // Android: also inject on each new page load
           injectedJavaScript={`
             window.__DINEOPEN_MOBILE_EMBED__ = true;
             true;
           `}
         />
+
+        {/* Thin progress bar at top */}
+        {loading && (
+          <View style={styles.progressBar} />
+        )}
+
+        {/* Floating back button */}
+        <TouchableOpacity onPress={handleBack} style={styles.floatingBack} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={18} color="#374151" />
+        </TouchableOpacity>
 
         {/* Error overlay — shown ON TOP of WebView, not replacing it */}
         {loadFailed && (
@@ -165,31 +162,37 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    backgroundColor: '#fff',
-  },
-  headerBtn: {
-    padding: 8,
-    borderRadius: 8,
-  },
-  loadingBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  floatingBack: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.9)',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 6,
-    backgroundColor: '#fffbeb',
-    borderBottomWidth: 1,
-    borderBottomColor: '#fde68a',
+    alignItems: 'center',
+    zIndex: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
-  loadingText: {
-    fontSize: 13,
-    color: '#92400e',
-    fontWeight: '500',
+  progressBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: '#ef4444',
+    zIndex: 5,
   },
   webview: {
     flex: 1,
@@ -199,6 +202,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
+  },
+  loadingDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 3,
+    borderColor: '#ef4444',
+    borderTopColor: 'transparent',
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -414,8 +414,8 @@ export default function HomeScreen() {
   const isCashier = role === 'cashier' || role === 'sales';
   const isWaiterOrEmployee = !isOwnerOrManager && !isCashier;
   const hasRestaurant = !!getRestaurantId();
-  // Non-admin/owner roles go to Tables first; owners go directly to Menu
-  const newOrderRoute = isBarType ? '/(tabs)/bar-billing' : (isOwnerOrManager ? '/(tabs)/menu' : '/(tabs)/tables');
+  // Cashiers go directly to Menu (no table selection needed); other non-admin roles go to Tables first
+  const newOrderRoute = isBarType ? '/(tabs)/bar-billing' : ((isOwnerOrManager || isCashier) ? '/(tabs)/menu' : '/(tabs)/tables');
 
   const getGreeting = () => {
     const hour = new Date().getHours();

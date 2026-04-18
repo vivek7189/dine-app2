@@ -349,8 +349,8 @@ export default function MoreScreen() {
           )}
         </View>
 
-        {/* ── Business Info (owner/admin only) — collapsible ── */}
-        {isOwnerOrAdmin && getRestaurantId() && (
+        {/* ── Business Info — collapsible (owner, admin, cashier, manager) ── */}
+        {['owner', 'admin', 'cashier', 'manager'].includes(role) && getRestaurantId() && (
           <View style={styles.sectionContainer}>
             <TouchableOpacity onPress={toggleBusinessInfo} activeOpacity={0.7} style={styles.collapsibleHeader}>
               <Ionicons name="business-outline" size={18} color="#8b7355" />
