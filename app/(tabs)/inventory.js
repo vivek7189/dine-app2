@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import apiClient from '../../services/api';
 import { Alert } from 'react-native';
+import { hasFeatureAccess } from '../../utils/permissions';
 
 // Hook & components
 import { useOffline } from '../../hooks/useOffline';
@@ -70,9 +71,10 @@ export default function InventoryScreen() {
       const userData = await apiClient.getUser();
       if (!userData) { router.replace('/(auth)/login'); return; }
 
-      const allowedRoles = ['owner', 'manager', 'admin'];
-      if (!allowedRoles.includes(userData.role?.toLowerCase())) {
-        Alert.alert('Access Denied', 'Inventory management requires owner/manager access.', [
+      // owner/admin always allowed; manager kept for backwards compat; custom roles check pageAccess
+      const role = userData.role?.toLowerCase();
+      if (!['owner', 'admin', 'manager'].includes(role) && !hasFeatureAccess(userData, 'inventory')) {
+        Alert.alert('Access Denied', 'You do not have permission to access inventory.', [
           { text: 'OK', onPress: () => router.back() },
         ]);
         return;

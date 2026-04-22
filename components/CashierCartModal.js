@@ -337,7 +337,7 @@ export default function CashierCartModal({
       return {
         id,
         name: fi.name || match?.name || `Item ${id}`,
-        quantity: fi.quantity || 1,
+        quantity: fi.qty || fi.quantity || 1,
       };
     });
   }, [freeItems, cart]);

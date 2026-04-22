@@ -131,7 +131,7 @@ export default function WaiterCartModal({
   const {
     genericOffers, personalizedOffers, applicableOffers,
     selectedOfferId, setSelectedOfferId,
-    selectedOfferIds, setSelectedOfferIds,
+    selectedOfferIds, toggleOffer,
     offerDiscount, freeItems,
     offerSettings,
     autoApplied,
@@ -218,7 +218,7 @@ export default function WaiterCartModal({
     return (freeItems || []).map(fi => {
       const id = fi.itemId || fi.menuItemId || fi.id;
       const match = cart.find(c => (c.menuItemId || c.id) === id);
-      return { id, name: fi.name || match?.name || `Item ${id}`, quantity: fi.quantity || 1 };
+      return { id, name: fi.name || match?.name || `Item ${id}`, quantity: fi.qty || fi.quantity || 1 };
     });
   }, [freeItems, cart]);
 
@@ -657,7 +657,7 @@ export default function WaiterCartModal({
                         style={{ flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 6, backgroundColor: isSelected ? '#fef2f2' : '#f9fafb', borderWidth: 1, borderColor: isSelected ? '#fca5a5' : '#f3f4f6' }}
                         onPress={() => {
                           if (isMulti) {
-                            setSelectedOfferIds(prev => prev.includes(oid) ? prev.filter(id => id !== oid) : [...prev, oid]);
+                            toggleOffer(oid);
                           } else {
                             setSelectedOfferId(selectedOfferId === oid ? null : oid);
                           }
@@ -704,7 +704,7 @@ export default function WaiterCartModal({
                         style={{ flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, marginBottom: 6, backgroundColor: isSelected ? '#fffbeb' : '#f9fafb', borderWidth: 1, borderColor: isSelected ? '#fbbf24' : '#f3f4f6' }}
                         onPress={() => {
                           if (isMulti) {
-                            setSelectedOfferIds(prev => prev.includes(oid) ? prev.filter(id => id !== oid) : [...prev, oid]);
+                            toggleOffer(oid);
                           } else {
                             setSelectedOfferId(selectedOfferId === oid ? null : oid);
                           }

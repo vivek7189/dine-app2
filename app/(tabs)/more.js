@@ -129,24 +129,24 @@ export default function MoreScreen() {
       title: 'Management',
       items: [
         { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'] },
-        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'] },
-        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'] },
-        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'] },
-        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'] },
+        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu' },
+        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers' },
+        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory' },
+        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
       ],
     },
     {
       title: 'Finance',
       items: [
-        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'] },
-        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'] },
+        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin' },
+        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice' },
       ],
     },
     {
       title: 'History',
       items: [
-        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null },
+        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history' },
       ],
     },
     ...(isHotelType ? [{
@@ -199,7 +199,15 @@ export default function MoreScreen() {
   const shouldShowItem = (item) => {
     if (!item.roles) return true;
     if (!role) return false;
-    return item.roles.includes(role);
+    // If role is in the hardcoded list, show it
+    if (item.roles.includes(role)) return true;
+    // For roles not in the list, check pageAccess (supports custom roles, employee, etc.)
+    if (item.feature && user?.pageAccess) {
+      const val = user.pageAccess[item.feature];
+      if (val === true) return true;
+      if (typeof val === 'object' && val !== null) return Object.values(val).some(Boolean);
+    }
+    return false;
   };
 
   const toggleSettings = () => {
@@ -228,6 +236,8 @@ export default function MoreScreen() {
     router.push(route);
   };
 
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
   const handleLogout = () => {
     Alert.alert(
       'Logout',
@@ -240,6 +250,46 @@ export default function MoreScreen() {
           onPress: async () => {
             await apiClient.logout();
             router.replace('/(auth)/login');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Your account and all associated data will be permanently deleted. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you sure?',
+              'This is permanent. You will lose access to all restaurants and data linked to this account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete My Account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeletingAccount(true);
+                    try {
+                      await apiClient.deleteAccount();
+                      await apiClient.logout();
+                      router.replace('/(auth)/login');
+                    } catch (error) {
+                      console.error('Delete account error:', error);
+                      Alert.alert('Error', 'Failed to delete account. Please try again.');
+                    } finally {
+                      setDeletingAccount(false);
+                    }
+                  },
+                },
+              ]
+            );
           },
         },
       ]
@@ -634,6 +684,19 @@ export default function MoreScreen() {
           <Ionicons name="log-out-outline" size={18} color="#e5484d" />
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
+
+        {/* ── Delete Account ──────────────────────────── */}
+        <TouchableOpacity
+          style={styles.deleteAccountButton}
+          onPress={handleDeleteAccount}
+          activeOpacity={0.7}
+          disabled={deletingAccount}
+        >
+          <Ionicons name="trash-outline" size={16} color="#9ca3af" />
+          <Text style={styles.deleteAccountText}>
+            {deletingAccount ? 'Deleting...' : 'Delete Account'}
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* ── Footer ─────────────────────────────────── */}
@@ -1019,6 +1082,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#e5484d',
+  },
+  deleteAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingVertical: 12,
+    borderRadius: 14,
+    gap: 6,
+  },
+  deleteAccountText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#9ca3af',
   },
 
   // ── Footer ────────────────────────────────────────

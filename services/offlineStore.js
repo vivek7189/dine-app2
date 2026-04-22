@@ -271,6 +271,23 @@ export function getOffers(restaurantId) {
 }
 
 // ============================================
+// Offer Settings (offerSettings + loyaltySettings)
+// ============================================
+export function saveOfferSettings(restaurantId, data) {
+  const db = getDb();
+  db.runSync(
+    'INSERT OR REPLACE INTO offer_settings (restaurant_id, data, synced_at) VALUES (?, ?, ?)',
+    [restaurantId, JSON.stringify(data), now()]
+  );
+}
+
+export function getOfferSettings(restaurantId) {
+  const db = getDb();
+  const row = db.getFirstSync('SELECT data FROM offer_settings WHERE restaurant_id = ?', [restaurantId]);
+  return parseData(row);
+}
+
+// ============================================
 // Inventory Items
 // ============================================
 export function saveInventoryItems(restaurantId, items) {
@@ -555,7 +572,7 @@ export function clearAllData() {
   const tables = [
     'restaurant', 'menu_items', 'floors', 'tables_local',
     'tax_settings', 'billing_settings', 'pricing_settings',
-    'customers', 'offers', 'inventory_items', 'recipes', 'rooms',
+    'customers', 'offers', 'offer_settings', 'inventory_items', 'recipes', 'rooms',
     'saved_carts', 'orders', 'local_sequences', 'sync_queue', 'sync_log',
   ];
   db.execSync('BEGIN TRANSACTION;');
@@ -576,7 +593,7 @@ export function clearAllData() {
 const VALID_TABLES = new Set([
   'restaurant', 'menu_items', 'floors', 'tables_local',
   'tax_settings', 'billing_settings', 'pricing_settings',
-  'customers', 'offers', 'inventory_items', 'recipes', 'rooms', 'saved_carts', 'orders',
+  'customers', 'offers', 'offer_settings', 'inventory_items', 'recipes', 'rooms', 'saved_carts', 'orders',
 ]);
 
 export function getLastSyncTime(tableName, restaurantId) {

@@ -16,7 +16,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Pusher from 'pusher-js/react-native';
 import apiClient from '../services/api';
+import * as offlineStore from '../services/offlineStore';
 import {
   calculateOfferResult,
   filterApplicableOffers,
@@ -26,6 +28,68 @@ import {
 } from '../services/offerEngine';
 
 const getOfferId = (o) => o?.id || o?._id;
+
+/**
+ * Compute ms until the next schedule transition (offer activates or deactivates).
+ * Returns null if no scheduled offers exist.
+ */
+const getNextScheduleTransition = (offers) => {
+  const now = new Date();
+  const currentDay = now.getDay();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  let minMs = null;
+
+  for (const offer of offers) {
+    if (offer.schedule?.type === 'recurring') {
+      const days = offer.schedule.days || [];
+      const [startH, startM] = (offer.schedule.startTime || '00:00').split(':').map(Number);
+      const [endH, endM] = (offer.schedule.endTime || '23:59').split(':').map(Number);
+      const startMinutes = startH * 60 + startM;
+      const endMinutes = endH * 60 + endM;
+
+      if (days.includes(currentDay)) {
+        if (currentMinutes < startMinutes) {
+          const ms = (startMinutes - currentMinutes) * 60000 - (now.getSeconds() * 1000);
+          if (minMs === null || ms < minMs) minMs = ms;
+        } else if (currentMinutes < endMinutes) {
+          const ms = (endMinutes - currentMinutes) * 60000 - (now.getSeconds() * 1000);
+          if (minMs === null || ms < minMs) minMs = ms;
+        }
+      }
+
+      if (!days.includes(currentDay) || currentMinutes >= endMinutes) {
+        for (let i = 1; i <= 7; i++) {
+          const nextDay = (currentDay + i) % 7;
+          if (days.includes(nextDay)) {
+            const msToMidnight = ((24 * 60) - currentMinutes) * 60000 - (now.getSeconds() * 1000);
+            const msFromMidnight = (i - 1) * 24 * 60 * 60000 + startMinutes * 60000;
+            const ms = msToMidnight + msFromMidnight;
+            if (minMs === null || ms < minMs) minMs = ms;
+            break;
+          }
+        }
+      }
+    }
+
+    if (offer.validFrom) {
+      const from = new Date(offer.validFrom);
+      if (from > now) {
+        const ms = from.getTime() - now.getTime();
+        if (minMs === null || ms < minMs) minMs = ms;
+      }
+    }
+    if (offer.validUntil) {
+      const until = new Date(offer.validUntil);
+      until.setHours(23, 59, 59, 999);
+      if (until > now) {
+        const ms = until.getTime() - now.getTime();
+        if (minMs === null || ms < minMs) minMs = ms;
+      }
+    }
+  }
+
+  return minMs;
+};
 
 const useOfferEngine = ({
   restaurantId,
@@ -41,8 +105,7 @@ const useOfferEngine = ({
   const [selectedOfferId, setSelectedOfferIdInternal] = useState(null);
   const [selectedOfferIds, setSelectedOfferIdsInternal] = useState([]);
   const [autoApplied, setAutoApplied] = useState(false);
-  const [offerDiscount, setOfferDiscount] = useState(0);
-  const [selectedOfferName, setSelectedOfferName] = useState('');
+  const [scheduleCheckKey, setScheduleCheckKey] = useState(0);
 
   const [offerSettings, setOfferSettings] = useState({
     autoApplyBestOffer: false,
@@ -83,10 +146,26 @@ const useOfferEngine = ({
       }
       const offers = (resp?.offers || (Array.isArray(resp) ? resp : []))
         .filter(o => o && o.isActive !== false);
-      if (!cancelled.value) setAllOffers(offers);
+      if (!cancelled.value) {
+        setAllOffers(offers);
+        // Cache to SQLite for offline use
+        try { offlineStore.saveOffers(restaurantId, offers); } catch (_) {}
+      }
     } catch (err) {
-      if (!cancelled.value) setAllOffers([]);
-      if (__DEV__) console.warn('[useOfferEngine] load offers failed:', err?.message);
+      // API failed — try SQLite cache (offline fallback)
+      try {
+        const cached = offlineStore.getOffers(restaurantId);
+        if (cached && cached.length > 0) {
+          const active = cached.filter(o => o && o.isActive !== false);
+          if (!cancelled.value) setAllOffers(active);
+          if (__DEV__) console.warn('[useOfferEngine] using cached offers:', active.length);
+        } else {
+          if (!cancelled.value) setAllOffers([]);
+        }
+      } catch (_) {
+        if (!cancelled.value) setAllOffers([]);
+      }
+      if (__DEV__) console.warn('[useOfferEngine] load offers failed, fell back to cache:', err?.message);
     } finally {
       if (!cancelled.value) setIsLoadingOffers(false);
     }
@@ -98,6 +177,55 @@ const useOfferEngine = ({
     loadOffers(cancelled);
     return () => { cancelled.value = true; };
   }, [loadOffers]);
+
+  // -------- Pusher: real-time offer sync --------
+  useEffect(() => {
+    if (!restaurantId) return;
+
+    const pusher = new Pusher(process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec', {
+      cluster: process.env.EXPO_PUBLIC_PUSHER_CLUSTER || 'ap2',
+    });
+
+    const channel = pusher.subscribe(`restaurant-${restaurantId}`);
+
+    let debounceTimer = null;
+    channel.bind('offer-updated', () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        // Invalidate in-memory cache so loadOffers fetches fresh data from server
+        apiClient.invalidateCache(`/api/offers/`);
+        apiClient.invalidateCache(`/api/public/offers/`);
+        // Re-fetch offers
+        loadOffers({ value: false });
+        // Re-fetch offer settings (auto-apply, multi-offer, loyalty)
+        try {
+          const settingsRes = await apiClient.getPublicCustomerAppSettings(restaurantId);
+          if (settingsRes?.settings?.offerSettings) {
+            setOfferSettings(prev => ({ ...prev, ...settingsRes.settings.offerSettings }));
+          }
+          if (settingsRes?.settings?.loyaltySettings) {
+            setLoyaltySettings(prev => ({ ...prev, ...settingsRes.settings.loyaltySettings }));
+          }
+          // Cache updated settings
+          try {
+            offlineStore.saveOfferSettings(restaurantId, {
+              offerSettings: settingsRes?.settings?.offerSettings || null,
+              loyaltySettings: settingsRes?.settings?.loyaltySettings || null,
+            });
+          } catch (_) {}
+        } catch (e) {
+          if (__DEV__) console.warn('[useOfferEngine] Pusher settings re-fetch failed:', e?.message);
+        }
+      }, 1000);
+    });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channel.unbind_all();
+      pusher.unsubscribe(`restaurant-${restaurantId}`);
+      pusher.disconnect();
+    };
+  }, [restaurantId, loadOffers]);
 
   // -------- load offerSettings + loyaltySettings --------
   useEffect(() => {
@@ -114,7 +242,24 @@ const useOfferEngine = ({
         if (settingsRes?.settings?.loyaltySettings) {
           setLoyaltySettings(prev => ({ ...prev, ...settingsRes.settings.loyaltySettings }));
         }
+        // Cache to SQLite for offline use
+        try {
+          offlineStore.saveOfferSettings(restaurantId, {
+            offerSettings: settingsRes?.settings?.offerSettings || null,
+            loyaltySettings: settingsRes?.settings?.loyaltySettings || null,
+          });
+        } catch (_) {}
       } catch (e) {
+        // API failed — try SQLite cache (offline fallback)
+        try {
+          const cached = offlineStore.getOfferSettings(restaurantId);
+          if (cached && !cancelled) {
+            settingsLoadedRef.current = true;
+            if (cached.offerSettings) setOfferSettings(prev => ({ ...prev, ...cached.offerSettings }));
+            if (cached.loyaltySettings) setLoyaltySettings(prev => ({ ...prev, ...cached.loyaltySettings }));
+            if (__DEV__) console.warn('[useOfferEngine] using cached offer settings');
+          }
+        } catch (_) {}
         if (__DEV__) console.warn('[useOfferEngine] settings load failed:', e?.message);
       }
     })();
@@ -134,12 +279,17 @@ const useOfferEngine = ({
   }, [customerContext, phoneOverride, customerGroupIds]);
 
   // -------- customer group lookup --------
+  // Use customerContext + phoneOverride directly (not resolvedContext) to avoid
+  // circular dependency: resolvedContext depends on customerGroupIds which this effect sets.
+  // This mirrors the web useOfferEngine approach.
+  const groupLookupPhone = phoneOverride || customerContext?.customerPhone;
+  const groupLookupCid = customerContext?.customerId;
+
   useEffect(() => {
-    if (__DEV__) console.warn('[useOfferEngine] group lookup effect - restaurantId:', restaurantId, 'resolvedContext:', JSON.stringify(resolvedContext));
     if (!restaurantId) { setCustomerGroupIds(prev => prev.length ? [] : prev); return; }
-    const phone = resolvedContext?.customerPhone;
-    const cid = resolvedContext?.customerId;
-    if (!phone && !cid) { if (__DEV__) console.warn('[useOfferEngine] no phone/cid, skipping group lookup'); setCustomerGroupIds(prev => prev.length ? [] : prev); setCustomerGroups(prev => prev.length ? [] : prev); return; }
+    const phone = groupLookupPhone;
+    const cid = groupLookupCid;
+    if (!phone && !cid) { setCustomerGroupIds(prev => prev.length ? [] : prev); setCustomerGroups(prev => prev.length ? [] : prev); return; }
 
     const cacheKey = `${restaurantId}|${normalizePhone(phone) || ''}|${cid || ''}`;
     if (groupLookupCacheRef.current[cacheKey]) {
@@ -158,10 +308,9 @@ const useOfferEngine = ({
           `/api/customer-groups/lookup/${restaurantId}${qs}`,
           { method: 'GET' }
         ).catch((err) => {
-          if (__DEV__) console.warn('[useOfferEngine] group lookup failed:', err?.message, 'URL:', `/api/customer-groups/lookup/${restaurantId}${qs}`);
+          if (__DEV__) console.warn('[useOfferEngine] group lookup failed:', err?.message);
           return null;
         });
-        if (__DEV__) console.warn('[useOfferEngine] group lookup result:', JSON.stringify(res));
         const groups = res?.groups || [];
         const ids = groups.map(g => g.id).filter(Boolean);
         const groupObjs = groups.map(g => ({ id: g.id, name: g.name, color: g.color })).filter(g => g.id);
@@ -178,8 +327,19 @@ const useOfferEngine = ({
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restaurantId, resolvedContext?.customerPhone, resolvedContext?.customerId]);
+  }, [restaurantId, groupLookupPhone, groupLookupCid]);
+
+  // -------- smart schedule timer --------
+  // Sets a precise timeout for the next schedule transition (offer activates/deactivates)
+  useEffect(() => {
+    if (allOffers.length === 0) return;
+    const msToNext = getNextScheduleTransition(allOffers);
+    if (!msToNext || msToNext <= 0) return;
+    // Cap at 1 hour to handle edge cases (app left open overnight)
+    const timeout = Math.min(msToNext + 1000, 3600000);
+    const timer = setTimeout(() => setScheduleCheckKey(prev => prev + 1), timeout);
+    return () => clearTimeout(timer);
+  }, [allOffers, scheduleCheckKey]);
 
   // -------- applicable offers --------
   const applicableOffers = useMemo(() => {
@@ -187,9 +347,6 @@ const useOfferEngine = ({
     const hasContext = !!resolvedContext;
     const now = new Date();
     const ctxForFilter = resolvedContext || {};
-
-    if (__DEV__) console.warn('[useOfferEngine] allOffers:', allOffers.length, 'hasContext:', hasContext, 'resolvedContext:', JSON.stringify(resolvedContext));
-    if (__DEV__) allOffers.forEach(o => console.log('[useOfferEngine] offer:', o.name, 'audience:', JSON.stringify(o.audience), 'isFirstOrderOnly:', o.isFirstOrderOnly));
 
     // First pass: base filter (schedule/date/minOrder/scope) ignoring audience.
     const baseFiltered = filterApplicableOffers(
@@ -199,8 +356,6 @@ const useOfferEngine = ({
     // Re-map to original offers
     const baseIds = new Set(baseFiltered.map(o => getOfferId(o)));
     const base = allOffers.filter(o => baseIds.has(getOfferId(o)));
-
-    if (__DEV__) console.warn('[useOfferEngine] baseFiltered:', baseFiltered.length, 'base:', base.length);
 
     const out = [];
     for (const offer of base) {
@@ -212,15 +367,13 @@ const useOfferEngine = ({
 
       if (hasContext) {
         const matches = matchesAudience(offer, ctxForFilter);
-        if (__DEV__) console.warn('[useOfferEngine] offer:', offer.name, 'audienceType:', audienceType, 'matches:', matches);
         if (matches) out.push(offer);
       } else {
         if (isPublicAudience) out.push(offer);
       }
     }
-    if (__DEV__) console.warn('[useOfferEngine] applicable:', out.length, out.map(o => o.name));
     return out;
-  }, [allOffers, subtotal, cart, resolvedContext]);
+  }, [allOffers, subtotal, cart, resolvedContext, scheduleCheckKey]);
 
   // Split applicable offers into generic (everyone/first-order) and personalized (group/customer-targeted)
   const { genericOffers, personalizedOffers } = useMemo(() => {
@@ -253,51 +406,49 @@ const useOfferEngine = ({
     if (activeIds.length === 0) return [];
     const all = [];
     for (const oid of activeIds) {
-      const offer = allOffers.find(o => getOfferId(o) === oid);
+      // Search applicableOffers (not allOffers) so ineligible offers (e.g., first-order for repeat customer) are excluded
+      const offer = applicableOffers.find(o => getOfferId(o) === oid);
       if (!offer) continue;
       const res = calculateOfferResult(offer, subtotal, cart, resolvedContext || {});
       if (res.freeItems && res.freeItems.length) all.push(...res.freeItems);
     }
     return all;
-  }, [selectedOfferId, selectedOfferIds, allOffers, subtotal, cart, offerSettings.allowMultipleOffers, resolvedContext]);
+  }, [selectedOfferId, selectedOfferIds, applicableOffers, subtotal, cart, offerSettings.allowMultipleOffers, resolvedContext]);
 
-  // -------- update discount when selection or subtotal changes --------
-  useEffect(() => {
+  // -------- compute discount synchronously (useMemo, no stale-render lag) --------
+  const { offerDiscount, selectedOfferName } = useMemo(() => {
     // Multi-offer mode
     if (offerSettings.allowMultipleOffers && selectedOfferIds.length > 0) {
       let totalDisc = 0;
       const names = [];
       for (const oid of selectedOfferIds) {
-        const offer = allOffers.find(o => getOfferId(o) === oid);
+        // Search applicableOffers so ineligible offers are excluded
+        const offer = applicableOffers.find(o => getOfferId(o) === oid);
         if (offer) {
           totalDisc += calculateDiscountForOffer(offer, subtotal, cart);
           names.push(offer.name);
         }
       }
       totalDisc = Math.min(totalDisc, subtotal);
-      setOfferDiscount(Math.round(totalDisc * 100) / 100);
-      setSelectedOfferName(names.join(', '));
-      return;
+      return {
+        offerDiscount: Math.round(totalDisc * 100) / 100,
+        selectedOfferName: names.join(', '),
+      };
     }
 
     // Single offer mode
     if (!selectedOfferId) {
-      setOfferDiscount(0);
-      setSelectedOfferName('');
-      return;
+      return { offerDiscount: 0, selectedOfferName: '' };
     }
 
-    const offer = allOffers.find(o => getOfferId(o) === selectedOfferId);
+    const offer = applicableOffers.find(o => getOfferId(o) === selectedOfferId);
     if (!offer) {
-      setOfferDiscount(0);
-      setSelectedOfferName('');
-      return;
+      return { offerDiscount: 0, selectedOfferName: '' };
     }
 
-    setSelectedOfferName(offer.name);
     const disc = calculateDiscountForOffer(offer, subtotal, cart);
-    setOfferDiscount(disc);
-  }, [selectedOfferId, selectedOfferIds, subtotal, cart, allOffers, offerSettings.allowMultipleOffers, calculateDiscountForOffer]);
+    return { offerDiscount: disc, selectedOfferName: offer.name };
+  }, [selectedOfferId, selectedOfferIds, subtotal, cart, applicableOffers, offerSettings.allowMultipleOffers, calculateDiscountForOffer]);
 
   // -------- auto-apply best offer(s) --------
   useEffect(() => {
@@ -335,10 +486,18 @@ const useOfferEngine = ({
         }
       }
     } else {
-      // Single offer: pick best
-      const best = pickBestOffer(eligible, subtotal, cart, resolvedContext || {});
-      if (best) {
-        const bid = getOfferId(best);
+      // Single offer mode: pick the one with maximum discount (priority tiebreaking)
+      let bestOffer = null;
+      let bestDiscount = 0;
+      for (const offer of eligible) {
+        const disc = calculateDiscountForOffer(offer, subtotal, cart, resolvedContext || {});
+        if (disc > bestDiscount || (disc === bestDiscount && disc > 0 && (offer.priority || 0) > (bestOffer?.priority || 0))) {
+          bestDiscount = disc;
+          bestOffer = offer;
+        }
+      }
+      if (bestOffer) {
+        const bid = getOfferId(bestOffer);
         if (bid !== selectedOfferId) {
           setSelectedOfferIdInternal(bid);
           setAutoApplied(true);
@@ -354,8 +513,6 @@ const useOfferEngine = ({
       setSelectedOfferIdInternal(null);
       setSelectedOfferIdsInternal([]);
       setAutoApplied(false);
-      setOfferDiscount(0);
-      setSelectedOfferName('');
       wasManuallySelectedRef.current = false;
     }
   }, [cart.length, selectedOfferId, selectedOfferIds.length]);
@@ -399,8 +556,6 @@ const useOfferEngine = ({
   const resetOffers = useCallback(() => {
     setSelectedOfferIdInternal(null);
     setSelectedOfferIdsInternal([]);
-    setOfferDiscount(0);
-    setSelectedOfferName('');
     setAutoApplied(false);
     wasManuallySelectedRef.current = false;
   }, []);

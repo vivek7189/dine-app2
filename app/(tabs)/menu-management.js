@@ -23,6 +23,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme
 import MenuItemForm from '../../components/MenuItemForm';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
+import { hasFeatureAccess } from '../../utils/permissions';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
@@ -94,11 +95,12 @@ export default function MenuManagementScreen() {
         return;
       }
 
-      const allowedRoles = ['owner', 'manager', 'cashier', 'admin'];
-      if (!allowedRoles.includes(userData.role?.toLowerCase())) {
+      // owner/admin always allowed; manager/cashier kept for backwards compat; custom roles check pageAccess
+      const role = userData.role?.toLowerCase();
+      if (!['owner', 'admin', 'manager', 'cashier'].includes(role) && !hasFeatureAccess(userData, 'menu')) {
         Alert.alert(
           'Access Denied',
-          'Menu management is only available for authorized staff.',
+          'You do not have permission to manage the menu.',
           [{ text: 'OK', onPress: () => router.back() }]
         );
         return;

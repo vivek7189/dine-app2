@@ -66,4 +66,28 @@ function canPerform(user, pageAccess, feature, operation) {
   return false;
 }
 
-module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform };
+/**
+ * Check if a user has access to a feature based on role + pageAccess.
+ * - owner, admin always have access (bypass).
+ * - For all other roles, checks pageAccess[feature].
+ *   If boolean true → access granted.
+ *   If object → access granted when at least one sub-permission is true.
+ * - bypassRoles: additional roles that always get access (e.g. 'waiter' for tables).
+ */
+function hasFeatureAccess(user, feature, bypassRoles = []) {
+  const role = user?.role?.toLowerCase();
+  if (role === 'owner' || role === 'admin') return true;
+  if (bypassRoles.includes(role)) return true;
+
+  const pa = user?.pageAccess;
+  if (!pa) return false;
+
+  const val = pa[feature];
+  if (val === true) return true;
+  if (typeof val === 'object' && val !== null) {
+    return Object.values(val).some(Boolean);
+  }
+  return false;
+}
+
+module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform, hasFeatureAccess };

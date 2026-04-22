@@ -151,6 +151,14 @@ function applyV1(database) {
   `);
 
   database.execSync(`
+    CREATE TABLE IF NOT EXISTS offer_settings (
+      restaurant_id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      synced_at INTEGER NOT NULL
+    );
+  `);
+
+  database.execSync(`
     CREATE TABLE IF NOT EXISTS inventory_items (
       id TEXT PRIMARY KEY,
       restaurant_id TEXT NOT NULL,

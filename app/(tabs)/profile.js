@@ -131,6 +131,49 @@ export default function ProfileScreen() {
     );
   };
 
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Your account and all associated data will be permanently deleted. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            // Second confirmation
+            Alert.alert(
+              'Are you sure?',
+              'This is permanent. You will lose access to all restaurants and data linked to this account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete My Account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeletingAccount(true);
+                    try {
+                      await apiClient.deleteAccount();
+                      await apiClient.logout();
+                      await AsyncStorage.clear();
+                      router.replace('/(auth)/login');
+                    } catch (error) {
+                      console.error('Delete account error:', error);
+                      Alert.alert('Error', 'Failed to delete account. Please try again.');
+                      setDeletingAccount(false);
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const getRoleDisplayName = (role) => {
     switch (role?.toLowerCase()) {
       case 'owner': return 'Owner';
@@ -672,6 +715,18 @@ export default function ProfileScreen() {
             <Ionicons name="log-out-outline" size={20} color="#fff" />
             <Text style={styles.logoutButtonText}>Logout</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteAccountButton}
+            onPress={handleDeleteAccount}
+            disabled={deletingAccount}
+          >
+            {deletingAccount ? (
+              <ActivityIndicator size="small" color={Colors.error} />
+            ) : (
+              <Ionicons name="person-remove-outline" size={20} color={Colors.error} />
+            )}
+            <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
+          </TouchableOpacity>
         </View>
 
         {/* App Info */}
@@ -836,6 +891,23 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: Typography.bodyBold.fontSize,
     fontWeight: Typography.bodyBold.fontWeight,
+  },
+  deleteAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.medium,
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    marginTop: Spacing.lg,
+  },
+  deleteAccountButtonText: {
+    color: Colors.error,
+    fontSize: Typography.body.fontSize,
+    fontWeight: '500',
   },
   footer: {
     alignItems: 'center',

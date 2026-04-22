@@ -27,6 +27,7 @@ function TabsNavigator() {
   const router = useRouter();
   const segments = useSegments();
   const [userRole, setUserRole] = useState(null);
+  const [pageAccess, setPageAccess] = useState(null);
   const [businessType, setBusinessType] = useState(null);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ function TabsNavigator() {
       const userData = await apiClient.getUser();
       if (userData) {
         setUserRole(userData.role);
+        setPageAccess(userData.pageAccess || null);
         const storedType = userData.restaurant?.businessType;
         if (storedType) {
           setBusinessType(storedType);
@@ -131,8 +133,18 @@ function TabsNavigator() {
               color={color}
             />
           ),
-          // Hide for simple mode roles
-          href: roleLower && ['cashier', 'sales'].includes(roleLower) ? null : undefined,
+          // owner/admin/waiter/manager always see tables; other roles need pageAccess.tables
+          href: (() => {
+            if (!roleLower) return undefined;
+            if (['owner', 'admin', 'waiter', 'manager'].includes(roleLower)) return undefined;
+            // For cashier, sales, employee, and custom roles — check pageAccess
+            if (pageAccess) {
+              const val = pageAccess.tables;
+              if (val === true) return undefined;
+              if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return undefined;
+            }
+            return null;
+          })(),
         }}
       />
 
@@ -148,7 +160,19 @@ function TabsNavigator() {
               color={color}
             />
           ),
-          href: businessType === 'bar' ? null : undefined,
+          href: (() => {
+            if (businessType === 'bar') return null;
+            // owner/admin/waiter/manager/cashier always see menu tab
+            if (!roleLower) return undefined;
+            if (['owner', 'admin', 'waiter', 'manager', 'cashier'].includes(roleLower)) return undefined;
+            // Other roles need pageAccess.menu
+            if (pageAccess) {
+              const val = pageAccess.menu;
+              if (val === true) return undefined;
+              if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return undefined;
+            }
+            return null;
+          })(),
         }}
       />
 

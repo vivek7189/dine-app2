@@ -50,6 +50,7 @@ export default function AppDrawer({
       icon: 'grid-outline',
       route: '/(tabs)/tables',
       restrictedRoles: ['cashier', 'sales'],
+      feature: 'tables',
     },
     {
       title: 'Menu',
@@ -69,6 +70,7 @@ export default function AppDrawer({
       icon: 'construct-outline',
       route: '/(tabs)/menu-management',
       requiresRole: ['owner', 'admin', 'manager'],
+      feature: 'menu',
     },
     {
       title: 'Settings',
@@ -105,10 +107,42 @@ export default function AppDrawer({
   };
 
   const shouldShowItem = (item) => {
-    if (user?.role && item.restrictedRoles?.includes(user.role.toLowerCase())) return false;
-    if (!item.requiresRole) return true;
-    if (!user?.role) return false;
-    return item.requiresRole.includes(user.role.toLowerCase());
+    const role = user?.role?.toLowerCase();
+    // owner/admin bypass all checks
+    if (role === 'owner' || role === 'admin') return true;
+
+    // If the item has a feature key, use pageAccess as the authority for non-bypass roles
+    if (item.feature && user?.pageAccess) {
+      // For roles explicitly listed in restrictedRoles, check pageAccess override
+      if (role && item.restrictedRoles?.includes(role)) {
+        const val = user.pageAccess[item.feature];
+        if (val === true) return true;
+        if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return true;
+        return false;
+      }
+      // For requiresRole items, check listed roles first, then pageAccess
+      if (item.requiresRole) {
+        if (role && item.requiresRole.includes(role)) return true;
+        const val = user.pageAccess[item.feature];
+        if (val === true) return true;
+        if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return true;
+        return false;
+      }
+      // For items with feature but no role restrictions, check pageAccess
+      const val = user.pageAccess[item.feature];
+      if (val === true) return true;
+      if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return true;
+      return false;
+    }
+
+    // No feature key — use restrictedRoles/requiresRole as before
+    if (role && item.restrictedRoles?.includes(role)) return false;
+    if (item.requiresRole) {
+      if (!role) return false;
+      return item.requiresRole.includes(role);
+    }
+
+    return true;
   };
 
   const initials = (user?.name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();

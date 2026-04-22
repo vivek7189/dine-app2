@@ -191,6 +191,11 @@ class ApiClient {
     }
   }
 
+  // Delete user account (Apple Guideline 5.1.1v)
+  async deleteAccount() {
+    return this.request('/api/user/delete-account', { method: 'POST' });
+  }
+
   // Check if user is authenticated
   async isAuthenticated() {
     const token = await this.getToken();
@@ -487,6 +492,15 @@ class ApiClient {
     await seed('offers', () => this.request(`/api/offers/${restaurantId}`), (data) => {
       const offers = data.offers || data || [];
       offlineStore.saveOffers(restaurantId, Array.isArray(offers) ? offers : []);
+    });
+
+    // Offer settings (offerSettings + loyaltySettings for offline use)
+    await seed('offer_settings', () => this.request(`/api/public/customer-app-settings/${restaurantId}`), (data) => {
+      const s = data.settings || data || {};
+      offlineStore.saveOfferSettings(restaurantId, {
+        offerSettings: s.offerSettings || null,
+        loyaltySettings: s.loyaltySettings || null,
+      });
     });
 
     // Inventory

@@ -183,12 +183,13 @@ export default function MenuScreen() {
   );
 
   // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
+  // Backend endpoints use KV cache (3-min TTL) so these calls are cheap — no client throttle needed
   useFocusEffect(
     useCallback(() => {
       const refreshTaxSettings = async () => {
         if (!restaurantId) return;
 
-        // First, load from cache for instant update
+        // Always load from local cache for instant update
         try {
           const cached = await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`);
           if (cached) {
@@ -205,7 +206,7 @@ export default function MenuScreen() {
           console.log('Cache read error:', e);
         }
 
-        // Then fetch from API in background
+        // Fetch from API in background (backend KV-cached, so this is cheap)
         try {
           const response = await apiClient.getTaxSettings(restaurantId);
           if (response.taxSettings) {
@@ -413,6 +414,12 @@ export default function MenuScreen() {
         }
 
         // No pending add-items — normal focus behavior: clear stale table selection
+        // Skip if fresh params were just applied (user selected a new table from Tables tab)
+        if (freshParamsRef.current) {
+          freshParamsRef.current = false;
+          hasBlurredRef.current = false;
+          return;
+        }
         if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
           setSelectedTable(null);
           setIsFromTablesPage(false);
@@ -805,6 +812,8 @@ export default function MenuScreen() {
         return [...prev, {
           id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
           quantity: 1, menuItemId: item.id,
+          category: item.category || item.categoryId || null,
+          categoryId: item.categoryId || item.category || null,
           spiritCategory: item.spiritCategory || null, abv: item.abv || null,
           servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
           unit: item.unit || null, weight: item.weight || null,
@@ -823,6 +832,8 @@ export default function MenuScreen() {
       return [...prev, {
         id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
         quantity: 1, menuItemId: item.id,
+        category: item.category || item.categoryId || null,
+        categoryId: item.categoryId || item.category || null,
         spiritCategory: item.spiritCategory || null, abv: item.abv || null,
         servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
         unit: item.unit || null, weight: item.weight || null,

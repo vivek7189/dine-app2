@@ -373,7 +373,7 @@ export default function CartModal({
       return {
         id,
         name: fi.name || match?.name || `Item ${id}`,
-        quantity: fi.quantity || 1,
+        quantity: fi.qty || fi.quantity || 1,
       };
     });
   }, [freeItems, cart]);
