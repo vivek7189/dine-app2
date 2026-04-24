@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 
 // Get API URL from environment or use deployed backend
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2.vercel.app';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-lake.vercel.app';
 
 // Frontend web URL for WebView embeds (mobile layout)
 export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
