@@ -30,6 +30,13 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   const [newTaxName, setNewTaxName] = useState('');
   const [newTaxRate, setNewTaxRate] = useState('');
 
+  // Tax Groups state
+  const [taxGroups, setTaxGroups] = useState([]);
+  const [showAddGroupModal, setShowAddGroupModal] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupTaxes, setNewGroupTaxes] = useState([{ name: '', rate: '' }]);
+
   // Discount settings state
   const [discountsEnabled, setDiscountsEnabled] = useState(false);
   const [allowManualDiscount, setAllowManualDiscount] = useState(false);
@@ -71,6 +78,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         const cachedSettings = JSON.parse(cached);
         setTaxEnabled(cachedSettings.enabled || false);
         setTaxes(cachedSettings.taxes || []);
+        setTaxGroups(cachedSettings.taxGroups || []);
         applyDiscountSettings(cachedSettings.discountSettings);
         setLoading(false);
       }
@@ -92,6 +100,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         const settings = response.taxSettings;
         setTaxEnabled(settings.enabled || false);
         setTaxes(settings.taxes || []);
+        setTaxGroups(settings.taxGroups || []);
         applyDiscountSettings(settings.discountSettings);
 
         // Cache the settings
@@ -122,6 +131,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         enabled,
         taxes: taxList,
         defaultTaxRate: taxList.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
+        taxGroups: taxGroups,
         discountSettings: discountOverride || getDiscountSettings(),
       };
 
@@ -244,6 +254,133 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         : (maxFlatDiscount ? Number(maxFlatDiscount) : null),
     };
     saveTaxSettings(taxEnabled, taxes, ds);
+  };
+
+  // Tax Group handlers
+  const handleAddGroup = () => {
+    setEditingGroup(null);
+    setNewGroupName('');
+    setNewGroupTaxes([{ name: '', rate: '' }]);
+    setShowAddGroupModal(true);
+  };
+
+  const handleEditGroup = (group) => {
+    setEditingGroup(group);
+    setNewGroupName(group.name);
+    setNewGroupTaxes(group.taxes.map(t => ({ name: t.name, rate: String(t.rate) })));
+    setShowAddGroupModal(true);
+  };
+
+  const handleSaveGroup = async () => {
+    if (!newGroupName.trim()) {
+      Alert.alert('Error', 'Please enter a group name');
+      return;
+    }
+    const validTaxes = newGroupTaxes.filter(t => t.name.trim() && t.rate);
+    if (validTaxes.length === 0) {
+      Alert.alert('Error', 'Add at least one tax entry');
+      return;
+    }
+    for (const t of validTaxes) {
+      const rate = parseFloat(t.rate);
+      if (isNaN(rate) || rate < 0 || rate > 100) {
+        Alert.alert('Error', `Invalid rate for "${t.name}"`);
+        return;
+      }
+    }
+
+    const groupData = {
+      id: editingGroup?.id || `tg_${Date.now()}`,
+      name: newGroupName.trim(),
+      taxes: validTaxes.map(t => ({ id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: t.name.trim(), rate: parseFloat(t.rate), type: 'percentage' })),
+    };
+
+    let updatedGroups;
+    if (editingGroup) {
+      updatedGroups = taxGroups.map(g => g.id === editingGroup.id ? groupData : g);
+    } else {
+      updatedGroups = [...taxGroups, groupData];
+    }
+
+    setTaxGroups(updatedGroups);
+    setShowAddGroupModal(false);
+    // Save with updated groups
+    setSaving(true);
+    try {
+      const settings = {
+        enabled: taxEnabled,
+        taxes,
+        defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
+        taxGroups: updatedGroups,
+        discountSettings: getDiscountSettings(),
+      };
+      await apiClient.updateTaxSettings(restaurantId, settings);
+      await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
+      if (onTaxSettingsChange) onTaxSettingsChange(settings);
+      Alert.alert('Success', editingGroup ? 'Tax group updated' : 'Tax group added');
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteGroup = (groupId) => {
+    Alert.alert('Delete Tax Group', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          const updatedGroups = taxGroups.filter(g => g.id !== groupId);
+          setTaxGroups(updatedGroups);
+          setSaving(true);
+          try {
+            const settings = {
+              enabled: taxEnabled,
+              taxes,
+              defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
+              taxGroups: updatedGroups,
+              discountSettings: getDiscountSettings(),
+            };
+            await apiClient.updateTaxSettings(restaurantId, settings);
+            await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
+            if (onTaxSettingsChange) onTaxSettingsChange(settings);
+          } catch (error) {
+            Alert.alert('Error', error.message || 'Failed to delete');
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleAddTaxExemptGroup = async () => {
+    if (taxGroups.some(g => g.name === 'Tax Exempt')) {
+      Alert.alert('Already Exists', 'Tax Exempt group already exists');
+      return;
+    }
+    const exemptGroup = { id: `tg_exempt_${Date.now()}`, name: 'Tax Exempt', taxes: [] };
+    const updatedGroups = [...taxGroups, exemptGroup];
+    setTaxGroups(updatedGroups);
+    setSaving(true);
+    try {
+      const settings = {
+        enabled: taxEnabled,
+        taxes,
+        defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
+        taxGroups: updatedGroups,
+        discountSettings: getDiscountSettings(),
+      };
+      await apiClient.updateTaxSettings(restaurantId, settings);
+      await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
+      if (onTaxSettingsChange) onTaxSettingsChange(settings);
+      Alert.alert('Success', 'Tax Exempt group added');
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleToggleDiscounts = (value) => {
@@ -383,6 +520,71 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         </View>
       )}
 
+      {/* Tax Groups Section */}
+      {taxEnabled && (
+        <View style={styles.taxListSection}>
+          <View style={styles.taxListHeader}>
+            <Text style={styles.taxListTitle}>Tax Groups</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.addButton, { backgroundColor: '#dc2626' }]}
+                onPress={handleAddTaxExemptGroup}
+              >
+                <Ionicons name="ban-outline" size={16} color="#fff" />
+                <Text style={styles.addButtonText}>Tax Exempt</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.addButton} onPress={handleAddGroup}>
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.addButtonText}>Add Group</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <Text style={{ fontSize: 12, color: '#6b7280', paddingHorizontal: Spacing.md, marginBottom: 8 }}>
+            Create tax groups for different item categories (e.g., "Liquor VAT" at 20%). Assign them to categories on Menu page.
+          </Text>
+
+          {taxGroups.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No tax groups yet</Text>
+              <Text style={styles.emptyHint}>Use default taxes for all items, or create groups for different tax rules</Text>
+            </View>
+          ) : (
+            <ScrollView style={styles.taxList} showsVerticalScrollIndicator={false}>
+              {taxGroups.map((group) => (
+                <View key={group.id} style={[styles.taxItem, { flexDirection: 'column', alignItems: 'flex-start', paddingVertical: 10 }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Ionicons name="layers-outline" size={18} color={group.taxes.length === 0 ? '#dc2626' : '#7c3aed'} />
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textDark }}>{group.name}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 4 }}>
+                      <TouchableOpacity style={styles.editButton} onPress={() => handleEditGroup(group)}>
+                        <Ionicons name="create-outline" size={18} color={Colors.info} />
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteGroup(group.id)}>
+                        <Ionicons name="trash-outline" size={18} color={Colors.error} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {group.taxes.length > 0 ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, paddingLeft: 26 }}>
+                      {group.taxes.map((tax, idx) => (
+                        <View key={idx} style={{ backgroundColor: '#f3e8ff', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                          <Text style={{ fontSize: 11, color: '#7c3aed' }}>{tax.name} {tax.rate}%</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, paddingLeft: 26 }}>No tax applied</Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
+
       {/* Discount Settings Section */}
       <View style={styles.discountSection}>
         <View style={styles.discountHeader}>
@@ -488,6 +690,85 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
           </View>
         )}
       </View>
+
+      {/* Add/Edit Tax Group Modal */}
+      <Modal
+        visible={showAddGroupModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddGroupModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, modalWidth(420)]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{editingGroup ? 'Edit Tax Group' : 'Add Tax Group'}</Text>
+              <TouchableOpacity onPress={() => setShowAddGroupModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.textDark} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Group Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Liquor VAT, Food GST"
+                  placeholderTextColor="#9ca3af"
+                  value={newGroupName}
+                  onChangeText={setNewGroupName}
+                />
+              </View>
+              <Text style={[styles.inputLabel, { marginTop: 12 }]}>Tax Entries</Text>
+              {newGroupTaxes.map((entry, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                  <TextInput
+                    style={[styles.input, { flex: 2 }]}
+                    placeholder="Tax name"
+                    placeholderTextColor="#9ca3af"
+                    value={entry.name}
+                    onChangeText={(val) => {
+                      const updated = [...newGroupTaxes];
+                      updated[idx].name = val;
+                      setNewGroupTaxes(updated);
+                    }}
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="Rate %"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="decimal-pad"
+                    value={entry.rate}
+                    onChangeText={(val) => {
+                      const updated = [...newGroupTaxes];
+                      updated[idx].rate = val;
+                      setNewGroupTaxes(updated);
+                    }}
+                  />
+                  {newGroupTaxes.length > 1 && (
+                    <TouchableOpacity onPress={() => setNewGroupTaxes(newGroupTaxes.filter((_, i) => i !== idx))}>
+                      <Ionicons name="close-circle" size={22} color="#dc2626" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10 }}
+                onPress={() => setNewGroupTaxes([...newGroupTaxes, { name: '', rate: '' }])}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={Colors.primary} />
+                <Text style={{ color: Colors.primary, fontSize: 13 }}>Add Tax Entry</Text>
+              </TouchableOpacity>
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.cancelButton} onPress={() => setShowAddGroupModal(false)}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveButton} onPress={handleSaveGroup}>
+                <Text style={styles.saveButtonText}>{editingGroup ? 'Update' : 'Add'} Group</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add/Edit Tax Modal */}
       <Modal

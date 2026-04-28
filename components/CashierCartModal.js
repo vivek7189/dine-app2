@@ -43,6 +43,7 @@ export default function CashierCartModal({
   restaurantName,
   sending,
   taxSettings = { enabled: false, rate: 0, taxes: [] },
+  categories = [],
   restaurantId,
   countryCode = 'IN',
   onOrderTypeChange,
@@ -328,6 +329,8 @@ export default function CashierCartModal({
     taxSettings,
     billingSettings,
     tipAmount,
+    cart,
+    categories,
   });
 
   const freeItemsForDisplay = useMemo(() => {

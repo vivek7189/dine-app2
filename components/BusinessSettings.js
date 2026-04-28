@@ -16,7 +16,35 @@ import { Colors, Spacing, BorderRadius } from '../constants/Theme';
 
 const BUSINESS_STORAGE_KEY = 'dine_business_settings';
 
-export default function BusinessSettings({ restaurantId, onBusinessSettingsChange }) {
+const COUNTRY_FIELDS = {
+  IN: [
+    { key: 'gstin', label: 'GSTIN (GST Number)', placeholder: 'e.g., 29ABCDE1234F1Z5', maxLength: 15, autoCapitalize: 'characters' },
+    { key: 'fssai', label: 'FSSAI License Number', placeholder: 'e.g., 12345678901234', maxLength: 14, keyboardType: 'numeric' },
+  ],
+  GB: [{ key: 'vatNumber', label: 'VAT Number', placeholder: 'e.g., GB123456789', maxLength: 14, autoCapitalize: 'characters' }],
+  DE: [{ key: 'vatNumber', label: 'USt-IdNr (VAT)', placeholder: 'e.g., DE123456789', maxLength: 14, autoCapitalize: 'characters' }],
+  FR: [{ key: 'vatNumber', label: 'TVA Number', placeholder: 'e.g., FR12345678901', maxLength: 15, autoCapitalize: 'characters' }],
+  AE: [{ key: 'vatNumber', label: 'TRN (Tax Registration)', placeholder: 'e.g., 100123456700003', maxLength: 15, keyboardType: 'numeric' }],
+  SA: [{ key: 'vatNumber', label: 'TRN (Tax Registration)', placeholder: 'e.g., 300012345600003', maxLength: 15, keyboardType: 'numeric' }],
+  CA: [{ key: 'vatNumber', label: 'GST/HST Number', placeholder: 'e.g., 123456789RT0001', maxLength: 15, autoCapitalize: 'characters' }],
+  AU: [
+    { key: 'taxId', label: 'ABN', placeholder: 'e.g., 51 824 753 556', maxLength: 14 },
+    { key: 'vatNumber', label: 'GST Registration', placeholder: 'GST registration number', maxLength: 15 },
+  ],
+  US: [{ key: 'taxId', label: 'EIN / Tax ID', placeholder: 'e.g., 12-3456789', maxLength: 10 }],
+  SG: [
+    { key: 'vatNumber', label: 'GST Registration No.', placeholder: 'e.g., M12345678X', maxLength: 10, autoCapitalize: 'characters' },
+    { key: 'businessRegistrationNumber', label: 'UEN', placeholder: 'e.g., 200012345K', maxLength: 10, autoCapitalize: 'characters' },
+  ],
+  MY: [{ key: 'vatNumber', label: 'SST Registration No.', placeholder: 'e.g., W10-1234-56789012', maxLength: 20, autoCapitalize: 'characters' }],
+};
+const DEFAULT_FIELDS = [
+  { key: 'vatNumber', label: 'VAT / Tax Number', placeholder: 'Enter tax registration number', maxLength: 20, autoCapitalize: 'characters' },
+  { key: 'taxId', label: 'Tax ID', placeholder: 'Enter tax ID', maxLength: 20 },
+  { key: 'businessRegistrationNumber', label: 'Business Registration No.', placeholder: 'Enter registration number', maxLength: 20 },
+];
+
+export default function BusinessSettings({ restaurantId, countryCode: propCountryCode, onBusinessSettingsChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -24,6 +52,14 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
   const [gstin, setGstin] = useState('');
   const [gstinError, setGstinError] = useState('');
   const [showGstOnInvoice, setShowGstOnInvoice] = useState(false);
+  const [fssai, setFssai] = useState('');
+  const [fssaiError, setFssaiError] = useState('');
+  const [showFssaiOnInvoice, setShowFssaiOnInvoice] = useState(false);
+  const [vatNumber, setVatNumber] = useState('');
+  const [taxId, setTaxId] = useState('');
+  const [businessRegistrationNumber, setBusinessRegistrationNumber] = useState('');
+  const [showTaxIdOnInvoice, setShowTaxIdOnInvoice] = useState(false);
+  const [countryCode, setCountryCode] = useState(propCountryCode || 'IN');
 
   useEffect(() => {
     loadBusinessSettings();
@@ -39,7 +75,13 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
         const cachedSettings = JSON.parse(cached);
         setLegalBusinessName(cachedSettings.legalBusinessName || '');
         setGstin(cachedSettings.gstin || '');
-        setShowGstOnInvoice(cachedSettings.showGstOnInvoice === true); // Default false
+        setShowGstOnInvoice(cachedSettings.showGstOnInvoice === true);
+        setFssai(cachedSettings.fssai || '');
+        setShowFssaiOnInvoice(cachedSettings.showFssaiOnInvoice === true);
+        setVatNumber(cachedSettings.vatNumber || '');
+        setTaxId(cachedSettings.taxId || '');
+        setBusinessRegistrationNumber(cachedSettings.businessRegistrationNumber || '');
+        setShowTaxIdOnInvoice(cachedSettings.showTaxIdOnInvoice === true);
         setLoading(false);
       }
 
@@ -60,25 +102,35 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
         const settings = response.businessSettings;
         setLegalBusinessName(settings.legalBusinessName || '');
         setGstin(settings.gstin || '');
-        setShowGstOnInvoice(settings.showGstOnInvoice === true); // Default false
+        setShowGstOnInvoice(settings.showGstOnInvoice === true);
+        setFssai(settings.fssai || '');
+        setShowFssaiOnInvoice(settings.showFssaiOnInvoice === true);
+        setVatNumber(settings.vatNumber || '');
+        setTaxId(settings.taxId || '');
+        setBusinessRegistrationNumber(settings.businessRegistrationNumber || '');
+        setShowTaxIdOnInvoice(settings.showTaxIdOnInvoice === true);
+
+        const allSettings = {
+          legalBusinessName: settings.legalBusinessName || '',
+          gstin: settings.gstin || '',
+          showGstOnInvoice: settings.showGstOnInvoice === true,
+          fssai: settings.fssai || '',
+          showFssaiOnInvoice: settings.showFssaiOnInvoice === true,
+          vatNumber: settings.vatNumber || '',
+          taxId: settings.taxId || '',
+          businessRegistrationNumber: settings.businessRegistrationNumber || '',
+          showTaxIdOnInvoice: settings.showTaxIdOnInvoice === true,
+        };
 
         // Cache the settings
         await AsyncStorage.setItem(
           `${BUSINESS_STORAGE_KEY}_${restaurantId}`,
-          JSON.stringify({
-            legalBusinessName: settings.legalBusinessName || '',
-            gstin: settings.gstin || '',
-            showGstOnInvoice: settings.showGstOnInvoice === true,
-          })
+          JSON.stringify(allSettings)
         );
 
         // Notify parent of settings
         if (onBusinessSettingsChange) {
-          onBusinessSettingsChange({
-            legalBusinessName: settings.legalBusinessName || '',
-            gstin: settings.gstin || '',
-            showGstOnInvoice: settings.showGstOnInvoice === true,
-          });
+          onBusinessSettingsChange(allSettings);
         }
       }
     } catch (error) {
@@ -108,16 +160,39 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
     return true;
   };
 
+  // Validate FSSAI format (14-digit number)
+  const validateFssai = (value) => {
+    if (!value || value.trim() === '') {
+      setFssaiError('');
+      return true;
+    }
+    if (!/^\d{14}$/.test(value.trim())) {
+      setFssaiError('FSSAI must be a 14-digit number');
+      return false;
+    }
+    setFssaiError('');
+    return true;
+  };
+
+  const buildUpdateData = (overrides = {}) => ({
+    legalBusinessName: legalBusinessName.trim(),
+    gstin: gstin.trim().toUpperCase(),
+    showGstOnInvoice,
+    fssai: fssai.trim(),
+    showFssaiOnInvoice,
+    vatNumber: vatNumber.trim(),
+    taxId: taxId.trim(),
+    businessRegistrationNumber: businessRegistrationNumber.trim(),
+    showTaxIdOnInvoice,
+    ...overrides,
+  });
+
   // Handle toggle save immediately (without entering edit mode)
-  const handleToggleSave = async (value) => {
+  const handleToggleSave = async (field, value) => {
     if (!restaurantId) return;
 
     try {
-      const updateData = {
-        legalBusinessName: legalBusinessName.trim(),
-        gstin: gstin.trim().toUpperCase(),
-        showGstOnInvoice: value,
-      };
+      const updateData = buildUpdateData({ [field]: value });
 
       await apiClient.updateBusinessSettings(restaurantId, updateData);
 
@@ -130,7 +205,7 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
       // Also update the user data in storage to reflect changes
       const userData = await apiClient.getUser();
       if (userData && userData.restaurant) {
-        userData.restaurant.showGstOnInvoice = value;
+        userData.restaurant[field] = value;
         await apiClient.setUser(userData);
       }
 
@@ -141,7 +216,9 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
     } catch (error) {
       console.error('Error saving toggle setting:', error);
       // Revert the toggle on error
-      setShowGstOnInvoice(!value);
+      if (field === 'showGstOnInvoice') setShowGstOnInvoice(!value);
+      else if (field === 'showFssaiOnInvoice') setShowFssaiOnInvoice(!value);
+      else if (field === 'showTaxIdOnInvoice') setShowTaxIdOnInvoice(!value);
       Alert.alert('Error', 'Failed to save setting');
     }
   };
@@ -149,18 +226,14 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
   const handleSave = async () => {
     if (!restaurantId) return;
 
-    // Validate GSTIN before saving
-    if (!validateGstin(gstin)) {
+    // Validate fields before saving
+    if (!validateGstin(gstin) || !validateFssai(fssai)) {
       return;
     }
 
     setSaving(true);
     try {
-      const updateData = {
-        legalBusinessName: legalBusinessName.trim(),
-        gstin: gstin.trim().toUpperCase(),
-        showGstOnInvoice: showGstOnInvoice,
-      };
+      const updateData = buildUpdateData();
 
       await apiClient.updateBusinessSettings(restaurantId, updateData);
 
@@ -173,9 +246,7 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
       // Also update the user data in storage to reflect changes
       const userData = await apiClient.getUser();
       if (userData && userData.restaurant) {
-        userData.restaurant.legalBusinessName = updateData.legalBusinessName;
-        userData.restaurant.gstin = updateData.gstin;
-        userData.restaurant.showGstOnInvoice = updateData.showGstOnInvoice;
+        Object.assign(userData.restaurant, updateData);
         await apiClient.setUser(userData);
       }
 
@@ -199,6 +270,7 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
     loadBusinessSettings();
     setIsEditing(false);
     setGstinError('');
+    setFssaiError('');
   };
 
   if (loading) {
@@ -224,7 +296,7 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
       {/* Info Text */}
       <View style={styles.infoSection}>
         <Text style={styles.infoText}>
-          These details will appear on your GST-compliant invoices. Required for businesses registered under GST.
+          These details will appear on your invoices. Add your tax registration and food license numbers for compliance.
         </Text>
       </View>
 
@@ -251,60 +323,108 @@ export default function BusinessSettings({ restaurantId, onBusinessSettingsChang
           )}
         </View>
 
-        {/* GSTIN */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>GSTIN (GST Number)</Text>
-          {isEditing ? (
-            <>
-              <TextInput
-                style={[styles.input, gstinError && styles.inputError]}
-                placeholder="e.g., 29ABCDE1234F1Z5"
-                placeholderTextColor="#9ca3af"
-                value={gstin}
-                onChangeText={(text) => {
-                  setGstin(text.toUpperCase());
-                  if (gstinError) validateGstin(text);
-                }}
-                onBlur={() => validateGstin(gstin)}
-                autoCapitalize="characters"
-                maxLength={15}
-                editable={!saving}
-              />
-              {gstinError ? (
-                <Text style={styles.errorText}>{gstinError}</Text>
-              ) : (
-                <Text style={styles.hintText}>15-character GST Identification Number</Text>
-              )}
-            </>
-          ) : (
-            <View style={styles.valueContainer}>
-              <Text style={styles.valueText}>
-                {gstin || 'Not set'}
-              </Text>
-            </View>
-          )}
-        </View>
+        {/* Country-specific fields */}
+        {(COUNTRY_FIELDS[countryCode] || DEFAULT_FIELDS).map((field) => {
+          const stateMap = { gstin, fssai, vatNumber, taxId, businessRegistrationNumber };
+          const setterMap = {
+            gstin: (v) => { setGstin(v.toUpperCase()); if (gstinError) validateGstin(v); },
+            fssai: (v) => { setFssai(v); if (fssaiError) validateFssai(v); },
+            vatNumber: setVatNumber,
+            taxId: setTaxId,
+            businessRegistrationNumber: setBusinessRegistrationNumber,
+          };
+          const errorMap = { gstin: gstinError, fssai: fssaiError };
+          const blurMap = { gstin: () => validateGstin(gstin), fssai: () => validateFssai(fssai) };
+          const value = stateMap[field.key] || '';
+          const error = errorMap[field.key] || '';
 
-        {/* Show GST on Invoice Toggle */}
-        <View style={styles.toggleGroup}>
-          <View style={styles.toggleInfo}>
-            <Text style={styles.inputLabel}>Show GST Info on Invoice</Text>
-            <Text style={styles.hintText}>
-              Display legal business name and GSTIN on invoices and shared PDFs
-            </Text>
+          return (
+            <View style={styles.inputGroup} key={field.key}>
+              <Text style={styles.inputLabel}>{field.label}</Text>
+              {isEditing ? (
+                <>
+                  <TextInput
+                    style={[styles.input, error ? styles.inputError : null]}
+                    placeholder={field.placeholder}
+                    placeholderTextColor="#9ca3af"
+                    value={value}
+                    onChangeText={setterMap[field.key]}
+                    onBlur={blurMap[field.key]}
+                    autoCapitalize={field.autoCapitalize || 'none'}
+                    keyboardType={field.keyboardType || 'default'}
+                    maxLength={field.maxLength || 20}
+                    editable={!saving}
+                  />
+                  {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                </>
+              ) : (
+                <View style={styles.valueContainer}>
+                  <Text style={styles.valueText}>{value || 'Not set'}</Text>
+                </View>
+              )}
+            </View>
+          );
+        })}
+
+        {/* Show GST on Invoice Toggle (India) */}
+        {countryCode === 'IN' && (
+          <View style={styles.toggleGroup}>
+            <View style={styles.toggleInfo}>
+              <Text style={styles.inputLabel}>Show GST Info on Invoice</Text>
+              <Text style={styles.hintText}>Display GSTIN on invoices</Text>
+            </View>
+            <Switch
+              value={showGstOnInvoice}
+              onValueChange={(value) => {
+                setShowGstOnInvoice(value);
+                handleToggleSave('showGstOnInvoice', value);
+              }}
+              trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
+              thumbColor={showGstOnInvoice ? Colors.primary : '#f4f3f4'}
+              disabled={saving}
+            />
           </View>
-          <Switch
-            value={showGstOnInvoice}
-            onValueChange={(value) => {
-              setShowGstOnInvoice(value);
-              // Auto-save toggle changes immediately
-              handleToggleSave(value);
-            }}
-            trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
-            thumbColor={showGstOnInvoice ? Colors.primary : '#f4f3f4'}
-            disabled={saving}
-          />
-        </View>
+        )}
+
+        {/* Show FSSAI on Invoice Toggle (India) */}
+        {countryCode === 'IN' && (
+          <View style={styles.toggleGroup}>
+            <View style={styles.toggleInfo}>
+              <Text style={styles.inputLabel}>Show FSSAI on Invoice</Text>
+              <Text style={styles.hintText}>Display FSSAI license on invoices</Text>
+            </View>
+            <Switch
+              value={showFssaiOnInvoice}
+              onValueChange={(value) => {
+                setShowFssaiOnInvoice(value);
+                handleToggleSave('showFssaiOnInvoice', value);
+              }}
+              trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
+              thumbColor={showFssaiOnInvoice ? Colors.primary : '#f4f3f4'}
+              disabled={saving}
+            />
+          </View>
+        )}
+
+        {/* Show Tax Info on Invoice Toggle (non-India or if has VAT/taxId) */}
+        {(countryCode !== 'IN' || vatNumber || taxId || businessRegistrationNumber) && (
+          <View style={styles.toggleGroup}>
+            <View style={styles.toggleInfo}>
+              <Text style={styles.inputLabel}>Show Tax Info on Invoice</Text>
+              <Text style={styles.hintText}>Display tax registration details on invoices</Text>
+            </View>
+            <Switch
+              value={showTaxIdOnInvoice}
+              onValueChange={(value) => {
+                setShowTaxIdOnInvoice(value);
+                handleToggleSave('showTaxIdOnInvoice', value);
+              }}
+              trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
+              thumbColor={showTaxIdOnInvoice ? Colors.primary : '#f4f3f4'}
+              disabled={saving}
+            />
+          </View>
+        )}
       </View>
 
       {/* Action Buttons */}

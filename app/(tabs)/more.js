@@ -134,6 +134,7 @@ export default function MoreScreen() {
         { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory' },
         { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
+        { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null },
       ],
     },
     {
@@ -412,7 +413,7 @@ export default function MoreScreen() {
             </TouchableOpacity>
             {businessInfoExpanded && (
               <View style={{ marginTop: 10 }}>
-                <BusinessSettings restaurantId={getRestaurantId()} />
+                <BusinessSettings restaurantId={getRestaurantId()} countryCode={restaurant?.currencySettings?.countryCode || 'IN'} />
               </View>
             )}
           </View>

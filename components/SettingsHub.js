@@ -134,6 +134,7 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
           <ScrollView contentContainerStyle={styles.scrollPadding}>
             <BusinessSettings
               restaurantId={restaurantId}
+              countryCode={restaurant?.currencySettings?.countryCode || 'IN'}
               onBusinessSettingsChange={(settings) => {
                 if (onRestaurantChange) onRestaurantChange(settings);
               }}

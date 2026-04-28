@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.11.0",
+    "version": "2.11.1",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -26,19 +26,27 @@
         "NSCameraUsageDescription": "DineOpen uses your camera to scan QR codes for table orders, capture menu item photos, and scan supplier invoices for inventory management.",
         "NSPhotoLibraryUsageDescription": "DineOpen accesses your photo library to upload menu item images, restaurant logos, and supplier invoice photos for inventory tracking.",
         "NSMicrophoneUsageDescription": "DineOpen uses the microphone for voice-based order taking, allowing staff to speak orders instead of typing them.",
-        "NSSpeechRecognitionUsageDescription": "DineOpen uses speech recognition to convert spoken orders into text for faster order entry."
+        "NSSpeechRecognitionUsageDescription": "DineOpen uses speech recognition to convert spoken orders into text for faster order entry.",
+        "NSLocationWhenInUseUsageDescription": "DineOpen uses your location to verify attendance clock-in/out at your workplace.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "DineOpen tracks your location during active deliveries so the restaurant owner can monitor delivery progress.",
+        "UIBackgroundModes": ["location"]
       }
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 56,
+      "versionCode": 57,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#DC4A3A"
       },
       "googleServicesFile": "./google-services.json",
       "permissions": [
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "plugins": [
@@ -47,7 +55,16 @@
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
       "expo-apple-authentication",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "DineOpen uses your location to verify attendance clock-in/out at your workplace.",
+          "locationAlwaysAndWhenInUsePermission": "DineOpen tracks your location during active deliveries so the restaurant owner can monitor delivery progress.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
     ],
     "scheme": "dineopen",
     "extra": {

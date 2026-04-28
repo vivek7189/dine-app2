@@ -57,17 +57,27 @@ export default function CashierInvoiceModal({
       return subline ? `${line}\n  (${subline})` : line;
     }).join('\n');
 
-    // Get business details from restaurantInfo (only if showGstOnInvoice is true)
+    // Get business details from restaurantInfo
     const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
     const legalName = showGstInfo ? invoiceData.restaurantInfo?.legalBusinessName : null;
     const gstin = showGstInfo ? invoiceData.restaurantInfo?.gstin : null;
     const businessAddress = invoiceData.restaurantInfo?.address;
+    const showFssai = invoiceData.restaurantInfo?.showFssaiOnInvoice === true;
+    const fssai = showFssai ? invoiceData.restaurantInfo?.fssai : null;
+    const showTaxId = invoiceData.restaurantInfo?.showTaxIdOnInvoice === true;
+    const vatNumber = showTaxId ? invoiceData.restaurantInfo?.vatNumber : null;
+    const taxId = showTaxId ? invoiceData.restaurantInfo?.taxId : null;
+    const bizRegNum = showTaxId ? invoiceData.restaurantInfo?.businessRegistrationNumber : null;
 
     const invoiceText = `
 ================================
         ${invoiceData.restaurantName}
 ${legalName ? `        ${legalName}` : ''}
-${gstin ? `GSTIN: ${gstin}` : ''}${businessAddress ? `
+${gstin ? `GSTIN: ${gstin}` : ''}${fssai ? `
+FSSAI: ${fssai}` : ''}${vatNumber ? `
+Tax ID: ${vatNumber}` : ''}${taxId ? `
+Tax ID: ${taxId}` : ''}${bizRegNum ? `
+Reg#: ${bizRegNum}` : ''}${businessAddress ? `
 ${businessAddress}` : ''}
 ================================
 Invoice #: ${invoiceData.orderNumber}
@@ -84,8 +94,11 @@ Offer (${ao.name}): -₹${(ao.discountApplied || 0).toFixed(2)}`).join('')
 Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : '')}${invoiceData.manualDiscount > 0 ? `
 Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
 Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
-Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
-${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : ''}${invoiceData.tipAmount > 0 ? `
+Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
+? invoiceData.taxBreakdown.map(tax => `
+${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '')).length))}₹${tax.amount.toFixed(2)}`).join('')
+: (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : '')}${invoiceData.tipAmount > 0 ? `
 Tip:             ₹${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
 Round-off:       ${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}` : ''}
 ================================
@@ -113,11 +126,17 @@ Thank you for your order!
       </tr>`;
     }).join('');
 
-    // Get business details from restaurantInfo (only if showGstOnInvoice is true)
+    // Get business details from restaurantInfo
     const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
     const legalName = showGstInfo ? invoiceData.restaurantInfo?.legalBusinessName : null;
     const gstin = showGstInfo ? invoiceData.restaurantInfo?.gstin : null;
     const businessAddress = invoiceData.restaurantInfo?.address;
+    const showFssaiH = invoiceData.restaurantInfo?.showFssaiOnInvoice === true;
+    const fssaiH = showFssaiH ? invoiceData.restaurantInfo?.fssai : null;
+    const showTaxIdH = invoiceData.restaurantInfo?.showTaxIdOnInvoice === true;
+    const vatNumberH = showTaxIdH ? invoiceData.restaurantInfo?.vatNumber : null;
+    const taxIdH = showTaxIdH ? invoiceData.restaurantInfo?.taxId : null;
+    const bizRegNumH = showTaxIdH ? invoiceData.restaurantInfo?.businessRegistrationNumber : null;
 
     return `
       <!DOCTYPE html>
@@ -230,6 +249,10 @@ Thank you for your order!
               <div class="restaurant-name">${invoiceData.restaurantName}</div>
               ${legalName ? `<div class="legal-name">${legalName}</div>` : ''}
               ${gstin ? `<div class="gstin">GSTIN: ${gstin}</div>` : ''}
+              ${fssaiH ? `<div class="gstin">FSSAI: ${fssaiH}</div>` : ''}
+              ${vatNumberH ? `<div class="gstin">Tax ID: ${vatNumberH}</div>` : ''}
+              ${taxIdH ? `<div class="gstin">Tax ID: ${taxIdH}</div>` : ''}
+              ${bizRegNumH ? `<div class="gstin">Reg#: ${bizRegNumH}</div>` : ''}
               ${businessAddress ? `<div class="business-address">${businessAddress}</div>` : ''}
               <div class="invoice-info">
                 Invoice #${invoiceData.orderNumber}<br>
@@ -286,12 +309,18 @@ Thank you for your order!
                 <span>₹${invoiceData.serviceChargeAmount.toFixed(2)}</span>
               </div>
               ` : ''}
-              ${invoiceData.taxEnabled && invoiceData.tax > 0 ? `
+              ${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
+                ? invoiceData.taxBreakdown.map(tax => `
+              <div class="total-row">
+                <span>${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}</span>
+                <span>₹${tax.amount.toFixed(2)}</span>
+              </div>`).join('')
+                : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
               <div class="total-row">
                 <span>${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</span>
                 <span>₹${invoiceData.tax.toFixed(2)}</span>
               </div>
-              ` : ''}
+              ` : '')}
               ${invoiceData.tipAmount > 0 ? `
               <div class="total-row" style="color: #d97706;">
                 <span>Tip</span>
@@ -474,6 +503,18 @@ Thank you for your order!
                 {invoiceData.restaurantInfo?.showGstOnInvoice === true && invoiceData.restaurantInfo?.gstin && (
                   <Text style={styles.gstinText}>GSTIN: {invoiceData.restaurantInfo.gstin}</Text>
                 )}
+                {invoiceData.restaurantInfo?.showFssaiOnInvoice === true && invoiceData.restaurantInfo?.fssai && (
+                  <Text style={styles.gstinText}>FSSAI: {invoiceData.restaurantInfo.fssai}</Text>
+                )}
+                {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.vatNumber && (
+                  <Text style={styles.gstinText}>Tax ID: {invoiceData.restaurantInfo.vatNumber}</Text>
+                )}
+                {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.taxId && (
+                  <Text style={styles.gstinText}>Tax ID: {invoiceData.restaurantInfo.taxId}</Text>
+                )}
+                {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.businessRegistrationNumber && (
+                  <Text style={styles.gstinText}>Reg#: {invoiceData.restaurantInfo.businessRegistrationNumber}</Text>
+                )}
                 {invoiceData.restaurantInfo?.address && (
                   <Text style={styles.businessAddress}>{invoiceData.restaurantInfo.address}</Text>
                 )}
@@ -551,12 +592,19 @@ Thank you for your order!
                     <Text style={[styles.totalValue, { color: '#7c3aed' }]}>₹{invoiceData.serviceChargeAmount.toFixed(2)}</Text>
                   </View>
                 )}
-                {invoiceData.taxEnabled && invoiceData.tax > 0 && (
+                {invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0 ? (
+                  invoiceData.taxBreakdown.map((tax, i) => (
+                    <View key={`tax-${i}`} style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}</Text>
+                      <Text style={styles.totalValue}>₹{tax.amount.toFixed(2)}</Text>
+                    </View>
+                  ))
+                ) : invoiceData.taxEnabled && invoiceData.tax > 0 ? (
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>{invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</Text>
                     <Text style={styles.totalValue}>₹{invoiceData.tax.toFixed(2)}</Text>
                   </View>
-                )}
+                ) : null}
                 {invoiceData.tipAmount > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>

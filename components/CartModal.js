@@ -50,6 +50,7 @@ export default function CartModal({
   activePricingRuleName,
   billingSettings = {},
   taxSettings = {},
+  categories = [],
   pricingRules = [],
   activePricingRuleId,
   setActivePricingRuleId,
@@ -65,6 +66,9 @@ export default function CartModal({
 }) {
   const { fs } = useResponsive();
   const { effectivelyOffline } = useOffline();
+
+  // Format amount: 2 decimals when round-off disabled, 0 decimals when enabled
+  const fmtAmt = (v) => billingSettings.roundOffEnabled ? Math.round(v).toString() : Number(v).toFixed(2);
 
   // Mode-based feature flags
   const isWaiterMode = mode === 'waiter';
@@ -341,6 +345,8 @@ export default function CartModal({
     taxSettings,
     billingSettings,
     tipAmount,
+    cart,
+    categories,
   });
 
   // Loyalty max redeemable
@@ -755,33 +761,33 @@ export default function CartModal({
                     <View>
                       <Text style={styles.compactTotalLabel}>TOTAL</Text>
                       {billing.totalDiscount > 0 && (
-                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{fmtAmt(billing.totalDiscount)}</Text>
                       )}
                     </View>
-                    <Text style={styles.compactTotalValue}>₹{billing.grandTotal.toFixed(0)}</Text>
+                    <Text style={styles.compactTotalValue}>₹{fmtAmt(billing.grandTotal)}</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breakdownChipsRow}>
                     <View style={styles.breakdownChip}>
-                      <Text style={styles.breakdownChipText}>Sub ₹{subtotal.toFixed(0)}</Text>
+                      <Text style={styles.breakdownChipText}>Sub ₹{fmtAmt(subtotal)}</Text>
                     </View>
                     {billing.totalDiscount > 0 && (
                       <View style={[styles.breakdownChip, styles.breakdownChipGreen]}>
-                        <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-₹{billing.totalDiscount.toFixed(0)}</Text>
+                        <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-₹{fmtAmt(billing.totalDiscount)}</Text>
                       </View>
                     )}
                     {billing.serviceChargeAmount > 0 && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>SC ₹{billing.serviceChargeAmount.toFixed(0)}</Text>
+                        <Text style={styles.breakdownChipText}>SC ₹{fmtAmt(billing.serviceChargeAmount)}</Text>
                       </View>
                     )}
                     {billing.totalTax > 0 && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>Tax ₹{billing.totalTax.toFixed(0)}</Text>
+                        <Text style={styles.breakdownChipText}>Tax ₹{fmtAmt(billing.totalTax)}</Text>
                       </View>
                     )}
                     {tipAmount > 0 && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>Tip ₹{tipAmount.toFixed(0)}</Text>
+                        <Text style={styles.breakdownChipText}>Tip ₹{fmtAmt(tipAmount)}</Text>
                       </View>
                     )}
                     {billing.roundOffAmount !== 0 && (
@@ -800,16 +806,16 @@ export default function CartModal({
                     <View>
                       <Text style={styles.totalCardTitle}>Total</Text>
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
-                        <Text style={styles.totalCardLabel}>Sub: ₹{subtotal.toFixed(0)}</Text>
-                        {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{billing.totalDiscount.toFixed(0)}</Text>}
-                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{billing.totalTax.toFixed(0)}</Text>}
-                        {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{tipAmount.toFixed(0)}</Text>}
+                        <Text style={styles.totalCardLabel}>Sub: ₹{fmtAmt(subtotal)}</Text>
+                        {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{fmtAmt(billing.totalDiscount)}</Text>}
+                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{fmtAmt(billing.totalTax)}</Text>}
+                        {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{fmtAmt(tipAmount)}</Text>}
                       </View>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.totalCardGrand}>₹{billing.grandTotal.toFixed(0)}</Text>
+                      <Text style={styles.totalCardGrand}>₹{fmtAmt(billing.grandTotal)}</Text>
                       {billing.totalDiscount > 0 && (
-                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{billing.totalDiscount.toFixed(0)}</Text>
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{fmtAmt(billing.totalDiscount)}</Text>
                       )}
                       {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && billing.loyaltyPointsToEarn > 0 && (
                         <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{billing.loyaltyPointsToEarn} pts</Text>
@@ -1002,7 +1008,7 @@ export default function CartModal({
                 </View>
                 <View>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Order Details</Text>
-                  <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · ₹{subtotal.toFixed(0)}</Text>
+                  <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · ₹{fmtAmt(subtotal)}</Text>
                 </View>
               </View>
               <TouchableOpacity onPress={() => setShowOffersModal(false)} style={styles.offersCloseBtn}>
@@ -1284,7 +1290,7 @@ export default function CartModal({
                   </View>
                   {manualDiscountAmount > 0 && (
                     <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '500' }}>
-                      Discount: -₹{manualDiscountAmount.toFixed(0)}
+                      Discount: -₹{fmtAmt(manualDiscountAmount)}
                     </Text>
                   )}
                 </View>
@@ -1314,36 +1320,36 @@ export default function CartModal({
               <View style={{ marginBottom: 10 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                   <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>₹{subtotal.toFixed(0)}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>₹{fmtAmt(subtotal)}</Text>
                 </View>
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Offers</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{offerDiscount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{fmtAmt(offerDiscount)}</Text>
                   </View>
                 )}
                 {manualDiscountAmount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Manual Discount</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{manualDiscountAmount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{fmtAmt(manualDiscountAmount)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#b45309' }}>Loyalty ({redeemPoints} pts)</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#b45309' }}>-₹{loyaltyDiscount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#b45309' }}>-₹{fmtAmt(loyaltyDiscount)}</Text>
                   </View>
                 )}
                 {billing.serviceChargeAmount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>{billingSettings.serviceChargeLabel || 'Service Charge'} ({billing.serviceChargeRate}%)</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{billing.serviceChargeAmount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{fmtAmt(billing.serviceChargeAmount)}</Text>
                   </View>
                 )}
                 {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%)</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{tax.amount.toFixed(0)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{fmtAmt(tax.amount)}</Text>
                   </View>
                 ))}
                 {billing.roundOffAmount !== 0 && (
@@ -1354,7 +1360,7 @@ export default function CartModal({
                 )}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4 }}>
                   <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>Total</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>₹{billing.grandTotal.toFixed(0)}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>₹{fmtAmt(billing.grandTotal)}</Text>
                 </View>
               </View>
               <TouchableOpacity
@@ -1363,7 +1369,7 @@ export default function CartModal({
                 activeOpacity={0.85}
               >
                 <Text style={styles.doneBtnText}>
-                  {billing.totalDiscount > 0 ? `Apply & Save ₹${billing.totalDiscount.toFixed(0)}` : 'Done'}
+                  {billing.totalDiscount > 0 ? `Apply & Save ₹${fmtAmt(billing.totalDiscount)}` : 'Done'}
                 </Text>
               </TouchableOpacity>
             </View>

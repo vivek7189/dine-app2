@@ -38,6 +38,7 @@ export default function WaiterCartModal({
   restaurantId,
   countryCode = 'IN',
   taxSettings = {},
+  categories = [],
   billingSettings = {},
   floors = [],
   onTableSelect,
@@ -203,6 +204,8 @@ export default function WaiterCartModal({
     taxSettings,
     billingSettings,
     tipAmount: 0,
+    cart,
+    categories,
   });
 
   const loyaltyPointsToEarn = useMemo(() => {

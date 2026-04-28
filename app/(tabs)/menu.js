@@ -98,6 +98,7 @@ export default function MenuScreen() {
   const [floors, setFloors] = useState([]);
   const [upiSettings, setUpiSettings] = useState({});
   const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [taxCategories, setTaxCategories] = useState([]); // Real categories from API (with taxGroupId) for tax resolution
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -200,7 +201,14 @@ export default function MenuScreen() {
               enabled: cachedSettings.enabled || false,
               rate: totalRate,
               taxes: cachedSettings.taxes || [],
+              taxGroups: cachedSettings.taxGroups || [],
             });
+            // Load real categories if tax groups exist
+            if (cachedSettings.taxGroups?.length > 0) {
+              apiClient.getCategories(restaurantId).then(res => {
+                setTaxCategories(res?.categories || []);
+              }).catch(() => {});
+            }
           }
         } catch (e) {
           console.log('Cache read error:', e);
@@ -218,7 +226,15 @@ export default function MenuScreen() {
               enabled: settings.enabled || false,
               rate: totalRate,
               taxes: settings.taxes || [],
+              taxGroups: settings.taxGroups || [],
             });
+
+            // Load real categories if tax groups exist
+            if (settings.taxGroups?.length > 0) {
+              apiClient.getCategories(restaurantId).then(res => {
+                setTaxCategories(res?.categories || []);
+              }).catch(() => {});
+            }
 
             // Update cache
             await AsyncStorage.setItem(
@@ -582,7 +598,13 @@ export default function MenuScreen() {
           enabled: cachedSettings.enabled || false,
           rate: totalRate,
           taxes: cachedSettings.taxes || [],
+          taxGroups: cachedSettings.taxGroups || [],
         });
+        if (cachedSettings.taxGroups?.length > 0) {
+          apiClient.getCategories(rid).then(res => {
+            setTaxCategories(res?.categories || []);
+          }).catch(() => {});
+        }
       }
     } catch (cacheError) {
       console.log('No cached tax settings:', cacheError);
@@ -605,7 +627,15 @@ export default function MenuScreen() {
           enabled: settings.enabled || false,
           rate: totalRate,
           taxes: settings.taxes || [],
+          taxGroups: settings.taxGroups || [],
         });
+
+        // Load real categories if tax groups exist
+        if (settings.taxGroups?.length > 0) {
+          apiClient.getCategories(rid).then(res => {
+            setTaxCategories(res?.categories || []);
+          }).catch(() => {});
+        }
 
         // Cache the settings
         await AsyncStorage.setItem(
@@ -1392,6 +1422,7 @@ export default function MenuScreen() {
         subtotal: subtotal,
         tax: taxAmount,
         taxRate: taxRate,
+        ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
         total: grandTotal,
         finalAmount: grandTotal,
         // Discount/loyalty data
@@ -1444,6 +1475,7 @@ export default function MenuScreen() {
         taxRate: taxRate,
         taxLabel: taxLabel,
         taxEnabled: taxSettings.enabled,
+        taxBreakdown: discountData.taxBreakdown || null,
         grandTotal: grandTotal,
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
@@ -1562,6 +1594,7 @@ export default function MenuScreen() {
         subtotal,
         tax: taxAmount,
         taxRate,
+        ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
         total: grandTotal,
         finalAmount: grandTotal,
         completedAt: new Date().toISOString(),
@@ -1623,6 +1656,7 @@ export default function MenuScreen() {
         taxRate,
         taxLabel,
         taxEnabled: taxSettings.enabled,
+        taxBreakdown: discountData.taxBreakdown || null,
         grandTotal,
         customerName: customerName || 'Walk-in Customer',
         customerMobile: customerMobile || '',
@@ -2514,6 +2548,7 @@ export default function MenuScreen() {
         activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
         billingSettings={billingSettings}
         taxSettings={taxSettings}
+        categories={taxCategories.length > 0 ? taxCategories : categories}
         pricingRules={pricingRules}
         activePricingRuleId={activePricingRuleId}
         setActivePricingRuleId={setActivePricingRuleId}

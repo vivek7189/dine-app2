@@ -468,6 +468,12 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.actionText}>Orders</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/attendance')}>
+            <View style={[styles.actionIcon, { backgroundColor: '#fef2f2' }]}>
+              <Ionicons name="time" size={24} color="#ef4444" />
+            </View>
+            <Text style={styles.actionText}>Attendance</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/more')}>
             <View style={[styles.actionIcon, { backgroundColor: '#f0fdf4' }]}>
               <Ionicons name="settings" size={24} color="#10b981" />
@@ -755,6 +761,16 @@ export default function HomeScreen() {
                   <Text style={styles.actionText}>Dashboard</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => router.push('/(tabs)/attendance')}
+              >
+                <View style={[styles.actionIcon, { backgroundColor: '#fef2f2' }]}>
+                  <Ionicons name="time" size={24} color="#ef4444" />
+                </View>
+                <Text style={styles.actionText}>Attendance</Text>
+              </TouchableOpacity>
 
               {isOwnerOrManager && (
                 <TouchableOpacity

@@ -1305,6 +1305,10 @@ class ApiClient {
     }
   }
 
+  async getCategories(restaurantId) {
+    return this.request(`/api/categories/${restaurantId}`);
+  }
+
   async bulkSaveMenuItems(restaurantId, menuItems, categories = null) {
     const body = { menuItems };
     if (categories && Array.isArray(categories) && categories.length > 0) {
@@ -2453,6 +2457,59 @@ class ApiClient {
       method: 'POST',
       data: paymentData,
     });
+  }
+
+  // ==================== ATTENDANCE ====================
+
+  async clockIn(restaurantId, { staffId, staffName, location }) {
+    return this.request(`/api/attendance/${restaurantId}/clock-in`, {
+      method: 'POST',
+      data: { staffId, staffName, location },
+    });
+  }
+
+  async clockOut(restaurantId, { staffId, location }) {
+    return this.request(`/api/attendance/${restaurantId}/clock-out`, {
+      method: 'POST',
+      data: { staffId, location },
+    });
+  }
+
+  async getAttendanceToday(restaurantId) {
+    return this.request(`/api/attendance/${restaurantId}/today`);
+  }
+
+  async getAttendanceHistory(restaurantId, params = {}) {
+    const qs = new URLSearchParams();
+    if (params.startDate) qs.set('startDate', params.startDate);
+    if (params.endDate) qs.set('endDate', params.endDate);
+    if (params.staffId) qs.set('staffId', params.staffId);
+    if (params.status) qs.set('status', params.status);
+    const query = qs.toString();
+    return this.request(`/api/attendance/${restaurantId}/history${query ? '?' + query : ''}`);
+  }
+
+  async getLeaveConfig(restaurantId) {
+    return this.request(`/api/attendance/${restaurantId}/leave/config`);
+  }
+
+  async applyLeave(restaurantId, data) {
+    return this.request(`/api/attendance/${restaurantId}/leave/apply`, {
+      method: 'POST',
+      data,
+    });
+  }
+
+  async getLeaveRequests(restaurantId, params = {}) {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.staffId) qs.set('staffId', params.staffId);
+    const query = qs.toString();
+    return this.request(`/api/attendance/${restaurantId}/leave/requests${query ? '?' + query : ''}`);
+  }
+
+  async getLeaveBalances(restaurantId, staffId) {
+    return this.request(`/api/attendance/${restaurantId}/leave/balances/${staffId}`);
   }
 }
 

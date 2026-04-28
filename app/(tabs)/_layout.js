@@ -225,6 +225,7 @@ function TabsNavigator() {
       />
 
       {/* === Hidden tabs === */}
+      <Tabs.Screen name="attendance" options={{ href: null }} />
       <Tabs.Screen name="hotel" options={{ href: null }} />
       <Tabs.Screen name="menu-management" options={{ href: null }} />
       <Tabs.Screen name="offers" options={{ href: null }} />
