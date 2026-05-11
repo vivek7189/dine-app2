@@ -15,6 +15,7 @@ try {
   console.log('expo-location not available, attendance will work without GPS');
 }
 import apiClient, { WEB_BASE_URL } from '../../services/api';
+import { startStaffTracking, stopStaffTracking, isTrackingActive, getTrackingContext } from '../../services/locationTracking';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { Colors, Spacing } from '../../constants/Theme';
@@ -225,6 +226,7 @@ export default function AttendanceScreen() {
   // Location/geofence state
   const [currentLocation, setCurrentLocation] = useState(null);
   const [geoStatus, setGeoStatus] = useState(null); // { inside: bool, distance: number }
+  const [isTracking, setIsTracking] = useState(false);
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
@@ -336,6 +338,15 @@ export default function AttendanceScreen() {
     }
   };
 
+  // ── Check if tracking was active (app restart) ──────────
+
+  useEffect(() => {
+    (async () => {
+      const active = await isTrackingActive();
+      setIsTracking(active);
+    })();
+  }, []);
+
   // ── Request location on mount & check geofence ──────────
 
   useEffect(() => {
@@ -384,6 +395,16 @@ export default function AttendanceScreen() {
       });
       setTodayRecord(result);
       showToast(`Clocked in at ${formatTime(result.clockIn)}${result.lateBy > 0 ? ` (Late by ${result.lateBy} min)` : ''}`, 'success');
+
+      // Start staff tracking if enabled for this user
+      if (result.trackingEnabled) {
+        const started = await startStaffTracking(restaurantId, user.id, user.name || user.displayName || '');
+        if (started) {
+          setIsTracking(true);
+          showToast('Location tracking started for your shift', 'info');
+        }
+      }
+
       loadData();
     } catch (err) {
       const msg = err.message || 'Could not clock in. Please try again.';
@@ -416,6 +437,13 @@ export default function AttendanceScreen() {
       });
       setTodayRecord(prev => ({ ...prev, ...result }));
       showToast(`Clocked out. Total: ${formatHours(result.totalHours)}`, 'success');
+
+      // Stop tracking on clock-out
+      if (isTracking) {
+        await stopStaffTracking();
+        setIsTracking(false);
+      }
+
       loadData();
     } catch (err) {
       showToast(err.message || 'Could not clock out. Please try again.', 'error');
@@ -634,6 +662,12 @@ export default function AttendanceScreen() {
                   <PulseDot color="#10b981" />
                   <Text style={[s.clockStatusText, { color: '#059669' }]}>Clocked In</Text>
                   <Text style={s.clockSinceText}>since {formatTime(todayRecord.clockIn)}</Text>
+                  {isTracking && (
+                    <View style={s.trackingChip}>
+                      <Ionicons name="navigate" size={10} color="#3b82f6" />
+                      <Text style={s.trackingChipText}>Tracking</Text>
+                    </View>
+                  )}
                 </>
               )}
               {isClockedOut && (
@@ -1176,6 +1210,12 @@ const s = StyleSheet.create({
   },
   clockStatusText: { fontSize: 16, fontWeight: '700' },
   clockSinceText: { fontSize: 13, color: '#6b7280', marginLeft: 4 },
+  trackingChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#dbeafe', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10,
+    marginLeft: 'auto',
+  },
+  trackingChipText: { fontSize: 10, fontWeight: '700', color: '#3b82f6' },
 
   // Live timer
   timerWrap: { alignItems: 'center', paddingVertical: 16 },

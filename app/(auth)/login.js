@@ -19,6 +19,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import lanClient from '../../services/lanClient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -147,7 +148,7 @@ const countries = [
 export default function LoginScreen() {
   const { isTablet } = useResponsive();
   const router = useRouter();
-  const [loginMode, setLoginMode] = useState('owner'); // 'owner' | 'staff'
+  const [loginMode, setLoginMode] = useState('owner'); // 'owner' | 'staff' | 'lan'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -155,6 +156,13 @@ export default function LoginScreen() {
   // Staff fields
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
+
+  // LAN pairing fields
+  const [lanHost, setLanHost] = useState('');
+  const [lanPort, setLanPort] = useState('3847');
+  const [lanPairingCode, setLanPairingCode] = useState('');
+  const [lanStep, setLanStep] = useState('connect'); // 'connect' | 'staff-login'
+  const [lanStaffList, setLanStaffList] = useState([]);
 
   // Owner auth method: 'main' (shows google + method picks), 'email', 'phone', 'register', 'emailOtp', 'phoneOtp'
   const [ownerStep, setOwnerStep] = useState('main');
@@ -582,6 +590,68 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  // ==================== LAN: Pair & Login ====================
+  const handleLanPair = async () => {
+    if (!lanHost || !lanPairingCode) {
+      setError('Please enter hub IP and pairing code');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await lanClient.init();
+      const result = await lanClient.pair(lanHost, parseInt(lanPort) || 3847, lanPairingCode, 'Waiter Device');
+      // Set LAN client on API
+      apiClient.setLanClient(lanClient);
+      // Get staff list for login
+      if (result.seedData?.staff) {
+        setLanStaffList(result.seedData.staff);
+      }
+      setLanStep('staff-login');
+    } catch (err) {
+      setError(err.message || 'Pairing failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLanStaffLogin = async () => {
+    if (!loginId || !password) {
+      setError('Please enter User ID and password');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await lanClient.staffLogin(loginId, password);
+      if (result.success && result.token) {
+        await apiClient.setToken(result.token);
+        await apiClient.setUser({
+          ...result.user,
+          restaurant: result.restaurant,
+        });
+        router.replace('/(tabs)/home');
+      } else {
+        setError(result.error || 'Login failed');
+      }
+    } catch (err) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Check if already paired on mount
+  useEffect(() => {
+    (async () => {
+      await lanClient.init();
+      if (lanClient.isPaired()) {
+        apiClient.setLanClient(lanClient);
+        lanClient.connectWebSocket();
+      }
+    })();
+  }, []);
 
   // ==================== COUNTRY PICKER ====================
   const filteredCountries = countrySearch
@@ -1150,13 +1220,31 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Join LAN Button */}
+        <TouchableOpacity
+          style={{
+            alignSelf: 'center', marginTop: 8, paddingVertical: 8, paddingHorizontal: 16,
+            borderRadius: 8, borderWidth: 1,
+            borderColor: loginMode === 'lan' ? '#6366f1' : '#e5e7eb',
+            backgroundColor: loginMode === 'lan' ? '#eef2ff' : 'transparent',
+          }}
+          onPress={() => {
+            setLoginMode('lan');
+            setError('');
+          }}
+        >
+          <Text style={{ fontSize: 12, color: loginMode === 'lan' ? '#6366f1' : Colors.textLight, fontWeight: '600' }}>
+            <Ionicons name="wifi-outline" size={12} /> Join Restaurant LAN
+          </Text>
+        </TouchableOpacity>
+
         {/* Form */}
         <View style={styles.form}>
           <Text style={styles.title}>
-            {loginMode === 'owner' ? getOwnerTitle() : 'Staff Login'}
+            {loginMode === 'owner' ? getOwnerTitle() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Staff Login' : 'Join LAN Hub') : 'Staff Login'}
           </Text>
           <Text style={styles.description}>
-            {loginMode === 'owner' ? getOwnerDescription() : 'Enter your credentials to continue'}
+            {loginMode === 'owner' ? getOwnerDescription() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Enter your staff credentials' : 'Connect to your restaurant hub') : 'Enter your credentials to continue'}
           </Text>
 
           {error ? (
@@ -1166,7 +1254,109 @@ export default function LoginScreen() {
             </View>
           ) : null}
 
-          {loginMode === 'owner' ? renderOwnerLogin() : renderStaffLogin()}
+          {loginMode === 'lan' ? (
+            lanStep === 'connect' ? (
+              <View>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Hub IP Address</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="192.168.1.50"
+                    placeholderTextColor={Colors.textLight}
+                    value={lanHost}
+                    onChangeText={setLanHost}
+                    keyboardType="decimal-pad"
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                </View>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Port</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="3847"
+                    placeholderTextColor={Colors.textLight}
+                    value={lanPort}
+                    onChangeText={setLanPort}
+                    keyboardType="number-pad"
+                    editable={!loading}
+                  />
+                </View>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Pairing Code</Text>
+                  <TextInput
+                    style={[styles.input, { fontSize: 24, fontWeight: '700', textAlign: 'center', letterSpacing: 6 }]}
+                    placeholder="000000"
+                    placeholderTextColor={Colors.textLight}
+                    value={lanPairingCode}
+                    onChangeText={(t) => setLanPairingCode(t.replace(/\D/g, '').slice(0, 6))}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    editable={!loading}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                  onPress={handleLanPair}
+                  disabled={loading || !lanHost || lanPairingCode.length !== 6}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Connect to Hub</Text>
+                  )}
+                </TouchableOpacity>
+                <View style={styles.staffHint}>
+                  <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
+                  <Text style={styles.staffHintText}>
+                    Get the IP address and pairing code from the hub terminal display
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>User ID / Login ID</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your login ID"
+                    placeholderTextColor={Colors.textLight}
+                    value={loginId}
+                    onChangeText={setLoginId}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                  />
+                </View>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your password"
+                    placeholderTextColor={Colors.textLight}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                    onSubmitEditing={handleLanStaffLogin}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.buttonDisabled]}
+                  onPress={handleLanStaffLogin}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Login</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )
+          ) : loginMode === 'owner' ? renderOwnerLogin() : renderStaffLogin()}
         </View>
       </ScrollView>
 

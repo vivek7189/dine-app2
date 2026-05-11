@@ -24,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
+import lanClient from '../../services/lanClient';
 import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
@@ -373,14 +374,10 @@ export default function TablesScreen() {
   };
 
 
-  // Pusher: real-time table status updates when orders change on other devices
+  // Pusher + LAN Hub: real-time table status updates when orders change on other devices
   useEffect(() => {
     const rid = restaurantIdRef.current;
     if (!rid) return;
-
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channelName = `restaurant-${rid}`;
-    const channel = pusher.subscribe(channelName);
 
     let debounceTimer = null;
     const debouncedRefresh = () => {
@@ -390,17 +387,15 @@ export default function TablesScreen() {
       }, 800);
     };
 
-    // Handle table-specific events with optimistic update
-    channel.bind('table-status-updated', (data) => {
+    // Event handlers (shared by Pusher and LAN hub)
+    const handleTableStatusUpdated = (data) => {
       if (data?.tableId && data?.status) {
         updateTableStatusOptimistically(data.tableId, data.status, data.orderId);
       }
       debouncedRefresh();
-    });
+    };
 
-    // All order events that can affect table status
-    channel.bind('order-created', (data) => {
-      // Optimistic: find table by tableNumber and mark occupied
+    const handleOrderCreated = (data) => {
       if (data?.tableNumber) {
         setFloors(prevFloors => {
           for (const floor of prevFloors) {
@@ -414,10 +409,9 @@ export default function TablesScreen() {
         });
       }
       debouncedRefresh();
-    });
-    channel.bind('order-updated', (data) => {
-      // When order is completed/cancelled, show loader on current state and let refresh set final status
-      // (avoids green→orange→green flicker from race between Pusher events and API refresh)
+    };
+
+    const handleOrderCompletionEvent = (data) => {
       if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
         setFloors(prevFloors => {
           for (const floor of prevFloors) {
@@ -425,7 +419,6 @@ export default function TablesScreen() {
             if (match) {
               const tableIdStr = String(match.id);
               setUpdatingTables(prev => new Set(prev).add(tableIdStr));
-              // Auto-clear updating state after 3s as safety net
               setTimeout(() => {
                 setUpdatingTables(prev => {
                   const next = new Set(prev);
@@ -440,35 +433,9 @@ export default function TablesScreen() {
         });
       }
       debouncedRefresh();
-    });
-    channel.bind('order-status-updated', (data) => {
-      // When order is completed/cancelled, show loader on current state and let refresh set final status
-      if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
-        setFloors(prevFloors => {
-          for (const floor of prevFloors) {
-            const match = floor.tables?.find(t => t.name === data.tableNumber);
-            if (match) {
-              const tableIdStr = String(match.id);
-              setUpdatingTables(prev => new Set(prev).add(tableIdStr));
-              // Auto-clear updating state after 3s as safety net
-              setTimeout(() => {
-                setUpdatingTables(prev => {
-                  const next = new Set(prev);
-                  next.delete(tableIdStr);
-                  return next;
-                });
-              }, 3000);
-              break;
-            }
-          }
-          return prevFloors;
-        });
-      }
-      debouncedRefresh();
-    });
-    channel.bind('order-completed', debouncedRefresh);
-    channel.bind('order-deleted', debouncedRefresh);
-    channel.bind('tables-reset', () => {
+    };
+
+    const handleTablesReset = () => {
       const resetT = (t) =>
         t.status === 'occupied' ? { ...t, status: 'available', currentOrderId: null } : t;
       setFloors(prev => prev.map(floor => ({
@@ -481,9 +448,36 @@ export default function TablesScreen() {
         return { ...prev, tables: prev.tables?.map(resetT) };
       });
       debouncedRefresh();
-    });
+    };
+
+    const lanUnsubs = [];
+
+    // LAN Hub WebSocket events (when paired)
+    if (lanClient.isPaired()) {
+      lanUnsubs.push(lanClient.onEvent('table-status-updated', handleTableStatusUpdated));
+      lanUnsubs.push(lanClient.onEvent('order-created', handleOrderCreated));
+      lanUnsubs.push(lanClient.onEvent('order-updated', handleOrderCompletionEvent));
+      lanUnsubs.push(lanClient.onEvent('order-status-updated', handleOrderCompletionEvent));
+      lanUnsubs.push(lanClient.onEvent('order-completed', debouncedRefresh));
+      lanUnsubs.push(lanClient.onEvent('order-deleted', debouncedRefresh));
+      lanUnsubs.push(lanClient.onEvent('tables-reset', handleTablesReset));
+    }
+
+    // Pusher (cloud)
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channelName = `restaurant-${rid}`;
+    const channel = pusher.subscribe(channelName);
+
+    channel.bind('table-status-updated', handleTableStatusUpdated);
+    channel.bind('order-created', handleOrderCreated);
+    channel.bind('order-updated', handleOrderCompletionEvent);
+    channel.bind('order-status-updated', handleOrderCompletionEvent);
+    channel.bind('order-completed', debouncedRefresh);
+    channel.bind('order-deleted', debouncedRefresh);
+    channel.bind('tables-reset', handleTablesReset);
 
     return () => {
+      lanUnsubs.forEach(fn => fn());
       if (debounceTimer) clearTimeout(debounceTimer);
       channel.unbind_all();
       pusher.unsubscribe(channelName);

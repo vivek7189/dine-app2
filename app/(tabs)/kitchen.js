@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import Pusher from 'pusher-js/react-native';
 import apiClient from '../../services/api';
+import lanClient from '../../services/lanClient';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -137,10 +138,27 @@ export default function KitchenScreen() {
     }, [restaurantId])
   );
 
-  // ─── Pusher ───
+  // ─── Pusher + LAN Hub Events ───
   useEffect(() => {
     if (!restaurantId) return;
 
+    const handleEvent = () => {
+      loadDataRef.current?.(false);
+      if (soundEnabled) Vibration.vibrate(100);
+    };
+
+    const eventNames = ['order-created', 'order-status-updated', 'order-updated', 'order-deleted'];
+    const lanUnsubs = [];
+
+    // LAN Hub WebSocket events (when paired)
+    if (lanClient.isPaired()) {
+      eventNames.forEach(evt => {
+        lanUnsubs.push(lanClient.onEvent(evt, handleEvent));
+      });
+      setIsLive(true);
+    }
+
+    // Pusher (cloud) — subscribe alongside LAN, whichever is active delivers events
     pusherRef.current = new Pusher(process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec', {
       cluster: process.env.EXPO_PUBLIC_PUSHER_CLUSTER || 'ap2',
     });
@@ -149,17 +167,10 @@ export default function KitchenScreen() {
     channelRef.current = pusherRef.current.subscribe(channelName);
     setIsLive(true);
 
-    const handleEvent = () => {
-      loadDataRef.current?.(false);
-      if (soundEnabled) Vibration.vibrate(100);
-    };
-
-    channelRef.current.bind('order-created', handleEvent);
-    channelRef.current.bind('order-status-updated', handleEvent);
-    channelRef.current.bind('order-updated', handleEvent);
-    channelRef.current.bind('order-deleted', handleEvent);
+    eventNames.forEach(evt => channelRef.current.bind(evt, handleEvent));
 
     return () => {
+      lanUnsubs.forEach(fn => fn());
       channelRef.current?.unbind_all();
       pusherRef.current?.unsubscribe(channelName);
       pusherRef.current?.disconnect();

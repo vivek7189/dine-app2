@@ -17,6 +17,8 @@ import * as Sharing from 'expo-sharing';
 import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
+import { buildTokenSlipHTML, buildTokenSlipsDocumentHTML } from '../utils/tokenSlipHTML';
+import * as printerService from '../services/printerService';
 
 export default function CashierInvoiceModal({
   visible,
@@ -25,15 +27,50 @@ export default function CashierInvoiceModal({
   onNewOrder,
   restaurantId,
   whatsappConnected = false,
+  tokenBillingEnabled = false,
+  autoPrintOnBilling = false,
 }) {
   const { isTablet } = useResponsive();
   const [waSending, setWaSending] = React.useState(false);
   const [waSent, setWaSent] = React.useState(false);
+  const [tokenPrinting, setTokenPrinting] = React.useState(false);
+  const [printerNotice, setPrinterNotice] = React.useState(null);
+  const autoPrintDoneRef = React.useRef(null);
+
+  // Listen for printer events (disconnect, reconnect, fallback)
+  React.useEffect(() => {
+    const unsub = printerService.onPrinterEvent((event) => {
+      if (event.type === 'disconnected' || event.type === 'fallback') {
+        setPrinterNotice({ type: 'error', message: event.message });
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => setPrinterNotice(null), 8000);
+      } else if (event.type === 'reconnected') {
+        setPrinterNotice({ type: 'success', message: 'Printer reconnected successfully.' });
+        setTimeout(() => setPrinterNotice(null), 3000);
+      } else if (event.type === 'reconnecting') {
+        setPrinterNotice({ type: 'info', message: 'Printer connection lost. Reconnecting...' });
+      }
+    });
+    return unsub;
+  }, []);
 
   // Reset sent state when modal opens with new data
   React.useEffect(() => {
-    if (visible) setWaSent(false);
+    if (visible) { setWaSent(false); setPrinterNotice(null); }
   }, [visible, invoiceData?.orderNumber]);
+
+  // Auto-print: when modal becomes visible and autoPrintOnBilling is enabled
+  // Uses silent print to saved printer (no dialog)
+  React.useEffect(() => {
+    if (visible && autoPrintOnBilling && invoiceData?.orderId && autoPrintDoneRef.current !== invoiceData.orderId) {
+      autoPrintDoneRef.current = invoiceData.orderId;
+      // Small delay to let the modal render first
+      const timer = setTimeout(() => {
+        handleSilentPrintAll();
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, autoPrintOnBilling, invoiceData?.orderId]);
 
   if (!invoiceData) return null;
 
@@ -93,7 +130,8 @@ Offer (${ao.name}): -₹${(ao.discountApplied || 0).toFixed(2)}`).join('')
 : (invoiceData.offerDiscount > 0 ? `
 Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : '')}${invoiceData.manualDiscount > 0 ? `
 Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
-Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
+Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.couponDiscount > 0 ? `
+Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-₹${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
 Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
 ? invoiceData.taxBreakdown.map(tax => `
 ${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '')).length))}₹${tax.amount.toFixed(2)}`).join('')
@@ -303,6 +341,12 @@ Thank you for your order!
                 <span>-₹${invoiceData.loyaltyDiscount.toFixed(2)}</span>
               </div>
               ` : ''}
+              ${invoiceData.couponDiscount > 0 ? `
+              <div class="total-row" style="color: #10b981;">
+                <span>Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}</span>
+                <span>-₹${invoiceData.couponDiscount.toFixed(2)}</span>
+              </div>
+              ` : ''}
               ${invoiceData.serviceChargeAmount > 0 ? `
               <div class="total-row" style="color: #7c3aed;">
                 <span>Service Charge${invoiceData.serviceChargeRate ? ` (${invoiceData.serviceChargeRate}%)` : ''}</span>
@@ -462,12 +506,83 @@ Thank you for your order!
     }
   };
 
+  // Silent print: uses saved printer (thermal/AirPrint) — for auto-print after billing
+  const silentPrint = async ({ html, text }) => {
+    return printerService.printContent({ html, text });
+  };
+
+  // Dialog print: always opens system print dialog — for manual button taps
+  const dialogPrint = async ({ html }) => {
+    if (!html) throw new Error('No printable content');
+    await Print.printAsync({ html });
+    return { method: 'dialog' };
+  };
+
+  const printFoodCourtTokens = async ({ silent = false } = {}) => {
+    if (!tokenBillingEnabled || !restaurantId || !invoiceData?.orderId) return;
+    setTokenPrinting(true);
+    try {
+      const apiClient = require('../services/api').default;
+      const tokenRes = await apiClient.getTokenRender(restaurantId, invoiceData.orderId);
+      const tokens = tokenRes?.tokens || [];
+      if (!tokenRes?.success || tokens.length === 0) return;
+
+      if (silent) {
+        // Silent mode: print each token separately with pauses (thermal printers need separate cuts)
+        const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        for (let i = 0; i < tokens.length; i++) {
+          try {
+            const token = tokens[i];
+            const tokenHtml = buildTokenSlipHTML(token);
+            const tokenText = printerService.generateTokenText(token);
+            await silentPrint({ html: tokenHtml, text: tokenText });
+            if (i < tokens.length - 1) await pause(350);
+          } catch (err) {
+            console.error(`Token ${i + 1} print failed:`, err);
+          }
+        }
+      } else {
+        // Dialog mode: combine ALL tokens into one document so user only sees one print dialog
+        const combinedHtml = buildTokenSlipsDocumentHTML(tokens);
+        await dialogPrint({ html: combinedHtml });
+      }
+    } catch (err) {
+      console.error('Token print error:', err);
+    } finally {
+      setTokenPrinting(false);
+    }
+  };
+
+  // Manual: Print bill only — always opens dialog
   const handlePrint = async () => {
     try {
       const html = generateInvoiceHTML();
-      await Print.printAsync({ html });
+      await dialogPrint({ html });
+    } catch (error) {
+      Alert.alert('Error', 'Failed to print bill');
+    }
+  };
+
+  // Manual: Print bill + tokens — always opens dialog
+  const handlePrintAll = async () => {
+    try {
+      const html = generateInvoiceHTML();
+      await dialogPrint({ html });
+      await printFoodCourtTokens({ silent: false });
     } catch (error) {
       Alert.alert('Error', 'Failed to print');
+    }
+  };
+
+  // Auto-print: silent print bill + tokens (called automatically after billing)
+  const handleSilentPrintAll = async () => {
+    try {
+      const html = generateInvoiceHTML();
+      const text = printerService.generateBillText(invoiceData);
+      await silentPrint({ html, text });
+      await printFoodCourtTokens({ silent: true });
+    } catch (error) {
+      console.error('Silent auto-print failed:', error);
     }
   };
 
@@ -487,6 +602,27 @@ Thank you for your order!
             </View>
             <Text style={styles.successTitle}>Order Completed!</Text>
           </View>
+
+          {/* Printer notification banner */}
+          {printerNotice && (
+            <TouchableOpacity
+              style={[styles.printerNoticeBanner, {
+                backgroundColor: printerNotice.type === 'error' ? '#fef2f2' : printerNotice.type === 'success' ? '#f0fdf4' : '#eff6ff',
+                borderColor: printerNotice.type === 'error' ? '#fca5a5' : printerNotice.type === 'success' ? '#86efac' : '#93c5fd',
+              }]}
+              onPress={() => setPrinterNotice(null)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={printerNotice.type === 'error' ? 'alert-circle' : printerNotice.type === 'success' ? 'checkmark-circle' : 'sync-circle'}
+                size={18}
+                color={printerNotice.type === 'error' ? '#dc2626' : printerNotice.type === 'success' ? '#16a34a' : '#2563eb'}
+              />
+              <Text style={[styles.printerNoticeText, {
+                color: printerNotice.type === 'error' ? '#dc2626' : printerNotice.type === 'success' ? '#16a34a' : '#2563eb',
+              }]}>{printerNotice.message}</Text>
+            </TouchableOpacity>
+          )}
 
           <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Invoice Receipt */}
@@ -695,6 +831,54 @@ Thank you for your order!
               </View>
             )}
 
+            {/* Print Actions */}
+            {tokenBillingEnabled && (
+              <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={handlePrintAll}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    backgroundColor: '#1e293b', paddingVertical: 14, borderRadius: 12,
+                  }}
+                >
+                  <Ionicons name="print" size={20} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                    Print Bill + Tokens
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                  <TouchableOpacity
+                    onPress={handlePrint}
+                    style={{
+                      flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      backgroundColor: '#f1f5f9', paddingVertical: 11, borderRadius: 10,
+                      borderWidth: 1, borderColor: '#e2e8f0',
+                    }}
+                  >
+                    <Ionicons name="receipt-outline" size={16} color="#334155" />
+                    <Text style={{ color: '#334155', fontWeight: '600', fontSize: 13 }}>Bill Only</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => printFoodCourtTokens({ silent: false })}
+                    disabled={tokenPrinting}
+                    style={{
+                      flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      backgroundColor: '#f5f3ff', paddingVertical: 11, borderRadius: 10,
+                      borderWidth: 1, borderColor: '#ddd6fe',
+                      opacity: tokenPrinting ? 0.6 : 1,
+                    }}
+                  >
+                    <Ionicons name="ticket-outline" size={16} color="#7c3aed" />
+                    <Text style={{ color: '#7c3aed', fontWeight: '600', fontSize: 13 }}>
+                      {tokenPrinting ? 'Printing...' : 'Tokens Only'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
             {/* Share Section */}
             <View style={styles.shareSection}>
               <Text style={styles.shareSectionTitle}>Share Invoice</Text>
@@ -713,12 +897,14 @@ Thank you for your order!
                   <Text style={styles.shareButtonText}>PDF</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.shareButton} onPress={handlePrint}>
-                  <View style={[styles.shareIconBg, { backgroundColor: '#333' }]}>
-                    <Ionicons name="print" size={22} color="#fff" />
-                  </View>
-                  <Text style={styles.shareButtonText}>Print</Text>
-                </TouchableOpacity>
+                {!tokenBillingEnabled && (
+                  <TouchableOpacity style={styles.shareButton} onPress={handlePrint}>
+                    <View style={[styles.shareIconBg, { backgroundColor: '#333' }]}>
+                      <Ionicons name="print" size={22} color="#fff" />
+                    </View>
+                    <Text style={styles.shareButtonText}>Print</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity style={styles.shareButton} onPress={handleShareGeneric}>
                   <View style={[styles.shareIconBg, { backgroundColor: Colors.primary }]}>
@@ -754,6 +940,23 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '95%',
+  },
+  printerNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginHorizontal: 12,
+    marginTop: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 8,
+  },
+  printerNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
   },
   successHeader: {
     backgroundColor: '#fff',

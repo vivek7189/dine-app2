@@ -198,6 +198,27 @@ export function OfflineProvider({ children }) {
     }
   }, [dbReady, isOnline, isOfflineMode, scheduleSyncDebounced]);
 
+  // Start background pull to keep local data fresh
+  useEffect(() => {
+    if (dbReady && !isOfflineMode) {
+      (async () => {
+        try {
+          const user = await apiClient.getUser();
+          const restaurantId = user?.restaurantId || user?.restaurant?.id || getMeta('seeded_restaurant_id');
+          if (restaurantId) {
+            apiClient.startBackgroundPull(restaurantId);
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    }
+
+    return () => {
+      apiClient.stopBackgroundPull();
+    };
+  }, [dbReady, isOfflineMode]);
+
   const toggleOfflineMode = useCallback(async (value) => {
     const newValue = value !== undefined ? value : !isOfflineMode;
     setIsOfflineMode(newValue);

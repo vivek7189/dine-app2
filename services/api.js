@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 
 // Get API URL from environment or use deployed backend
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-backend-lake.vercel.app';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2-phi.vercel.app';
 
 // Frontend web URL for WebView embeds (mobile layout)
 export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
@@ -19,6 +19,8 @@ class ApiClient {
     this._inflight = new Map();
     // Offline state (set by OfflineProvider)
     this._offlineState = null;
+    // LAN client (set when paired with hub)
+    this._lanClient = null;
   }
 
   /**
@@ -26,6 +28,13 @@ class ApiClient {
    */
   setOfflineState(state) {
     this._offlineState = state;
+  }
+
+  /**
+   * Set the LAN client for routing API calls through the hub.
+   */
+  setLanClient(client) {
+    this._lanClient = client;
   }
 
   /**
@@ -204,6 +213,16 @@ class ApiClient {
 
   // Make authenticated request
   async request(endpoint, options = {}, isRetry = false) {
+    // If paired with LAN hub, route through hub (skip auth endpoints)
+    if (this._lanClient?.isPaired() && !endpoint.startsWith('/api/auth/')) {
+      try {
+        return await this._lanClient.request(endpoint, options);
+      } catch (lanErr) {
+        console.warn('[API] LAN request failed, falling back to cloud:', lanErr.message);
+        // Fall through to cloud
+      }
+    }
+
     const token = await this.getToken();
     const url = `${this.baseURL}${endpoint}`;
 
@@ -312,37 +331,48 @@ class ApiClient {
     }
   }
 
-  // ==================== OFFLINE-AWARE REQUEST LAYER ====================
+  // ==================== LOCAL-FIRST REQUEST LAYER ====================
 
   /**
-   * Offline-aware GET: try network first, fallback to SQLite.
-   * On success, updates SQLite in background.
+   * Local-first GET: always read from SQLite first for instant UI.
+   * Then refresh from network in background (fire-and-forget).
    */
   async offlineGet(endpoint, { localRead, onFetched, ttlMs = 5 * 60 * 1000 } = {}) {
-    // If online, try network first
+    // 1. Always try local read first — instant, no network wait
+    let localData = null;
+    if (localRead) {
+      try {
+        localData = localRead();
+      } catch (e) {
+        console.warn('offlineGet localRead error:', e.message);
+      }
+    }
+
+    // 2. If we have local data, return it immediately and refresh in background
+    if (localData !== null && localData !== undefined) {
+      // Background refresh: fetch from network and save to SQLite (fire-and-forget)
+      if (!this.isEffectivelyOffline() && onFetched) {
+        this.cachedGet(endpoint, ttlMs)
+          .then((data) => {
+            try { onFetched(data); } catch (e) { console.warn('offlineGet bg onFetched error:', e.message); }
+          })
+          .catch(() => {
+            // Network failed in background — no problem, we already returned local data
+          });
+      }
+      return localData;
+    }
+
+    // 3. No local data — try network (blocks UI, but only on first load)
     if (!this.isEffectivelyOffline()) {
       try {
         const data = await this.cachedGet(endpoint, ttlMs);
-        // Write to SQLite in background (fire-and-forget)
         if (onFetched) {
           try { onFetched(data); } catch (e) { console.warn('offlineGet onFetched error:', e.message); }
         }
         return data;
       } catch (err) {
-        // Network failed — fall through to local read
-        console.warn(`offlineGet network failed for ${endpoint}, trying local:`, err.message);
-      }
-    }
-
-    // Offline or network failed — read from SQLite
-    if (localRead) {
-      try {
-        const localData = localRead();
-        if (localData !== null && localData !== undefined) {
-          return localData;
-        }
-      } catch (e) {
-        console.warn('offlineGet localRead error:', e.message);
+        console.warn(`offlineGet network failed for ${endpoint}:`, err.message);
       }
     }
 
@@ -350,7 +380,9 @@ class ApiClient {
   }
 
   /**
-   * Offline-aware write: if online, send immediately; if offline, queue and update local DB.
+   * Local-first write: always save to local SQLite + queue for sync.
+   * The sync engine pushes to cloud in the background.
+   * UI never waits for network — instant response.
    */
   async offlineWrite(endpoint, {
     method = 'POST',
@@ -363,31 +395,13 @@ class ApiClient {
     onSuccess,
     idempotencyKey = null,
   }) {
-    // If online, try to send immediately
-    if (!this.isEffectivelyOffline()) {
-      try {
-        const result = await this.request(endpoint, { method, data });
-        if (onSuccess) {
-          try { onSuccess(result); } catch (e) { console.warn('offlineWrite onSuccess error:', e.message); }
-        }
-        return result;
-      } catch (err) {
-        // If it's a network error, fall through to offline queue
-        const isNetworkError = !err.response || err.code === 'ERR_NETWORK' || err.code === 'ECONNABORTED' || err.message?.includes('Network error') || err.message?.includes('timeout');
-        if (!isNetworkError) {
-          throw err; // Re-throw non-network errors (validation, auth, etc.)
-        }
-        console.warn(`offlineWrite network failed, queuing for sync:`, err.message);
-      }
-    }
-
-    // Offline or network failed — queue for sync
     const { enqueue, generateIdempotencyKey } = require('./syncQueueV2');
     const key = idempotencyKey || generateIdempotencyKey();
 
     // Add idempotency key to payload
     const payload = { ...data, idempotencyKey: key, syncSource: 'offline' };
 
+    // 1. Always queue for background sync
     enqueue({
       entityType,
       operation,
@@ -399,12 +413,25 @@ class ApiClient {
       idempotencyKey: key,
     });
 
-    // Optimistically update local DB
+    // 2. Always do optimistic local update
     if (onOfflineQueue) {
       try { onOfflineQueue(key, payload); } catch (e) { console.warn('offlineWrite onOfflineQueue error:', e.message); }
     }
 
-    return { offline: true, idempotencyKey: key, message: 'Queued for sync' };
+    // 3. If online, trigger sync immediately (non-blocking)
+    if (!this.isEffectivelyOffline()) {
+      // Fire-and-forget: the sync engine will pick up this item
+      try {
+        const { syncAll } = require('./syncEngineV2');
+        setTimeout(() => {
+          syncAll(this).catch(() => {});
+        }, 100);
+      } catch {
+        // ignore — sync engine not available
+      }
+    }
+
+    return { success: true, offline: true, idempotencyKey: key, message: 'Saved locally' };
   }
 
   /**
@@ -547,6 +574,82 @@ class ApiClient {
         );
       }, 3000);
     }
+  }
+
+  /**
+   * Start background pull loop to keep local data fresh.
+   * Called by OfflineProvider after DB is ready.
+   * HOT data (orders, tables) refreshed every 10s when online.
+   * WARM data (menu, customers) refreshed every 5 min.
+   */
+  _bgPullTimer = null;
+  _bgPullRunning = false;
+
+  startBackgroundPull(restaurantId) {
+    if (this._bgPullTimer) return;
+
+    let hotCounter = 0;
+    const INTERVAL = 10_000; // 10 seconds
+    const WARM_EVERY = 30;   // every 30 intervals = 5 min
+
+    this._bgPullTimer = setInterval(async () => {
+      if (this._bgPullRunning || this.isEffectivelyOffline() || !restaurantId) return;
+      this._bgPullRunning = true;
+      hotCounter++;
+
+      const offlineStore = require('./offlineStore');
+
+      try {
+        // HOT: orders, tables — every 10s
+        const [ordersData, tablesData] = await Promise.allSettled([
+          this.request(`/api/orders/${restaurantId}?status=confirmed&status=pending&status=preparing&status=ready&status=saved&limit=200`).catch(() => null),
+          this.request(`/api/tables/${restaurantId}`).catch(() => null),
+        ]);
+
+        if (ordersData.status === 'fulfilled' && ordersData.value) {
+          const orders = ordersData.value.orders || [];
+          if (orders.length > 0) offlineStore.saveOrders(restaurantId, orders);
+        }
+        if (tablesData.status === 'fulfilled' && tablesData.value) {
+          const tables = tablesData.value.tables || [];
+          if (tables.length > 0) offlineStore.saveTables(restaurantId, tables);
+        }
+
+        // WARM: menu, customers, floors — every 5 min
+        if (hotCounter % WARM_EVERY === 0) {
+          const warmFetches = await Promise.allSettled([
+            this.request(`/api/menus/${restaurantId}`).catch(() => null),
+            this.request(`/api/customers/${restaurantId}`).catch(() => null),
+            this.request(`/api/floors/${restaurantId}`).catch(() => null),
+          ]);
+
+          if (warmFetches[0].status === 'fulfilled' && warmFetches[0].value) {
+            const items = warmFetches[0].value.menu?.items || warmFetches[0].value.menuItems || [];
+            if (items.length > 0) offlineStore.saveMenuItems(restaurantId, items);
+          }
+          if (warmFetches[1].status === 'fulfilled' && warmFetches[1].value) {
+            const customers = warmFetches[1].value.customers || [];
+            if (customers.length > 0) offlineStore.saveCustomers(restaurantId, customers);
+          }
+          if (warmFetches[2].status === 'fulfilled' && warmFetches[2].value) {
+            const floors = warmFetches[2].value.floors || [];
+            if (floors.length > 0) offlineStore.saveFloors(restaurantId, floors);
+          }
+        }
+      } catch (e) {
+        // Background pull failed — not critical
+      } finally {
+        this._bgPullRunning = false;
+      }
+    }, INTERVAL);
+  }
+
+  stopBackgroundPull() {
+    if (this._bgPullTimer) {
+      clearInterval(this._bgPullTimer);
+      this._bgPullTimer = null;
+    }
+    this._bgPullRunning = false;
   }
 
   // Staff login
@@ -1790,6 +1893,26 @@ class ApiClient {
     });
   }
 
+  // ==================== COUPONS ====================
+
+  async validateCoupon(restaurantId, code, customerPhone, cartTotal) {
+    return this.request(`/api/automation/${restaurantId}/coupons/validate`, {
+      method: 'POST',
+      data: { code, customerPhone, cartTotal },
+    });
+  }
+
+  async redeemCoupon(restaurantId, couponId, orderId) {
+    return this.request(`/api/automation/${restaurantId}/coupons/redeem`, {
+      method: 'POST',
+      data: { couponId, orderId },
+    });
+  }
+
+  async getCustomerCoupons(restaurantId, phone) {
+    return this.request(`/api/automation/${restaurantId}/coupons/customer/${encodeURIComponent(phone)}`);
+  }
+
   // ==================== CUSTOMER GROUPS ====================
 
   async getCustomerGroups(restaurantId) {
@@ -2318,6 +2441,10 @@ class ApiClient {
     return this.request(`/api/admin/print-settings/${restaurantId}`);
   }
 
+  async getTokenRender(restaurantId, orderId) {
+    return this.request(`/api/token/render/${restaurantId}/${orderId}`);
+  }
+
   async updatePrintSettings(restaurantId, printSettings) {
     return this.request(`/api/admin/print-settings/${restaurantId}`, {
       method: 'PUT',
@@ -2510,6 +2637,28 @@ class ApiClient {
 
   async getLeaveBalances(restaurantId, staffId) {
     return this.request(`/api/attendance/${restaurantId}/leave/balances/${staffId}`);
+  }
+
+  // ==================== PARKING MANAGEMENT ====================
+
+  getParkingConfig(restaurantId) { return this.request(`/api/parking/config/${restaurantId}`); }
+  getParkingDashboardStats(restaurantId) { return this.request(`/api/parking/config/${restaurantId}/dashboard-stats`); }
+  getParkingZones(restaurantId) { return this.request(`/api/parking/zones/${restaurantId}`); }
+  getParkingRates(restaurantId) { return this.request(`/api/parking/rates/${restaurantId}`); }
+  getParkingTickets(restaurantId, filters = {}) {
+    const query = Object.entries(filters).filter(([,v]) => v).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    return this.request(`/api/parking/tickets/${restaurantId}${query ? `?${query}` : ''}`);
+  }
+  createParkingEntry(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/entry`, { method: 'POST', body: data }); }
+  processParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit`, { method: 'POST', body: data }); }
+  confirmParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit/confirm`, { method: 'POST', body: data }); }
+  cancelParkingTicket(restaurantId, ticketId, reason) { return this.request(`/api/parking/tickets/${restaurantId}/${ticketId}/cancel`, { method: 'POST', body: { reason } }); }
+  recognizeLicensePlate(restaurantId, formData) {
+    return this.request(`/api/parking/ai/recognize-plate/${restaurantId}`, {
+      method: 'POST',
+      data: formData,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   }
 }
 

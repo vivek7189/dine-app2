@@ -199,7 +199,7 @@ const useOfferEngine = ({
         loadOffers({ value: false });
         // Re-fetch offer settings (auto-apply, multi-offer, loyalty)
         try {
-          const settingsRes = await apiClient.getPublicCustomerAppSettings(restaurantId);
+          const settingsRes = await apiClient.getCustomerAppSettings(restaurantId);
           if (settingsRes?.settings?.offerSettings) {
             setOfferSettings(prev => ({ ...prev, ...settingsRes.settings.offerSettings }));
           }
@@ -233,7 +233,7 @@ const useOfferEngine = ({
     let cancelled = false;
     (async () => {
       try {
-        const settingsRes = await apiClient.getPublicCustomerAppSettings(restaurantId);
+        const settingsRes = await apiClient.getCustomerAppSettings(restaurantId);
         if (cancelled) return;
         settingsLoadedRef.current = true;
         if (settingsRes?.settings?.offerSettings) {

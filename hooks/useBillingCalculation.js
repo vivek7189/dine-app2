@@ -58,6 +58,7 @@ export default function useBillingCalculation({
   offerDiscount = 0,
   manualDiscountAmount = 0,
   loyaltyDiscount = 0,
+  couponDiscount = 0,
   compAmount = 0,
   taxSettings = {},
   billingSettings = {},
@@ -67,7 +68,7 @@ export default function useBillingCalculation({
 }) {
   return useMemo(() => {
     // Step 1: Total discount
-    const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + compAmount;
+    const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + couponDiscount + compAmount;
 
     // Step 2: Discounted subtotal
     const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
@@ -166,5 +167,5 @@ export default function useBillingCalculation({
       roundOffAmount,
       grandTotal,
     };
-  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, compAmount, taxSettings, billingSettings, tipAmount, cart, categories]);
+  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, couponDiscount, compAmount, taxSettings, billingSettings, tipAmount, cart, categories]);
 }

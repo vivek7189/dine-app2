@@ -23,11 +23,14 @@ import Pusher from 'pusher-js';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import apiClient from '../../services/api';
+import lanClient from '../../services/lanClient';
 import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
 // SyncIndicator moved to settings page
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { buildTokenSlipHTML } from '../../utils/tokenSlipHTML';
+import * as printerService from '../../services/printerService';
 import { useOffline } from '../../hooks/useOffline';
 
 // Pusher configuration (same as web frontend)
@@ -48,6 +51,7 @@ export default function OrdersScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
   const [user, setUser] = useState(null);
+  const [printSettings, setPrintSettings] = useState(null);
 
   // Spinning animation for refresh icon
   const spinValue = useState(new Animated.Value(0))[0];
@@ -246,42 +250,38 @@ export default function OrdersScreen() {
     return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
-  // Pusher subscription for real-time order updates
+  // Pusher + LAN Hub subscription for real-time order updates
   useEffect(() => {
     if (!restaurantId) return;
 
-    // Initialize Pusher
-    const pusher = new Pusher(PUSHER_KEY, {
-      cluster: PUSHER_CLUSTER,
-    });
+    const handleOrderEvent = (eventName, data) => {
+      console.log(`[Orders] Received '${eventName}' event:`, data);
+      loadOrdersInBackground(restaurantId);
+    };
 
+    const eventNames = ['order-created', 'order-status-updated', 'order-updated', 'order-deleted'];
+    const lanUnsubs = [];
+
+    // LAN Hub WebSocket events (when paired)
+    if (lanClient.isPaired()) {
+      eventNames.forEach(evt => {
+        lanUnsubs.push(lanClient.onEvent(evt, (data) => handleOrderEvent(evt, data)));
+      });
+    }
+
+    // Pusher (cloud)
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
     pusherRef.current = pusher;
 
-    // Subscribe to restaurant-specific channel
     const channelName = `restaurant-${restaurantId}`;
     const channel = pusher.subscribe(channelName);
     channelRef.current = channel;
 
-    console.log(`📡 Pusher: Subscribed to channel '${channelName}'`);
+    eventNames.forEach(evt => channel.bind(evt, (data) => handleOrderEvent(evt, data)));
 
-    // Handle order events
-    const handleOrderEvent = (eventName, data) => {
-      console.log(`📡 Pusher: Received '${eventName}' event:`, data);
-      // Refresh orders list in background
-      loadOrdersInBackground(restaurantId);
-    };
-
-    channel.bind('order-created', (data) => handleOrderEvent('order-created', data));
-    channel.bind('order-status-updated', (data) => handleOrderEvent('order-status-updated', data));
-    channel.bind('order-updated', (data) => handleOrderEvent('order-updated', data));
-    channel.bind('order-deleted', (data) => handleOrderEvent('order-deleted', data));
-
-    // Cleanup on unmount
     return () => {
-      console.log(`📡 Pusher: Unsubscribing from channel '${channelName}'`);
-      if (channelRef.current) {
-        channelRef.current.unbind_all();
-      }
+      lanUnsubs.forEach(fn => fn());
+      if (channelRef.current) channelRef.current.unbind_all();
       if (pusherRef.current) {
         pusherRef.current.unsubscribe(channelName);
         pusherRef.current.disconnect();
@@ -306,6 +306,11 @@ export default function OrdersScreen() {
       }
 
       setRestaurantId(rid);
+
+      // Fetch print settings for token billing
+      apiClient.getPrintSettings(rid).then(pRes => {
+        if (pRes) setPrintSettings(pRes.printSettings || pRes || {});
+      }).catch(() => {});
 
       // Stale-while-revalidate: show cached data instantly, then refresh in background
       const cacheKey = `cache_orders_${rid}_${dateFilterMode}`;
@@ -646,7 +651,23 @@ export default function OrdersScreen() {
           text: 'Print',
           onPress: async () => {
             try {
-              await Print.printAsync({ html });
+              await printerService.printContent({ html, text: null });
+              // Print category-wise token slips if Food Court Token Billing is enabled
+              if (printSettings?.tokenBillingEnabled && restaurantId && order.id) {
+                try {
+                  const tokenRes = await apiClient.getTokenRender(restaurantId, order.id);
+                  const tokens = tokenRes?.tokens || [];
+                  if (tokenRes?.success && tokens.length > 0) {
+                    for (const token of tokens) {
+                      const tokenHtml = buildTokenSlipHTML(token);
+                      const tokenText = printerService.generateTokenText(token);
+                      await printerService.printContent({ html: tokenHtml, text: tokenText });
+                    }
+                  }
+                } catch (tokenErr) {
+                  console.error('Token print error:', tokenErr);
+                }
+              }
             } catch (e) {
               console.error('Print error:', e);
               Alert.alert('Error', 'Failed to print bill.');

@@ -29,6 +29,7 @@ function TabsNavigator() {
   const [userRole, setUserRole] = useState(null);
   const [pageAccess, setPageAccess] = useState(null);
   const [businessType, setBusinessType] = useState(null);
+  const [parkingEnabled, setParkingEnabled] = useState(false);
 
   useEffect(() => {
     // Check authentication on mount
@@ -45,6 +46,7 @@ function TabsNavigator() {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
         const storedType = userData.restaurant?.businessType;
+        if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
           setBusinessType(storedType);
         } else {
@@ -55,6 +57,7 @@ function TabsNavigator() {
               const res = await apiClient.getRestaurant(restaurantId);
               const freshType = res?.restaurant?.businessType || res?.businessType || 'restaurant';
               setBusinessType(freshType);
+              if (res?.restaurant?.parkingEnabled || res?.parkingEnabled) setParkingEnabled(true);
             } catch (e) {
               setBusinessType('restaurant');
             }
@@ -209,6 +212,22 @@ function TabsNavigator() {
         }}
       />
 
+      {/* Parking — visible when parkingEnabled */}
+      <Tabs.Screen
+        name="parking"
+        options={{
+          title: 'Parking',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "car-sport" : "car-sport-outline"}
+              size={iconSize}
+              color={color}
+            />
+          ),
+          href: parkingEnabled ? undefined : null,
+        }}
+      />
+
       {/* More — visible to all roles */}
       <Tabs.Screen
         name="more"
@@ -236,6 +255,7 @@ function TabsNavigator() {
       <Tabs.Screen name="kitchen" options={{ href: null }} />
       <Tabs.Screen name="order-history" options={{ href: null }} />
       <Tabs.Screen name="webview" options={{ href: null }} />
+      <Tabs.Screen name="printer-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="billing-webview" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   );

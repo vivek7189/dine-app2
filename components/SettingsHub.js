@@ -17,6 +17,7 @@ import BusinessSettings from './BusinessSettings';
 import StaffManagement from './StaffManagement';
 import RestaurantManagement from './RestaurantManagement';
 import PrintSettings from './PrintSettings';
+import PrinterSetup from './PrinterSetup';
 import ZonePricingSettings from './ZonePricingSettings';
 import CurrencySettings from './CurrencySettings';
 import OrderManagementSettings from './OrderManagementSettings';
@@ -43,6 +44,13 @@ const SETTINGS_CATEGORIES = [
     title: 'Print Settings',
     subtitle: 'Configure KOT & bill printing',
     icon: 'print-outline',
+    roles: ['owner', 'admin', 'manager', 'cashier'],
+  },
+  {
+    key: 'printerSetup',
+    title: 'Printer Setup',
+    subtitle: 'Connect Bluetooth/WiFi thermal printer',
+    icon: 'hardware-chip-outline',
     roles: ['owner', 'admin', 'manager', 'cashier'],
   },
   {
@@ -120,6 +128,8 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
         return <StaffManagement restaurantId={restaurantId} />;
       case 'print':
         return <PrintSettings restaurantId={restaurantId} />;
+      case 'printerSetup':
+        return <PrinterSetup restaurantId={restaurantId} />;
       case 'tax':
         return (
           <ScrollView contentContainerStyle={styles.scrollPadding}>

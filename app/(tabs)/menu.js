@@ -22,6 +22,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
+import * as printerService from '../../services/printerService';
+import lanClient from '../../services/lanClient';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -99,6 +101,7 @@ export default function MenuScreen() {
   const [upiSettings, setUpiSettings] = useState({});
   const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [taxCategories, setTaxCategories] = useState([]); // Real categories from API (with taxGroupId) for tax resolution
+  const [printSettings, setPrintSettings] = useState(null);
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -113,6 +116,19 @@ export default function MenuScreen() {
   useEffect(() => {
     loadInitialData();
     loadImagePreference();
+  }, []);
+
+  // Listen for printer disconnect events — show alert so user knows
+  useEffect(() => {
+    const unsub = printerService.onPrinterEvent((event) => {
+      if (event.type === 'disconnected') {
+        Alert.alert(
+          'Printer Disconnected',
+          'Could not reach the printer. Please check it is powered on and on the same WiFi, then go to Printer Settings to reconnect.',
+        );
+      }
+    });
+    return unsub;
   }, []);
 
   // Listen for restaurant switch from other tabs (e.g. home drawer)
@@ -148,13 +164,9 @@ export default function MenuScreen() {
     return unsub;
   }, []);
 
-  // Pusher real-time menu updates
+  // Pusher + LAN Hub real-time menu updates
   useEffect(() => {
     if (!restaurantId) return;
-
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channelName = `restaurant-${restaurantId}`;
-    const channel = pusher.subscribe(channelName);
 
     let debounceTimer = null;
     const debouncedRefresh = () => {
@@ -165,11 +177,25 @@ export default function MenuScreen() {
       }, 1000);
     };
 
-    channel.bind('menu-updated', debouncedRefresh);
-    channel.bind('menu-item-created', debouncedRefresh);
-    channel.bind('menu-item-deleted', debouncedRefresh);
+    const menuEvents = ['menu-updated', 'menu-item-created', 'menu-item-deleted'];
+    const lanUnsubs = [];
+
+    // LAN Hub WebSocket events (when paired)
+    if (lanClient.isPaired()) {
+      menuEvents.forEach(evt => {
+        lanUnsubs.push(lanClient.onEvent(evt, debouncedRefresh));
+      });
+    }
+
+    // Pusher (cloud)
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channelName = `restaurant-${restaurantId}`;
+    const channel = pusher.subscribe(channelName);
+
+    menuEvents.forEach(evt => channel.bind(evt, debouncedRefresh));
 
     return () => {
+      lanUnsubs.forEach(fn => fn());
       if (debounceTimer) clearTimeout(debounceTimer);
       channel.unbind_all();
       pusher.unsubscribe(channelName);
@@ -573,6 +599,14 @@ export default function MenuScreen() {
             setFloors(fRes?.floors || []);
           } catch { /* ignore */ }
         })(),
+        (async () => {
+          try {
+            const pRes = await apiClient.getPrintSettings(rid);
+            if (pRes) setPrintSettings(pRes.printSettings || pRes || {});
+          } catch { /* ignore */ }
+        })(),
+        // Auto-reconnect saved printer for silent printing
+        printerService.autoReconnect().catch(() => {}),
       ]);
       setSyncing(false);
     } catch (error) {
@@ -1216,9 +1250,17 @@ export default function MenuScreen() {
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
+          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
+          ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+          ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
           ...partialFields,
         });
+
+        // Redeem coupon after bar tab settle
+        if (discountData.couponId) {
+          apiClient.redeemCoupon(restaurantId, discountData.couponId, existingOrderId).catch(err => console.warn('Coupon redeem:', err));
+        }
 
         await apiClient.verifyPayment({
           orderId: existingOrderId,
@@ -1252,11 +1294,19 @@ export default function MenuScreen() {
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
           finalAmount: grandTotal,
+          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
+          ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+          ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
           ...partialFields,
         };
 
         await apiClient.updateOrder(existingOrderId, updateData);
+
+        // Redeem coupon after order update
+        if (discountData.couponId) {
+          apiClient.redeemCoupon(restaurantId, discountData.couponId, existingOrderId).catch(err => console.warn('Coupon redeem:', err));
+        }
 
         toast.success('Order updated successfully!');
         setCart([]);
@@ -1300,12 +1350,21 @@ export default function MenuScreen() {
           customerId: discountData.customerId || null,
           pricingRuleId: activePricingRuleId || null,
           finalAmount: grandTotal,
+          // Coupon fields
+          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
+          ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+          ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
           ...partialFields,
         };
 
         let response;
         response = await apiClient.createOrder(orderData);
+
+        // Redeem coupon after successful order (fire-and-forget)
+        if (discountData.couponId && response.order?.id) {
+          apiClient.redeemCoupon(restaurantId, discountData.couponId, response.order.id).catch(err => console.warn('Coupon redeem:', err));
+        }
 
         if (isBarTabMode) {
           await apiClient.verifyPayment({
@@ -1434,6 +1493,9 @@ export default function MenuScreen() {
         customerId: discountData.customerId || null,
         discountAmount: totalDiscount,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        ...(discountData.couponDiscount > 0 && { couponDiscount: discountData.couponDiscount }),
+        ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+        ...(discountData.couponId && { couponId: discountData.couponId }),
         pricingRuleId: activePricingRuleId || null,
         ...billingFields,
         ...partialFields,
@@ -1452,6 +1514,11 @@ export default function MenuScreen() {
           restaurantId,
           paymentStatus: 'completed',
         }).catch(() => {});
+
+        // Redeem coupon after successful order (fire-and-forget)
+        if (discountData.couponId) {
+          apiClient.redeemCoupon(restaurantId, discountData.couponId, response.order.id).catch(() => {});
+        }
       }
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
@@ -1490,6 +1557,8 @@ export default function MenuScreen() {
         appliedOffers: discountData.appliedOffers || [],
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        couponDiscount: discountData.couponDiscount || 0,
+        couponCode: discountData.couponCode || null,
         // Billing fields for invoice
         serviceChargeAmount: serviceCharge || 0,
         serviceChargeRate: discountData.serviceChargeRate || 0,
@@ -1669,6 +1738,8 @@ export default function MenuScreen() {
         appliedOffers: discountData.appliedOffers || [],
         manualDiscount: discountData.manualDiscountAmount || 0,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        couponDiscount: discountData.couponDiscount || 0,
+        couponCode: discountData.couponCode || null,
         serviceChargeAmount: serviceCharge || 0,
         serviceChargeRate: discountData.serviceChargeRate || null,
         roundOffAmount: roundOff || 0,
@@ -2613,6 +2684,8 @@ export default function MenuScreen() {
         invoiceData={lastOrderData}
         restaurantId={restaurantId}
         whatsappConnected={whatsappConnected}
+        tokenBillingEnabled={printSettings?.tokenBillingEnabled || false}
+        autoPrintOnBilling={printSettings?.autoPrintOnBilling || false}
         onNewOrder={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);

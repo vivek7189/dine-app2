@@ -175,15 +175,18 @@ async function executeRequest(apiClient, item) {
   // Ensure the payload has the idempotency key
   const data = { ...payload, idempotencyKey: item.idempotency_key, syncSource: 'offline' };
 
+  // Tell backend to skip table availability checks for offline synced orders
+  const headers = { 'x-sync-source': 'offline' };
+
   switch (method) {
     case 'POST':
-      return apiClient.request(endpoint, { method: 'POST', data });
+      return apiClient.request(endpoint, { method: 'POST', data, headers });
     case 'PATCH':
-      return apiClient.request(endpoint, { method: 'PATCH', data });
+      return apiClient.request(endpoint, { method: 'PATCH', data, headers });
     case 'PUT':
-      return apiClient.request(endpoint, { method: 'PUT', data });
+      return apiClient.request(endpoint, { method: 'PUT', data, headers });
     case 'DELETE':
-      return apiClient.request(endpoint, { method: 'DELETE', data });
+      return apiClient.request(endpoint, { method: 'DELETE', data, headers });
     default:
       throw new Error(`Unknown method: ${method}`);
   }

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 import { clearCache } from '../../services/cacheManager';
@@ -21,6 +22,7 @@ import { useOffline } from '../../hooks/useOffline';
 import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import BusinessSettings from '../../components/BusinessSettings';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
+import lanClient from '../../services/lanClient';
 import { resolveFeaturePermissions } from '../../utils/permissions';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 
@@ -45,10 +47,17 @@ export default function MoreScreen() {
   const [switchingRestaurant, setSwitchingRestaurant] = useState(false);
   const [showRestaurantModal, setShowRestaurantModal] = useState(false);
   const [switchingRestaurantId, setSwitchingRestaurantId] = useState(null);
+  const [lanPaired, setLanPaired] = useState(false);
+  const [lanConfig, setLanConfig] = useState(null);
 
   useEffect(() => {
     loadUserData();
     hasPin().then(setPinEnabled);
+    // Check LAN pairing status
+    lanClient.init().then(() => {
+      setLanPaired(lanClient.isPaired());
+      lanClient.getConfig().then(setLanConfig);
+    });
   }, []);
 
   useEffect(() => {
@@ -135,6 +144,7 @@ export default function MoreScreen() {
         { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null },
+        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: ['owner', 'admin', 'manager', 'cashier'], feature: 'print' },
       ],
     },
     {
@@ -154,6 +164,12 @@ export default function MoreScreen() {
       title: 'Hotel',
       items: [
         { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: null },
+      ],
+    }] : []),
+    ...(restaurant?.parkingEnabled ? [{
+      title: 'Parking',
+      items: [
+        { title: 'Parking Management', icon: 'car-outline', route: '/(tabs)/parking', roles: ['owner', 'admin', 'manager'] },
       ],
     }] : []),
   ];
@@ -600,6 +616,38 @@ export default function MoreScreen() {
                 </View>
               </View>
             )}
+
+            {/* LAN Hub Connection */}
+            {lanPaired && lanConfig && (
+              <View style={[styles.connectRow, { borderBottomWidth: 0 }]}>
+                <View style={styles.connectLeft}>
+                  <Ionicons name="git-network-outline" size={18} color="#8b5cf6" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.connectLabel}>LAN Hub</Text>
+                    <Text style={styles.connectHint}>
+                      Connected to {lanConfig.hubUrl || `${lanConfig.hubHost}:${lanConfig.hubPort}`}
+                      {lanConfig.restaurantName ? ` (${lanConfig.restaurantName})` : ''}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#fef2f2', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                  onPress={() => {
+                    Alert.alert('Unpair from Hub', 'This will disconnect from the LAN hub. You can pair again later.', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Unpair', style: 'destructive', onPress: async () => {
+                        await lanClient.unpair();
+                        setLanPaired(false);
+                        setLanConfig(null);
+                        Alert.alert('Unpaired', 'Disconnected from LAN hub.');
+                      }},
+                    ]);
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444' }}>Unpair</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
           )}
         </View>
@@ -707,7 +755,7 @@ export default function MoreScreen() {
           <Text style={styles.footerRoleText}>{role || 'Staff'}</Text>
         </View>
         <TouchableOpacity style={styles.footerVersionPill}>
-          <Text style={styles.footerVersionText}>v1.6.0</Text>
+          <Text style={styles.footerVersionText}>v{Constants.expoConfig?.version || Constants.manifest?.version || '?.?.?'}</Text>
         </TouchableOpacity>
       </View>
 

@@ -28,6 +28,7 @@ import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 import UpiQrModal from './UpiQrModal';
+import apiClient from '../services/api';
 
 export default function CartModal({
   mode = 'owner',         // 'waiter' | 'cashier' | 'owner'
@@ -173,6 +174,13 @@ export default function CartModal({
   const [sliderWidth, setSliderWidth] = useState(280);
   const [lookupKey, setLookupKey] = useState(0);
 
+  // Coupon state
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponError, setCouponError] = useState('');
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [customerCoupons, setCustomerCoupons] = useState([]);
+
   // Billing state
   const [activeBillingPanel, setActiveBillingPanel] = useState(null);
   const [cashReceived, setCashReceived] = useState('');
@@ -207,6 +215,10 @@ export default function CartModal({
       setManualDiscountType('flat');
       setShowOffersModal(false);
       resetOffers();
+      setAppliedCoupon(null);
+      setCouponCode('');
+      setCouponError('');
+      setCustomerCoupons([]);
       setLookupKey(k => k + 1);
     }
   }, [visible]);
@@ -225,6 +237,51 @@ export default function CartModal({
 
   // Comp items reduce subtotal
   const compAmount = selectedCompItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  // Coupon discount
+  const couponDiscountAmount = appliedCoupon?.discountAmount || 0;
+  const couponsEnabled = offerSettings?.couponsEnabled === true;
+
+  const handleApplyCoupon = async (code) => {
+    if (!code?.trim()) return;
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      const res = await apiClient.validateCoupon(restaurantId, code.trim(), customerMobile || '', subtotal);
+      if (res.valid) {
+        if (!offerSettings?.allowCouponsWithOffers && offerDiscount > 0) {
+          setCouponError('Remove offers to use a coupon');
+          setCouponLoading(false);
+          return;
+        }
+        setAppliedCoupon({ ...res.coupon, discountAmount: res.discountAmount });
+        setCouponCode('');
+        setCouponError('');
+      } else {
+        setCouponError(res.reason || 'Invalid coupon');
+      }
+    } catch (err) {
+      setCouponError('Failed to validate coupon');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponError('');
+  };
+
+  // Fetch customer coupons when phone is set
+  useEffect(() => {
+    if (!couponsEnabled || !customerMobile || !customerData) {
+      setCustomerCoupons([]);
+      return;
+    }
+    apiClient.getCustomerCoupons(restaurantId, customerMobile)
+      .then(res => setCustomerCoupons(res.coupons || []))
+      .catch(() => setCustomerCoupons([]));
+  }, [couponsEnabled, customerMobile, customerData, restaurantId]);
 
   const buildDiscountData = () => ({
     offerDiscount,
@@ -272,6 +329,9 @@ export default function CartModal({
       amount: item.price * item.quantity, reason: voidReason,
     })) : null,
     freeItems: freeItems && freeItems.length > 0 ? freeItems : null,
+    couponDiscount: couponDiscountAmount > 0 ? couponDiscountAmount : null,
+    couponCode: appliedCoupon?.code || null,
+    couponId: appliedCoupon?.id || null,
   });
 
   // Build customer context for extended offer engine (audience targeting).
@@ -341,6 +401,7 @@ export default function CartModal({
     offerDiscount,
     manualDiscountAmount,
     loyaltyDiscount,
+    couponDiscount: couponDiscountAmount,
     compAmount,
     taxSettings,
     billingSettings,
@@ -1254,6 +1315,77 @@ export default function CartModal({
                       </Text>
                     ) : null}
                   </View>
+                </View>
+              )}
+
+              {/* COUPON CODE Section */}
+              {couponsEnabled && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Ionicons name="ticket-outline" size={10} color="#94a3b8" />
+                    <Text style={styles.modalSectionLabel}>Coupon Code</Text>
+                  </View>
+                  {appliedCoupon ? (
+                    <View style={{ padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#86efac', backgroundColor: '#f0fdf4', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#15803d', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{appliedCoupon.code}</Text>
+                        <Text style={{ fontSize: 11, color: '#16a34a', marginTop: 2 }}>Saving ₹{fmtAmt(appliedCoupon.discountAmount)}</Text>
+                      </View>
+                      <TouchableOpacity onPress={handleRemoveCoupon} style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#fca5a5', backgroundColor: '#fef2f2' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#dc2626' }}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={{ flexDirection: 'row', gap: 8, marginBottom: couponError ? 6 : (customerCoupons.length > 0 ? 8 : 0) }}>
+                        <TextInput
+                          style={{ flex: 1, borderWidth: 1.5, borderColor: couponError ? '#fca5a5' : '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontWeight: '600', letterSpacing: 1, color: '#1f2937' }}
+                          placeholder="Enter coupon code"
+                          placeholderTextColor="#9ca3af"
+                          autoCapitalize="characters"
+                          value={couponCode}
+                          onChangeText={(t) => { setCouponCode(t.toUpperCase()); setCouponError(''); }}
+                          onSubmitEditing={() => handleApplyCoupon(couponCode)}
+                        />
+                        <TouchableOpacity
+                          onPress={() => handleApplyCoupon(couponCode)}
+                          disabled={couponLoading || !couponCode.trim()}
+                          style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: couponLoading || !couponCode.trim() ? '#e5e7eb' : '#ef4444', justifyContent: 'center' }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: couponLoading || !couponCode.trim() ? '#9ca3af' : '#fff' }}>
+                            {couponLoading ? '...' : 'Apply'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {couponError ? <Text style={{ fontSize: 11, color: '#dc2626', marginBottom: customerCoupons.length > 0 ? 8 : 0 }}>{couponError}</Text> : null}
+                      {customerCoupons.length > 0 && (
+                        <View>
+                          <Text style={{ fontSize: 10, fontWeight: '600', color: '#6b7280', marginBottom: 4 }}>Available coupons:</Text>
+                          <ScrollView horizontal={false} style={{ maxHeight: 100 }} nestedScrollEnabled>
+                            {customerCoupons.map(c => (
+                              <TouchableOpacity
+                                key={c.id}
+                                onPress={() => handleApplyCoupon(c.code)}
+                                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff', marginBottom: 4 }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={{ fontSize: 12, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: '#1f2937' }}>{c.code}</Text>
+                                  {c.type === 'private' && (
+                                    <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: '#ede9fe' }}>
+                                      <Text style={{ fontSize: 9, fontWeight: '600', color: '#7c3aed' }}>YOURS</Text>
+                                    </View>
+                                  )}
+                                </View>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>
+                                  {c.discountType === 'percentage' ? `${c.value}% off` : `₹${c.value}`}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
+                    </>
+                  )}
                 </View>
               )}
 

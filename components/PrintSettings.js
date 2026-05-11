@@ -59,8 +59,14 @@ const BILLING_TOGGLES = [
   {
     key: 'autoPrintOnBilling',
     title: 'Auto-Print on Billing',
-    hint: 'Automatically print when billing is completed',
+    hint: 'Automatically print bill when billing is completed (uses system print dialog)',
     icon: 'card-outline',
+  },
+  {
+    key: 'tokenBillingEnabled',
+    title: 'Food Court Token Billing',
+    hint: 'Print separate category-wise token slips after billing for counter pickup',
+    icon: 'ticket-outline',
   },
 ];
 
