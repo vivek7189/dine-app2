@@ -973,7 +973,7 @@ export default function OrdersScreen() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Ionicons name="restaurant-outline" size={12} color="#9ca3af" />
-            <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }}>{item.tableNumber ? `Table ${item.tableNumber}` : 'N/A'}</Text>
+            <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }}>{item.tableNumber ? `Table ${item.tableNumber}${item.floorName ? ` · ${item.floorName}` : ''}` : 'N/A'}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Ionicons name="bag-handle-outline" size={12} color="#9ca3af" />

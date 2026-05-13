@@ -131,7 +131,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 {(tableNumber || order?.tableNumber) ? (
                   <View style={styles.headerChipWhite}>
                     <Ionicons name="restaurant" size={12} color="#fff" />
-                    <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}</Text>
+                    <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}{order?.floorName ? ` · ${order.floorName}` : ''}</Text>
                   </View>
                 ) : null}
               </View>

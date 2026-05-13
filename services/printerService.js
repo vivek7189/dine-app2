@@ -760,10 +760,10 @@ const printViaAirPrint = async (html, printerUrl) => {
  * @param {string} options.text - Plain text (for thermal printers)
  * @returns {Promise<{method: string}>}
  */
-export const printContent = async ({ html, text }) => {
+export const printContent = async ({ html, text, silentOnly = false }) => {
   const mode = await getPrinterMode();
 
-  if (mode === 'silent' && connectedPrinter) {
+  if ((mode === 'silent' || silentOnly) && connectedPrinter) {
     // iOS AirPrint - silent with saved printer URL
     if (connectionType === 'airprint' && html) {
       try {
@@ -771,6 +771,7 @@ export const printContent = async ({ html, text }) => {
         return { method: 'silent-airprint' };
       } catch (err) {
         console.error('AirPrint silent failed:', err);
+        if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
         // fall through to dialog
       }
     }
@@ -782,10 +783,17 @@ export const printContent = async ({ html, text }) => {
         return { method: `silent-${connectionType}` };
       } catch (err) {
         console.error(`${connectionType} silent print failed:`, err);
+        if (silentOnly) return { method: 'skipped', reason: `${connectionType}-failed` };
         // fall through to dialog
       }
     }
+
+    // silentOnly but no matching print path — skip
+    if (silentOnly) return { method: 'skipped', reason: 'no-printer-match' };
   }
+
+  // silentOnly mode: never open dialog
+  if (silentOnly) return { method: 'skipped', reason: 'no-connected-printer' };
 
   // Fallback: system print dialog
   if (html) {

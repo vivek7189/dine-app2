@@ -29,6 +29,7 @@ import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache } from '../../services/cacheManager';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
+import MoveOrderModal from '../../components/MoveOrderModal';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -80,6 +81,7 @@ export default function TablesScreen() {
   const [savingBooking, setSavingBooking] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [updatingTables, setUpdatingTables] = useState(new Set()); // tables with pending status change
+  const [moveModalTable, setMoveModalTable] = useState(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
@@ -527,7 +529,7 @@ export default function TablesScreen() {
     if (table.status === 'available') {
       router.push({
         pathname: '/(tabs)/menu',
-        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, navStamp: Date.now().toString() },
+        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '', navStamp: Date.now().toString() },
       });
     } else if (table.status === 'occupied' && table.currentOrderId) {
       // Keep user on tables page — open the order detail modal inline
@@ -545,7 +547,7 @@ export default function TablesScreen() {
       } else {
         router.push({
           pathname: '/(tabs)/menu',
-          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, navStamp: Date.now().toString() },
+          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '', navStamp: Date.now().toString() },
         });
       }
     } else {
@@ -702,6 +704,7 @@ export default function TablesScreen() {
         tableId: selectedTableForOrder?.id,
         tableNumber: selectedTableForOrder?.name,
         floorName,
+        floorId: tableFloor?.id || '',
         orderId: order.id,
         cartItems,
         timestamp: Date.now(),
@@ -858,6 +861,25 @@ export default function TablesScreen() {
                     <Ionicons name="eye-outline" size={11} color={Colors.textDark} />
                     <Text style={styles.viewButtonText}>View</Text>
                   </TouchableOpacity>
+                  {posSettings.moveOrderEnabled && isOccupied && table.currentOrderId && (
+                    <TouchableOpacity
+                      style={styles.moveButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        const tableFloor = getFloorForTable(table);
+                        setMoveModalTable({
+                          id: table.id,
+                          name: table.name,
+                          currentOrderId: table.currentOrderId,
+                          floorId: tableFloor?.id || null,
+                          floorName: tableFloor?.name || '',
+                        });
+                      }}
+                    >
+                      <Ionicons name="swap-horizontal" size={11} color="#8b5cf6" />
+                      <Text style={styles.moveButtonText}>Move</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={styles.addButton}
                     onPress={(e) => {
@@ -912,6 +934,7 @@ export default function TablesScreen() {
 
   const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());
   const canResetTables = canPerform(user, user?.pageAccess, 'tables', 'reset');
+  const posSettings = selectedRestaurant?.posSettings || {};
 
   const openAddFloor = () => {
     setEditingFloor(null);
@@ -1143,6 +1166,14 @@ export default function TablesScreen() {
       if (status === 'occupied' && table.currentOrderId) {
         options.push('View Order');
         actions.push(() => handleViewOrder(table));
+      }
+      if (posSettings.moveOrderEnabled && status === 'occupied' && table.currentOrderId) {
+        const tableFloor = getFloorForTable(table);
+        options.push('Move Order');
+        actions.push(() => setMoveModalTable({
+          id: table.id, name: table.name, currentOrderId: table.currentOrderId,
+          floorId: tableFloor?.id || null, floorName: tableFloor?.name || '',
+        }));
       }
       if (status !== 'out-of-service') {
         options.push('Mark Out of Service');
@@ -1617,6 +1648,20 @@ export default function TablesScreen() {
         }}
       />
 
+      {/* Move Order Modal */}
+      <MoveOrderModal
+        visible={!!moveModalTable}
+        onClose={() => setMoveModalTable(null)}
+        sourceTable={moveModalTable}
+        floors={floors}
+        restaurantId={selectedRestaurant?.id}
+        onMoveComplete={(oldId, newId) => {
+          updateTableStatusOptimistically(oldId, 'available', null);
+          updateTableStatusOptimistically(newId, 'occupied', moveModalTable?.currentOrderId);
+          setMoveModalTable(null);
+        }}
+      />
+
       {/* Floor Add/Edit Modal */}
       <Modal
         visible={showFloorModal}
@@ -1962,6 +2007,20 @@ export default function TablesScreen() {
                 <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleViewOrder(actionTable); }}>
                   <Ionicons name="eye" size={20} color="#3b82f6" />
                   <Text style={styles.actionSheetBtnText}>View Order</Text>
+                </TouchableOpacity>
+              )}
+
+              {posSettings.moveOrderEnabled && actionTable?.status === 'occupied' && actionTable?.currentOrderId && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+                  setShowTableActions(false);
+                  const tableFloor = getFloorForTable(actionTable);
+                  setMoveModalTable({
+                    id: actionTable.id, name: actionTable.name, currentOrderId: actionTable.currentOrderId,
+                    floorId: tableFloor?.id || null, floorName: tableFloor?.name || '',
+                  });
+                }}>
+                  <Ionicons name="swap-horizontal" size={20} color="#8b5cf6" />
+                  <Text style={styles.actionSheetBtnText}>Move Order</Text>
                 </TouchableOpacity>
               )}
 
@@ -2467,6 +2526,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#3b82f6',
+  },
+  moveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  moveButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#8b5cf6',
   },
   outOfServiceButtonContainer: {
     flexDirection: 'row',

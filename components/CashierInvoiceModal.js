@@ -29,6 +29,7 @@ export default function CashierInvoiceModal({
   whatsappConnected = false,
   tokenBillingEnabled = false,
   autoPrintOnBilling = false,
+  manualPrintEnabled = true,
 }) {
   const { isTablet } = useResponsive();
   const [waSending, setWaSending] = React.useState(false);
@@ -506,9 +507,9 @@ Thank you for your order!
     }
   };
 
-  // Silent print: uses saved printer (thermal/AirPrint) — for auto-print after billing
+  // Silent print: uses saved printer (thermal/AirPrint) — no dialog fallback
   const silentPrint = async ({ html, text }) => {
-    return printerService.printContent({ html, text });
+    return printerService.printContent({ html, text, silentOnly: true });
   };
 
   // Dialog print: always opens system print dialog — for manual button taps
@@ -832,7 +833,7 @@ Thank you for your order!
             )}
 
             {/* Print Actions */}
-            {tokenBillingEnabled && (
+            {manualPrintEnabled && tokenBillingEnabled && (
               <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
                 <TouchableOpacity
                   onPress={handlePrintAll}
@@ -897,7 +898,7 @@ Thank you for your order!
                   <Text style={styles.shareButtonText}>PDF</Text>
                 </TouchableOpacity>
 
-                {!tokenBillingEnabled && (
+                {manualPrintEnabled && !tokenBillingEnabled && (
                   <TouchableOpacity style={styles.shareButton} onPress={handlePrint}>
                     <View style={[styles.shareIconBg, { backgroundColor: '#333' }]}>
                       <Ionicons name="print" size={22} color="#fff" />

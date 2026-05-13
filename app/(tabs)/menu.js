@@ -377,7 +377,7 @@ export default function MenuScreen() {
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
-      setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '' });
+      setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '', floorId: params.floorId || '' });
       setIsFromTablesPage(true);
       setExistingOrderId(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
@@ -443,7 +443,7 @@ export default function MenuScreen() {
               tableParamsStampRef.current = stamp;
               lastAppliedStampRef.current = stamp;
               freshParamsRef.current = true;
-              setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '' });
+              setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
               if (data.cartItems) setCart(data.cartItems);
@@ -1095,6 +1095,9 @@ export default function MenuScreen() {
         const orderData = {
           restaurantId,
           tableNumber: tableNumber,
+          tableId: selectedTable?.id || null,
+          floorId: selectedTable?.floorId || null,
+          floorName: selectedTable?.floor || null,
           items: cart.map(item => ({
             menuItemId: item.menuItemId || item.id,
             name: item.name,
@@ -1143,6 +1146,7 @@ export default function MenuScreen() {
         orderNumber,
         orderId,
         tableNumber: tableNumber,
+        floorName: selectedTable?.floor || '',
         roomNumber: response.order?.roomNumber || null,
         items: cart.map(item => ({
           name: item.name,
@@ -1244,7 +1248,7 @@ export default function MenuScreen() {
           taxAmount: taxAmount,
           finalAmount: grandTotal,
           completedAt: new Date().toISOString(),
-          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
           manualDiscount: discountData.manualDiscountAmount || 0,
@@ -1286,7 +1290,7 @@ export default function MenuScreen() {
           discountAmount: totalDiscount,
           loyaltyDiscount: discountData.loyaltyDiscount || 0,
           taxAmount: taxAmount,
-          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
@@ -1329,6 +1333,9 @@ export default function MenuScreen() {
         const orderData = {
           restaurantId,
           tableNumber: selectedTable?.name || tableNumberFromModal || '',
+          tableId: selectedTable?.id || null,
+          floorId: selectedTable?.floorId || null,
+          floorName: selectedTable?.floor || null,
           items,
           orderType: isBarTabMode ? 'dine-in' : orderType,
           paymentMethod: billingFields.paymentMethod || paymentMethod,
@@ -1341,7 +1348,7 @@ export default function MenuScreen() {
           discountAmount: totalDiscount,
           loyaltyDiscount: discountData.loyaltyDiscount || 0,
           taxAmount: taxAmount,
-          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile } }),
+          ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
@@ -2659,6 +2666,8 @@ export default function MenuScreen() {
           }
         }}
         orderData={kotOrderData}
+        autoPrintOnKOT={printSettings?.autoPrintOnKOT !== false}
+        manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
       />
 
       {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
@@ -2685,7 +2694,8 @@ export default function MenuScreen() {
         restaurantId={restaurantId}
         whatsappConnected={whatsappConnected}
         tokenBillingEnabled={printSettings?.tokenBillingEnabled || false}
-        autoPrintOnBilling={printSettings?.autoPrintOnBilling || false}
+        autoPrintOnBilling={printSettings?.autoPrintOnBilling !== false}
+        manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
         onNewOrder={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);

@@ -16,68 +16,38 @@ import { Colors, Spacing } from '../constants/Theme';
 
 const STORAGE_KEY = 'dine_print_settings';
 
-const KOT_TOGGLES = [
+const PRINT_TOGGLES = [
   {
-    key: 'kotPrinterEnabled',
-    title: 'KOT Printer App (Auto-Print)',
-    hint: 'Enable automatic printing via dine-kot-printer app',
-    icon: 'print-outline',
-  },
-  {
-    key: 'showKOTSummaryAfterOrder',
-    title: 'Show KOT Summary After Order',
-    hint: 'Display order summary on dashboard after placing order to kitchen',
-    icon: 'eye-outline',
+    key: 'manualPrintEnabled',
+    title: 'Show Manual Print Button',
+    hint: 'Show print button on KOT and bill screens for manual printing',
+    icon: 'hand-left-outline',
   },
   {
     key: 'autoPrintOnKOT',
     title: 'Auto-Print on KOT',
-    hint: 'Automatically print when order is sent to kitchen',
+    hint: 'Automatically print when order is sent to kitchen via connected printer',
     icon: 'document-text-outline',
-  },
-  {
-    key: 'usePusherForKOT',
-    title: 'Use Pusher for KOT',
-    hint: 'Use real-time Pusher instead of polling for KOT updates',
-    icon: 'flash-outline',
-  },
-];
-
-const BILLING_TOGGLES = [
-  {
-    key: 'manualPrintEnabled',
-    title: 'Manual Print Button',
-    hint: 'Show manual print button on dashboard order summary',
-    icon: 'hand-left-outline',
-  },
-  {
-    key: 'showBillSummaryAfterBilling',
-    title: 'Show Bill Summary After Billing',
-    hint: 'Display bill summary on dashboard after completing billing',
-    icon: 'receipt-outline',
   },
   {
     key: 'autoPrintOnBilling',
     title: 'Auto-Print on Billing',
-    hint: 'Automatically print bill when billing is completed (uses system print dialog)',
+    hint: 'Automatically print bill when billing is completed via connected printer',
     icon: 'card-outline',
   },
   {
     key: 'tokenBillingEnabled',
     title: 'Food Court Token Billing',
-    hint: 'Print separate category-wise token slips after billing for counter pickup',
+    hint: 'Print category-wise token slips after billing for counter pickup',
     icon: 'ticket-outline',
   },
 ];
 
 const DEFAULT_SETTINGS = {
-  kotPrinterEnabled: true,
   manualPrintEnabled: true,
-  showKOTSummaryAfterOrder: true,
-  showBillSummaryAfterBilling: true,
   autoPrintOnKOT: true,
-  autoPrintOnBilling: false,
-  usePusherForKOT: false,
+  autoPrintOnBilling: true,
+  tokenBillingEnabled: false,
 };
 
 export default function PrintSettings({ restaurantId, onSettingsChange }) {
@@ -181,26 +151,17 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       <View style={styles.infoBanner}>
         <Ionicons name="information-circle-outline" size={18} color="#3b82f6" />
         <Text style={styles.infoBannerText}>
-          Configure printing behavior and order summary display settings for your restaurant dashboard.
+          Configure when to automatically print via your connected thermal printer.
         </Text>
       </View>
 
-      {/* KOT Settings */}
+      {/* Print Settings */}
       <View style={styles.sectionCard}>
         <View style={styles.sectionHeader}>
-          <Ionicons name="restaurant-outline" size={18} color={Colors.primary} />
-          <Text style={styles.sectionTitle}>KOT Settings</Text>
+          <Ionicons name="print-outline" size={18} color={Colors.primary} />
+          <Text style={styles.sectionTitle}>Print Settings</Text>
         </View>
-        {KOT_TOGGLES.map(renderToggle)}
-      </View>
-
-      {/* Billing Settings */}
-      <View style={styles.sectionCard}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="wallet-outline" size={18} color={Colors.primary} />
-          <Text style={styles.sectionTitle}>Billing Settings</Text>
-        </View>
-        {BILLING_TOGGLES.map(renderToggle)}
+        {PRINT_TOGGLES.map(renderToggle)}
       </View>
 
       {/* Save/Cancel */}

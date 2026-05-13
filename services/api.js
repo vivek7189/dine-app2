@@ -1093,6 +1093,17 @@ class ApiClient {
     return result;
   }
 
+  // Move order to a different table
+  async moveOrderToTable(orderId, { targetTableId, targetTableName, targetFloorId, targetFloorName, restaurantId }) {
+    const result = await this.request(`/api/orders/${orderId}/move-table`, {
+      method: 'POST',
+      data: { targetTableId, targetTableName, targetFloorId, targetFloorName, restaurantId },
+    });
+    this.invalidateCache('/api/floors/');
+    this.invalidateCache('/api/tables/');
+    return result;
+  }
+
   // Update order status
   async updateOrderStatus(orderId, status, restaurantId) {
     const result = await this.offlineWrite(`/api/orders/${orderId}/status`, {

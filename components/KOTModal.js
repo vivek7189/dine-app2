@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,20 +16,32 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
-// Note: For direct thermal printer support, install:
-// npm install react-native-thermal-receipt-printer
-// This component uses Share API as a fallback which works with most printer apps
+import * as printerService from '../services/printerService';
 
 export default function KOTModal({
   visible,
   onClose,
   orderData,
   onPrint,
+  autoPrintOnKOT = false,
+  manualPrintEnabled = true,
 }) {
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
   const [sharingWhatsApp, setSharingWhatsApp] = useState(false);
   const [showFullInstructions, setShowFullInstructions] = useState(false);
+  const autoPrintDoneRef = useRef(null);
+
+  // Auto-print KOT when modal becomes visible (same pattern as CashierInvoiceModal)
+  useEffect(() => {
+    if (visible && autoPrintOnKOT && orderData?.orderId && autoPrintDoneRef.current !== orderData.orderId) {
+      autoPrintDoneRef.current = orderData.orderId;
+      const timer = setTimeout(() => {
+        handleSilentPrint();
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, autoPrintOnKOT, orderData?.orderId]);
 
   if (!orderData) return null;
 
@@ -57,49 +69,38 @@ export default function KOTModal({
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
+  const wrapKOTTextInHTML = (text) => {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
+</head><body><pre>${text}</pre></body></html>`;
+  };
+
+  // Silent print via connected thermal printer (no dialog fallback)
+  const handleSilentPrint = async () => {
+    try {
+      const kotText = generateKOTText(orderData);
+      const kotHtml = wrapKOTTextInHTML(kotText);
+      await printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true });
+    } catch (err) {
+      console.error('KOT auto-print failed:', err);
+    }
+  };
+
   const handlePrint = async () => {
     if (onPrint) {
       onPrint(orderData);
       return;
     }
 
-    // For thermal printer support, you can integrate libraries like:
-    // - react-native-thermal-receipt-printer (for ESC/POS printers)
-    // - react-native-bluetooth-escpos-printer (for Bluetooth printers)
-    // - expo-print (for general printing via system print dialog)
-    
     setPrinting(true);
     try {
-      // Generate KOT text for printing
       const kotText = generateKOTText(orderData);
-      
-      // Use Share API to share KOT text to printer apps
-      // This works with most thermal printer apps on Android and iOS
-      try {
-        const result = await Share.share({
-          message: kotText,
-          title: 'KOT - Kitchen Order Ticket',
-        });
-        
-        if (result.action === Share.sharedAction) {
-          Alert.alert('Success', 'KOT shared. Select your thermal printer app to print.');
-        }
-      } catch (shareError) {
-        // If share fails, show the KOT text for manual printing
-        Alert.alert(
-          'KOT Text',
-          kotText,
-          [
-            { text: 'OK', onPress: () => {
-              // User can manually copy and paste to printer app
-            }},
-          ],
-          { userInterfaceStyle: 'light' }
-        );
-      }
+      const kotHtml = wrapKOTTextInHTML(kotText);
+      await printerService.printContent({ html: kotHtml, text: kotText });
     } catch (error) {
       console.error('Print error:', error);
-      Alert.alert('Error', 'Failed to print. Please check printer connection.');
+      Alert.alert('Error', 'Failed to print. Check printer connection.');
     } finally {
       setPrinting(false);
     }
@@ -471,24 +472,26 @@ ${'='.repeat(width)}
           {/* Footer Actions */}
           <View style={styles.footer}>
             <View style={styles.actionButtonsRow}>
-              <TouchableOpacity
-                style={[styles.printButton, printing && styles.printButtonDisabled]}
-                onPress={handlePrint}
-                disabled={printing}
-              >
-                {printing ? (
-                  <>
-                    <ActivityIndicator size="small" color="#fff" />
-                    <Text style={styles.printButtonText}>Printing...</Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons name="print" size={20} color="#fff" />
-                    <Text style={styles.printButtonText}>Print KOT</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              
+              {manualPrintEnabled && (
+                <TouchableOpacity
+                  style={[styles.printButton, printing && styles.printButtonDisabled]}
+                  onPress={handlePrint}
+                  disabled={printing}
+                >
+                  {printing ? (
+                    <>
+                      <ActivityIndicator size="small" color="#fff" />
+                      <Text style={styles.printButtonText}>Printing...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="print" size={20} color="#fff" />
+                      <Text style={styles.printButtonText}>Print KOT</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={[styles.whatsappButton, sharingWhatsApp && styles.printButtonDisabled]}
                 onPress={handleWhatsAppShare}
@@ -507,7 +510,7 @@ ${'='.repeat(width)}
                 )}
               </TouchableOpacity>
             </View>
-            
+
             <TouchableOpacity
               style={styles.closeButtonFooter}
               onPress={onClose}

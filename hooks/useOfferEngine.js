@@ -227,10 +227,21 @@ const useOfferEngine = ({
     };
   }, [restaurantId, loadOffers]);
 
-  // -------- load offerSettings + loyaltySettings --------
+  // -------- load offerSettings + loyaltySettings (cache-first) --------
   useEffect(() => {
     if (!restaurantId || settingsLoadedRef.current) return;
     let cancelled = false;
+
+    // 1. Load from SQLite cache INSTANTLY (synchronous) — makes couponsEnabled etc. available immediately
+    try {
+      const cached = offlineStore.getOfferSettings(restaurantId);
+      if (cached) {
+        if (cached.offerSettings) setOfferSettings(prev => ({ ...prev, ...cached.offerSettings }));
+        if (cached.loyaltySettings) setLoyaltySettings(prev => ({ ...prev, ...cached.loyaltySettings }));
+      }
+    } catch (_) {}
+
+    // 2. Revalidate from API in background
     (async () => {
       try {
         const settingsRes = await apiClient.getCustomerAppSettings(restaurantId);
@@ -242,7 +253,7 @@ const useOfferEngine = ({
         if (settingsRes?.settings?.loyaltySettings) {
           setLoyaltySettings(prev => ({ ...prev, ...settingsRes.settings.loyaltySettings }));
         }
-        // Cache to SQLite for offline use
+        // Update SQLite cache
         try {
           offlineStore.saveOfferSettings(restaurantId, {
             offerSettings: settingsRes?.settings?.offerSettings || null,
@@ -250,16 +261,8 @@ const useOfferEngine = ({
           });
         } catch (_) {}
       } catch (e) {
-        // API failed — try SQLite cache (offline fallback)
-        try {
-          const cached = offlineStore.getOfferSettings(restaurantId);
-          if (cached && !cancelled) {
-            settingsLoadedRef.current = true;
-            if (cached.offerSettings) setOfferSettings(prev => ({ ...prev, ...cached.offerSettings }));
-            if (cached.loyaltySettings) setLoyaltySettings(prev => ({ ...prev, ...cached.loyaltySettings }));
-            if (__DEV__) console.warn('[useOfferEngine] using cached offer settings');
-          }
-        } catch (_) {}
+        // API failed — SQLite cache already loaded above, just mark as loaded
+        settingsLoadedRef.current = true;
         if (__DEV__) console.warn('[useOfferEngine] settings load failed:', e?.message);
       }
     })();
