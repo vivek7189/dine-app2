@@ -7,7 +7,6 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
-  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,24 +21,32 @@ const PRINT_TOGGLES = [
     title: 'Show Manual Print Button',
     hint: 'Show print button on KOT and bill screens for manual printing',
     icon: 'hand-left-outline',
+    color: '#6366f1',
+    bg: '#eef2ff',
   },
   {
     key: 'autoPrintOnKOT',
     title: 'Auto-Print on KOT',
-    hint: 'Automatically print when order is sent to kitchen via connected printer',
+    hint: 'Automatically print when order is sent to kitchen',
     icon: 'document-text-outline',
+    color: '#f59e0b',
+    bg: '#fffbeb',
   },
   {
     key: 'autoPrintOnBilling',
     title: 'Auto-Print on Billing',
-    hint: 'Automatically print bill when billing is completed via connected printer',
-    icon: 'card-outline',
+    hint: 'Automatically print bill when billing is completed',
+    icon: 'receipt-outline',
+    color: '#10b981',
+    bg: '#ecfdf5',
   },
   {
     key: 'tokenBillingEnabled',
     title: 'Food Court Token Billing',
     hint: 'Print category-wise token slips after billing for counter pickup',
     icon: 'ticket-outline',
+    color: '#ec4899',
+    bg: '#fdf2f8',
   },
 ];
 
@@ -110,7 +117,7 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       setIsDirty(false);
       await AsyncStorage.setItem(`${STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
       if (onSettingsChange) onSettingsChange(settings);
-      Alert.alert('Success', 'Print settings saved');
+      Alert.alert('Saved', 'Print settings updated successfully.');
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to save');
     } finally {
@@ -118,56 +125,40 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
     }
   };
 
-  const renderToggle = (item) => (
-    <View key={item.key} style={styles.toggleRow}>
-      <View style={styles.toggleIconWrap}>
-        <Ionicons name={item.icon} size={20} color={Colors.primary} />
-      </View>
-      <View style={styles.toggleInfo}>
-        <Text style={styles.toggleLabel}>{item.title}</Text>
-        <Text style={styles.toggleHint}>{item.hint}</Text>
-      </View>
-      <Switch
-        value={!!settings[item.key]}
-        onValueChange={(val) => handleToggle(item.key, val)}
-        trackColor={{ false: '#e5e7eb', true: Colors.primary + '50' }}
-        thumbColor={settings[item.key] ? Colors.primary : '#f4f4f5'}
-      />
-    </View>
-  );
-
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Loading print settings...</Text>
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      {/* Info Banner */}
-      <View style={styles.infoBanner}>
-        <Ionicons name="information-circle-outline" size={18} color="#3b82f6" />
-        <Text style={styles.infoBannerText}>
-          Configure when to automatically print via your connected thermal printer.
-        </Text>
-      </View>
-
-      {/* Print Settings */}
-      <View style={styles.sectionCard}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="print-outline" size={18} color={Colors.primary} />
-          <Text style={styles.sectionTitle}>Print Settings</Text>
+    <View style={styles.container}>
+      {PRINT_TOGGLES.map((item, idx) => (
+        <View key={item.key} style={[styles.toggleRow, idx === PRINT_TOGGLES.length - 1 && { borderBottomWidth: 0 }]}>
+          <View style={[styles.toggleIconWrap, { backgroundColor: item.bg }]}>
+            <Ionicons name={item.icon} size={18} color={item.color} />
+          </View>
+          <View style={styles.toggleInfo}>
+            <Text style={styles.toggleLabel}>{item.title}</Text>
+            <Text style={styles.toggleHint}>{item.hint}</Text>
+          </View>
+          <Switch
+            value={!!settings[item.key]}
+            onValueChange={(val) => handleToggle(item.key, val)}
+            trackColor={{ false: '#e5e7eb', true: item.color + '40' }}
+            thumbColor={settings[item.key] ? item.color : '#d1d5db'}
+          />
         </View>
-        {PRINT_TOGGLES.map(renderToggle)}
-      </View>
+      ))}
 
-      {/* Save/Cancel */}
+      {/* Save/Cancel bar */}
       {isDirty && (
         <View style={styles.actionRow}>
           <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
+            <Ionicons name="close" size={16} color="#6b7280" />
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -179,130 +170,101 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <>
-                <Ionicons name="checkmark" size={18} color="#fff" />
-                <Text style={styles.saveButtonText}>Save Changes</Text>
+                <Ionicons name="checkmark" size={16} color="#fff" />
+                <Text style={styles.saveButtonText}>Save</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-  },
-  contentContainer: {
-    padding: Spacing.md,
-    paddingBottom: 40,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: Colors.textMedium,
-  },
-  infoBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: '#eff6ff',
-    padding: Spacing.md,
-    borderRadius: 12,
-    marginBottom: Spacing.md,
-  },
-  infoBannerText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#1e40af',
-    lineHeight: 18,
-  },
-  sectionCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    marginBottom: Spacing.md,
     overflow: 'hidden',
   },
-  sectionHeader: {
+  loadingWrap: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    padding: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    paddingVertical: 24,
   },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textDark,
+  loadingText: {
+    fontSize: 13,
+    color: Colors.textMedium,
   },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: 14,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f9fafb',
+    borderBottomColor: '#f3f4f6',
   },
   toggleIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: Colors.primary + '10',
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   toggleInfo: {
     flex: 1,
-    marginRight: 12,
+    marginRight: 10,
   },
   toggleLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.textDark,
+    color: '#1f2937',
   },
   toggleHint: {
-    fontSize: 12,
-    color: Colors.textMedium,
+    fontSize: 11,
+    color: '#9ca3af',
     marginTop: 2,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   actionRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: Spacing.sm,
+    padding: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
   },
   cancelButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#f3f4f6',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
   },
   cancelButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
-    color: Colors.textMedium,
+    color: '#6b7280',
   },
   saveButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: Colors.primary,
+    gap: 4,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#16a34a',
   },
   saveButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#fff',
   },

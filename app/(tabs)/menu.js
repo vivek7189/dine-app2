@@ -83,6 +83,7 @@ export default function MenuScreen() {
   const [canCompleteBill, setCanCompleteBill] = useState(false);
   const [showImages, setShowImages] = useState(true);
   const [existingOrderId, setExistingOrderId] = useState(null);
+  const [existingOrderItems, setExistingOrderItems] = useState(null); // snapshot of items when order was loaded for editing
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
   const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
@@ -152,7 +153,7 @@ export default function MenuScreen() {
       setCart([]);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
       setSearchTerm('');
       setShortCodeSearch('');
       tableParamsStampRef.current = null;
@@ -379,7 +380,7 @@ export default function MenuScreen() {
       freshParamsRef.current = true;
       setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '', floorId: params.floorId || '' });
       setIsFromTablesPage(true);
-      setExistingOrderId(null); // Clear stale order when switching tables
+      setExistingOrderId(null); setExistingOrderItems(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
       const paramsKey = `bartab_${params.tableNumber}`;
       if (consumedParamsKeyRef.current === paramsKey) return;
@@ -390,7 +391,7 @@ export default function MenuScreen() {
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: null, name: params.tableNumber });
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
       setIsBarTabMode(true);
     }
 
@@ -414,7 +415,7 @@ export default function MenuScreen() {
       AsyncStorage.getItem('billingWebViewResult').then(result => {
         if (result) {
           AsyncStorage.removeItem('billingWebViewResult');
-          setExistingOrderId(null);
+          setExistingOrderId(null); setExistingOrderItems(null);
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
@@ -446,7 +447,10 @@ export default function MenuScreen() {
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
-              if (data.cartItems) setCart(data.cartItems);
+              if (data.cartItems) {
+                setCart(data.cartItems);
+                setExistingOrderItems(data.cartItems.map(i => ({ menuItemId: i.menuItemId || i.id, name: i.name, quantity: i.quantity })));
+              }
             }
           } catch (e) {
             console.error('Error parsing pendingAddItems:', e);
@@ -465,7 +469,7 @@ export default function MenuScreen() {
         if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null);
+          setExistingOrderId(null); setExistingOrderItems(null);
           setCart([]);
           setIsBarTabMode(false);
           setAutoSelectedRule(false);
@@ -1140,6 +1144,23 @@ export default function MenuScreen() {
       // Note: Table status update to 'occupied' is now handled by backend during POST /api/orders
       // No separate updateTableStatus call needed
 
+      // Compute incremental items (new/changed) for KOT when updating an existing order
+      let kotItems = cart;
+      let isIncremental = false;
+      if (existingOrderId && existingOrderItems) {
+        const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId, i]));
+        const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id));
+        const updatedItems = cart.filter(item => {
+          const existing = existingMap.get(item.menuItemId || item.id);
+          return existing && existing.quantity !== item.quantity;
+        });
+        const incrementalItems = [...newItems, ...updatedItems];
+        if (incrementalItems.length > 0) {
+          kotItems = incrementalItems;
+          isIncremental = true;
+        }
+      }
+
       // Prepare KOT data
       const orderNumber = response.order?.dailyOrderId || response.order?.orderNumber || orderId?.slice(-6);
       const kotData = {
@@ -1148,7 +1169,8 @@ export default function MenuScreen() {
         tableNumber: tableNumber,
         floorName: selectedTable?.floor || '',
         roomNumber: response.order?.roomNumber || null,
-        items: cart.map(item => ({
+        isIncremental,
+        items: kotItems.map(item => ({
           name: item.name,
           quantity: item.quantity,
           notes: item.notes || '',
@@ -1159,12 +1181,20 @@ export default function MenuScreen() {
         restaurantName: restaurantName,
       };
 
-      // Show KOT Modal instead of Alert
+      // Auto-print KOT silently in background (fire and forget)
+      if (printSettings?.autoPrintOnKOT !== false) {
+        const kotText = printerService.generateKOTText(kotData);
+        const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+        printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true })
+          .catch(err => console.error('KOT auto-print failed:', err));
+      }
+
+      // Show KOT Modal
       setKotOrderData(kotData);
       setShowKOTModal(true);
       setCart([]);
       setShowCart(false);
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
     } catch (error) {
       console.error('Error sending order:', error);
       toast.error(error.message || 'Failed to send order to kitchen. Please try again.');
@@ -1180,7 +1210,9 @@ export default function MenuScreen() {
       return;
     }
 
-    if (!existingOrderId && !selectedTable && !tableNumberFromModal) {
+    // Table is only mandatory for dine-in orders
+    const isDineIn = DINEIN_NAMES.includes((orderType || '').toLowerCase().trim());
+    if (!existingOrderId && isDineIn && !selectedTable && !tableNumberFromModal) {
       Alert.alert('Select Table', 'Please select a table first.');
       return;
     }
@@ -1278,7 +1310,7 @@ export default function MenuScreen() {
         toast.success('Tab settled!');
         setCart([]);
         setShowCart(false);
-        setExistingOrderId(null);
+        setExistingOrderId(null); setExistingOrderItems(null);
         router.back();
       } else if (existingOrderId) {
         // Update existing order (adding items to occupied table)
@@ -1307,6 +1339,45 @@ export default function MenuScreen() {
 
         await apiClient.updateOrder(existingOrderId, updateData);
 
+        // Auto-print KOT for newly added/changed items (fire and forget)
+        if (printSettings?.autoPrintOnKOT !== false) {
+          let kotItems = cart;
+          let isIncremental = false;
+          if (existingOrderItems) {
+            const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId, i]));
+            const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id));
+            const updatedItems = cart.filter(item => {
+              const existing = existingMap.get(item.menuItemId || item.id);
+              return existing && existing.quantity !== item.quantity;
+            });
+            const incrementalItems = [...newItems, ...updatedItems];
+            if (incrementalItems.length > 0) {
+              kotItems = incrementalItems;
+              isIncremental = true;
+            }
+          }
+          if (kotItems.length > 0) {
+            const kotData = {
+              orderNumber: existingOrderId?.slice(-6),
+              orderId: existingOrderId,
+              tableNumber: selectedTable?.name || '',
+              floorName: selectedTable?.floor || '',
+              isIncremental,
+              items: kotItems.map(item => ({
+                name: item.name,
+                quantity: item.quantity,
+                notes: item.notes || '',
+              })),
+              waiterName: user?.name || 'Staff',
+              timestamp: new Date(),
+              restaurantName: restaurantName,
+            };
+            const kotText = printerService.generateKOTText(kotData);
+            printerService.printContent({ text: kotText, silentOnly: true })
+              .catch(err => console.error('KOT auto-print failed:', err));
+          }
+        }
+
         // Redeem coupon after order update
         if (discountData.couponId) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, existingOrderId).catch(err => console.warn('Coupon redeem:', err));
@@ -1315,7 +1386,7 @@ export default function MenuScreen() {
         toast.success('Order updated successfully!');
         setCart([]);
         setShowCart(false);
-        setExistingOrderId(null);
+        setExistingOrderId(null); setExistingOrderItems(null);
         if (selectedTable) {
           router.replace({
             pathname: '/(tabs)/tables',
@@ -1371,6 +1442,26 @@ export default function MenuScreen() {
         // Redeem coupon after successful order (fire-and-forget)
         if (discountData.couponId && response.order?.id) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, response.order.id).catch(err => console.warn('Coupon redeem:', err));
+        }
+
+        // Auto-print KOT silently for confirmed orders (fire and forget)
+        if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false) {
+          const kotData = {
+            orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+            orderId: response.order?.id,
+            tableNumber: orderData.tableNumber || '',
+            floorName: selectedTable?.floor || '',
+            roomNumber: response.order?.roomNumber || null,
+            items: cart.map(item => ({ name: item.name, quantity: item.quantity, notes: item.notes || '' })),
+            waiterName: user?.name || 'Manager',
+            waiterId: user?.id,
+            timestamp: new Date(),
+            restaurantName,
+          };
+          const kotText = printerService.generateKOTText(kotData);
+          const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+          printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true })
+            .catch(err => console.error('KOT auto-print failed:', err));
         }
 
         if (isBarTabMode) {
@@ -1576,13 +1667,20 @@ export default function MenuScreen() {
         splitPayments: discountData.splitPayments || null,
       };
 
+      // Auto-print bill silently in background (fire and forget)
+      if (printSettings?.autoPrintOnBilling !== false) {
+        const billText = printerService.generateBillText(invoiceData);
+        printerService.printContent({ text: billText, silentOnly: true })
+          .catch(err => console.error('Bill auto-print failed:', err));
+      }
+
       setLastOrderData(invoiceData);
       setShowInvoiceModal(true);
       setCart([]);
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
       tableParamsStampRef.current = null;
@@ -1756,13 +1854,20 @@ export default function MenuScreen() {
         splitPayments: discountData.splitPayments || null,
       };
 
+      // Auto-print bill silently in background (fire and forget)
+      if (printSettings?.autoPrintOnBilling !== false) {
+        const billText = printerService.generateBillText(invoiceData);
+        printerService.printContent({ text: billText, silentOnly: true })
+          .catch(err => console.error('Bill auto-print failed:', err));
+      }
+
       setLastOrderData(invoiceData);
       setShowInvoiceModal(true);
       setCart([]);
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
       tableParamsStampRef.current = null;
@@ -1828,7 +1933,7 @@ export default function MenuScreen() {
 
       setCart([]);
       setShowCart(false);
-      setExistingOrderId(null);
+      setExistingOrderId(null); setExistingOrderItems(null);
       // Navigate back to bar billing
       router.back();
     } catch (error) {
@@ -1844,7 +1949,7 @@ export default function MenuScreen() {
     setSelectedTable(null);
     setIsFromTablesPage(false);
     setCart([]);
-    setExistingOrderId(null);
+    setExistingOrderId(null); setExistingOrderItems(null);
     setIsBarTabMode(false);
     setAutoSelectedRule(false);
     setActivePricingRuleId(null);
@@ -2154,7 +2259,7 @@ export default function MenuScreen() {
                     setSelectedTable(null);
                     setIsFromTablesPage(false);
                     setCart([]);
-                    setExistingOrderId(null);
+                    setExistingOrderId(null); setExistingOrderItems(null);
                     setIsBarTabMode(false);
                     setAutoSelectedRule(false);
                     setActivePricingRuleId(null);
@@ -2459,7 +2564,7 @@ export default function MenuScreen() {
               setSelectedTable(null);
               setIsFromTablesPage(false);
               setCart([]);
-              setExistingOrderId(null);
+              setExistingOrderId(null); setExistingOrderItems(null);
               setIsBarTabMode(false);
               setAutoSelectedRule(false);
               setActivePricingRuleId(null);
@@ -2648,7 +2753,7 @@ export default function MenuScreen() {
           setKotOrderData(null);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null);
+          setExistingOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
@@ -2666,7 +2771,6 @@ export default function MenuScreen() {
           }
         }}
         orderData={kotOrderData}
-        autoPrintOnKOT={printSettings?.autoPrintOnKOT !== false}
         manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
       />
 
@@ -2679,7 +2783,7 @@ export default function MenuScreen() {
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null);
+          setExistingOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
@@ -2694,7 +2798,6 @@ export default function MenuScreen() {
         restaurantId={restaurantId}
         whatsappConnected={whatsappConnected}
         tokenBillingEnabled={printSettings?.tokenBillingEnabled || false}
-        autoPrintOnBilling={printSettings?.autoPrintOnBilling !== false}
         manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
         onNewOrder={() => {
           setShowInvoiceModal(false);
@@ -2702,7 +2805,7 @@ export default function MenuScreen() {
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null);
+          setExistingOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;

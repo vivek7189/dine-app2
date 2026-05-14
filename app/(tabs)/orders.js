@@ -555,6 +555,46 @@ export default function OrdersScreen() {
     const total = order.finalAmount || order.totalAmount || subtotal + taxAmt;
     const customerName = order.customerName || order.customerDisplay?.name || 'Walk-in Customer';
 
+    // Build invoiceData for thermal text (same format as tables.js autoPrintBill)
+    const invoiceData = {
+      orderId: order.id,
+      orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+      restaurantName: user?.restaurantName || user?.restaurant?.name || 'Restaurant',
+      restaurantInfo: user?.restaurant || {},
+      items: (order.items || []).map(i => ({
+        name: i.name, quantity: i.quantity || 1, price: i.price || 0,
+        total: (i.price || 0) * (i.quantity || 1),
+      })),
+      subtotal,
+      tax: taxAmt,
+      taxRate: order.taxRate || 0,
+      taxEnabled: !!(taxAmt > 0 || order.taxBreakdown?.length),
+      taxBreakdown: order.taxBreakdown || null,
+      grandTotal: total,
+      customerName,
+      customerMobile: order.customerPhone || order.customerDisplay?.phone || '',
+      orderType: order.orderType || 'dine-in',
+      paymentMethod: order.paymentMethod || 'cash',
+      timestamp: order.completedAt || order.createdAt || new Date(),
+      staffName: order.staffInfo?.name || user?.name || 'Staff',
+      offerDiscount: order.discountAmount || 0,
+      manualDiscount: order.manualDiscount || 0,
+      loyaltyDiscount: order.loyaltyDiscount || 0,
+      couponDiscount: order.couponDiscount || 0,
+      couponCode: order.couponCode || null,
+      serviceChargeAmount: order.serviceChargeAmount || 0,
+      serviceChargeRate: order.serviceChargeRate || 0,
+      tipAmount: order.tipAmount || 0,
+      roundOffAmount: order.roundOffAmount || 0,
+      cashReceived: order.cashReceived || null,
+      changeReturned: order.changeReturned || null,
+      splitPayments: order.splitPayments || null,
+    };
+
+    // Generate thermal text for bill
+    const billText = printerService.generateBillText(invoiceData);
+
+    // HTML for AirPrint / Share PDF fallback
     const itemsHTML = (order.items || []).map(item => `
       <tr>
         <td style="padding: 6px 0; border-bottom: 1px dashed #ddd;">${item.name}</td>
@@ -642,60 +682,117 @@ export default function OrdersScreen() {
       </html>
     `;
 
-    Alert.alert(
-      'Print Bill',
-      `Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Print',
-          onPress: async () => {
-            try {
-              await printerService.printContent({ html, text: null });
-              // Print category-wise token slips if Food Court Token Billing is enabled
-              if (printSettings?.tokenBillingEnabled && restaurantId && order.id) {
-                try {
-                  const tokenRes = await apiClient.getTokenRender(restaurantId, order.id);
-                  const tokens = tokenRes?.tokens || [];
-                  if (tokenRes?.success && tokens.length > 0) {
-                    for (const token of tokens) {
-                      const tokenHtml = buildTokenSlipHTML(token);
-                      const tokenText = printerService.generateTokenText(token);
-                      await printerService.printContent({ html: tokenHtml, text: tokenText });
-                    }
-                  }
-                } catch (tokenErr) {
-                  console.error('Token print error:', tokenErr);
-                }
+    const printBill = async () => {
+      try {
+        await printerService.printContent({ html, text: billText });
+        // Print category-wise token slips if Food Court Token Billing is enabled
+        if (printSettings?.tokenBillingEnabled && restaurantId && order.id) {
+          try {
+            const tokenRes = await apiClient.getTokenRender(restaurantId, order.id);
+            const tokens = tokenRes?.tokens || [];
+            if (tokenRes?.success && tokens.length > 0) {
+              for (const token of tokens) {
+                const tokenText = printerService.generateTokenText(token);
+                await printerService.printContent({ text: tokenText, silentOnly: true });
               }
-            } catch (e) {
-              console.error('Print error:', e);
-              Alert.alert('Error', 'Failed to print bill.');
             }
-          },
-        },
+          } catch (tokenErr) {
+            console.error('Token print error:', tokenErr);
+          }
+        }
+      } catch (e) {
+        console.error('Print error:', e);
+        Alert.alert('Error', 'Failed to print bill.');
+      }
+    };
+
+    const printKOT = async () => {
+      try {
+        const kotData = {
+          restaurantName: user?.restaurantName || user?.restaurant?.name || 'Restaurant',
+          orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+          tableNumber: order.tableNumber || order.tableName || 'N/A',
+          roomNumber: order.roomNumber || null,
+          items: (order.items || []).map(i => ({
+            name: i.name, quantity: i.quantity || 1,
+            variants: i.variants || i.selectedVariants || null,
+            addons: i.addons || i.selectedAddons || null,
+            notes: i.notes || i.specialInstructions || null,
+          })),
+          timestamp: new Date(),
+          waiterName: order.staffInfo?.name || user?.name || 'Staff',
+          orderId: order.id,
+        };
+        const kotText = printerService.generateKOTText(kotData);
+        const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+        await printerService.printContent({ html: kotHtml, text: kotText });
+      } catch (e) {
+        console.error('KOT print error:', e);
+        Alert.alert('Error', 'Failed to print KOT.');
+      }
+    };
+
+    const sharePDF = async () => {
+      try {
+        const { uri } = await Print.printToFileAsync({ html });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: `Bill #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+            UTI: 'com.adobe.pdf',
+          });
+        } else {
+          Alert.alert('Error', 'Sharing is not available on this device.');
+        }
+      } catch (e) {
+        console.error('Share PDF error:', e);
+        Alert.alert('Error', 'Failed to generate PDF.');
+      }
+    };
+
+    // Use ActionSheetIOS on iOS for 4+ options, two-step Alert on Android
+    if (Platform.OS === 'ios') {
+      const { ActionSheetIOS } = require('react-native');
+      ActionSheetIOS.showActionSheetWithOptions(
         {
-          text: 'Share PDF',
-          onPress: async () => {
-            try {
-              const { uri } = await Print.printToFileAsync({ html });
-              if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(uri, {
-                  mimeType: 'application/pdf',
-                  dialogTitle: `Bill #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
-                  UTI: 'com.adobe.pdf',
-                });
-              } else {
-                Alert.alert('Error', 'Sharing is not available on this device.');
-              }
-            } catch (e) {
-              console.error('Share PDF error:', e);
-              Alert.alert('Error', 'Failed to generate PDF.');
-            }
-          },
+          title: `Print — Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+          options: ['Cancel', 'Print Bill', 'Print KOT', 'Share PDF'],
+          cancelButtonIndex: 0,
         },
-      ]
-    );
+        (buttonIndex) => {
+          if (buttonIndex === 1) printBill();
+          else if (buttonIndex === 2) printKOT();
+          else if (buttonIndex === 3) sharePDF();
+        }
+      );
+    } else {
+      // Android: Alert supports 3 buttons max, so use two-step
+      Alert.alert(
+        'Print',
+        `Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Print Bill',
+            onPress: printBill,
+          },
+          {
+            text: 'More Options',
+            onPress: () => {
+              Alert.alert(
+                'More Print Options',
+                `Order #${order.dailyOrderId || order.id?.slice(-6).toUpperCase()}`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Print KOT', onPress: printKOT },
+                  { text: 'Share PDF', onPress: sharePDF },
+                ]
+              );
+            },
+          },
+        ]
+      );
+    }
   };
 
   const executeMarkPaid = async (orderId) => {

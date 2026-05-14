@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
-import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import * as printerService from '../services/printerService';
 
@@ -23,25 +22,12 @@ export default function KOTModal({
   onClose,
   orderData,
   onPrint,
-  autoPrintOnKOT = false,
   manualPrintEnabled = true,
 }) {
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
   const [sharingWhatsApp, setSharingWhatsApp] = useState(false);
   const [showFullInstructions, setShowFullInstructions] = useState(false);
-  const autoPrintDoneRef = useRef(null);
-
-  // Auto-print KOT when modal becomes visible (same pattern as CashierInvoiceModal)
-  useEffect(() => {
-    if (visible && autoPrintOnKOT && orderData?.orderId && autoPrintDoneRef.current !== orderData.orderId) {
-      autoPrintDoneRef.current = orderData.orderId;
-      const timer = setTimeout(() => {
-        handleSilentPrint();
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [visible, autoPrintOnKOT, orderData?.orderId]);
 
   if (!orderData) return null;
 
@@ -69,12 +55,7 @@ export default function KOTModal({
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  const wrapKOTTextInHTML = (text) => {
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
-</head><body><pre>${text}</pre></body></html>`;
-  };
+  const { generateKOTText, wrapKOTTextInHTML } = printerService;
 
   // Silent print via connected thermal printer (no dialog fallback)
   const handleSilentPrint = async () => {
@@ -106,50 +87,6 @@ export default function KOTModal({
     }
   };
 
-  // Generate plain text KOT for thermal printers (ESC/POS format)
-  // Best practices for thermal printing:
-  // - Use monospace font (Courier)
-  // - Keep line width to 32-48 characters (80mm paper)
-  // - Use simple ASCII characters
-  // - Avoid special formatting that may not print
-  // - Use dashes and equals for separators
-  const generateKOTText = (data) => {
-    const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
-    const itemsText = data.items.map(item => {
-      const subline = getItemSubline(item);
-      const itemLine = `${item.quantity}x ${item.name}`;
-      const sublineLine = subline ? `  (${subline})` : '';
-      const notesLine = item.notes ? `  Note: ${item.notes}` : '';
-      return [itemLine, sublineLine, notesLine].filter(Boolean).join('\n');
-    }).join('\n');
-    
-    // ESC/POS format for thermal printers (80mm width = 48 chars)
-    const width = 48;
-    const centerText = (text, w = width) => {
-      const padding = Math.max(0, Math.floor((w - text.length) / 2));
-      return ' '.repeat(padding) + text;
-    };
-    
-    return `
-${'='.repeat(width)}
-${centerText((data.restaurantName || 'RESTAURANT').toUpperCase())}
-${centerText('KITCHEN ORDER TICKET')}
-${'='.repeat(width)}
-Order #: ${data.orderNumber || data.orderId?.slice(-6) || 'N/A'}
-${location}
-Time: ${formatTime(data.timestamp)}
-Date: ${formatDate(data.timestamp)}
-${data.waiterName ? `Staff: ${data.waiterName}` : ''}
-${'-'.repeat(width)}
-${itemsText}
-${'-'.repeat(width)}
-Total Items: ${data.items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-${'='.repeat(width)}
-${centerText('Thank you!')}
-${centerText(new Date().toLocaleString('en-IN'))}
-${'='.repeat(width)}
-    `.trim();
-  };
 
   const handleWhatsAppShare = async () => {
     setSharingWhatsApp(true);

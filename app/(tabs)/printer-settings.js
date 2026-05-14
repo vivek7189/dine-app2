@@ -70,22 +70,34 @@ export default function PrinterSettingsScreen() {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Printer Connection - always shown first and prominently */}
+          {/* Printer Connection */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Ionicons name="print-outline" size={18} color="#8b7355" />
+              <View style={styles.sectionIconWrap}>
+                <Ionicons name="print-outline" size={16} color="#fff" />
+              </View>
               <Text style={styles.sectionTitle}>Printer Connection</Text>
             </View>
             <PrinterSetup restaurantId={restaurantId} />
           </View>
 
-          {/* Print Behavior Settings */}
+          {/* Print Behavior Settings — always visible */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Ionicons name="settings-outline" size={18} color="#8b7355" />
+              <View style={[styles.sectionIconWrap, { backgroundColor: '#8b5cf6' }]}>
+                <Ionicons name="options-outline" size={16} color="#fff" />
+              </View>
               <Text style={styles.sectionTitle}>Print Behavior</Text>
             </View>
             <PrintSettings restaurantId={restaurantId} />
+          </View>
+
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Ionicons name="information-circle-outline" size={14} color="#9ca3af" />
+            <Text style={styles.footerText}>
+              Print settings are synced across all devices for this restaurant.
+            </Text>
           </View>
         </ScrollView>
       )}
@@ -96,7 +108,7 @@ export default function PrinterSettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f3ef',
+    backgroundColor: '#f8f7f4',
   },
   header: {
     flexDirection: 'row',
@@ -108,6 +120,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#ece8e1',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   backBtn: {
     width: 40,
@@ -121,7 +138,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#374151',
+    color: '#1f2937',
   },
   versionText: {
     fontSize: 11,
@@ -130,7 +147,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 60,
+    paddingBottom: 80,
   },
   section: {
     marginBottom: 20,
@@ -138,16 +155,35 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     marginBottom: 12,
-    marginLeft: 4,
+    marginLeft: 2,
+  },
+  sectionIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#ef4444',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#8b7355',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#374151',
+    letterSpacing: 0.3,
+  },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 16,
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#9ca3af',
   },
   loadingContainer: {
     flex: 1,

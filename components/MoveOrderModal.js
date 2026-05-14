@@ -8,9 +8,10 @@ import apiClient from '../services/api';
 import { Colors } from '../constants/Theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const MODAL_MAX_WIDTH = Math.min(420, SCREEN_WIDTH - 32);
 const CARD_GAP = 8;
-const CARDS_PER_ROW = 3;
-const CARD_WIDTH = (SCREEN_WIDTH - 48 - CARD_GAP * (CARDS_PER_ROW - 1)) / CARDS_PER_ROW;
+const CARDS_PER_ROW = 2;
+const CARD_WIDTH = (MODAL_MAX_WIDTH - 32 - CARD_GAP * (CARDS_PER_ROW - 1)) / CARDS_PER_ROW;
 
 export default function MoveOrderModal({
   visible,
@@ -113,27 +114,24 @@ export default function MoveOrderModal({
 
           {/* Floor Tabs */}
           {showFloorTabs && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.floorTabsContainer}
-              contentContainerStyle={styles.floorTabs}
-            >
-              {floorData.map(floor => {
-                const isActive = floor.id === activeFloorId;
-                return (
-                  <TouchableOpacity
-                    key={floor.id}
-                    onPress={() => { setSelectedFloorId(floor.id); setSelectedTarget(null); }}
-                    style={[styles.floorChip, isActive && styles.floorChipActive]}
-                  >
-                    <Text style={[styles.floorChipText, isActive && styles.floorChipTextActive]}>
-                      {floor.name} ({floor.tables.length})
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            <View style={styles.floorTabsContainer}>
+              <View style={styles.floorTabs}>
+                {floorData.map(floor => {
+                  const isActive = floor.id === activeFloorId;
+                  return (
+                    <TouchableOpacity
+                      key={floor.id}
+                      onPress={() => { setSelectedFloorId(floor.id); setSelectedTarget(null); }}
+                      style={[styles.floorChip, isActive && styles.floorChipActive]}
+                    >
+                      <Text style={[styles.floorChipText, isActive && styles.floorChipTextActive]} numberOfLines={1}>
+                        {floor.name} ({floor.tables.length})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
           )}
 
           {/* Table Grid */}
@@ -253,21 +251,22 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   floorTabsContainer: {
-    maxHeight: 44,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
   floorTabs: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 6,
   },
   floorChip: {
     paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 20,
     backgroundColor: '#f3f4f6',
+    maxWidth: '48%',
   },
   floorChipActive: {
     backgroundColor: '#111827',

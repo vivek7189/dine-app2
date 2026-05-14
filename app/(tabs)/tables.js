@@ -16,7 +16,6 @@ import {
   ScrollView,
   ActionSheetIOS,
   Animated,
-  Easing,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +34,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { canPerform } from '../../utils/permissions';
 import { useTabBar } from '../../contexts/TabBarContext';
+import * as printerService from '../../services/printerService';
 
 const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 const PUSHER_CLUSTER = 'ap2';
@@ -80,14 +80,14 @@ export default function TablesScreen() {
   });
   const [savingBooking, setSavingBooking] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [updatingTables, setUpdatingTables] = useState(new Set()); // tables with pending status change
   const [moveModalTable, setMoveModalTable] = useState(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const restaurantIdRef = useRef(null);
   const lastProcessedTableParamRef = useRef(null);
+  const printSettingsRef = useRef(null);
+  const pendingOptimisticRef = useRef(new Map()); // Map<tableId, { status, orderId, timestamp }>
 
   useEffect(() => {
     loadInitialData();
@@ -105,22 +105,6 @@ export default function TablesScreen() {
     });
     return unsub;
   }, []);
-
-  // Pulse animation for tables being updated
-  useEffect(() => {
-    if (updatingTables.size > 0) {
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 0.6, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        ])
-      );
-      loop.start();
-      return () => loop.stop();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [updatingTables.size]);
 
   // Memoize loadFloorsAndTables to prevent recreation
   const loadFloorsAndTables = useCallback(async (restaurantId) => {
@@ -142,7 +126,9 @@ export default function TablesScreen() {
 
       setFloors(floorsData);
 
-      const allTables = floorsData.flatMap(floor => floor.tables || []);
+      const allTables = floorsData.flatMap(floor =>
+        (floor.tables || []).map(t => ({ ...t, _floorName: floor.name, _floorId: floor.id }))
+      );
       setTables(allTables);
 
       // Keep selectedFloor in sync so currentFloorTables reflects new data
@@ -167,74 +153,37 @@ export default function TablesScreen() {
     }
   }, []);
 
-  // Optimistically update table status
+  // Optimistically update table status — instant, no loading spinner
   const updateTableStatusOptimistically = useCallback((tableId, status, orderId) => {
-    // Convert tableId to string for comparison (params come as strings)
     const tableIdStr = String(tableId);
 
-    // Mark table as updating (shows pulse animation)
-    setUpdatingTables(prev => new Set(prev).add(tableIdStr));
-
-    setFloors(prevFloors => {
-      return prevFloors.map(floor => ({
-        ...floor,
-        tables: floor.tables?.map(table => {
-          if (String(table.id) === tableIdStr) {
-            return {
-              ...table,
-              status: status,
-              currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
-              lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
-            };
-          }
-          return table;
-        }) || [],
-      }));
+    // Track this optimistic update so refreshInBackground doesn't overwrite it
+    pendingOptimisticRef.current.set(tableIdStr, {
+      status,
+      orderId: status === 'available' ? null : (orderId || null),
+      timestamp: Date.now(),
     });
 
-    setTables(prevTables => {
-      return prevTables.map(table => {
-        if (String(table.id) === tableIdStr) {
-          return {
-            ...table,
-            status: status,
-            currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
-            lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
-          };
-        }
-        return table;
-      });
-    });
-
-    // Keep selectedFloor in sync
-    const updateTable = (table) => {
-      if (String(table.id) === tableIdStr) {
-        return {
-          ...table,
-          status: status,
-          currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
-          lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
-        };
-      }
-      return table;
+    const updater = (table) => {
+      if (String(table.id) !== tableIdStr) return table;
+      return {
+        ...table,
+        status,
+        currentOrderId: status === 'available' ? null : (orderId || table.currentOrderId),
+        lastOrderTime: status === 'occupied' ? new Date().toISOString() : table.lastOrderTime,
+      };
     };
+
+    setFloors(prev => prev.map(floor => ({
+      ...floor,
+      tables: floor.tables?.map(updater) || [],
+    })));
+    setTables(prev => prev.map(updater));
     setSelectedFloor(prev => {
       if (!prev) return prev;
-      return { ...prev, tables: prev.tables?.map(updateTable) || [] };
+      return { ...prev, tables: prev.tables?.map(updater) || [] };
     });
-
-    // Clear updating state after server has had time to process, then do a final refresh
-    setTimeout(() => {
-      setUpdatingTables(prev => {
-        const next = new Set(prev);
-        next.delete(tableIdStr);
-        return next;
-      });
-      // Final refresh to get authoritative server state
-      const rid = restaurantIdRef.current;
-      if (rid) refreshInBackground(rid);
-    }, 3000);
-  }, [refreshInBackground]);
+  }, []);
 
   // Background refresh without blocking
   const refreshInBackground = useCallback(async (restaurantId) => {
@@ -254,18 +203,35 @@ export default function TablesScreen() {
         floorsData = response;
       }
 
-      // Accept server state as authoritative and clear all updating indicators
-      setTables(() => {
-        return floorsData.flatMap(floor => floor.tables || []);
-      });
+      // Merge: preserve optimistic status for recently-updated tables (5s window)
+      const OPTIMISTIC_WINDOW_MS = 5000;
+      const now = Date.now();
+      // Clean expired entries
+      for (const [tid, entry] of pendingOptimisticRef.current) {
+        if (now - entry.timestamp > OPTIMISTIC_WINDOW_MS) pendingOptimisticRef.current.delete(tid);
+      }
 
-      setFloors(() => floorsData);
+      const mergeTable = (t) => {
+        const pending = pendingOptimisticRef.current.get(String(t.id));
+        if (pending && (now - pending.timestamp <= OPTIMISTIC_WINDOW_MS)) {
+          return { ...t, status: pending.status, currentOrderId: pending.orderId !== undefined ? pending.orderId : t.currentOrderId };
+        }
+        return t;
+      };
 
-      setUpdatingTables(new Set());
+      const mergedFloors = floorsData.map(floor => ({
+        ...floor,
+        tables: (floor.tables || []).map(mergeTable),
+      }));
+
+      setFloors(() => mergedFloors);
+      setTables(() => mergedFloors.flatMap(floor =>
+        (floor.tables || []).map(t => ({ ...t, _floorName: floor.name, _floorId: floor.id }))
+      ));
 
       setSelectedFloor(prev => {
         if (prev) {
-          const updatedFloor = floorsData.find(f => f.id === prev.id);
+          const updatedFloor = mergedFloors.find(f => f.id === prev.id);
           return updatedFloor || prev;
         }
         return prev;
@@ -273,8 +239,8 @@ export default function TablesScreen() {
 
       // Save to cache for stale-while-revalidate
       if (restaurantId) {
-        const allTables = floorsData.flatMap(floor => floor.tables || []);
-        setCache('cache_floors_' + restaurantId, { floors: floorsData, tables: allTables });
+        const allTables = mergedFloors.flatMap(floor => floor.tables || []);
+        setCache('cache_floors_' + restaurantId, { floors: mergedFloors, tables: allTables });
       }
     } catch (error) {
       console.error('Error refreshing in background:', error);
@@ -322,8 +288,8 @@ export default function TablesScreen() {
             setUser(userData);
             await loadFloorsAndTables(rid);
           } else if (rid && !isRefreshingRef.current) {
-            // Same restaurant — background refresh with slight delay for optimistic update
-            setTimeout(() => refreshInBackground(rid), params.tableId ? 500 : 100);
+            // Same restaurant — background refresh after optimistic update settles
+            setTimeout(() => refreshInBackground(rid), params.tableId ? 2000 : 300);
           }
         } catch (e) {
           console.error('Focus refresh error:', e);
@@ -353,6 +319,15 @@ export default function TablesScreen() {
       const restaurant = { id: restaurantId, ...userData.restaurant };
       setSelectedRestaurant(restaurant);
       restaurantIdRef.current = restaurantId;
+
+      // Load print settings (fire-and-forget, use cached if available)
+      try {
+        const cachedPS = await AsyncStorage.getItem(`dine_print_settings_${restaurantId}`);
+        if (cachedPS) printSettingsRef.current = JSON.parse(cachedPS);
+        apiClient.getPrintSettings(restaurantId).then(res => {
+          printSettingsRef.current = res?.printSettings || res || {};
+        }).catch(() => {});
+      } catch (_) {}
 
       // Stale-while-revalidate: try cache first
       const cached = await getCached('cache_floors_' + restaurantId);
@@ -392,47 +367,52 @@ export default function TablesScreen() {
     // Event handlers (shared by Pusher and LAN hub)
     const handleTableStatusUpdated = (data) => {
       if (data?.tableId && data?.status) {
+        // Server confirmed — clear pending optimistic entry
+        pendingOptimisticRef.current.delete(String(data.tableId));
         updateTableStatusOptimistically(data.tableId, data.status, data.orderId);
+      } else if (data?.tableNumber && data?.floorId && data?.status) {
+        // Safe fallback: require both floorId + tableNumber
+        setFloors(prevFloors => {
+          const floor = prevFloors.find(f => f.id === data.floorId);
+          const match = floor?.tables?.find(t => t.name === data.tableNumber);
+          if (match) {
+            pendingOptimisticRef.current.delete(String(match.id));
+            updateTableStatusOptimistically(match.id, data.status, data.orderId);
+          }
+          return prevFloors;
+        });
       }
       debouncedRefresh();
     };
 
     const handleOrderCreated = (data) => {
-      if (data?.tableNumber) {
+      if (data?.tableId) {
+        updateTableStatusOptimistically(data.tableId, 'occupied', data.orderId);
+      } else if (data?.tableNumber && data?.floorId) {
+        // Safe fallback: require BOTH floorId + tableNumber to avoid cross-floor collision
         setFloors(prevFloors => {
-          for (const floor of prevFloors) {
-            const match = floor.tables?.find(t => t.name === data.tableNumber);
-            if (match) {
-              updateTableStatusOptimistically(match.id, 'occupied', data.orderId);
-              break;
-            }
-          }
+          const floor = prevFloors.find(f => f.id === data.floorId);
+          const match = floor?.tables?.find(t => t.name === data.tableNumber);
+          if (match) updateTableStatusOptimistically(match.id, 'occupied', data.orderId);
           return prevFloors;
         });
       }
+      // If neither tableId nor floorId+tableNumber, debouncedRefresh will pick up correct state
       debouncedRefresh();
     };
 
     const handleOrderCompletionEvent = (data) => {
-      if (data?.tableNumber && (data?.status === 'completed' || data?.status === 'cancelled')) {
-        setFloors(prevFloors => {
-          for (const floor of prevFloors) {
-            const match = floor.tables?.find(t => t.name === data.tableNumber);
-            if (match) {
-              const tableIdStr = String(match.id);
-              setUpdatingTables(prev => new Set(prev).add(tableIdStr));
-              setTimeout(() => {
-                setUpdatingTables(prev => {
-                  const next = new Set(prev);
-                  next.delete(tableIdStr);
-                  return next;
-                });
-              }, 3000);
-              break;
-            }
-          }
-          return prevFloors;
-        });
+      if (data?.status === 'completed' || data?.status === 'cancelled') {
+        if (data?.tableId) {
+          updateTableStatusOptimistically(data.tableId, 'available', null);
+        } else if (data?.tableNumber && data?.floorId) {
+          setFloors(prevFloors => {
+            const floor = prevFloors.find(f => f.id === data.floorId);
+            const match = floor?.tables?.find(t => t.name === data.tableNumber);
+            if (match) updateTableStatusOptimistically(match.id, 'available', null);
+            return prevFloors;
+          });
+        }
       }
       debouncedRefresh();
     };
@@ -607,6 +587,74 @@ export default function TablesScreen() {
     }
   };
 
+  // Fire-and-forget bill auto-print from order data
+  const autoPrintBill = (order) => {
+    if (printSettingsRef.current?.autoPrintOnBilling === false) return;
+    try {
+      const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
+      const invoiceData = {
+        orderId: order.id,
+        orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+        restaurantName: selectedRestaurant?.name || '',
+        restaurantInfo: selectedRestaurant || {},
+        items: (order.items || []).map(i => ({
+          name: i.name, quantity: i.quantity || 1, price: i.price || 0,
+          total: (i.price || 0) * (i.quantity || 1),
+        })),
+        subtotal,
+        tax: order.taxAmount || 0,
+        taxRate: order.taxRate || 0,
+        taxEnabled: !!(order.taxAmount > 0 || order.taxBreakdown?.length),
+        taxBreakdown: order.taxBreakdown || null,
+        grandTotal: order.finalAmount || order.totalAmount || subtotal,
+        customerName: order.customerInfo?.name || 'Walk-in Customer',
+        customerMobile: order.customerInfo?.phone || order.customerPhone || '',
+        orderType: order.orderType || 'dine-in',
+        paymentMethod: order.paymentMethod || 'cash',
+        timestamp: order.completedAt || new Date(),
+        staffName: user?.name || 'Staff',
+        offerDiscount: order.discountAmount || 0,
+        manualDiscount: order.manualDiscount || 0,
+        loyaltyDiscount: order.loyaltyDiscount || 0,
+        couponDiscount: order.couponDiscount || 0,
+        couponCode: order.couponCode || null,
+        serviceChargeAmount: order.serviceChargeAmount || 0,
+        serviceChargeRate: order.serviceChargeRate || 0,
+        tipAmount: order.tipAmount || 0,
+        roundOffAmount: order.roundOffAmount || 0,
+        cashReceived: order.cashReceived || null,
+        changeReturned: order.changeReturned || null,
+        splitPayments: order.splitPayments || null,
+      };
+      const billText = printerService.generateBillText(invoiceData);
+      printerService.printContent({ text: billText, silentOnly: true })
+        .then(() => {
+          // Print food court token slips after bill (category-wise, each as separate cut)
+          if (printSettingsRef.current?.tokenBillingEnabled && selectedRestaurant?.id && order.id) {
+            autoPrintTokens(selectedRestaurant.id, order.id);
+          }
+        })
+        .catch(err => console.error('Bill auto-print failed:', err));
+    } catch (err) {
+      console.error('Bill auto-print build failed:', err);
+    }
+  };
+
+  // Print food court token slips — one per category, each as a separate print (cut command between)
+  const autoPrintTokens = async (restaurantId, orderId) => {
+    try {
+      const tokenRes = await apiClient.getTokenRender(restaurantId, orderId);
+      const tokens = tokenRes?.tokens || [];
+      if (!tokenRes?.success || tokens.length === 0) return;
+      for (const token of tokens) {
+        const tokenText = printerService.generateTokenText(token);
+        await printerService.printContent({ text: tokenText, silentOnly: true });
+      }
+    } catch (err) {
+      console.error('Token auto-print failed:', err);
+    }
+  };
+
   const handleMarkTableComplete = async (table) => {
     if (!table.currentOrderId) return;
     const rid = selectedRestaurant?.id;
@@ -650,6 +698,9 @@ export default function TablesScreen() {
       };
 
       await apiClient.updateOrder(table.currentOrderId, updateData);
+
+      // Auto-print bill silently (fire and forget)
+      if (order) autoPrintBill({ ...order, id: table.currentOrderId, completedAt: new Date().toISOString() });
 
       // Verify payment
       try {
@@ -754,7 +805,6 @@ export default function TablesScreen() {
     const isReserved = normalizedStatus === 'reserved';
     const isCleaning = normalizedStatus === 'cleaning';
     const isOutOfService = normalizedStatus === 'out-of-service';
-    const isUpdating = updatingTables.has(String(table.id));
 
     const cardContent = (
       <TouchableOpacity
@@ -784,6 +834,9 @@ export default function TablesScreen() {
                 backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
               }]} />
               <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{table.name}</Text>
+              {!selectedFloor && table._floorName && floors.length > 1 && (
+                <Text style={styles.floorLabel} numberOfLines={1}>{table._floorName}</Text>
+              )}
               {isOccupied && table.lastOrderTime && (() => {
                 const elapsed = getTimeElapsed(table.lastOrderTime);
                 if (!elapsed) return null;
@@ -833,7 +886,6 @@ export default function TablesScreen() {
             {/* Action Buttons */}
             <View style={styles.tableActions}>
               {isOutOfService ? (
-                // Out of service - no actions allowed
                 <View style={styles.outOfServiceButtonContainer}>
                   <Ionicons name="ban" size={14} color="#9ca3af" />
                   <Text style={styles.outOfServiceButtonText}>Not Available</Text>
@@ -849,7 +901,7 @@ export default function TablesScreen() {
                   <Text style={styles.reservedInfoText}>Reserved</Text>
                 </View>
               ) : (
-                // Cleaning or occupied - allow view/add operations
+                // Occupied or cleaning — View and Add buttons
                 <View style={styles.occupiedActions}>
                   <TouchableOpacity
                     style={styles.viewButton}
@@ -861,25 +913,6 @@ export default function TablesScreen() {
                     <Ionicons name="eye-outline" size={11} color={Colors.textDark} />
                     <Text style={styles.viewButtonText}>View</Text>
                   </TouchableOpacity>
-                  {posSettings.moveOrderEnabled && isOccupied && table.currentOrderId && (
-                    <TouchableOpacity
-                      style={styles.moveButton}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        const tableFloor = getFloorForTable(table);
-                        setMoveModalTable({
-                          id: table.id,
-                          name: table.name,
-                          currentOrderId: table.currentOrderId,
-                          floorId: tableFloor?.id || null,
-                          floorName: tableFloor?.name || '',
-                        });
-                      }}
-                    >
-                      <Ionicons name="swap-horizontal" size={11} color="#8b5cf6" />
-                      <Text style={styles.moveButtonText}>Move</Text>
-                    </TouchableOpacity>
-                  )}
                   <TouchableOpacity
                     style={styles.addButton}
                     onPress={(e) => {
@@ -906,28 +939,6 @@ export default function TablesScreen() {
         ]} />
       </TouchableOpacity>
     );
-
-    // Show a subtle syncing overlay if table is being updated
-    if (isUpdating) {
-      return (
-        <View style={{ flex: 1, position: 'relative' }}>
-          {cardContent}
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute', top: 8, right: 8, zIndex: 10,
-              backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 999,
-              paddingHorizontal: 6, paddingVertical: 2,
-              flexDirection: 'row', alignItems: 'center', gap: 3,
-              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.1, shadowRadius: 2, elevation: 2,
-            }}
-          >
-            <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.6 }] }} />
-          </View>
-        </View>
-      );
-    }
 
     return cardContent;
   };
@@ -1397,7 +1408,18 @@ export default function TablesScreen() {
   
   // Sort tables alphabetically
   currentFloorTables = sortTablesAlphabetically(currentFloorTables);
-  
+
+  // When showing all floors with multiple floors, group by floor order then sort within each group
+  if (!selectedFloor && floors.length > 1) {
+    const floorOrder = new Map(floors.map((f, i) => [f.id, i]));
+    currentFloorTables = [...currentFloorTables].sort((a, b) => {
+      const floorA = floorOrder.get(a._floorId) ?? 999;
+      const floorB = floorOrder.get(b._floorId) ?? 999;
+      if (floorA !== floorB) return floorA - floorB;
+      return 0; // preserve alphabetical sort within floor
+    });
+  }
+
   // Filter and sort tables by selected status
   if (selectedStatus) {
     const filtered = currentFloorTables.filter(t => t.status === selectedStatus);
@@ -1600,6 +1622,9 @@ export default function TablesScreen() {
             };
 
             await apiClient.updateOrder(order.id, updateData);
+
+            // Auto-print bill silently (fire and forget)
+            autoPrintBill({ ...order, completedAt: new Date().toISOString() });
 
             // Verify payment (same as web flow)
             try {
@@ -2415,6 +2440,16 @@ const styles = StyleSheet.create({
   tableNumberDisabled: {
     color: '#9ca3af',
   },
+  floorLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#6b7280',
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
   statusBadgeOccupied: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -2526,23 +2561,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#3b82f6',
-  },
-  moveButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 9,
-    borderRadius: 10,
-    backgroundColor: '#f5f3ff',
-    borderWidth: 1,
-    borderColor: '#ddd6fe',
-  },
-  moveButtonText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#8b5cf6',
   },
   outOfServiceButtonContainer: {
     flexDirection: 'row',

@@ -28,7 +28,6 @@ export default function CashierInvoiceModal({
   restaurantId,
   whatsappConnected = false,
   tokenBillingEnabled = false,
-  autoPrintOnBilling = false,
   manualPrintEnabled = true,
 }) {
   const { isTablet } = useResponsive();
@@ -36,8 +35,6 @@ export default function CashierInvoiceModal({
   const [waSent, setWaSent] = React.useState(false);
   const [tokenPrinting, setTokenPrinting] = React.useState(false);
   const [printerNotice, setPrinterNotice] = React.useState(null);
-  const autoPrintDoneRef = React.useRef(null);
-
   // Listen for printer events (disconnect, reconnect, fallback)
   React.useEffect(() => {
     const unsub = printerService.onPrinterEvent((event) => {
@@ -59,19 +56,6 @@ export default function CashierInvoiceModal({
   React.useEffect(() => {
     if (visible) { setWaSent(false); setPrinterNotice(null); }
   }, [visible, invoiceData?.orderNumber]);
-
-  // Auto-print: when modal becomes visible and autoPrintOnBilling is enabled
-  // Uses silent print to saved printer (no dialog)
-  React.useEffect(() => {
-    if (visible && autoPrintOnBilling && invoiceData?.orderId && autoPrintDoneRef.current !== invoiceData.orderId) {
-      autoPrintDoneRef.current = invoiceData.orderId;
-      // Small delay to let the modal render first
-      const timer = setTimeout(() => {
-        handleSilentPrintAll();
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [visible, autoPrintOnBilling, invoiceData?.orderId]);
 
   if (!invoiceData) return null;
 

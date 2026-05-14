@@ -13,6 +13,7 @@ import {
   TextInput,
   ActivityIndicator,
   Keyboard,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +25,7 @@ import CustomerDetailModal from './CustomerDetailModal';
 import useOfferEngine from '../hooks/useOfferEngine';
 import useBillingCalculation from '../hooks/useBillingCalculation';
 import { calculateOfferResult } from '../services/offerEngine';
+import apiClient from '../services/api';
 
 export default function WaiterCartModal({
   visible,
@@ -121,6 +123,13 @@ export default function WaiterCartModal({
   const [sliderWidth, setSliderWidth] = useState(280);
   const [lookupKey, setLookupKey] = useState(0);
 
+  // Coupon state
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponError, setCouponError] = useState('');
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [customerCoupons, setCustomerCoupons] = useState([]);
+
   const manualDiscountAmount = useMemo(() => {
     const val = parseFloat(manualDiscount) || 0;
     if (val <= 0) return 0;
@@ -159,6 +168,10 @@ export default function WaiterCartModal({
       setManualDiscountType('flat');
       setShowOffersModal(false);
       resetOffers();
+      setAppliedCoupon(null);
+      setCouponCode('');
+      setCouponError('');
+      setCustomerCoupons([]);
       setLookupKey(k => k + 1);
     }
   }, [visible]);
@@ -194,12 +207,58 @@ export default function WaiterCartModal({
     return applicableOffers.filter(o => selectedOfferIds.includes(o.id || o._id));
   }, [selectedOfferIds, applicableOffers]);
 
+  // Coupon discount
+  const couponDiscountAmount = appliedCoupon?.discountAmount || 0;
+  const couponsEnabled = offerSettings?.couponsEnabled === true;
+
+  const handleApplyCoupon = async (code) => {
+    if (!code?.trim()) return;
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      const res = await apiClient.validateCoupon(restaurantId, code.trim(), customerMobile || '', subtotal);
+      if (res.valid) {
+        if (!offerSettings?.allowCouponsWithOffers && offerDiscount > 0) {
+          setCouponError('Remove offers to use a coupon');
+          setCouponLoading(false);
+          return;
+        }
+        setAppliedCoupon({ ...res.coupon, discountAmount: res.discountAmount });
+        setCouponCode('');
+        setCouponError('');
+      } else {
+        setCouponError(res.reason || 'Invalid coupon');
+      }
+    } catch (err) {
+      setCouponError('Failed to validate coupon');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponError('');
+  };
+
+  // Fetch customer coupons when phone is set
+  useEffect(() => {
+    if (!couponsEnabled || !customerMobile || !customerData) {
+      setCustomerCoupons([]);
+      return;
+    }
+    apiClient.getCustomerCoupons(restaurantId, customerMobile)
+      .then(res => setCustomerCoupons(res.coupons || []))
+      .catch(() => setCustomerCoupons([]));
+  }, [couponsEnabled, customerMobile, customerData, restaurantId]);
+
   // Use shared billing calculation hook (same as CashierCartModal & CartModal)
   const billing = useBillingCalculation({
     subtotal,
     offerDiscount,
     manualDiscountAmount,
     loyaltyDiscount,
+    couponDiscount: couponDiscountAmount,
     compAmount: 0,
     taxSettings,
     billingSettings,
@@ -257,6 +316,9 @@ export default function WaiterCartModal({
       customerPhone: customerMobile || customerData?.phone || '',
       customerName: customerName || customerData?.name || '',
       customerId: customerData?.id || customerData?._id || null,
+      couponCode: appliedCoupon?.code || null,
+      couponId: appliedCoupon?.id || null,
+      couponDiscount: couponDiscountAmount || null,
       serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
       serviceChargeAmount: billing.serviceChargeAmount || null,
       serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
@@ -492,7 +554,7 @@ export default function WaiterCartModal({
                   if (!hasAnything) return null;
 
                   const activeOfferCount = (offerSettings?.allowMultipleOffers ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : [])).length;
-                  const hasApplied = activeOfferCount > 0 || loyaltyDiscount > 0;
+                  const hasApplied = activeOfferCount > 0 || loyaltyDiscount > 0 || couponDiscountAmount > 0;
 
                   return (
                     <TouchableOpacity
@@ -503,7 +565,7 @@ export default function WaiterCartModal({
                       <Ionicons name="pricetag" size={13} color={hasApplied ? '#dc2626' : '#dc2626'} />
                       {hasApplied ? (
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>
-                          -₹{(offerDiscount + loyaltyDiscount).toFixed(0)}
+                          -₹{(offerDiscount + loyaltyDiscount + couponDiscountAmount).toFixed(0)}
                         </Text>
                       ) : (
                         <Text style={{ fontSize: 10, fontWeight: '600', color: '#dc2626' }}>
@@ -525,7 +587,7 @@ export default function WaiterCartModal({
                 {billing.totalDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>
-                      {offerDiscount > 0 && loyaltyDiscount > 0 ? 'Offers + Loyalty' : offerDiscount > 0 ? 'Offers' : 'Loyalty'}
+                      Discount
                     </Text>
                     <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{billing.totalDiscount.toFixed(0)}</Text>
                   </View>
@@ -833,6 +895,77 @@ export default function WaiterCartModal({
                 </View>
               )}
 
+              {/* Coupon Code */}
+              {couponsEnabled && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Ionicons name="ticket-outline" size={10} color="#94a3b8" />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Coupon Code</Text>
+                  </View>
+                  {appliedCoupon ? (
+                    <View style={{ padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#86efac', backgroundColor: '#f0fdf4', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#15803d', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{appliedCoupon.code}</Text>
+                        <Text style={{ fontSize: 11, color: '#16a34a', marginTop: 2 }}>Saving ₹{couponDiscountAmount.toFixed(0)}</Text>
+                      </View>
+                      <TouchableOpacity onPress={handleRemoveCoupon} style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#fca5a5', backgroundColor: '#fef2f2' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#dc2626' }}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={{ flexDirection: 'row', gap: 8, marginBottom: couponError ? 6 : (customerCoupons.length > 0 ? 8 : 0) }}>
+                        <TextInput
+                          style={{ flex: 1, borderWidth: 1.5, borderColor: couponError ? '#fca5a5' : '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontWeight: '600', letterSpacing: 1, color: '#1f2937' }}
+                          placeholder="Enter coupon code"
+                          placeholderTextColor="#9ca3af"
+                          autoCapitalize="characters"
+                          value={couponCode}
+                          onChangeText={(t) => { setCouponCode(t.toUpperCase()); setCouponError(''); }}
+                          onSubmitEditing={() => handleApplyCoupon(couponCode)}
+                        />
+                        <TouchableOpacity
+                          onPress={() => handleApplyCoupon(couponCode)}
+                          disabled={couponLoading || !couponCode.trim()}
+                          style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: couponLoading || !couponCode.trim() ? '#e5e7eb' : '#ef4444', justifyContent: 'center' }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: couponLoading || !couponCode.trim() ? '#9ca3af' : '#fff' }}>
+                            {couponLoading ? '...' : 'Apply'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {couponError ? <Text style={{ fontSize: 11, color: '#dc2626', marginBottom: customerCoupons.length > 0 ? 8 : 0 }}>{couponError}</Text> : null}
+                      {customerCoupons.length > 0 && (
+                        <View>
+                          <Text style={{ fontSize: 10, fontWeight: '600', color: '#6b7280', marginBottom: 4 }}>Available coupons:</Text>
+                          <ScrollView horizontal={false} style={{ maxHeight: 100 }} nestedScrollEnabled>
+                            {customerCoupons.map(c => (
+                              <TouchableOpacity
+                                key={c.id}
+                                onPress={() => handleApplyCoupon(c.code)}
+                                style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff', marginBottom: 4 }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={{ fontSize: 12, fontWeight: '700', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: '#1f2937' }}>{c.code}</Text>
+                                  {c.type === 'private' && (
+                                    <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: '#ede9fe' }}>
+                                      <Text style={{ fontSize: 9, fontWeight: '600', color: '#7c3aed' }}>YOURS</Text>
+                                    </View>
+                                  )}
+                                </View>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>
+                                  {c.discountType === 'percentage' ? `${c.value}% off` : `₹${c.value}`}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
+                    </>
+                  )}
+                </View>
+              )}
+
               {/* Kitchen Notes */}
               <View style={{ marginBottom: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
@@ -868,6 +1001,12 @@ export default function WaiterCartModal({
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Manual Discount</Text>
                     <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{manualDiscountAmount.toFixed(0)}</Text>
+                  </View>
+                )}
+                {couponDiscountAmount > 0 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#15803d' }}>Coupon ({appliedCoupon?.code})</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#15803d' }}>-₹{couponDiscountAmount.toFixed(0)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (

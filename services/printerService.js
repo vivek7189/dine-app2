@@ -19,6 +19,7 @@ import {
 import { NativeModules } from 'react-native';
 import Zeroconf from 'react-native-zeroconf';
 import NetInfo from '@react-native-community/netinfo';
+import { getItemSubline } from '../utils/itemSubline';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
@@ -563,7 +564,7 @@ export const generateBillText = (invoiceData) => {
     lines.push(center(invoiceData.restaurantInfo.address));
   }
   lines.push(LINE);
-  lines.push(`Invoice #: ${invoiceData.orderNumber}`);
+  lines.push(`Invoice #: ${invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-'}`);
   const dateStr = invoiceData.timestamp
     ? new Date(invoiceData.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
     : new Date().toLocaleString('en-IN');
@@ -654,6 +655,68 @@ export const generateTokenText = (token) => {
   lines.push(LINE);
 
   return lines.join('\n');
+};
+
+// ==================== KOT TEXT GENERATION ====================
+
+const formatKOTTime = (date) => {
+  if (!date) return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const d = date instanceof Date ? date : new Date(date);
+  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatKOTDate = (date) => {
+  if (!date) return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const d = date instanceof Date ? date : new Date(date);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+export const generateKOTText = (data) => {
+  const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
+  const itemsText = data.items.map(item => {
+    const subline = getItemSubline(item);
+    const itemLine = `${item.quantity}x ${item.name}`;
+    const sublineLine = subline ? `  (${subline})` : '';
+    const notesLine = item.notes ? `  Note: ${item.notes}` : '';
+    return [itemLine, sublineLine, notesLine].filter(Boolean).join('\n');
+  }).join('\n');
+
+  const width = 48;
+  const centerKOT = (text, w = width) => {
+    const padding = Math.max(0, Math.floor((w - text.length) / 2));
+    return ' '.repeat(padding) + text;
+  };
+
+  const incrementalHeader = data.isIncremental
+    ? `${centerKOT('*** NEW ITEMS ONLY ***')}\n`
+    : '';
+
+  return `
+${'='.repeat(width)}
+${centerKOT((data.restaurantName || 'RESTAURANT').toUpperCase())}
+${centerKOT('KITCHEN ORDER TICKET')}
+${'='.repeat(width)}
+${incrementalHeader}Order #: ${data.orderNumber || data.orderId?.slice(-6) || 'N/A'}
+${location}
+Time: ${formatKOTTime(data.timestamp)}
+Date: ${formatKOTDate(data.timestamp)}
+${data.waiterName ? `Staff: ${data.waiterName}` : ''}
+${'-'.repeat(width)}
+${itemsText}
+${'-'.repeat(width)}
+Total Items: ${data.items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
+${'='.repeat(width)}
+${centerKOT('Thank you!')}
+${centerKOT(new Date().toLocaleString('en-IN'))}
+${'='.repeat(width)}
+    `.trim();
+};
+
+export const wrapKOTTextInHTML = (text) => {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
+</head><body><pre>${text}</pre></body></html>`;
 };
 
 // ==================== SILENT PRINT DISPATCH ====================
