@@ -21,9 +21,27 @@ const BOTTLE_SIZES = ['30ml', '60ml', '90ml', '180ml', '375ml', '500ml', '750ml'
 const BAKERY_UNITS = ['piece', 'kg', 'gram', 'dozen', 'box', 'slice', 'pack'];
 const SERVING_SIZES = ['scoop', 'cup', 'cone', 'sundae', 'shake', 'tub', 'stick'];
 
+const STOCK_UNITS = ['pcs', 'kg', 'gram', 'liter', 'ml', 'bottle', 'dozen', 'box', 'plate', 'slice'];
+const TAX_PRICING_OPTIONS = ['Follow restaurant setting', 'Price includes tax', 'Add tax on top'];
+
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
 const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+
+// AI stock suggestion patterns
+const BOTTLED_PATTERNS = /\b(water|soda|cola|pepsi|coke|sprite|fanta|beer|wine|bottle|can|tin|juice|energy drink|redbull|monster)\b/i;
+const PACKAGED_PATTERNS = /\b(bread|bun|pav|roti|naan|paratha|chips|lays|kurkure|biscuit|cookie|wafer|packet|pack)\b/i;
+const COUNTABLE_PATTERNS = /\b(cigarette|gutka|pan masala|ice cream|egg|samosa|burger|wrap|sandwich|momo|dumpling|spring roll|roll|puff|patty|cutlet|vada|idli|dosa)\b/i;
+const DESSERT_PATTERNS = /\b(gulab jamun|rasgulla|laddu|barfi|jalebi|cake slice|pastry|brownie|donut|muffin|cupcake)\b/i;
+
+const getStockSuggestion = (name) => {
+  if (!name) return null;
+  if (BOTTLED_PATTERNS.test(name)) return { unit: 'bottle', label: 'bottled item' };
+  if (PACKAGED_PATTERNS.test(name)) return { unit: 'pcs', label: 'packaged item' };
+  if (COUNTABLE_PATTERNS.test(name)) return { unit: 'pcs', label: 'countable item' };
+  if (DESSERT_PATTERNS.test(name)) return { unit: 'pcs', label: 'dessert item' };
+  return null;
+};
 
 export default function MenuItemForm({
   formData,
@@ -43,6 +61,8 @@ export default function MenuItemForm({
   const [showBottleSizePicker, setShowBottleSizePicker] = useState(false);
   const [showBakeryUnitPicker, setShowBakeryUnitPicker] = useState(false);
   const [showServingSizePicker, setShowServingSizePicker] = useState(false);
+  const [showTaxPricingPicker, setShowTaxPricingPicker] = useState(false);
+  const [showStockUnitPicker, setShowStockUnitPicker] = useState(false);
 
   const isBar = businessType === 'bar';
   const isBakery = businessType === 'bakery';
@@ -277,6 +297,24 @@ export default function MenuItemForm({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Tax Pricing */}
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Tax Pricing</Text>
+        {renderDropdownPicker(
+          TAX_PRICING_OPTIONS,
+          formData.taxInclusive === null || formData.taxInclusive === undefined
+            ? 'Follow restaurant setting'
+            : formData.taxInclusive ? 'Price includes tax' : 'Add tax on top',
+          (val) => {
+            const taxVal = val === 'Follow restaurant setting' ? null : val === 'Price includes tax';
+            setFormData({ ...formData, taxInclusive: taxVal });
+          },
+          showTaxPricingPicker,
+          setShowTaxPricingPicker,
+          'Follow restaurant setting'
+        )}
+      </View>
 
       {/* Channel & Zone Prices — Tree Layout */}
       {multiPricingEnabled && activePricingRules.length > 0 && (
@@ -819,6 +857,143 @@ export default function MenuItemForm({
           )}
         </View>
       </View>
+
+      {/* Stock Suggestion Banner */}
+      {!formData.isStockManaged && (() => {
+        const suggestion = getStockSuggestion(formData.name);
+        if (!suggestion) return null;
+        return (
+          <View style={{
+            backgroundColor: '#eff6ff',
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 12,
+            borderWidth: 1,
+            borderColor: '#bfdbfe',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+            <Ionicons name="bulb-outline" size={20} color="#2563eb" />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: '#1e40af', fontWeight: '600' }}>
+                This looks like a {suggestion.label}
+              </Text>
+              <Text style={{ fontSize: 11, color: '#3b82f6', marginTop: 2 }}>
+                Enable stock tracking to manage inventory
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#2563eb',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 8,
+              }}
+              onPress={() => setFormData({
+                ...formData,
+                isStockManaged: true,
+                stockUnit: suggestion.unit,
+                deductionQuantity: 1,
+                stockQuantity: formData.stockQuantity || '',
+              })}
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Enable</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })()}
+
+      {/* Stock Management */}
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Stock Management</Text>
+        <TouchableOpacity
+          style={[
+            styles.statusButton,
+            { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 14 },
+            formData.isStockManaged && { backgroundColor: '#059669', borderColor: '#059669' },
+          ]}
+          onPress={() => setFormData({ ...formData, isStockManaged: !formData.isStockManaged, ...(!formData.isStockManaged ? { stockQuantity: formData.stockQuantity || '', stockUnit: formData.stockUnit || 'pcs' } : {}) })}
+        >
+          <Ionicons name={formData.isStockManaged ? 'checkbox' : 'square-outline'} size={18} color={formData.isStockManaged ? '#fff' : Colors.textLight} />
+          <Text style={[styles.statusText, formData.isStockManaged && { color: '#fff' }]}>Track Stock</Text>
+        </TouchableOpacity>
+        {formData.isStockManaged && (
+          <>
+            <View style={[styles.row, { marginTop: 10 }]}>
+              <View style={[styles.inputGroup, { flex: 1, marginBottom: 0 }]}>
+                <Text style={[styles.label, { fontSize: 12 }]}>Quantity</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="number-pad"
+                  value={String(formData.stockQuantity ?? '')}
+                  onChangeText={(text) => setFormData({ ...formData, stockQuantity: text ? parseInt(text) || 0 : '' })}
+                />
+              </View>
+              <View style={[styles.inputGroup, { flex: 1, marginLeft: Spacing.xs, marginBottom: 0 }]}>
+                <Text style={[styles.label, { fontSize: 12 }]}>Unit</Text>
+                {renderDropdownPicker(
+                  STOCK_UNITS,
+                  formData.stockUnit || 'pcs',
+                  (val) => setFormData({ ...formData, stockUnit: val }),
+                  showStockUnitPicker,
+                  setShowStockUnitPicker,
+                  'pcs'
+                )}
+              </View>
+              <View style={[styles.inputGroup, { flex: 1, marginLeft: Spacing.xs, marginBottom: 0 }]}>
+                <Text style={[styles.label, { fontSize: 12 }]}>Low Alert</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="5"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="number-pad"
+                  value={String(formData.lowStockThreshold ?? '')}
+                  onChangeText={(text) => setFormData({ ...formData, lowStockThreshold: text ? parseInt(text) || 0 : '' })}
+                />
+              </View>
+            </View>
+            <View style={[styles.row, { marginTop: 10 }]}>
+              <View style={[styles.inputGroup, { flex: 1, marginBottom: 0 }]}>
+                <Text style={[styles.label, { fontSize: 12 }]}>Deduct per sale</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="1"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="number-pad"
+                  value={String(formData.deductionQuantity ?? 1)}
+                  onChangeText={(text) => setFormData({ ...formData, deductionQuantity: text ? parseInt(text) || 1 : 1 })}
+                />
+              </View>
+              <View style={[styles.inputGroup, { flex: 2, marginLeft: Spacing.sm, marginBottom: 0, justifyContent: 'flex-end' }]}>
+                <Text style={{ fontSize: 11, color: Colors.textLight, marginTop: 4 }}>
+                  Each sale deducts {formData.deductionQuantity || 1} {formData.stockUnit || 'pcs'} from stock
+                </Text>
+              </View>
+            </View>
+          </>
+        )}
+      </View>
+
+      {/* Generate Smart Recipe — only for new items, not bar */}
+      {!isEditing && businessType !== 'bar' && (
+        <View style={styles.inputGroup}>
+          <TouchableOpacity
+            style={[
+              styles.statusButton,
+              { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 14 },
+              formData.generateRecipe && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
+            ]}
+            onPress={() => setFormData({ ...formData, generateRecipe: !formData.generateRecipe })}
+          >
+            <Ionicons name={formData.generateRecipe ? 'checkbox' : 'square-outline'} size={18} color={formData.generateRecipe ? '#fff' : Colors.textLight} />
+            <Text style={[styles.statusText, formData.generateRecipe && { color: '#fff' }]}>Generate Smart Recipe</Text>
+          </TouchableOpacity>
+          <Text style={[styles.hintText, { marginTop: 4 }]}>Auto-create recipe with ingredients list using AI</Text>
+        </View>
+      )}
 
       {/* Status */}
       <View style={styles.inputGroup}>

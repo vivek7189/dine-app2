@@ -19,6 +19,7 @@ import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { buildTokenSlipHTML, buildTokenSlipsDocumentHTML } from '../utils/tokenSlipHTML';
 import * as printerService from '../services/printerService';
+import { renderBill } from '../utils/printTemplates/index';
 
 export default function CashierInvoiceModal({
   visible,
@@ -29,6 +30,7 @@ export default function CashierInvoiceModal({
   whatsappConnected = false,
   tokenBillingEnabled = false,
   manualPrintEnabled = true,
+  printSettings = {},
 }) {
   const { isTablet } = useResponsive();
   const [waSending, setWaSending] = React.useState(false);
@@ -119,7 +121,7 @@ Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceDa
 Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-₹${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
 Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
 ? invoiceData.taxBreakdown.map(tax => `
-${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '')).length))}₹${tax.amount.toFixed(2)}`).join('')
+${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${tax.inclusive ? ' (incl.)' : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '') + (tax.inclusive ? ' (incl.)' : '')).length))}₹${tax.amount.toFixed(2)}`).join('')
 : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
 ${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : '')}${invoiceData.tipAmount > 0 ? `
 Tip:             ₹${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
@@ -137,269 +139,55 @@ Thank you for your order!
     return invoiceText;
   };
 
+  // Generate Bill/Invoice HTML using the template system
   const generateInvoiceHTML = () => {
-    const itemsHTML = invoiceData.items.map(item => {
-      const subline = getItemSubline(item);
-      return `
-      <tr>
-        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd;">${item.name}${subline ? `<br><span style="font-size:10px;color:#888;">${subline}</span>` : ''}</td>
-        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: center;">${item.quantity}</td>
-        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right;">₹${item.price}</td>
-        <td style="padding: 8px 0; border-bottom: 1px dashed #ddd; text-align: right; font-weight: 600;">₹${item.total.toFixed(2)}</td>
-      </tr>`;
-    }).join('');
-
-    // Get business details from restaurantInfo
-    const showGstInfo = invoiceData.restaurantInfo?.showGstOnInvoice === true;
-    const legalName = showGstInfo ? invoiceData.restaurantInfo?.legalBusinessName : null;
-    const gstin = showGstInfo ? invoiceData.restaurantInfo?.gstin : null;
-    const businessAddress = invoiceData.restaurantInfo?.address;
-    const showFssaiH = invoiceData.restaurantInfo?.showFssaiOnInvoice === true;
-    const fssaiH = showFssaiH ? invoiceData.restaurantInfo?.fssai : null;
-    const showTaxIdH = invoiceData.restaurantInfo?.showTaxIdOnInvoice === true;
-    const vatNumberH = showTaxIdH ? invoiceData.restaurantInfo?.vatNumber : null;
-    const taxIdH = showTaxIdH ? invoiceData.restaurantInfo?.taxId : null;
-    const bizRegNumH = showTaxIdH ? invoiceData.restaurantInfo?.businessRegistrationNumber : null;
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            body {
-              font-family: 'Courier New', monospace;
-              padding: 20px;
-              max-width: ${isTablet ? '600px' : '400px'};
-              margin: 0 auto;
-              background: #fff;
-            }
-            .receipt {
-              border: 2px dashed #333;
-              padding: 20px;
-            }
-            .header {
-              text-align: center;
-              padding-bottom: 15px;
-              border-bottom: 2px dashed #333;
-              margin-bottom: 15px;
-            }
-            .restaurant-name {
-              font-size: 24px;
-              font-weight: bold;
-              margin-bottom: 5px;
-            }
-            .legal-name {
-              font-size: 12px;
-              color: #444;
-              margin-bottom: 5px;
-            }
-            .gstin {
-              font-size: 11px;
-              color: #666;
-              margin-bottom: 3px;
-            }
-            .business-address {
-              font-size: 10px;
-              color: #888;
-              margin-bottom: 8px;
-            }
-            .invoice-info {
-              font-size: 12px;
-              color: #666;
-            }
-            .items-table {
-              width: 100%;
-              border-collapse: collapse;
-              font-size: 13px;
-              margin-bottom: 15px;
-            }
-            .items-table th {
-              text-align: left;
-              padding: 8px 0;
-              border-bottom: 2px solid #333;
-              font-size: 11px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-            }
-            .items-table th:nth-child(2),
-            .items-table th:nth-child(3),
-            .items-table th:nth-child(4) {
-              text-align: right;
-            }
-            .items-table th:nth-child(2) {
-              text-align: center;
-            }
-            .totals {
-              border-top: 2px dashed #333;
-              padding-top: 15px;
-              margin-top: 15px;
-            }
-            .total-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 6px 0;
-              font-size: 14px;
-            }
-            .grand-total {
-              border-top: 2px solid #333;
-              margin-top: 10px;
-              padding-top: 10px;
-              font-size: 20px;
-              font-weight: bold;
-            }
-            .footer {
-              text-align: center;
-              margin-top: 20px;
-              padding-top: 15px;
-              border-top: 2px dashed #333;
-              font-size: 12px;
-              color: #666;
-            }
-            .footer .thanks {
-              font-size: 14px;
-              font-weight: bold;
-              color: #333;
-              margin-bottom: 5px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="receipt">
-            <div class="header">
-              <div class="restaurant-name">${invoiceData.restaurantName}</div>
-              ${legalName ? `<div class="legal-name">${legalName}</div>` : ''}
-              ${gstin ? `<div class="gstin">GSTIN: ${gstin}</div>` : ''}
-              ${fssaiH ? `<div class="gstin">FSSAI: ${fssaiH}</div>` : ''}
-              ${vatNumberH ? `<div class="gstin">Tax ID: ${vatNumberH}</div>` : ''}
-              ${taxIdH ? `<div class="gstin">Tax ID: ${taxIdH}</div>` : ''}
-              ${bizRegNumH ? `<div class="gstin">Reg#: ${bizRegNumH}</div>` : ''}
-              ${businessAddress ? `<div class="business-address">${businessAddress}</div>` : ''}
-              <div class="invoice-info">
-                Invoice #${invoiceData.orderNumber}<br>
-                ${formatDate(invoiceData.timestamp)}
-              </div>
-            </div>
-
-            <table class="items-table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Qty</th>
-                  <th>Rate</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${itemsHTML}
-              </tbody>
-            </table>
-
-            <div class="totals">
-              <div class="total-row">
-                <span>Subtotal</span>
-                <span>₹${invoiceData.subtotal.toFixed(2)}</span>
-              </div>
-              ${invoiceData.appliedOffers?.length > 1
-                ? invoiceData.appliedOffers.map(ao => `
-              <div class="total-row" style="color: #10b981;">
-                <span>Offer (${ao.name})</span>
-                <span>-₹${(ao.discountApplied || 0).toFixed(2)}</span>
-              </div>`).join('')
-                : (invoiceData.offerDiscount > 0 ? `
-              <div class="total-row" style="color: #10b981;">
-                <span>${invoiceData.offerName || 'Offer'} Discount</span>
-                <span>-₹${invoiceData.offerDiscount.toFixed(2)}</span>
-              </div>
-              ` : '')}
-              ${invoiceData.manualDiscount > 0 ? `
-              <div class="total-row" style="color: #10b981;">
-                <span>Manual Discount</span>
-                <span>-₹${invoiceData.manualDiscount.toFixed(2)}</span>
-              </div>
-              ` : ''}
-              ${invoiceData.loyaltyDiscount > 0 ? `
-              <div class="total-row" style="color: #10b981;">
-                <span>Loyalty Points Redeemed</span>
-                <span>-₹${invoiceData.loyaltyDiscount.toFixed(2)}</span>
-              </div>
-              ` : ''}
-              ${invoiceData.couponDiscount > 0 ? `
-              <div class="total-row" style="color: #10b981;">
-                <span>Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}</span>
-                <span>-₹${invoiceData.couponDiscount.toFixed(2)}</span>
-              </div>
-              ` : ''}
-              ${invoiceData.serviceChargeAmount > 0 ? `
-              <div class="total-row" style="color: #7c3aed;">
-                <span>Service Charge${invoiceData.serviceChargeRate ? ` (${invoiceData.serviceChargeRate}%)` : ''}</span>
-                <span>₹${invoiceData.serviceChargeAmount.toFixed(2)}</span>
-              </div>
-              ` : ''}
-              ${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
-                ? invoiceData.taxBreakdown.map(tax => `
-              <div class="total-row">
-                <span>${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}</span>
-                <span>₹${tax.amount.toFixed(2)}</span>
-              </div>`).join('')
-                : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
-              <div class="total-row">
-                <span>${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</span>
-                <span>₹${invoiceData.tax.toFixed(2)}</span>
-              </div>
-              ` : '')}
-              ${invoiceData.tipAmount > 0 ? `
-              <div class="total-row" style="color: #d97706;">
-                <span>Tip</span>
-                <span>₹${invoiceData.tipAmount.toFixed(2)}</span>
-              </div>
-              ` : ''}
-              ${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
-              <div class="total-row" style="color: #9ca3af;">
-                <span>Round-off</span>
-                <span>${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}</span>
-              </div>
-              ` : ''}
-              <div class="total-row grand-total">
-                <span>TOTAL</span>
-                <span>₹${invoiceData.grandTotal.toFixed(2)}</span>
-              </div>
-              ${invoiceData.cashReceived > 0 ? `
-              <div style="border-top: 1px dashed #ccc; margin-top: 8px; padding-top: 8px;">
-                <div class="total-row">
-                  <span>Cash Received</span>
-                  <span>₹${invoiceData.cashReceived.toFixed(2)}</span>
-                </div>
-                ${invoiceData.changeReturned > 0 ? `
-                <div class="total-row" style="color: #3b82f6;">
-                  <span>Change</span>
-                  <span>₹${invoiceData.changeReturned.toFixed(2)}</span>
-                </div>
-                ` : ''}
-              </div>
-              ` : ''}
-              ${invoiceData.splitPayments && invoiceData.splitPayments.length > 0 ? `
-              <div style="border-top: 1px dashed #ccc; margin-top: 8px; padding-top: 8px;">
-                ${invoiceData.splitPayments.map(sp => `
-                <div class="total-row">
-                  <span>${(sp.method || sp.paymentMethod || '').toUpperCase()}</span>
-                  <span>₹${(sp.amount || 0).toFixed(2)}</span>
-                </div>
-                `).join('')}
-              </div>
-              ` : ''}
-            </div>
-
-            <div class="footer">
-              <div class="thanks">Thank you for your order!</div>
-              <div>Served by: ${invoiceData.staffName}</div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    // Map CashierInvoiceModal's invoiceData to the template system's invoice format
+    const ri = invoiceData.restaurantInfo || {};
+    const invoice = {
+      restaurantName: invoiceData.restaurantName || '',
+      dailyOrderId: invoiceData.orderNumber,
+      id: invoiceData.orderId,
+      currencySymbol: invoiceData.currencySymbol || '₹',
+      items: invoiceData.items || [],
+      subtotal: invoiceData.subtotal || 0,
+      taxBreakdown: invoiceData.taxBreakdown || [],
+      taxEnabled: invoiceData.taxEnabled,
+      tax: invoiceData.tax || 0,
+      taxRate: invoiceData.taxRate,
+      taxLabel: invoiceData.taxLabel,
+      offerDiscount: invoiceData.offerDiscount || 0,
+      offerName: invoiceData.offerName,
+      appliedOffers: invoiceData.appliedOffers,
+      manualDiscount: invoiceData.manualDiscount || 0,
+      loyaltyDiscount: invoiceData.loyaltyDiscount || 0,
+      couponDiscount: invoiceData.couponDiscount || 0,
+      couponCode: invoiceData.couponCode,
+      serviceChargeAmount: invoiceData.serviceChargeAmount || 0,
+      serviceChargeRate: invoiceData.serviceChargeRate,
+      tipAmount: invoiceData.tipAmount || 0,
+      roundOffAmount: invoiceData.roundOffAmount,
+      grandTotal: invoiceData.grandTotal || 0,
+      paymentMethod: invoiceData.paymentMethod || 'cash',
+      cashReceived: invoiceData.cashReceived || 0,
+      changeReturned: invoiceData.changeReturned || 0,
+      splitPayments: invoiceData.splitPayments,
+      tableNumber: invoiceData.tableNumber,
+      floorName: invoiceData.floorName,
+      customerName: invoiceData.customerName,
+      waiterName: invoiceData.staffName,
+      // Identity fields from restaurantInfo
+      showGstOnInvoice: ri.showGstOnInvoice,
+      legalBusinessName: ri.legalBusinessName,
+      gstin: ri.gstin,
+      showFssaiOnInvoice: ri.showFssaiOnInvoice,
+      fssai: ri.fssai,
+      showTaxIdOnInvoice: ri.showTaxIdOnInvoice,
+      vatNumber: ri.vatNumber,
+      taxId: ri.taxId,
+      businessRegistrationNumber: ri.businessRegistrationNumber,
+      address: ri.address,
+    };
+    return renderBill(invoice, printSettings, {});
   };
 
   const handleDownloadPDF = async () => {
@@ -716,7 +504,7 @@ Thank you for your order!
                 {invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0 ? (
                   invoiceData.taxBreakdown.map((tax, i) => (
                     <View key={`tax-${i}`} style={styles.totalRow}>
-                      <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}</Text>
+                      <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
                       <Text style={styles.totalValue}>₹{tax.amount.toFixed(2)}</Text>
                     </View>
                   ))

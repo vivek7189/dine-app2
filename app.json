@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.24.0",
+    "version": "2.39.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,6 +14,14 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "updates": {
+      "url": "https://u.expo.dev/dcfa8510-7c36-4f3c-badd-1888ca992d6c",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -36,7 +44,7 @@
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 70,
+      "versionCode": 84,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#DC4A3A"
@@ -56,6 +64,7 @@
       ]
     },
     "plugins": [
+      "expo-updates",
       "expo-router",
       "@react-native-google-signin/google-signin",
       "@react-native-firebase/app",

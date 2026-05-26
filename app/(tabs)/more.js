@@ -158,6 +158,7 @@ export default function MoreScreen() {
       title: 'History',
       items: [
         { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history' },
+        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'] },
       ],
     },
     ...(isHotelType ? [{

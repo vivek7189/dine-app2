@@ -6,7 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import Pusher from 'pusher-js/react-native';
+// import Pusher from 'pusher-js/react-native';
+import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { database } from '../../config/firebase';
 import apiClient from '../../services/api';
 import lanClient from '../../services/lanClient';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
@@ -58,8 +60,6 @@ export default function KitchenScreen() {
   const [timers, setTimers] = useState({});
 
   const undoTimeoutRef = useRef(null);
-  const pusherRef = useRef(null);
-  const channelRef = useRef(null);
   const loadDataRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const shimmerAnim = useRef(new Animated.Value(1)).current;
@@ -138,11 +138,11 @@ export default function KitchenScreen() {
     }, [restaurantId])
   );
 
-  // ─── Pusher + LAN Hub Events ───
+  // ─── Firebase RTDB + LAN Hub Events ───
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId || !database) return;
 
-    const handleEvent = () => {
+    const handleEvent = (data) => {
       loadDataRef.current?.(false);
       if (soundEnabled) Vibration.vibrate(100);
     };
@@ -158,22 +158,27 @@ export default function KitchenScreen() {
       setIsLive(true);
     }
 
-    // Pusher (cloud) — subscribe alongside LAN, whichever is active delivers events
-    pusherRef.current = new Pusher(process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec', {
-      cluster: process.env.EXPO_PUBLIC_PUSHER_CLUSTER || 'ap2',
-    });
+    // Firebase RTDB — subscribe to orders category
+    const now = Date.now();
+    const ordersQuery = query(
+      ref(database, `events/${restaurantId}/orders`),
+      orderByChild('ts'),
+      startAt(now)
+    );
 
-    const channelName = `restaurant-${restaurantId}`;
-    channelRef.current = pusherRef.current.subscribe(channelName);
+    const ordersHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && eventNames.includes(data.type)) {
+        handleEvent(data);
+      }
+    };
+
+    onChildAdded(ordersQuery, ordersHandler);
     setIsLive(true);
-
-    eventNames.forEach(evt => channelRef.current.bind(evt, handleEvent));
 
     return () => {
       lanUnsubs.forEach(fn => fn());
-      channelRef.current?.unbind_all();
-      pusherRef.current?.unsubscribe(channelName);
-      pusherRef.current?.disconnect();
+      off(ordersQuery, 'child_added', ordersHandler);
       setIsLive(false);
     };
   }, [restaurantId, soundEnabled]);

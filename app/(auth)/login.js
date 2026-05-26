@@ -645,10 +645,14 @@ export default function LoginScreen() {
   // Check if already paired on mount
   useEffect(() => {
     (async () => {
-      await lanClient.init();
-      if (lanClient.isPaired()) {
-        apiClient.setLanClient(lanClient);
-        lanClient.connectWebSocket();
+      try {
+        await lanClient.init();
+        if (lanClient.isPaired()) {
+          apiClient.setLanClient(lanClient);
+          lanClient.connectWebSocket();
+        }
+      } catch (e) {
+        console.warn('LAN client init error:', e.message);
       }
     })();
   }, []);
@@ -765,14 +769,16 @@ export default function LoginScreen() {
         <Ionicons name="chevron-forward" size={18} color={Colors.textLight} />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.linkButton}
-        onPress={() => { setError(''); setOwnerStep('register'); }}
-      >
-        <Text style={styles.linkText}>
-          New here? <Text style={styles.linkTextBold}>Create an account</Text>
-        </Text>
-      </TouchableOpacity>
+      {Platform.OS !== 'ios' && (
+        <TouchableOpacity
+          style={styles.linkButton}
+          onPress={() => { setError(''); setOwnerStep('register'); }}
+        >
+          <Text style={styles.linkText}>
+            New here? <Text style={styles.linkTextBold}>Create an account</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 
@@ -1098,8 +1104,8 @@ export default function LoginScreen() {
     switch (ownerStep) {
       case 'email': return renderEmailLogin();
       case 'phone': return renderPhoneInput();
-      case 'register': return renderRegister();
-      case 'emailOtp': return renderEmailOtp();
+      case 'register': return Platform.OS === 'ios' ? renderOwnerMain() : renderRegister();
+      case 'emailOtp': return Platform.OS === 'ios' ? renderOwnerMain() : renderEmailOtp();
       case 'phoneOtp': return renderPhoneOtp();
       default: return renderOwnerMain();
     }

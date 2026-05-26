@@ -2,20 +2,23 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development"
     },
     "preview": {
       "android": {
         "buildType": "apk",
         "credentialsSource": "remote"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview"
     },
     "production": {
       "android": {
         "buildType": "app-bundle",
         "credentialsSource": "remote"
-      }
+      },
+      "channel": "production"
     }
   }
 }

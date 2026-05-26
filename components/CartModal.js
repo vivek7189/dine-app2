@@ -12,6 +12,7 @@ import {
   Platform,
   Keyboard,
   Animated,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -369,7 +370,7 @@ export default function CartModal({
     cart,
     subtotal,
     customerContext,
-    options: { autoApply: true },
+    options: {},
   });
 
   // Merge loyaltySettings — prefer hook source (loads from API on mount), fall back to local state
@@ -451,7 +452,28 @@ export default function CartModal({
 
   const upiConfigured = upiSettings?.upiEnabled && upiSettings?.upiId;
 
+  // Stock warnings for cart items
+  const stockWarnings = useMemo(() => {
+    const overStock = [];
+    const lowStock = [];
+    cart.forEach(item => {
+      if (!item.isStockManaged || typeof item.stockQuantity !== 'number') return;
+      if (item.quantity > item.stockQuantity) {
+        overStock.push(item);
+      } else if (item.stockQuantity <= (item.lowStockThreshold || 5)) {
+        lowStock.push(item);
+      }
+    });
+    return { overStock, lowStock };
+  }, [cart]);
+
   const handlePlaceOrder = () => {
+    // Block order if any items exceed available stock
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
     setActiveAction('place');
     if (paymentMethod === 'upi' && upiConfigured) {
       setShowUpiQr(true);
@@ -461,6 +483,11 @@ export default function CartModal({
   };
 
   const handleCompleteBill = () => {
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
     if (onCompleteBill) {
       setActiveAction('complete');
       if (paymentMethod === 'upi' && upiConfigured) {
@@ -481,6 +508,11 @@ export default function CartModal({
   };
 
   const handleSendToKitchenAction = () => {
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
     const discountData = {
       offerDiscount,
       manualDiscountAmount,
@@ -527,10 +559,31 @@ export default function CartModal({
               <Text style={[styles.vegBadgeText, !item.isVeg && styles.nonVegBadgeText]}>{item.isVeg ? 'V' : 'N'}</Text>
             </View>
           )}
+          {item.isStockManaged && typeof item.stockQuantity === 'number' && (
+            <View style={{
+              backgroundColor: item.quantity > item.stockQuantity ? '#fee2e2' : item.stockQuantity <= (item.lowStockThreshold || 5) ? '#fef3c7' : '#dcfce7',
+              paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4,
+            }}>
+              <Text style={{
+                fontSize: 9, fontWeight: '700',
+                color: item.quantity > item.stockQuantity ? '#dc2626' : item.stockQuantity <= (item.lowStockThreshold || 5) ? '#92400e' : '#166534',
+              }}>
+                {item.stockQuantity === 0 ? 'OUT' : `${item.stockQuantity} left`}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
       {getItemSubline(item) ? (
         <Text style={styles.cartItemSubline} numberOfLines={1}>{getItemSubline(item)}</Text>
+      ) : null}
+      {item.selectedVariant?.name ? (
+        <Text style={styles.cartItemSubline} numberOfLines={1}>{item.selectedVariant.name}</Text>
+      ) : null}
+      {Array.isArray(item.selectedCustomizations) && item.selectedCustomizations.length > 0 ? (
+        <Text style={[styles.cartItemSubline, { color: '#6b7280' }]} numberOfLines={1}>
+          + {item.selectedCustomizations.map(c => c.name).join(', ')}
+        </Text>
       ) : null}
       <View style={styles.cartItemFooter}>
         <View style={styles.cartItemPriceInfo}>
@@ -541,7 +594,7 @@ export default function CartModal({
           <View style={styles.quantityControls}>
             <TouchableOpacity
               style={styles.qtyBtnMinus}
-              onPress={() => onUpdateQuantity(item.id, item.quantity - 1)}
+              onPress={() => onUpdateQuantity(item.cartId || item.id, item.quantity - 1)}
               disabled={sending}
             >
               <Ionicons name="remove" size={12} color="#ef4444" />
@@ -549,14 +602,14 @@ export default function CartModal({
             <Text style={styles.qtyText}>{item.quantity}</Text>
             <TouchableOpacity
               style={styles.qtyBtnPlus}
-              onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
+              onPress={() => onUpdateQuantity(item.cartId || item.id, item.quantity + 1)}
               disabled={sending}
             >
               <Ionicons name="add" size={12} color="#dc2626" />
             </TouchableOpacity>
           </View>
           <TouchableOpacity
-            onPress={() => onRemoveItem(item.id)}
+            onPress={() => onRemoveItem(item.cartId || item.id)}
             disabled={sending}
             style={styles.removeBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -725,6 +778,26 @@ export default function CartModal({
               />
             )}
 
+            {/* Stock Warnings */}
+            {stockWarnings.overStock.length > 0 && (
+              <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                {stockWarnings.overStock.map((item, i) => (
+                  <Text key={i} style={{ fontSize: 12, color: '#dc2626', fontWeight: '600' }}>
+                    ⚠ {item.name}: only {item.stockQuantity} in stock, {item.quantity} in cart
+                  </Text>
+                ))}
+              </View>
+            )}
+            {stockWarnings.lowStock.length > 0 && (
+              <View style={{ backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                {stockWarnings.lowStock.map((item, i) => (
+                  <Text key={i} style={{ fontSize: 12, color: '#92400e', fontWeight: '600' }}>
+                    ⚠ {item.name}: only {item.stockQuantity} left
+                  </Text>
+                ))}
+              </View>
+            )}
+
             {/* Cart Items */}
             {cart.length === 0 ? (
               <View style={styles.emptyCart}>
@@ -864,16 +937,17 @@ export default function CartModal({
               ) : (
                 <View style={styles.totalCard}>
                   <View style={styles.totalCardTop}>
-                    <View>
+                    <View style={{ flex: 1, marginRight: 10 }}>
                       <Text style={styles.totalCardTitle}>Total</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                         <Text style={styles.totalCardLabel}>Sub: ₹{fmtAmt(subtotal)}</Text>
                         {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{fmtAmt(billing.totalDiscount)}</Text>}
-                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{fmtAmt(billing.totalTax)}</Text>}
+                        {billing.serviceChargeAmount > 0 && <Text style={styles.totalCardLabel}>SC: ₹{fmtAmt(billing.serviceChargeAmount)}</Text>}
+                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{fmtAmt(billing.totalTax)}{billing.taxBreakdown?.some(t => t.inclusive) ? ' (incl.)' : ''}</Text>}
                         {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{fmtAmt(tipAmount)}</Text>}
                       </View>
                     </View>
-                    <View style={{ alignItems: 'flex-end' }}>
+                    <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
                       <Text style={styles.totalCardGrand}>₹{fmtAmt(billing.grandTotal)}</Text>
                       {billing.totalDiscount > 0 && (
                         <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{fmtAmt(billing.totalDiscount)}</Text>
@@ -1480,7 +1554,7 @@ export default function CartModal({
                 )}
                 {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%)</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
                     <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{fmtAmt(tax.amount)}</Text>
                   </View>
                 ))}
@@ -1556,7 +1630,7 @@ export default function CartModal({
                 )}
                 {billing.taxBreakdown.map((tax, i) => (
                   <View key={`tax-${i}`} style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}</Text>
+                    <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
                     <Text style={styles.breakdownAmount}>₹{tax.amount.toFixed(2)}</Text>
                   </View>
                 ))}
@@ -1860,7 +1934,7 @@ const styles = StyleSheet.create({
   totalCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 4,
   },
   totalCardTitle: {

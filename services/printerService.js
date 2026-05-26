@@ -11,15 +11,31 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, PermissionsAndroid } from 'react-native';
 import * as Print from 'expo-print';
-import {
-  BLEPrinter,
-  NetPrinter,
-  USBPrinter,
-} from 'react-native-thermal-receipt-printer';
 import { NativeModules } from 'react-native';
-import Zeroconf from 'react-native-zeroconf';
+
+// Lazy-load native modules that may not be linked in all builds (e.g. Expo Go)
+let BLEPrinter = null;
+let NetPrinter = null;
+let USBPrinter = null;
+let Zeroconf = null;
+
+try {
+  const thermalPrinter = require('react-native-thermal-receipt-printer');
+  BLEPrinter = thermalPrinter.BLEPrinter;
+  NetPrinter = thermalPrinter.NetPrinter;
+  USBPrinter = thermalPrinter.USBPrinter;
+} catch (e) {
+  console.warn('react-native-thermal-receipt-printer not available:', e.message);
+}
+
+try {
+  Zeroconf = require('react-native-zeroconf').default;
+} catch (e) {
+  console.warn('react-native-zeroconf not available:', e.message);
+}
 import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
+import { renderKOT } from '../utils/printTemplates/index';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
@@ -113,6 +129,7 @@ const ensureBluetoothPermissions = async () => {
 
 // Bluetooth printers (Android + iOS)
 export const discoverBluetoothPrinters = async () => {
+  if (!BLEPrinter) return [];
   try {
     // Request runtime Bluetooth permissions on Android 12+ before touching BLE APIs
     const hasPerms = await ensureBluetoothPermissions();
@@ -178,6 +195,7 @@ export const discoverUSBPrinters = async () => {
 
 // WiFi/Network printers via mDNS/Bonjour discovery
 export const discoverNetworkPrinters = async (timeoutMs = 5000) => {
+  if (!Zeroconf) return [];
   try {
     // Stop any previous zeroconf scan
     if (activeZeroconf) {
@@ -408,6 +426,7 @@ export const selectAirPrintPrinter = async () => {
 // ==================== CONNECTION ====================
 
 export const connectBluetoothPrinter = async (macAddress) => {
+  if (!BLEPrinter) throw new Error('Bluetooth printing not available in this build');
   const hasPerms = await ensureBluetoothPermissions();
   if (!hasPerms) throw new Error('Bluetooth permissions not granted. Please enable Bluetooth permissions in Settings.');
   if (!printerInitialized.bluetooth) {
@@ -421,6 +440,7 @@ export const connectBluetoothPrinter = async (macAddress) => {
 };
 
 export const connectNetworkPrinter = async (host, port = 9100) => {
+  if (!NetPrinter) throw new Error('Network printing not available in this build');
   if (!printerInitialized.network) {
     await NetPrinter.init();
     printerInitialized.network = true;
@@ -450,12 +470,12 @@ export const connectUSBPrinter = async (vendorId, productId) => {
 
 export const disconnectPrinter = async () => {
   try {
-    if (connectionType === 'bluetooth') {
+    if (connectionType === 'bluetooth' && BLEPrinter) {
       const hasPerms = await ensureBluetoothPermissions();
       if (hasPerms) await BLEPrinter.closeConn();
-    } else if (connectionType === 'network') {
+    } else if (connectionType === 'network' && NetPrinter) {
       await NetPrinter.closeConn();
-    } else if (connectionType === 'usb') {
+    } else if (connectionType === 'usb' && USBPrinter) {
       await USBPrinter.closeConn();
     }
     // airprint doesn't need disconnect
@@ -491,12 +511,12 @@ export const autoReconnect = async () => {
   try {
     // Close any stale connection first (BT needs runtime permissions on Android 12+)
     try {
-      if (connectionType === 'bluetooth') {
+      if (connectionType === 'bluetooth' && BLEPrinter) {
         const hasPerms = await ensureBluetoothPermissions();
         if (hasPerms) await BLEPrinter.closeConn();
-      } else if (connectionType === 'network') {
+      } else if (connectionType === 'network' && NetPrinter) {
         await NetPrinter.closeConn();
-      } else if (connectionType === 'usb') {
+      } else if (connectionType === 'usb' && USBPrinter) {
         await USBPrinter.closeConn();
       }
     } catch { /* ignore close errors */ }
@@ -528,12 +548,13 @@ export const autoReconnect = async () => {
 
 // ==================== TEXT GENERATION (ESC/POS for thermal printers) ====================
 
-const CHARS = 48; // 80mm paper = 48 chars
-const LINE = '='.repeat(CHARS);
-const THIN_LINE = '-'.repeat(CHARS);
+const CHARS = 32; // 58mm paper = 32 chars; 80mm = 48 chars — use 32 for safe compat
+const LINE = '-'.repeat(CHARS);
+const DOUBLE_LINE = '='.repeat(CHARS);
 
 const center = (text, width = CHARS) => {
   const t = String(text || '');
+  if (t.length >= width) return t;
   const pad = Math.max(0, Math.floor((width - t.length) / 2));
   return ' '.repeat(pad) + t;
 };
@@ -545,67 +566,125 @@ const leftRight = (left, right, width = CHARS) => {
   return l + ' '.repeat(gap) + r;
 };
 
+// Thermal-safe currency: ₹ is not supported by most thermal printers (Code Page 437/850)
+const RS = 'Rs.';
+
+// Wrap long text into multiple centered lines
+const wrapText = (text, width = CHARS) => {
+  const t = String(text || '');
+  if (t.length <= width) return [t];
+  const words = t.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(w => {
+    if (current.length + w.length + 1 <= width) {
+      current = current ? current + ' ' + w : w;
+    } else {
+      if (current) lines.push(current);
+      current = w;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+};
+
+// Format item row: "Name           Qty  Amt"
+const itemRow = (name, qty, amount, width = CHARS) => {
+  const qStr = `x${qty}`;
+  const aStr = `${RS}${amount}`;
+  const fixedRight = qStr.length + 1 + aStr.length; // "x1 Rs.110.00"
+  const nameWidth = Math.max(6, width - fixedRight - 2);
+  const n = name.length > nameWidth ? name.substring(0, nameWidth - 1) + '.' : name;
+  const gap1 = Math.max(1, nameWidth - n.length + 1);
+  const gap2 = Math.max(1, aStr.length <= 10 ? 1 : 1);
+  return n + ' '.repeat(gap1) + qStr + ' '.repeat(gap2) + aStr;
+};
+
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
   const lines = [];
+  const r = invoiceData.restaurantInfo || {};
+  const fmt = (n) => (n || 0).toFixed(2);
 
+  // ── Header ──
+  // CM = center + double-height (still 32 chars wide, safe for long names)
+  wrapText(invoiceData.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  if (r.address) wrapText(r.address, CHARS).forEach(l => lines.push(`<C>${l}</C>`));
+  if (r.phone) lines.push(`<C>Phone: ${r.phone}</C>`);
+  if (r.gstin && r.showGstOnInvoice) lines.push(`GSTIN: ${r.gstin}`);
+  if (r.fssai && r.showFssaiOnInvoice) lines.push(`FSSAI: ${r.fssai}`);
   lines.push(LINE);
-  lines.push(center(invoiceData.restaurantName || ''));
-  if (invoiceData.restaurantInfo?.legalBusinessName && invoiceData.restaurantInfo?.showGstOnInvoice) {
-    lines.push(center(invoiceData.restaurantInfo.legalBusinessName));
-  }
-  if (invoiceData.restaurantInfo?.gstin && invoiceData.restaurantInfo?.showGstOnInvoice) {
-    lines.push(`GSTIN: ${invoiceData.restaurantInfo.gstin}`);
-  }
-  if (invoiceData.restaurantInfo?.fssai && invoiceData.restaurantInfo?.showFssaiOnInvoice) {
-    lines.push(`FSSAI: ${invoiceData.restaurantInfo.fssai}`);
-  }
-  if (invoiceData.restaurantInfo?.address) {
-    lines.push(center(invoiceData.restaurantInfo.address));
-  }
-  lines.push(LINE);
-  lines.push(`Invoice #: ${invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-'}`);
-  const dateStr = invoiceData.timestamp
-    ? new Date(invoiceData.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
-    : new Date().toLocaleString('en-IN');
-  lines.push(`Date: ${dateStr}`);
-  lines.push(LINE);
-  lines.push('ITEMS:');
-  lines.push(THIN_LINE);
 
+  // ── Invoice info ──
+  if (r.showGstOnInvoice) lines.push(`<CM>Bill of Supply</CM>`);
+  const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
+  lines.push(leftRight(payMethod + ' Sale', ''));
+  const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-';
+  const now = invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date();
+  const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  lines.push(leftRight('', `Date: ${dateStr}`));
+  lines.push(leftRight('', `Time: ${timeStr}`));
+  lines.push(leftRight('', `Invoice no: ${invoiceNum}`));
+  lines.push(LINE);
+
+  // ── Item table header ──
+  lines.push(`<M>${leftRight('Item Name', 'Price  Amount')}</M>`);
+  lines.push(`<M>${leftRight('  Qty', '')}</M>`);
+  lines.push(LINE);
+
+  // ── Items ──
   (invoiceData.items || []).forEach(item => {
-    lines.push(`${item.quantity} x ${item.name}`);
-    lines.push(leftRight('', `₹${item.total.toFixed(2)}`));
+    const qty = item.quantity || 1;
+    const price = item.price || item.total / qty;
+    const total = item.total || 0;
+    const name = item.name || 'Item';
+    // Item name line
+    lines.push(name.length > CHARS ? name.substring(0, CHARS - 1) + '.' : name);
+    // Qty, Price, Amount line
+    const qtyStr = `  x${qty}`;
+    const priceStr = fmt(price);
+    const totalStr = fmt(total);
+    const rightPart = `${priceStr}  ${totalStr}`;
+    lines.push(leftRight(qtyStr, rightPart));
   });
 
-  lines.push(THIN_LINE);
-  lines.push(leftRight('Subtotal:', `₹${invoiceData.subtotal.toFixed(2)}`));
-  if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount:', `-₹${invoiceData.offerDiscount.toFixed(2)}`));
-  if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount:', `-₹${invoiceData.manualDiscount.toFixed(2)}`));
-  if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Points:', `-₹${invoiceData.loyaltyDiscount.toFixed(2)}`));
-  if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge:', `₹${invoiceData.serviceChargeAmount.toFixed(2)}`));
+  lines.push(LINE);
+
+  // ── Totals ──
+  lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`));
+  if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`));
+  if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`));
+  if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`));
+  if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`));
   if (invoiceData.taxBreakdown?.length > 0) {
     invoiceData.taxBreakdown.forEach(tax => {
-      lines.push(leftRight(`${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}:`, `₹${tax.amount.toFixed(2)}`));
+      const inclSuffix = tax.inclusive ? ' (incl.)' : '';
+      const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
+      lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`));
     });
   } else if (invoiceData.taxEnabled && invoiceData.tax > 0) {
-    lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%):`, `₹${invoiceData.tax.toFixed(2)}`));
+    lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`, `${RS}${fmt(invoiceData.tax)}`));
   }
-  if (invoiceData.tipAmount > 0) lines.push(leftRight('Tip:', `₹${invoiceData.tipAmount.toFixed(2)}`));
+  if (invoiceData.tipAmount > 0) lines.push(leftRight('Tip', `${RS}${fmt(invoiceData.tipAmount)}`));
   if (invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0) {
-    lines.push(leftRight('Round-off:', `${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}`));
+    const sign = invoiceData.roundOffAmount > 0 ? '+' : '-';
+    lines.push(leftRight('Round-off', `${sign}${RS}${fmt(Math.abs(invoiceData.roundOffAmount))}`));
   }
   lines.push(LINE);
-  lines.push(leftRight('GRAND TOTAL:', `₹${invoiceData.grandTotal.toFixed(2)}`));
-  lines.push(LINE);
+  lines.push(`<M>${leftRight('Total', `${RS}${fmt(invoiceData.grandTotal)}`)}</M>`);
+  lines.push(DOUBLE_LINE);
+
+  // ── Payment ──
   if (invoiceData.cashReceived > 0) {
-    lines.push(leftRight('Cash Received:', `₹${invoiceData.cashReceived.toFixed(2)}`));
-    if (invoiceData.changeReturned > 0) lines.push(leftRight('Change:', `₹${invoiceData.changeReturned.toFixed(2)}`));
+    lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`));
+    if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`));
   }
-  lines.push(`Payment: ${(invoiceData.paymentMethod || 'cash').toUpperCase()}`);
+
+  // ── Footer ──
   lines.push('');
-  lines.push(center('Thank you for your order!'));
-  lines.push(LINE);
+  wrapText('Thank you for your visit!', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  lines.push('');
 
   return lines.join('\n');
 };
@@ -613,46 +692,49 @@ export const generateBillText = (invoiceData) => {
 export const generateTokenText = (token) => {
   if (!token) return '';
   const lines = [];
+  const label = token.tokenLabel || 'TOKEN';
+  const counterName = (token.printStationName || token.categoryName || '').toUpperCase();
 
-  lines.push(LINE);
-  lines.push('');
-  lines.push(center(token.tokenLabel || ''));
-  lines.push('');
-  lines.push(LINE);
-  lines.push(center(`Order #${token.orderNumber || ''}`));
-  lines.push(THIN_LINE);
+  // ── Token number (prominent) ──
+  lines.push(DOUBLE_LINE);
+  lines.push(`<CB>** ${label} **</CB>`);
+  lines.push(DOUBLE_LINE);
 
+  // ── Order & counter info ──
+  lines.push(`<CM>Order #${token.orderNumber || ''}</CM>`);
+  if (counterName) lines.push(`<CM>[ ${counterName} ]</CM>`);
+  lines.push(LINE);
+
+  // ── Items ──
   (token.items || []).forEach(i => {
     const qty = i.quantity || 1;
     const price = i.price || 0;
     const itemTotal = i.total || (qty * price);
-    const itemLeft = `${qty} x ${i.name || 'Item'}${price ? ` @${price}` : ''}`;
-    const itemRight = itemTotal ? `₹${itemTotal.toFixed(2)}` : '';
-    lines.push(leftRight(itemLeft, itemRight));
-    if (i.variant) lines.push(`  ${i.variant}`);
+    const name = i.name || 'Item';
+    lines.push(leftRight(`${qty}x ${name}`, itemTotal ? `${RS}${itemTotal.toFixed(2)}` : ''));
+    if (i.variant) lines.push(`   ${i.variant}`);
     if (i.customizations?.length > 0) {
       const custs = Array.isArray(i.customizations) ? i.customizations.map(c => c.name || c).join(', ') : '';
-      if (custs) lines.push(`  ${custs}`);
+      if (custs) lines.push(`   ${custs}`);
     }
   });
 
+  // ── Total ──
   if (token.tokenTotal) {
     lines.push(LINE);
-    lines.push(leftRight('TOTAL', `₹${token.tokenTotal.toFixed(2)}`));
+    lines.push(leftRight('Total', `${RS}${token.tokenTotal.toFixed(2)}`));
   }
-  lines.push(THIN_LINE);
-  lines.push(center(`Items: ${token.itemCount || 0}`));
-  const counterName = token.printStationName || token.categoryName || '';
-  if (counterName) {
-    lines.push(LINE);
-    lines.push(center(counterName.toUpperCase()));
-    lines.push(LINE);
-  }
-  lines.push(center(token.time || ''));
-  lines.push(THIN_LINE);
-  lines.push(center('Present this token at counter'));
-  lines.push(center(token.restaurantName || ''));
   lines.push(LINE);
+
+  // ── Footer ──
+  lines.push(center(`Items: ${token.itemCount || 0}`));
+  if (token.time) lines.push(center(token.time));
+  lines.push('');
+  lines.push(center('Present token at counter'));
+  if (token.restaurantName) {
+    wrapText(token.restaurantName, CHARS).forEach(l => lines.push(center(l)));
+  }
+  lines.push('');
 
   return lines.join('\n');
 };
@@ -672,44 +754,92 @@ const formatKOTDate = (date) => {
 };
 
 export const generateKOTText = (data) => {
-  const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
-  const itemsText = data.items.map(item => {
-    const subline = getItemSubline(item);
-    const itemLine = `${item.quantity}x ${item.name}`;
-    const sublineLine = subline ? `  (${subline})` : '';
-    const notesLine = item.notes ? `  Note: ${item.notes}` : '';
-    return [itemLine, sublineLine, notesLine].filter(Boolean).join('\n');
-  }).join('\n');
+  const location = data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}` : '');
 
-  const width = 48;
-  const centerKOT = (text, w = width) => {
-    const padding = Math.max(0, Math.floor((w - text.length) / 2));
-    return ' '.repeat(padding) + text;
+  const formatItemLine = (item, opts = {}) => {
+    const subline = getItemSubline(item);
+    const qty = item.quantity || 1;
+    const tag = opts.isRemoved ? ' [CANCEL]' : (opts.showDelta && item.quantityDelta > 0 ? ' [+NEW]' : '');
+    const name = item.name || 'Item';
+    // Qty column (4 chars) + Item name
+    const qtyCol = `${qty}x`.padEnd(4);
+    const itemLine = `${qtyCol}${name}${tag}`;
+    const lines = [itemLine];
+    if (subline) lines.push(`    (${subline})`);
+    if (item.notes) lines.push(`    Note: ${item.notes}`);
+    return lines.join('\n');
   };
 
-  const incrementalHeader = data.isIncremental
-    ? `${centerKOT('*** NEW ITEMS ONLY ***')}\n`
-    : '';
+  const removedItems = data.removedItems || [];
+  const hasChanges = data.isIncremental && (data.items.length > 0 || removedItems.length > 0);
 
-  return `
-${'='.repeat(width)}
-${centerKOT((data.restaurantName || 'RESTAURANT').toUpperCase())}
-${centerKOT('KITCHEN ORDER TICKET')}
-${'='.repeat(width)}
-${incrementalHeader}Order #: ${data.orderNumber || data.orderId?.slice(-6) || 'N/A'}
-${location}
-Time: ${formatKOTTime(data.timestamp)}
-Date: ${formatKOTDate(data.timestamp)}
-${data.waiterName ? `Staff: ${data.waiterName}` : ''}
-${'-'.repeat(width)}
-${itemsText}
-${'-'.repeat(width)}
-Total Items: ${data.items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-${'='.repeat(width)}
-${centerKOT('Thank you!')}
-${centerKOT(new Date().toLocaleString('en-IN'))}
-${'='.repeat(width)}
-    `.trim();
+  // Build items section
+  const itemLines = [];
+  if (hasChanges) {
+    if (removedItems.length > 0) {
+      itemLines.push(center('*** CANCELLED ***'));
+      removedItems.forEach(item => itemLines.push(formatItemLine(item, { isRemoved: true })));
+    }
+    const reducedItems = data.items.filter(i => i.isUpdated && i.quantityDelta < 0);
+    if (reducedItems.length > 0) {
+      itemLines.push(center('*** REDUCED ***'));
+      reducedItems.forEach(item => itemLines.push(formatItemLine({ ...item, quantity: Math.abs(item.quantityDelta) }, { isRemoved: true })));
+    }
+    const newAndIncreased = data.items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0));
+    if (newAndIncreased.length > 0) {
+      itemLines.push(center('*** NEW ITEMS ***'));
+      newAndIncreased.forEach(item => itemLines.push(formatItemLine(item, { showDelta: item.isUpdated })));
+    }
+    const unmarked = data.items.filter(i => !i.isNew && !i.isUpdated);
+    unmarked.forEach(item => itemLines.push(formatItemLine(item)));
+  } else {
+    data.items.forEach(item => itemLines.push(formatItemLine(item)));
+  }
+
+  const title = hasChanges ? 'KOT UPDATE' : 'KITCHEN ORDER';
+  const totalQty = data.items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const footerText = hasChanges
+    ? `+${data.items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0)).length} new, ${removedItems.length + data.items.filter(i => i.isUpdated && i.quantityDelta < 0).length} removed`
+    : `Total: ${totalQty} items`;
+
+  // ── Assemble ──
+  const lines = [];
+  wrapText(data.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  lines.push(`<CM>--- ${title} ---</CM>`);
+  lines.push(LINE);
+
+  // Order info — side by side where possible
+  const ordNum = `#${data.orderNumber || data.dailyOrderId || data.orderId?.slice(-6) || ''}`;
+  if (location) {
+    lines.push(leftRight(`Order ${ordNum}`, location));
+  } else {
+    lines.push(`Order ${ordNum}`);
+  }
+  lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp)));
+  if (data.orderType) lines.push(`Type: ${data.orderType}`);
+  if (data.waiterName) lines.push(`Staff: ${data.waiterName}`);
+  if (data.customerName) lines.push(`Customer: ${data.customerName}`);
+  lines.push(LINE);
+
+  // Item header — M = double-height bold
+  lines.push(`<M>${leftRight('Qty Item', '')}</M>`);
+  lines.push(LINE);
+
+  // Items
+  lines.push(itemLines.join('\n'));
+  lines.push(LINE);
+
+  // Footer
+  lines.push(footerText);
+
+  // Special instructions
+  if (data.specialInstructions) {
+    lines.push(LINE);
+    lines.push('NOTE: ' + data.specialInstructions);
+  }
+  lines.push('');
+
+  return lines.join('\n');
 };
 
 export const wrapKOTTextInHTML = (text) => {
@@ -717,6 +847,28 @@ export const wrapKOTTextInHTML = (text) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
 </head><body><pre>${text}</pre></body></html>`;
+};
+
+// Generate KOT HTML using the template system (for AirPrint / WebView)
+export const generateKOTHTML = (orderData, printSettings = {}) => {
+  const kotData = {
+    restaurantName: orderData.restaurantName || '',
+    restaurantPhone: orderData.restaurantPhone || '',
+    orderId: orderData.orderId,
+    dailyOrderId: orderData.orderNumber || orderData.dailyOrderId || orderData.orderId,
+    tableNumber: orderData.tableNumber || '',
+    roomNumber: orderData.roomNumber || '',
+    floorName: orderData.floorName || '',
+    customerName: orderData.customerName || '',
+    orderType: orderData.orderType || '',
+    waiterName: orderData.waiterName || '',
+    specialInstructions: orderData.specialInstructions || orderData.notes || '',
+    items: orderData.items || [],
+    removedItems: orderData.removedItems || [],
+    isIncremental: orderData.isIncremental || false,
+    currencySymbol: orderData.currencySymbol || '',
+  };
+  return renderKOT(kotData, printSettings, {});
 };
 
 // ==================== SILENT PRINT DISPATCH ====================
@@ -740,12 +892,12 @@ const tryReconnect = async () => {
     if (!saved) return false;
     // Close stale connection first (BT needs runtime permissions on Android 12+)
     try {
-      if (connectionType === 'bluetooth') {
+      if (connectionType === 'bluetooth' && BLEPrinter) {
         const hasPerms = await ensureBluetoothPermissions();
         if (hasPerms) await BLEPrinter.closeConn();
-      } else if (connectionType === 'network') {
+      } else if (connectionType === 'network' && NetPrinter) {
         await NetPrinter.closeConn();
-      } else if (connectionType === 'usb') {
+      } else if (connectionType === 'usb' && USBPrinter) {
         await USBPrinter.closeConn();
       }
     } catch { /* ignore close errors on dead socket */ }
@@ -779,7 +931,7 @@ const printViaThermal = async (text) => {
   const mod = getThermalModule();
   if (!mod) throw new Error('No thermal printer connected');
   try {
-    await mod.printText(text + '\n\n\n');
+    await mod.printBill(text + '\n\n\n', { beep: false, cut: true, tailingLine: true });
   } catch (firstErr) {
     console.warn('Print failed, attempting reconnect...', firstErr.message);
     emitPrinterEvent({ type: 'reconnecting' });
@@ -795,7 +947,7 @@ const printViaThermal = async (text) => {
       throw firstErr;
     }
     try {
-      await newMod.printText(text + '\n\n\n');
+      await newMod.printBill(text + '\n\n\n', { beep: false, cut: true, tailingLine: true });
       emitPrinterEvent({ type: 'reconnected' });
     } catch (retryErr) {
       emitPrinterEvent({ type: 'disconnected', message: 'Printer disconnected. Please check the printer and reconnect.' });
@@ -886,12 +1038,12 @@ export const printTestPage = async () => {
     center('DineOpen POS'),
     center('Printer Connection OK!'),
     '',
-    THIN_LINE,
+    LINE,
     `Date: ${new Date().toLocaleString('en-IN')}`,
     `Type: ${connectionType || 'system dialog'}`,
     `Printer: ${connectedPrinter ? String(connectedPrinter).substring(0, 30) : 'System default'}`,
     `Platform: ${Platform.OS}`,
-    THIN_LINE,
+    LINE,
     '',
     center('If you can read this,'),
     center('your printer is working!'),

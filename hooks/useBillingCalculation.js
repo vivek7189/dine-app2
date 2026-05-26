@@ -46,12 +46,25 @@ function resolveTaxesForItem(item, taxSettings, categories) {
 }
 
 /**
+ * Determine if an item's price includes tax (inclusive pricing).
+ * Priority: item-level override > global taxInclusivePricing > false
+ */
+function isItemTaxInclusive(item, taxSettings) {
+  if (item.taxInclusive === true) return true;
+  if (item.taxInclusive === false) return false;
+  return taxSettings?.taxInclusivePricing === true;
+}
+
+/**
  * Shared billing calculation hook — matches web OrderSummary.js logic.
  *
  * Flow: Subtotal → Discount → Service Charge → Tax → Tips → Round-off → Grand Total
  *
  * When taxGroups exist, tax is calculated per-item (each item may have different tax rates).
  * Otherwise falls back to flat tax on the entire taxable amount.
+ *
+ * Supports taxInclusivePricing: when enabled, tax is back-calculated from the price
+ * (price already includes tax) and NOT added to the grand total.
  */
 export default function useBillingCalculation({
   subtotal = 0,
@@ -82,6 +95,7 @@ export default function useBillingCalculation({
     // Step 4: Tax
     let taxBreakdown = [];
     let totalTax = 0;
+    let exclusiveTaxTotal = 0;
     const hasTaxGroups = taxSettings?.taxGroups && taxSettings.taxGroups.length > 0;
 
     if (taxSettings?.enabled) {
@@ -97,22 +111,28 @@ export default function useBillingCalculation({
         for (const cartItem of cart) {
           const itemTotal = (cartItem.price || 0) * (cartItem.quantity || 1);
           const isDiscountable = cartItem.discountApplicable !== false;
+          const isInclusive = isItemTaxInclusive(cartItem, taxSettings);
           // Proportional discount share: only among discountable items
           const itemDiscShare = (isDiscountable && discountableSubtotal > 0)
             ? (itemTotal / discountableSubtotal) * totalDiscount
             : 0;
           const itemTaxable = Math.max(0, itemTotal - itemDiscShare);
-          // Service charge distributed across all items
-          const itemSCShare = subtotal > 0 ? (itemTotal / subtotal) * serviceChargeAmount : 0;
+          // Service charge distributed across all items (proportional to post-discount subtotal)
+          const itemSCShare = discountedSubtotal > 0 ? (Math.max(0, itemTotal - itemDiscShare) / discountedSubtotal) * serviceChargeAmount : 0;
           const itemTaxableWithSC = itemTaxable + itemSCShare;
           // Resolve taxes for this item
           const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories);
+          const totalRate = itemTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
           for (const tax of itemTaxes) {
-            const amt = Math.round((itemTaxableWithSC * (tax.rate || 0) / 100) * 100) / 100;
-            const key = `${tax.name || 'Tax'}|${tax.rate || 0}`;
-            if (!taxTotals[key]) taxTotals[key] = { name: tax.name || 'Tax', rate: tax.rate || 0, amount: 0 };
+            // Inclusive: back-calculate tax from price. Exclusive: add on top.
+            const amt = isInclusive
+              ? Math.round((itemTaxableWithSC * (tax.rate || 0) / (100 + totalRate)) * 100) / 100
+              : Math.round((itemTaxableWithSC * (tax.rate || 0) / 100) * 100) / 100;
+            const key = `${tax.name || 'Tax'}|${tax.rate || 0}|${isInclusive}`;
+            if (!taxTotals[key]) taxTotals[key] = { name: tax.name || 'Tax', rate: tax.rate || 0, amount: 0, inclusive: isInclusive };
             taxTotals[key].amount += amt;
             totalTax += amt;
+            if (!isInclusive) exclusiveTaxTotal += amt;
           }
         }
         taxBreakdown = Object.values(taxTotals).map(t => ({
@@ -120,29 +140,38 @@ export default function useBillingCalculation({
           amount: Math.round(t.amount * 100) / 100
         }));
         totalTax = Math.round(totalTax * 100) / 100;
+        exclusiveTaxTotal = Math.round(exclusiveTaxTotal * 100) / 100;
       } else {
         // Flat tax calculation (original behavior — no tax groups)
         const taxableAmount = discountedSubtotal + serviceChargeAmount;
+        const isGlobalInclusive = taxSettings.taxInclusivePricing === true;
         if (taxSettings.taxes && taxSettings.taxes.length > 0) {
-          taxBreakdown = taxSettings.taxes
-            .filter(t => t.enabled)
-            .map(t => ({
-              name: t.name,
-              rate: t.rate,
-              amount: Math.round(taxableAmount * t.rate / 100 * 100) / 100,
-            }));
+          const enabledTaxes = taxSettings.taxes.filter(t => t.enabled);
+          const totalRate = enabledTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
+          taxBreakdown = enabledTaxes.map(t => ({
+            name: t.name,
+            rate: t.rate,
+            amount: isGlobalInclusive
+              ? Math.round(taxableAmount * t.rate / (100 + totalRate) * 100) / 100
+              : Math.round(taxableAmount * t.rate / 100 * 100) / 100,
+            inclusive: isGlobalInclusive,
+          }));
           totalTax = taxBreakdown.reduce((sum, t) => sum + t.amount, 0);
+          exclusiveTaxTotal = isGlobalInclusive ? 0 : totalTax;
         } else if (taxSettings.defaultTaxRate) {
-          const amount = Math.round(taxableAmount * taxSettings.defaultTaxRate / 100 * 100) / 100;
-          taxBreakdown = [{ name: 'GST', rate: taxSettings.defaultTaxRate, amount }];
+          const amount = isGlobalInclusive
+            ? Math.round(taxableAmount * taxSettings.defaultTaxRate / (100 + taxSettings.defaultTaxRate) * 100) / 100
+            : Math.round(taxableAmount * taxSettings.defaultTaxRate / 100 * 100) / 100;
+          taxBreakdown = [{ name: 'GST', rate: taxSettings.defaultTaxRate, amount, inclusive: isGlobalInclusive }];
           totalTax = amount;
+          exclusiveTaxTotal = isGlobalInclusive ? 0 : amount;
         }
       }
     }
 
-    // Step 5: After tax + tips
+    // Step 5: After tax + tips — only add exclusive tax (inclusive is already in subtotal)
     const taxableAmount = discountedSubtotal + serviceChargeAmount;
-    const afterTax = taxableAmount + totalTax;
+    const afterTax = taxableAmount + Math.round(exclusiveTaxTotal * 100) / 100;
     const withTips = afterTax + tipAmount;
 
     // Step 6: Round-off

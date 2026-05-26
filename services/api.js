@@ -337,7 +337,7 @@ class ApiClient {
    * Local-first GET: always read from SQLite first for instant UI.
    * Then refresh from network in background (fire-and-forget).
    */
-  async offlineGet(endpoint, { localRead, onFetched, ttlMs = 5 * 60 * 1000 } = {}) {
+  async offlineGet(endpoint, { localRead, onFetched, onRefreshed, ttlMs = 5 * 60 * 1000 } = {}) {
     // 1. Always try local read first — instant, no network wait
     let localData = null;
     if (localRead) {
@@ -350,11 +350,17 @@ class ApiClient {
 
     // 2. If we have local data, return it immediately and refresh in background
     if (localData !== null && localData !== undefined) {
-      // Background refresh: fetch from network and save to SQLite (fire-and-forget)
-      if (!this.isEffectivelyOffline() && onFetched) {
+      // Background refresh: fetch from network and save to SQLite
+      if (!this.isEffectivelyOffline()) {
         this.cachedGet(endpoint, ttlMs)
           .then((data) => {
-            try { onFetched(data); } catch (e) { console.warn('offlineGet bg onFetched error:', e.message); }
+            if (onFetched) {
+              try { onFetched(data); } catch (e) { console.warn('offlineGet bg onFetched error:', e.message); }
+            }
+            // Notify caller with fresh data so UI can update
+            if (onRefreshed) {
+              try { onRefreshed(data); } catch (e) { console.warn('offlineGet bg onRefreshed error:', e.message); }
+            }
           })
           .catch(() => {
             // Network failed in background — no problem, we already returned local data
@@ -656,7 +662,7 @@ class ApiClient {
   async staffLogin(loginId, password) {
     const response = await this.request('/api/auth/staff/login', {
       method: 'POST',
-      data: { loginId, password },
+      data: { loginId, password, platform: 'dine-app' },
     });
 
     if (response.token) {
@@ -683,7 +689,7 @@ class ApiClient {
   async googleLogin(uid, email, name, picture) {
     const response = await this.request('/api/auth/google', {
       method: 'POST',
-      data: { uid, email, name, picture },
+      data: { uid, email, name, picture, platform: 'dine-app' },
     });
 
     if (response.token) {
@@ -701,7 +707,7 @@ class ApiClient {
   async appleLogin(uid, email, name, picture) {
     const response = await this.request('/api/auth/apple', {
       method: 'POST',
-      data: { uid, email, name, picture },
+      data: { uid, email, name, picture, platform: 'dine-app' },
     });
 
     if (response.token) {
@@ -719,7 +725,7 @@ class ApiClient {
   async emailLogin(email, password) {
     const response = await this.request('/api/auth/email/login', {
       method: 'POST',
-      data: { email, password },
+      data: { email, password, platform: 'dine-app' },
     });
 
     if (response.token) {
@@ -788,7 +794,7 @@ class ApiClient {
   async phoneVerifyOtp(phone, otp) {
     const response = await this.request('/api/auth/phone/verify-otp', {
       method: 'POST',
-      data: { phone, otp },
+      data: { phone, otp, platform: 'dine-app' },
     });
 
     if (response.token) {
@@ -822,24 +828,33 @@ class ApiClient {
   // Get floors and tables
   async getFloors(restaurantId) {
     const offlineStore = require('./offlineStore');
-    return this.offlineGet(`/api/floors/${restaurantId}`, {
-      ttlMs: 5 * 60 * 1000,
-      localRead: () => {
-        const floors = offlineStore.getFloors(restaurantId);
-        if (floors && floors.length > 0) return { floors };
-        return null;
-      },
-      onFetched: (data) => {
+    const endpoint = `/api/floors/${restaurantId}`;
+
+    // When online, always fetch directly from API — no stale data
+    if (!this.isEffectivelyOffline()) {
+      try {
+        this.invalidateCache(endpoint);
+        const data = await this.request(endpoint);
+        // Save to offline store for offline fallback
         const floors = data?.floors || (Array.isArray(data) ? data : []);
-        if (floors.length > 0) offlineStore.saveFloors(restaurantId, floors);
-        // Also save tables from floor data
-        const allTables = [];
-        for (const floor of floors) {
-          if (floor.tables) allTables.push(...floor.tables);
+        if (floors.length > 0) {
+          offlineStore.saveFloors(restaurantId, floors);
+          const allTables = [];
+          for (const floor of floors) {
+            if (floor.tables) allTables.push(...floor.tables);
+          }
+          if (allTables.length > 0) offlineStore.saveTables(restaurantId, allTables);
         }
-        if (allTables.length > 0) offlineStore.saveTables(restaurantId, allTables);
-      },
-    });
+        return data;
+      } catch (err) {
+        console.warn('getFloors API failed, falling back to offline:', err.message);
+      }
+    }
+
+    // Offline fallback — read from SQLite
+    const floors = offlineStore.getFloors(restaurantId);
+    if (floors && floors.length > 0) return { floors };
+    return { floors: [] };
   }
 
   // Create a new floor
@@ -947,7 +962,7 @@ class ApiClient {
   }
 
   // Get orders
-  async getOrders(restaurantId, params = {}) {
+  async getOrders(restaurantId, params = {}, { onRefreshed } = {}) {
     const queryString = new URLSearchParams(params).toString();
     const endpoint = `/api/orders/${restaurantId}${queryString ? `?${queryString}` : ''}`;
     const offlineStore = require('./offlineStore');
@@ -959,6 +974,8 @@ class ApiClient {
         if (params.search) filters.search = params.search;
         if (params.status) filters.status = params.status;
         if (params.today || params.period === 'today') filters.today = true;
+        if (params.startDate) filters.startDate = params.startDate;
+        if (params.endDate) filters.endDate = params.endDate;
         if (params.limit) filters.limit = parseInt(params.limit, 10);
         const orders = offlineStore.getOrders(restaurantId, filters);
         if (orders) return { orders };
@@ -968,11 +985,12 @@ class ApiClient {
         const orders = data?.orders || (Array.isArray(data) ? data : []);
         if (orders.length > 0) offlineStore.saveOrders(restaurantId, orders);
       },
+      onRefreshed,
     });
   }
 
   // Get analytics for restaurant
-  async getAnalytics(restaurantId, period = 'today', options = {}) {
+  async getAnalytics(restaurantId, period = 'today', options = {}, { onRefreshed } = {}) {
     const params = new URLSearchParams({ period });
     if (options.startDate) params.append('startDate', options.startDate);
     if (options.endDate) params.append('endDate', options.endDate);
@@ -993,6 +1011,7 @@ class ApiClient {
           _offlineComputed: true,
         };
       },
+      onRefreshed,
     });
   }
 
@@ -1004,24 +1023,35 @@ class ApiClient {
     if (options.endDate) params.append('endDate', options.endDate);
     const qs = params.toString();
     const endpoint = `/api/analytics/${restaurantId}/daily-summary${qs ? '?' + qs : ''}`;
+
+    // Always invalidate in-memory cache so we get fresh data per period
+    this.invalidateCache(`/api/analytics/${restaurantId}/daily-summary`);
+
+    // When online, fetch directly from API (no offline-first for summary)
+    if (!this.isEffectivelyOffline()) {
+      try {
+        const data = await this.request(endpoint);
+        return data;
+      } catch (err) {
+        console.warn('getDailySummary network error, falling back to offline:', err.message);
+      }
+    }
+
+    // Offline fallback: compute basic stats from local orders
     const offlineStore = require('./offlineStore');
-    return this.offlineGet(endpoint, {
-      ttlMs: 2 * 60 * 1000,
-      localRead: () => {
-        const orders = offlineStore.getOrders(restaurantId, { today: true });
-        if (!orders) return null;
-        const completed = orders.filter(o => o.status === 'completed' || o.status === 'served');
-        const totalRevenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
-        return {
-          summary: {
-            totalOrders: orders.length,
-            totalRevenue,
-            avgOrderValue: completed.length > 0 ? totalRevenue / completed.length : 0,
-          },
-          _offlineComputed: true,
-        };
+    const orders = offlineStore.getOrders(restaurantId, { today: true });
+    if (!orders) throw new Error('No data available offline.');
+    const completed = orders.filter(o => o.status === 'completed' || o.status === 'served');
+    const totalRevenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+    return {
+      success: true,
+      summary: {
+        totalOrders: orders.length,
+        totalRevenue,
+        avgOrderValue: completed.length > 0 ? totalRevenue / completed.length : 0,
       },
-    });
+      _offlineComputed: true,
+    };
   }
 
   // Create order
@@ -1143,11 +1173,13 @@ class ApiClient {
       onSuccess: () => {
         this.invalidateCache('/api/floors/');
         this.invalidateCache('/api/tables/');
+        this.invalidateCache('/api/menus/');
       },
     });
     if (!result.offline) {
       this.invalidateCache('/api/floors/');
       this.invalidateCache('/api/tables/');
+      this.invalidateCache('/api/menus/');
     }
     return result;
   }
@@ -1421,6 +1453,26 @@ class ApiClient {
 
   async getCategories(restaurantId) {
     return this.request(`/api/categories/${restaurantId}`);
+  }
+
+  async createCategory(restaurantId, data) {
+    return this.request(`/api/categories/${restaurantId}`, {
+      method: 'POST',
+      data,
+    });
+  }
+
+  async updateCategory(restaurantId, categoryId, data) {
+    return this.request(`/api/categories/${restaurantId}/${categoryId}`, {
+      method: 'PATCH',
+      data,
+    });
+  }
+
+  async deleteCategory(restaurantId, categoryId) {
+    return this.request(`/api/categories/${restaurantId}/${categoryId}`, {
+      method: 'DELETE',
+    });
   }
 
   async bulkSaveMenuItems(restaurantId, menuItems, categories = null) {
@@ -2670,6 +2722,38 @@ class ApiClient {
       data: formData,
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+  }
+
+  // ─── Delivery Management ────────────────────────────────────────────────────
+  getMyDeliveries(restaurantId, staffId) {
+    return this.request(`/api/delivery/${restaurantId}/partner/${staffId}/active`, { skipCache: true });
+  }
+  respondToDelivery(restaurantId, orderId, action) {
+    return this.request(`/api/delivery/${restaurantId}/respond`, { method: 'POST', body: { orderId, action } });
+  }
+  markDeliveryPickedUp(restaurantId, orderId) {
+    return this.request(`/api/delivery/${restaurantId}/mark-picked-up`, { method: 'POST', body: { orderId } });
+  }
+  markDeliveryDelivered(restaurantId, orderId, paymentInfo = {}) {
+    return this.request(`/api/delivery/${restaurantId}/mark-delivered`, {
+      method: 'POST',
+      body: { orderId, paymentCollected: paymentInfo.paymentCollected, paymentMethod: paymentInfo.paymentMethod },
+    });
+  }
+  registerDeliveryToken(restaurantId, token, platform) {
+    return this.request(`/api/delivery/${restaurantId}/register-token`, { method: 'POST', body: { token, platform } });
+  }
+  getDeliveryPartners(restaurantId) {
+    return this.request(`/api/delivery/${restaurantId}/partners`);
+  }
+  assignDeliveryPartner(restaurantId, orderId, staffId, staffName) {
+    return this.request(`/api/delivery/${restaurantId}/assign`, { method: 'POST', body: { orderId, staffId, staffName } });
+  }
+  getActiveDeliveries(restaurantId) {
+    return this.request(`/api/delivery/${restaurantId}/active`, { skipCache: true });
+  }
+  getDeliverySettings(restaurantId) {
+    return this.request(`/api/delivery/${restaurantId}/settings`);
   }
 }
 

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dine — Print Preview (Bill / KOT / Token)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a2e; color: #fff; font-family: -apple-system, sans-serif; padding: 30px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 22px; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 30px; font-size: 13px; }
+  .receipts { display: flex; gap: 40px; justify-content: center; flex-wrap: wrap; }
+  .receipt-wrapper { text-align: center; }
+  .receipt-wrapper h2 { margin-bottom: 12px; font-size: 15px; color: #aaa; letter-spacing: 2px; text-transform: uppercase; }
+  .receipt {
+    background: #fff; color: #000; font-family: 'Courier New', monospace;
+    font-size: 12px; line-height: 1.5; padding: 20px 14px;
+    width: 280px;
+    overflow-x: hidden;
+    border-radius: 4px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    border-bottom: 3px dashed #ccc;
+    text-align: left;
+  }
+  .receipt div { white-space: pre; }
+  .controls { text-align: center; margin-bottom: 30px; }
+  .controls button {
+    background: #e94560; color: #fff; border: none; padding: 10px 20px;
+    border-radius: 6px; cursor: pointer; font-size: 14px; margin: 0 6px;
+  }
+  .controls button:hover { background: #c73e54; }
+  .controls button.secondary { background: #333; }
+  .controls button.secondary:hover { background: #555; }
+  .platform-note {
+    text-align: center; color: #666; font-size: 12px; margin-top: 24px;
+    max-width: 700px; margin-left: auto; margin-right: auto; line-height: 1.6;
+  }
+  .platform-note code { background: #333; color: #e94560; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Thermal Print Preview</h1>
+<p class="subtitle" id="subtitle">58mm (32 chars) | Android (bold tags active)</p>
+
+<div class="controls">
+  <button onclick="regenerate()">Regenerate</button>
+  <button class="secondary" onclick="toggleWidth()">Toggle 58mm / 80mm</button>
+  <button class="secondary" onclick="togglePlatform()">Toggle Android / iOS</button>
+</div>
+
+<div class="receipts">
+  <div class="receipt-wrapper">
+    <h2>Bill / Invoice</h2>
+    <div class="receipt" id="bill"></div>
+  </div>
+  <div class="receipt-wrapper">
+    <h2>KOT (Kitchen Order)</h2>
+    <div class="receipt" id="kot"></div>
+  </div>
+  <div class="receipt-wrapper">
+    <h2>Token Slip</h2>
+    <div class="receipt" id="token"></div>
+  </div>
+</div>
+
+<p class="platform-note">
+  <code>&lt;CM&gt;</code> Center + Double-height (32 chars wide, bold+tall) &nbsp;
+  <code>&lt;CB&gt;</code> Center + Big (16 chars wide, bold+tall+wide) &nbsp;
+  <code>&lt;M&gt;</code> Double-height left-aligned (32 chars wide, bold+tall) &nbsp;
+  <code>&lt;C&gt;</code> Center (normal size)<br>
+  Android: tags become ESC/POS bold/big commands via <code>printBill()</code>.
+  iOS: tags stripped (plain text) — same as before.
+</p>
+
+<script>
+let CHARS = 32;
+let LINE, DOUBLE_LINE;
+let platformMode = 'android';
+
+function recalcConstants() {
+  LINE = '-'.repeat(CHARS);
+  DOUBLE_LINE = '='.repeat(CHARS);
+}
+recalcConstants();
+
+const RS = 'Rs.';
+
+const center = (text, width) => {
+  width = width || CHARS;
+  const t = String(text || '');
+  if (t.length >= width) return t;
+  const pad = Math.max(0, Math.floor((width - t.length) / 2));
+  return ' '.repeat(pad) + t;
+};
+
+const leftRight = (left, right, width) => {
+  width = width || CHARS;
+  const l = String(left || '');
+  const r = String(right || '');
+  const gap = Math.max(1, width - l.length - r.length);
+  return l + ' '.repeat(gap) + r;
+};
+
+const wrapText = (text, width) => {
+  width = width || CHARS;
+  const t = String(text || '');
+  if (t.length <= width) return [t];
+  const words = t.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(w => {
+    if (current.length + w.length + 1 <= width) {
+      current = current ? current + ' ' + w : w;
+    } else {
+      if (current) lines.push(current);
+      current = w;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+};
+
+const fmt = (n) => (n || 0).toFixed(2);
+
+function getItemSubline(item) {
+  const parts = [];
+  if (item.variants && item.variants.length > 0)
+    parts.push(item.variants.map(v => v.name || v).join(', '));
+  if (item.addons && item.addons.length > 0)
+    parts.push(item.addons.map(a => a.name || a).join(', '));
+  return parts.join(' | ');
+}
+
+// ─── Bill (matches printerService.js exactly) ───
+function generateBillText(d) {
+  if (!d) return '';
+  const lines = [];
+  const r = d.restaurantInfo || {};
+
+  wrapText(d.restaurantName || '', CHARS).forEach(l => lines.push('<CM>' + l + '</CM>'));
+  if (r.address) wrapText(r.address, CHARS).forEach(l => lines.push('<C>' + l + '</C>'));
+  if (r.phone) lines.push('<C>Phone: ' + r.phone + '</C>');
+  if (r.gstin && r.showGstOnInvoice) lines.push('GSTIN: ' + r.gstin);
+  if (r.fssai && r.showFssaiOnInvoice) lines.push('FSSAI: ' + r.fssai);
+  lines.push(LINE);
+
+  if (r.showGstOnInvoice) lines.push('<CM>Bill of Supply</CM>');
+  const pay = (d.paymentMethod || 'cash').charAt(0).toUpperCase() + (d.paymentMethod || 'cash').slice(1);
+  lines.push(leftRight(pay + ' Sale', ''));
+  const inv = d.orderNumber || d.dailyOrderId || '-';
+  const now = d.timestamp ? new Date(d.timestamp) : new Date();
+  lines.push(leftRight('', 'Date: ' + now.toLocaleDateString('en-IN', {day:'2-digit',month:'2-digit',year:'numeric'})));
+  lines.push(leftRight('', 'Time: ' + now.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',hour12:true})));
+  lines.push(leftRight('', 'Invoice no: ' + inv));
+  lines.push(LINE);
+
+  lines.push('<M>' + leftRight('Item Name', 'Price  Amount') + '</M>');
+  lines.push('<M>' + leftRight('  Qty', '') + '</M>');
+  lines.push(LINE);
+
+  (d.items || []).forEach(item => {
+    const qty = item.quantity || 1;
+    const price = item.price || item.total / qty;
+    const total = item.total || 0;
+    const name = item.name || 'Item';
+    lines.push(name.length > CHARS ? name.substring(0, CHARS - 1) + '.' : name);
+    lines.push(leftRight('  x' + qty, fmt(price) + '  ' + fmt(total)));
+  });
+
+  lines.push(LINE);
+  lines.push(leftRight('Subtotal', RS + fmt(d.subtotal)));
+  if (d.offerDiscount > 0) lines.push(leftRight('Offer Discount', '-' + RS + fmt(d.offerDiscount)));
+  if (d.manualDiscount > 0) lines.push(leftRight('Manual Discount', '-' + RS + fmt(d.manualDiscount)));
+  if (d.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', RS + fmt(d.serviceChargeAmount)));
+  if (d.taxBreakdown && d.taxBreakdown.length > 0) {
+    d.taxBreakdown.forEach(tax => {
+      lines.push(leftRight(tax.name + (tax.rate ? ' (' + tax.rate + '%)' : ''), RS + fmt(tax.amount)));
+    });
+  } else if (d.taxEnabled && d.tax > 0) {
+    lines.push(leftRight('Tax (' + d.taxRate + '%)', RS + fmt(d.tax)));
+  }
+  if (d.tipAmount > 0) lines.push(leftRight('Tip', RS + fmt(d.tipAmount)));
+  if (d.roundOffAmount != null && d.roundOffAmount !== 0) {
+    const s = d.roundOffAmount > 0 ? '+' : '-';
+    lines.push(leftRight('Round-off', s + RS + fmt(Math.abs(d.roundOffAmount))));
+  }
+  lines.push(LINE);
+  lines.push('<M>' + leftRight('Total', RS + fmt(d.grandTotal)) + '</M>');
+  lines.push(DOUBLE_LINE);
+
+  if (d.cashReceived > 0) {
+    lines.push(leftRight('Cash Received', RS + fmt(d.cashReceived)));
+    if (d.changeReturned > 0) lines.push(leftRight('Change', RS + fmt(d.changeReturned)));
+  }
+
+  lines.push('');
+  wrapText('Thank you for your visit!', CHARS).forEach(l => lines.push('<CM>' + l + '</CM>'));
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ─── KOT (matches printerService.js exactly) ───
+function generateKOTText(data) {
+  const location = data.roomNumber ? 'Room: ' + data.roomNumber : (data.tableNumber ? 'Table: ' + data.tableNumber : '');
+
+  const formatItemLine = (item, opts) => {
+    opts = opts || {};
+    const subline = getItemSubline(item);
+    const qty = item.quantity || 1;
+    const tag = opts.isRemoved ? ' [CANCEL]' : (opts.showDelta && item.quantityDelta > 0 ? ' [+NEW]' : '');
+    const name = item.name || 'Item';
+    const qtyCol = (qty + 'x').padEnd(4);
+    const lines = [qtyCol + name + tag];
+    if (subline) lines.push('    (' + subline + ')');
+    if (item.notes) lines.push('    Note: ' + item.notes);
+    return lines.join('\n');
+  };
+
+  const removedItems = data.removedItems || [];
+  const hasChanges = data.isIncremental && (data.items.length > 0 || removedItems.length > 0);
+  const itemLines = [];
+
+  if (hasChanges) {
+    if (removedItems.length > 0) {
+      itemLines.push(center('*** CANCELLED ***'));
+      removedItems.forEach(i => itemLines.push(formatItemLine(i, {isRemoved:true})));
+    }
+    const newItems = data.items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0));
+    if (newItems.length > 0) {
+      itemLines.push(center('*** NEW ITEMS ***'));
+      newItems.forEach(i => itemLines.push(formatItemLine(i, {showDelta: i.isUpdated})));
+    }
+    data.items.filter(i => !i.isNew && !i.isUpdated).forEach(i => itemLines.push(formatItemLine(i)));
+  } else {
+    data.items.forEach(i => itemLines.push(formatItemLine(i)));
+  }
+
+  const title = hasChanges ? 'KOT UPDATE' : 'KITCHEN ORDER';
+  const totalQty = data.items.reduce((s, i) => s + (i.quantity || 1), 0);
+  const footer = hasChanges
+    ? '+' + data.items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0)).length + ' new, ' + removedItems.length + ' removed'
+    : 'Total: ' + totalQty + ' items';
+
+  const lines = [];
+  wrapText(data.restaurantName || '', CHARS).forEach(l => lines.push('<CM>' + l + '</CM>'));
+  lines.push('<CM>--- ' + title + ' ---</CM>');
+  lines.push(LINE);
+
+  const ordNum = '#' + (data.orderNumber || data.dailyOrderId || '');
+  lines.push(location ? leftRight('Order ' + ordNum, location) : 'Order ' + ordNum);
+
+  const d = data.timestamp ? new Date(data.timestamp) : new Date();
+  lines.push(leftRight(
+    d.toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'}),
+    d.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit'})
+  ));
+  if (data.orderType) lines.push('Type: ' + data.orderType);
+  if (data.waiterName) lines.push('Staff: ' + data.waiterName);
+  if (data.customerName) lines.push('Customer: ' + data.customerName);
+  lines.push(LINE);
+
+  lines.push('<M>' + leftRight('Qty Item', '') + '</M>');
+  lines.push(LINE);
+  lines.push(itemLines.join('\n'));
+  lines.push(LINE);
+  lines.push(footer);
+
+  if (data.specialInstructions) {
+    lines.push(LINE);
+    lines.push('NOTE: ' + data.specialInstructions);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ─── Token (matches printerService.js exactly) ───
+function generateTokenText(token) {
+  if (!token) return '';
+  const lines = [];
+  const label = token.tokenLabel || 'TOKEN';
+  const counter = (token.printStationName || token.categoryName || '').toUpperCase();
+
+  lines.push(DOUBLE_LINE);
+  lines.push('<CB>** ' + label + ' **</CB>');
+  lines.push(DOUBLE_LINE);
+  lines.push('<CM>Order #' + (token.orderNumber || '') + '</CM>');
+  if (counter) lines.push('<CM>[ ' + counter + ' ]</CM>');
+  lines.push(LINE);
+
+  (token.items || []).forEach(i => {
+    const qty = i.quantity || 1;
+    const total = i.total || (qty * (i.price || 0));
+    lines.push(leftRight(qty + 'x ' + (i.name || 'Item'), total ? RS + total.toFixed(2) : ''));
+    if (i.variant) lines.push('   ' + i.variant);
+  });
+
+  if (token.tokenTotal) {
+    lines.push(LINE);
+    lines.push(leftRight('Total', RS + token.tokenTotal.toFixed(2)));
+  }
+  lines.push(LINE);
+  lines.push(center('Items: ' + (token.itemCount || 0)));
+  if (token.time) lines.push(center(token.time));
+  lines.push('');
+  lines.push(center('Present token at counter'));
+  if (token.restaurantName) wrapText(token.restaurantName, CHARS).forEach(l => lines.push(center(l)));
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ─── Tag renderer ───
+function esc(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+}
+
+function renderTaggedText(text, mode) {
+  if (mode === 'ios') {
+    const plain = text.replace(/<\/?(?:CB|CM|CD|C|D|B|M)>/g, '');
+    return '<pre style="margin:0;white-space:pre;font:inherit;line-height:inherit;">' + esc(plain) + '</pre>';
+  }
+
+  // Android — render tags as styled HTML
+  const out = [];
+  for (const line of text.split('\n')) {
+    // <CB> = center + big (double-width + double-height)
+    let m = line.match(/^<CB>(.*)<\/CB>$/);
+    if (m) { out.push('<div style="text-align:center;font-weight:900;font-size:20px;letter-spacing:2px;line-height:1.3;">' + esc(m[1]) + '</div>'); continue; }
+
+    // <CM> = center + medium (double-height only)
+    m = line.match(/^<CM>(.*)<\/CM>$/);
+    if (m) { out.push('<div style="text-align:center;font-weight:bold;font-size:15px;line-height:1.3;">' + esc(m[1]) + '</div>'); continue; }
+
+    // <M> = medium left-aligned (double-height only)
+    m = line.match(/^<M>(.*)<\/M>$/);
+    if (m) { out.push('<div style="font-weight:bold;font-size:14px;line-height:1.3;">' + esc(m[1]) + '</div>'); continue; }
+
+    // <B> = big left-aligned
+    m = line.match(/^<B>(.*)<\/B>$/);
+    if (m) { out.push('<div style="font-weight:900;font-size:20px;letter-spacing:2px;line-height:1.3;">' + esc(m[1]) + '</div>'); continue; }
+
+    // <C> = center normal
+    m = line.match(/^<C>(.*)<\/C>$/);
+    if (m) { out.push('<div style="text-align:center;">' + esc(m[1]) + '</div>'); continue; }
+
+    // Plain
+    out.push('<div>' + esc(line) + '</div>');
+  }
+  return out.join('');
+}
+
+// ─── Sample Data ───
+const sampleBill = {
+  restaurantName: 'PVR Rooftop Restaurant',
+  restaurantInfo: {
+    address: '123 MG Road, Jabalpur, MP 482001',
+    phone: '9876543210',
+    gstin: '23AABCU9603R1ZM', showGstOnInvoice: true,
+    fssai: '12345678901234', showFssaiOnInvoice: true,
+  },
+  orderNumber: '1042',
+  items: [
+    { name: 'Paneer Butter Masala', quantity: 1, price: 280, total: 280 },
+    { name: 'Butter Naan', quantity: 4, price: 60, total: 240 },
+    { name: 'Dal Tadka', quantity: 1, price: 180, total: 180 },
+    { name: 'Veg Manchurian Dry', quantity: 1, price: 220, total: 220 },
+    { name: 'Masala Papad', quantity: 2, price: 40, total: 80 },
+    { name: 'Sweet Lassi', quantity: 2, price: 90, total: 180 },
+  ],
+  subtotal: 1180,
+  taxEnabled: true,
+  taxBreakdown: [
+    { name: 'CGST', rate: 2.5, amount: 29.50 },
+    { name: 'SGST', rate: 2.5, amount: 29.50 },
+  ],
+  grandTotal: 1239, roundOffAmount: 0,
+  paymentMethod: 'cash', timestamp: new Date(),
+  cashReceived: 1300, changeReturned: 61,
+};
+
+const sampleKOT = {
+  restaurantName: 'PVR Rooftop Restaurant',
+  orderNumber: '1042', tableNumber: 'T-05',
+  items: [
+    { name: 'Paneer Butter Masala', quantity: 1, variants: [{name:'Full'}], addons: [] },
+    { name: 'Butter Naan', quantity: 4, variants: [], addons: [] },
+    { name: 'Dal Tadka', quantity: 1, variants: [{name:'Half'}], addons: [] },
+    { name: 'Veg Manchurian Dry', quantity: 1, variants: [], addons: [{name:'Extra Sauce'}], notes: 'Less spicy' },
+    { name: 'Masala Papad', quantity: 2, variants: [], addons: [] },
+    { name: 'Sweet Lassi', quantity: 2, variants: [], addons: [] },
+  ],
+  timestamp: new Date(), waiterName: 'Rahul',
+  orderType: 'Dine-in', customerName: 'Vivek Sharma',
+  specialInstructions: 'No onion, no garlic for Paneer and Dal',
+};
+
+const sampleToken = {
+  tokenLabel: 'TOKEN #3', orderNumber: '1042',
+  printStationName: 'Main Kitchen',
+  restaurantName: 'PVR Rooftop Restaurant',
+  items: [
+    { name: 'Paneer Butter Masala', quantity: 1, price: 280, total: 280, variant: 'Full' },
+    { name: 'Butter Naan', quantity: 4, price: 60, total: 240 },
+    { name: 'Dal Tadka', quantity: 1, price: 180, total: 180, variant: 'Half' },
+  ],
+  tokenTotal: 700, itemCount: 3,
+  time: new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',hour12:true}),
+};
+
+// ─── Controls ───
+let is58mm = true;
+
+function regenerate() {
+  recalcConstants();
+  document.getElementById('bill').innerHTML = renderTaggedText(generateBillText(sampleBill), platformMode);
+  document.getElementById('kot').innerHTML = renderTaggedText(generateKOTText(sampleKOT), platformMode);
+  document.getElementById('token').innerHTML = renderTaggedText(generateTokenText(sampleToken), platformMode);
+}
+
+function toggleWidth() {
+  is58mm = !is58mm;
+  CHARS = is58mm ? 32 : 48;
+  recalcConstants();
+  document.querySelectorAll('.receipt').forEach(el => el.style.width = is58mm ? '280px' : '400px');
+  regenerate(); updateSubtitle();
+}
+
+function togglePlatform() {
+  platformMode = platformMode === 'android' ? 'ios' : 'android';
+  regenerate(); updateSubtitle();
+}
+
+function updateSubtitle() {
+  const sz = is58mm ? '58mm (32 chars)' : '80mm (48 chars)';
+  const pl = platformMode === 'android' ? 'Android (bold tags active)' : 'iOS (plain text, tags stripped)';
+  document.getElementById('subtitle').textContent = sz + '  |  ' + pl;
+}
+
+regenerate();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineProvider, useOffline } from '../hooks/useOffline';
 import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
@@ -77,6 +78,29 @@ export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     ...Ionicons.font,
   });
+
+  // Background OTA update — download silently, apply on next app launch
+  useEffect(() => {
+    if (__DEV__) return; // skip in development
+    async function checkForUpdate() {
+      try {
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          // Apply on next cold start — no disruptive reload
+        }
+      } catch (e) {
+        // Silent fail — don't disrupt the user
+      }
+    }
+    checkForUpdate();
+
+    // Also check when app comes back to foreground
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkForUpdate();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {

@@ -74,9 +74,10 @@ export default function BillingSummaryBar({
   }
 
   taxBreakdown.forEach((tax, i) => {
+    const inclLabel = tax.inclusive ? ' incl.' : '';
     chips.push({
       key: `tax-${i}`,
-      label: `${tax.name}${tax.rate ? ` ${tax.rate}%` : ''}`,
+      label: `${tax.name}${tax.rate ? ` ${tax.rate}%` : ''}${inclLabel}`,
       value: fmt(tax.amount),
     });
   });

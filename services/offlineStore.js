@@ -477,7 +477,19 @@ export function getOrders(restaurantId, filters = {}) {
     }
   }
 
-  if (filters.today) {
+  if (filters.startDate) {
+    const start = new Date(filters.startDate);
+    query += ' AND created_at >= ?';
+    params.push(start.getTime());
+  }
+
+  if (filters.endDate) {
+    const end = new Date(filters.endDate);
+    query += ' AND created_at <= ?';
+    params.push(end.getTime());
+  }
+
+  if (filters.today && !filters.startDate) {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     query += ' AND created_at >= ?';

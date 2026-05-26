@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import * as printerService from '../services/printerService';
+import { renderKOT } from '../utils/printTemplates/index';
+import { getItemSubline } from '../utils/itemSubline';
 
 export default function KOTModal({
   visible,
@@ -23,6 +25,7 @@ export default function KOTModal({
   orderData,
   onPrint,
   manualPrintEnabled = true,
+  printSettings = {},
 }) {
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
@@ -37,11 +40,19 @@ export default function KOTModal({
     tableNumber,
     roomNumber,
     items = [],
+    removedItems = [],
+    isIncremental = false,
     waiterName,
     waiterId,
     timestamp,
     restaurantName,
   } = orderData;
+
+  // Categorize items for update display
+  const hasChanges = isIncremental && (items.length > 0 || removedItems.length > 0);
+  const newAndIncItems = hasChanges ? items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0)) : [];
+  const reducedItems = hasChanges ? items.filter(i => i.isUpdated && i.quantityDelta < 0) : [];
+  const unmarkedItems = hasChanges ? items.filter(i => !i.isNew && !i.isUpdated) : items;
 
   const formatTime = (date) => {
     if (!date) return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -55,13 +66,32 @@ export default function KOTModal({
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  const { generateKOTText, wrapKOTTextInHTML } = printerService;
+  const { generateKOTText } = printerService;
+
+  // Build kotData object for the template system
+  const buildKotData = () => ({
+    restaurantName: orderData.restaurantName || '',
+    restaurantPhone: orderData.restaurantPhone || '',
+    orderId: orderData.orderId,
+    dailyOrderId: orderData.orderNumber || orderData.dailyOrderId || orderData.orderId,
+    tableNumber: orderData.tableNumber || '',
+    roomNumber: orderData.roomNumber || '',
+    floorName: orderData.floorName || '',
+    customerName: orderData.customerName || '',
+    orderType: orderData.orderType || '',
+    waiterName: orderData.waiterName || '',
+    specialInstructions: orderData.specialInstructions || orderData.notes || '',
+    items: orderData.items || [],
+    removedItems: orderData.removedItems || [],
+    isIncremental: orderData.isIncremental || false,
+    currencySymbol: orderData.currencySymbol || '',
+  });
 
   // Silent print via connected thermal printer (no dialog fallback)
   const handleSilentPrint = async () => {
     try {
       const kotText = generateKOTText(orderData);
-      const kotHtml = wrapKOTTextInHTML(kotText);
+      const kotHtml = renderKOT(buildKotData(), printSettings, {});
       await printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true });
     } catch (err) {
       console.error('KOT auto-print failed:', err);
@@ -77,7 +107,7 @@ export default function KOTModal({
     setPrinting(true);
     try {
       const kotText = generateKOTText(orderData);
-      const kotHtml = wrapKOTTextInHTML(kotText);
+      const kotHtml = renderKOT(buildKotData(), printSettings, {});
       await printerService.printContent({ html: kotHtml, text: kotText });
     } catch (error) {
       console.error('Print error:', error);
@@ -122,133 +152,26 @@ export default function KOTModal({
     }
   };
 
+  // Generate KOT HTML using the template system
   const generateKOTHTML = (data) => {
-    const location = data.roomNumber ? `Room: ${data.roomNumber}` : `Table: ${data.tableNumber || 'N/A'}`;
-    const itemsHTML = data.items.map(item => {
-      const subline = getItemSubline(item);
-      return `
-      <tr>
-        <td style="padding: 4px 0; border-bottom: 1px dashed #ddd;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div style="flex: 1;">
-              <div style="font-weight: bold; font-size: 14px; margin-bottom: 2px;">${item.name}</div>
-              ${subline ? `<div style="font-size: 10px; color: #888; margin-bottom: 2px;">${subline}</div>` : ''}
-              ${item.notes ? `<div style="font-size: 11px; color: #666; font-style: italic;">${item.notes}</div>` : ''}
-            </div>
-            <div style="text-align: right; margin-left: 10px;">
-              <div style="font-weight: bold; font-size: 16px;">${item.quantity}x</div>
-            </div>
-          </div>
-        </td>
-      </tr>`;
-    }).join('');
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            @media print {
-              @page { margin: 0; size: 80mm auto; }
-              body { margin: 0; padding: 0; }
-            }
-            body {
-              font-family: 'Courier New', monospace;
-              width: 80mm;
-              margin: 0;
-              padding: 8px;
-              font-size: 12px;
-              line-height: 1.4;
-            }
-            .header {
-              text-align: center;
-              border-bottom: 2px solid #000;
-              padding-bottom: 8px;
-              margin-bottom: 8px;
-            }
-            .restaurant-name {
-              font-size: 16px;
-              font-weight: bold;
-              margin-bottom: 4px;
-            }
-            .kot-label {
-              font-size: 14px;
-              font-weight: bold;
-              margin-top: 4px;
-            }
-            .order-info {
-              margin: 8px 0;
-              line-height: 1.6;
-            }
-            .order-info-row {
-              display: flex;
-              justify-content: space-between;
-              margin: 3px 0;
-            }
-            .items-table {
-              width: 100%;
-              margin: 8px 0;
-            }
-            .footer {
-              margin-top: 12px;
-              padding-top: 8px;
-              border-top: 2px dashed #000;
-              text-align: center;
-              font-size: 11px;
-            }
-            .divider {
-              border-top: 1px dashed #000;
-              margin: 8px 0;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="restaurant-name">${data.restaurantName || 'RESTAURANT'}</div>
-            <div class="kot-label">KITCHEN ORDER TICKET</div>
-          </div>
-          
-          <div class="order-info">
-            <div class="order-info-row">
-              <span><strong>Order #:</strong> ${data.orderNumber || data.orderId?.slice(-6) || 'N/A'}</span>
-            </div>
-            <div class="order-info-row">
-              <span><strong>${location}</strong></span>
-            </div>
-            <div class="order-info-row">
-              <span><strong>Time:</strong> ${formatTime(data.timestamp)}</span>
-              <span><strong>Date:</strong> ${formatDate(data.timestamp)}</span>
-            </div>
-            ${data.waiterName ? `
-            <div class="order-info-row">
-              <span><strong>Staff:</strong> ${data.waiterName}</span>
-            </div>
-            ` : ''}
-          </div>
-
-          <div class="divider"></div>
-
-          <table class="items-table">
-            ${itemsHTML}
-          </table>
-
-          <div class="divider"></div>
-
-          <div class="order-info">
-            <div class="order-info-row">
-              <span><strong>Total Items:</strong> ${data.items.reduce((sum, item) => sum + (item.quantity || 1), 0)}</span>
-            </div>
-          </div>
-
-          <div class="footer">
-            <div>Thank you!</div>
-            <div style="margin-top: 4px;">${new Date().toLocaleString('en-IN')}</div>
-          </div>
-        </body>
-      </html>
-    `;
+    const kotData = {
+      restaurantName: data.restaurantName || '',
+      restaurantPhone: data.restaurantPhone || '',
+      orderId: data.orderId,
+      dailyOrderId: data.orderNumber || data.dailyOrderId || data.orderId,
+      tableNumber: data.tableNumber || '',
+      roomNumber: data.roomNumber || '',
+      floorName: data.floorName || '',
+      customerName: data.customerName || '',
+      orderType: data.orderType || '',
+      waiterName: data.waiterName || '',
+      specialInstructions: data.specialInstructions || data.notes || '',
+      items: data.items || [],
+      removedItems: data.removedItems || [],
+      isIncremental: data.isIncremental || false,
+      currencySymbol: data.currencySymbol || '',
+    };
+    return renderKOT(kotData, printSettings, {});
   };
 
   return (
@@ -319,25 +242,118 @@ export default function KOTModal({
 
             {/* Items Section */}
             <View style={styles.itemsSection}>
-              <Text style={styles.sectionTitle}>ITEMS</Text>
-              {items.map((item, index) => (
-                <View key={index} style={styles.itemRow}>
-                  <View style={styles.itemLeft}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    {getItemSubline(item) ? (
-                      <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
-                    ) : null}
-                    {item.notes && (
-                      <Text style={styles.itemNotes}>{item.notes}</Text>
-                    )}
-                  </View>
-                  <View style={styles.itemRight}>
-                    <View style={styles.quantityBadge}>
-                      <Text style={styles.quantityText}>{item.quantity}x</Text>
+              <Text style={styles.sectionTitle}>{hasChanges ? 'KOT UPDATE' : 'ITEMS'}</Text>
+
+              {hasChanges ? (
+                <>
+                  {/* Cancelled items */}
+                  {removedItems.length > 0 && (
+                    <>
+                      <View style={{ backgroundColor: '#fee2e2', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626', textAlign: 'center' }}>CANCELLED</Text>
+                      </View>
+                      {removedItems.map((item, index) => (
+                        <View key={`rem-${index}`} style={[styles.itemRow, { opacity: 0.6 }]}>
+                          <View style={styles.itemLeft}>
+                            <Text style={[styles.itemName, { textDecorationLine: 'line-through', color: '#ef4444' }]}>{item.name}</Text>
+                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
+                          </View>
+                          <View style={styles.itemRight}>
+                            <View style={[styles.quantityBadge, { backgroundColor: '#fee2e2' }]}>
+                              <Text style={[styles.quantityText, { color: '#ef4444' }]}>{item.quantity}x</Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Reduced quantity items */}
+                  {reducedItems.length > 0 && (
+                    <>
+                      <View style={{ backgroundColor: '#fef3c7', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4, marginTop: removedItems.length > 0 ? 8 : 0 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706', textAlign: 'center' }}>REDUCED</Text>
+                      </View>
+                      {reducedItems.map((item, index) => (
+                        <View key={`dec-${index}`} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <Text style={[styles.itemName, { color: '#d97706' }]}>{item.name}</Text>
+                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
+                          </View>
+                          <View style={styles.itemRight}>
+                            <View style={[styles.quantityBadge, { backgroundColor: '#fef3c7' }]}>
+                              <Text style={[styles.quantityText, { color: '#d97706' }]}>{Math.abs(item.quantityDelta)}x</Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {/* New / increased items */}
+                  {newAndIncItems.length > 0 && (
+                    <>
+                      <View style={{ backgroundColor: '#dcfce7', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4, marginTop: (removedItems.length > 0 || reducedItems.length > 0) ? 8 : 0 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a', textAlign: 'center' }}>NEW ITEMS</Text>
+                      </View>
+                      {newAndIncItems.map((item, index) => (
+                        <View key={`new-${index}`} style={styles.itemRow}>
+                          <View style={styles.itemLeft}>
+                            <Text style={styles.itemName}>{item.name}</Text>
+                            {getItemSubline(item) ? (
+                              <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                            ) : null}
+                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
+                          </View>
+                          <View style={styles.itemRight}>
+                            <View style={[styles.quantityBadge, { backgroundColor: '#dcfce7' }]}>
+                              <Text style={[styles.quantityText, { color: '#16a34a' }]}>{item.quantity}x</Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Unmarked items (fallback) */}
+                  {unmarkedItems.length > 0 && unmarkedItems.map((item, index) => (
+                    <View key={`unk-${index}`} style={styles.itemRow}>
+                      <View style={styles.itemLeft}>
+                        <Text style={styles.itemName}>{item.name}</Text>
+                        {getItemSubline(item) ? (
+                          <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                        ) : null}
+                        {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
+                      </View>
+                      <View style={styles.itemRight}>
+                        <View style={styles.quantityBadge}>
+                          <Text style={styles.quantityText}>{item.quantity}x</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              ) : (
+                // Normal order — all items flat
+                items.map((item, index) => (
+                  <View key={index} style={styles.itemRow}>
+                    <View style={styles.itemLeft}>
+                      <Text style={styles.itemName}>{item.name}</Text>
+                      {getItemSubline(item) ? (
+                        <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
+                      ) : null}
+                      {item.notes && (
+                        <Text style={styles.itemNotes}>{item.notes}</Text>
+                      )}
+                    </View>
+                    <View style={styles.itemRight}>
+                      <View style={styles.quantityBadge}>
+                        <Text style={styles.quantityText}>{item.quantity}x</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              ))}
+                ))
+              )}
             </View>
 
             {/* Divider */}
@@ -346,9 +362,14 @@ export default function KOTModal({
             {/* Summary */}
             <View style={styles.summarySection}>
               <View style={styles.infoRow}>
-                <Text style={styles.summaryLabel}>Total Items:</Text>
+                <Text style={styles.summaryLabel}>
+                  {hasChanges ? 'Changes:' : 'Total Items:'}
+                </Text>
                 <Text style={styles.summaryValue}>
-                  {items.reduce((sum, item) => sum + (item.quantity || 1), 0)}
+                  {hasChanges
+                    ? `+${newAndIncItems.length} new, ${removedItems.length + reducedItems.length} removed`
+                    : items.reduce((sum, item) => sum + (item.quantity || 1), 0)
+                  }
                 </Text>
               </View>
             </View>

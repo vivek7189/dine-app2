@@ -19,7 +19,9 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import Pusher from 'pusher-js';
+// import Pusher from 'pusher-js';
+import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { database } from '../../config/firebase';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import apiClient from '../../services/api';
@@ -33,9 +35,9 @@ import { buildTokenSlipHTML } from '../../utils/tokenSlipHTML';
 import * as printerService from '../../services/printerService';
 import { useOffline } from '../../hooks/useOffline';
 
-// Pusher configuration (same as web frontend)
-const PUSHER_KEY = '4e1f74ae05c66bbc4eec';
-const PUSHER_CLUSTER = 'ap2';
+// Pusher configuration (same as web frontend) — commented out, now using Firebase RTDB
+// const PUSHER_KEY = '4e1f74ae05c66bbc4eec';
+// const PUSHER_CLUSTER = 'ap2';
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -98,9 +100,7 @@ export default function OrdersScreen() {
   const [refundReason, setRefundReason] = useState('');
   const [refundSubmitting, setRefundSubmitting] = useState(false);
 
-  // Pusher reference
-  const pusherRef = useRef(null);
-  const channelRef = useRef(null);
+  // (stale Pusher refs removed — now using Firebase RTDB)
 
   useEffect(() => {
     loadInitialData();
@@ -195,7 +195,7 @@ export default function OrdersScreen() {
 
     switch (dateFilterMode) {
       case 'today':
-        return { startDate: todayStart.toISOString(), endDate: todayEnd.toISOString() };
+        return { todayOnly: true };
       case 'yesterday': {
         const ys = new Date(todayStart);
         ys.setDate(ys.getDate() - 1);
@@ -250,9 +250,9 @@ export default function OrdersScreen() {
     return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
-  // Pusher + LAN Hub subscription for real-time order updates
+  // Firebase RTDB + LAN Hub subscription for real-time order updates
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId || !database) return;
 
     const handleOrderEvent = (eventName, data) => {
       console.log(`[Orders] Received '${eventName}' event:`, data);
@@ -269,23 +269,26 @@ export default function OrdersScreen() {
       });
     }
 
-    // Pusher (cloud)
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    pusherRef.current = pusher;
+    // Firebase RTDB — subscribe to orders category
+    const now = Date.now();
+    const ordersQuery = query(
+      ref(database, `events/${restaurantId}/orders`),
+      orderByChild('ts'),
+      startAt(now)
+    );
 
-    const channelName = `restaurant-${restaurantId}`;
-    const channel = pusher.subscribe(channelName);
-    channelRef.current = channel;
+    const ordersHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && eventNames.includes(data.type)) {
+        handleOrderEvent(data.type, data);
+      }
+    };
 
-    eventNames.forEach(evt => channel.bind(evt, (data) => handleOrderEvent(evt, data)));
+    onChildAdded(ordersQuery, ordersHandler);
 
     return () => {
       lanUnsubs.forEach(fn => fn());
-      if (channelRef.current) channelRef.current.unbind_all();
-      if (pusherRef.current) {
-        pusherRef.current.unsubscribe(channelName);
-        pusherRef.current.disconnect();
-      }
+      off(ordersQuery, 'child_added', ordersHandler);
     };
   }, [restaurantId]);
 
@@ -335,6 +338,20 @@ export default function OrdersScreen() {
     }
   };
 
+  // Shared helper to process raw order response into sorted, filtered list
+  const processOrdersList = (response) => {
+    let ordersList = response.orders || [];
+    if (selectedStatus === 'all') {
+      ordersList = ordersList.filter(order => order.status !== 'deleted');
+    }
+    ordersList.sort((a, b) => {
+      const dateA = getOrderDate(a.createdAt);
+      const dateB = getOrderDate(b.createdAt);
+      return dateB - dateA;
+    });
+    return ordersList;
+  };
+
   const loadOrders = async (rid) => {
     try {
       const dateRange = getDateRange();
@@ -349,20 +366,17 @@ export default function OrdersScreen() {
       // Remove undefined filters
       Object.keys(filters).forEach(key => filters[key] === undefined && delete filters[key]);
 
-      const response = await apiClient.getOrders(rid, filters);
-      let ordersList = response.orders || [];
-
-      // Filter out deleted orders from "All" view (only show deleted in "Deleted" filter)
-      if (selectedStatus === 'all') {
-        ordersList = ordersList.filter(order => order.status !== 'deleted');
-      }
-
-      // Sort by created date (newest first)
-      ordersList.sort((a, b) => {
-        const dateA = getOrderDate(a.createdAt);
-        const dateB = getOrderDate(b.createdAt);
-        return dateB - dateA;
+      const response = await apiClient.getOrders(rid, filters, {
+        // Called when fresh network data arrives after returning stale local data
+        onRefreshed: (freshData) => {
+          const freshOrders = processOrdersList(freshData);
+          setOrders(freshOrders);
+          if (rid) {
+            setCache(`cache_orders_${rid}_${dateFilterMode}`, freshOrders);
+          }
+        },
       });
+      const ordersList = processOrdersList(response);
 
       setOrders(ordersList);
       if (restaurantId) {
@@ -374,7 +388,13 @@ export default function OrdersScreen() {
         const analyticsOptions = {};
         if (dateRange.startDate) analyticsOptions.startDate = dateRange.startDate;
         if (dateRange.endDate) analyticsOptions.endDate = dateRange.endDate;
-        const analyticsResponse = await apiClient.getAnalytics(rid, dateRange.startDate ? 'custom' : 'today', analyticsOptions);
+        const analyticsResponse = await apiClient.getAnalytics(rid, dateRange.startDate ? 'custom' : 'today', analyticsOptions, {
+          onRefreshed: (freshAnalytics) => {
+            if (freshAnalytics?.success && freshAnalytics?.analytics) {
+              setAnalyticsStats(freshAnalytics.analytics);
+            }
+          },
+        });
         if (analyticsResponse?.success && analyticsResponse?.analytics) {
           setAnalyticsStats(analyticsResponse.analytics);
         }
@@ -402,20 +422,16 @@ export default function OrdersScreen() {
 
       Object.keys(filters).forEach(key => filters[key] === undefined && delete filters[key]);
 
-      const response = await apiClient.getOrders(rid, filters);
-      let ordersList = response.orders || [];
-
-      // Filter out deleted orders from "All" view
-      if (selectedStatus === 'all') {
-        ordersList = ordersList.filter(order => order.status !== 'deleted');
-      }
-
-      // Sort by created date (newest first)
-      ordersList.sort((a, b) => {
-        const dateA = getOrderDate(a.createdAt);
-        const dateB = getOrderDate(b.createdAt);
-        return dateB - dateA;
+      const response = await apiClient.getOrders(rid, filters, {
+        onRefreshed: (freshData) => {
+          const freshOrders = processOrdersList(freshData);
+          setOrders(freshOrders);
+          if (rid) {
+            setCache(`cache_orders_${rid}_${dateFilterMode}`, freshOrders);
+          }
+        },
       });
+      const ordersList = processOrdersList(response);
 
       setOrders(ordersList);
       if (rid) {
@@ -722,6 +738,9 @@ export default function OrdersScreen() {
           timestamp: new Date(),
           waiterName: order.staffInfo?.name || user?.name || 'Staff',
           orderId: order.id,
+          orderType: order.orderType || '',
+          customerName: order.customerInfo?.name || '',
+          specialInstructions: order.specialInstructions || order.notes || '',
         };
         const kotText = printerService.generateKOTText(kotData);
         const kotHtml = printerService.wrapKOTTextInHTML(kotText);
@@ -999,18 +1018,21 @@ export default function OrdersScreen() {
     const orderType = (item.orderType || 'dine-in').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     const staffLabel = item.staffInfo?.name || item.source || null;
 
-    // Build tax summary text
+    // Build tax summary text — matches web order breakdown format
     const taxSummaryText = (() => {
-      const parts = [`₹${subtotal.toFixed(2)}`];
+      let text = `₹${subtotal.toFixed(2)}`;
+      const discAmt = item.totalDiscountAmount || item.discountAmount || item.offerDiscount || 0;
+      if (discAmt > 0) text += ` - Disc ₹${discAmt.toFixed(2)}`;
+      if (item.serviceChargeAmount > 0) text += ` + SC ₹${item.serviceChargeAmount.toFixed(2)}`;
       if (item.taxBreakdown && item.taxBreakdown.length > 0) {
-        item.taxBreakdown.forEach(t => parts.push(`${t.name || 'Tax'} ${t.rate}%`));
+        text += ` + ${item.taxBreakdown.map(t => `${t.name || 'Tax'} ${t.rate}%`).join(', ')}`;
       } else if (taxAmt > 0) {
-        parts.push(`Tax ₹${taxAmt.toFixed(2)}`);
+        text += ` + Tax ₹${taxAmt.toFixed(2)}`;
       }
       if (item.roundOffAmount != null && item.roundOffAmount !== 0) {
-        parts.push(`Round ${item.roundOffAmount > 0 ? '+' : ''}₹${item.roundOffAmount.toFixed(2)}`);
+        text += ` ${item.roundOffAmount > 0 ? '+' : '-'} Round ₹${Math.abs(item.roundOffAmount).toFixed(2)}`;
       }
-      return parts.length > 1 ? parts.join(' + ') : null;
+      return text !== `₹${subtotal.toFixed(2)}` ? text : null;
     })();
 
     return (
@@ -1515,16 +1537,18 @@ export default function OrdersScreen() {
     );
   };
 
-  // Compute summary from analytics or orders
+  // Compute summary from analytics or orders — filter out invalid statuses for revenue (matches web)
   const summaryData = useMemo(() => {
-    const totalRevenue = analyticsStats?.totalRevenue || orders.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
-    const totalOrders = analyticsStats?.totalOrders || orders.length;
+    const validOrders = orders.filter(o => !['cancelled', 'deleted', 'saved', 'refunded'].includes(o.status));
+    const totalRevenueWithTax = analyticsStats?.totalRevenueWithTax || analyticsStats?.totalRevenue || validOrders.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+    const totalRevenueBeforeTax = analyticsStats?.totalRevenue || totalRevenueWithTax;
+    const totalOrders = analyticsStats?.totalOrders || validOrders.length;
     const completedCount = analyticsStats?.completedOrders || orders.filter(o => o.status === 'completed').length;
     const pb = analyticsStats?.paymentBreakdown || {};
-    return { totalRevenue, totalOrders, completedCount, paymentBreakdown: pb };
+    return { totalRevenue: totalRevenueWithTax, totalRevenueBeforeTax, totalRevenueWithTax, totalOrders, completedCount, paymentBreakdown: pb };
   }, [analyticsStats, orders]);
 
-  // Sales Summary fetching
+  // Sales Summary fetching — always hits API when online
   const fetchSaleSummary = useCallback(async (period) => {
     if (!restaurantId) return;
     const p = period || summaryPeriod;
@@ -1547,9 +1571,9 @@ export default function OrdersScreen() {
     fetchSaleSummary(period);
   }, [fetchSaleSummary]);
 
-  // Auto-fetch when switching to summary view
+  // Always re-fetch when switching to summary view (data may be stale)
   useEffect(() => {
-    if (activeView === 'summary' && restaurantId && !saleSummaryData && !saleSummaryLoading) {
+    if (activeView === 'summary' && restaurantId) {
       fetchSaleSummary();
     }
   }, [activeView, restaurantId]);
@@ -1679,7 +1703,10 @@ export default function OrdersScreen() {
             </View>
             <View style={styles.statContent}>
               <Text style={styles.statLabel}>Revenue</Text>
-              <Text style={[styles.statValue, { color: '#166534' }]}>{'\u20B9'}{summaryData.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+              <Text style={[styles.statValue, { color: '#166534' }]}>{'\u20B9'}{summaryData.totalRevenueBeforeTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+              {summaryData.totalRevenueWithTax > 0 && summaryData.totalRevenueWithTax !== summaryData.totalRevenueBeforeTax && (
+                <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>incl. tax: {'\u20B9'}{summaryData.totalRevenueWithTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+              )}
             </View>
           </View>
           <View style={[styles.statCard, { backgroundColor: '#eff6ff' }]}>
@@ -1937,8 +1964,11 @@ export default function OrdersScreen() {
                   </View>
                   <Text style={summaryStyles.kpiLabel}>Revenue</Text>
                   <Text style={[summaryStyles.kpiValue, { color: '#166534' }]}>
-                    {'\u20B9'}{(saleSummaryData.totalRevenueWithTax || saleSummaryData.totalRevenue || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    {'\u20B9'}{(saleSummaryData.totalRevenue || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                   </Text>
+                  {saleSummaryData.totalRevenueWithTax > 0 && saleSummaryData.totalRevenueWithTax !== saleSummaryData.totalRevenue && (
+                    <Text style={summaryStyles.kpiSub}>incl. tax: {'\u20B9'}{saleSummaryData.totalRevenueWithTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</Text>
+                  )}
                 </View>
                 <View style={[summaryStyles.kpiCard, { backgroundColor: '#eff6ff' }]}>
                   <View style={[summaryStyles.kpiIcon, { backgroundColor: '#3b82f6' }]}>

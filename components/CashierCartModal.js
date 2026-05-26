@@ -1157,7 +1157,7 @@ export default function CashierCartModal({
                 )}
                 {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%)</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
                     <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{tax.amount.toFixed(0)}</Text>
                   </View>
                 ))}
@@ -1232,7 +1232,7 @@ export default function CashierCartModal({
               )}
               {billing.taxBreakdown.map((tax, i) => (
                 <View key={`tax-${i}`} style={styles.breakdownRow}>
-                  <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}</Text>
+                  <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
                   <Text style={styles.breakdownAmount}>₹{tax.amount.toFixed(2)}</Text>
                 </View>
               ))}

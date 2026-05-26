@@ -21,7 +21,9 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Pusher from 'pusher-js/react-native';
+// import Pusher from 'pusher-js/react-native';
+import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { database } from '../../config/firebase';
 import apiClient from '../../services/api';
 import lanClient from '../../services/lanClient';
 import restaurantEvents from '../../services/restaurantEvents';
@@ -36,8 +38,8 @@ import { canPerform } from '../../utils/permissions';
 import { useTabBar } from '../../contexts/TabBarContext';
 import * as printerService from '../../services/printerService';
 
-const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
-const PUSHER_CLUSTER = 'ap2';
+// const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+// const PUSHER_CLUSTER = 'ap2';
 
 export default function TablesScreen() {
   const router = useRouter();
@@ -68,6 +70,10 @@ export default function TablesScreen() {
   const [tableForm, setTableForm] = useState({ name: '', capacity: '4', type: 'regular', floor: '' });
   const [bulkForm, setBulkForm] = useState({ fromNumber: '', toNumber: '', capacity: '4', floor: '' });
   const [savingTable, setSavingTable] = useState(false);
+  // Inline new floor creation inside Add Table modal
+  const [showInlineFloorInput, setShowInlineFloorInput] = useState(false);
+  const [inlineFloorName, setInlineFloorName] = useState('');
+  const [savingInlineFloor, setSavingInlineFloor] = useState(false);
   // Table action sheet state
   const [showTableActions, setShowTableActions] = useState(false);
   const [actionTable, setActionTable] = useState(null);
@@ -106,52 +112,57 @@ export default function TablesScreen() {
     return unsub;
   }, []);
 
+  // Process floors response and update all related state
+  const processFloorsData = useCallback((response) => {
+    let floorsData = [];
+    if (response.floors) {
+      floorsData = response.floors;
+    } else if (Array.isArray(response)) {
+      floorsData = response;
+    }
+
+    setFloors(floorsData);
+
+    const allTables = floorsData.flatMap(floor =>
+      (floor.tables || []).map(t => ({ ...t, _floorName: floor.name, _floorId: floor.id }))
+    );
+    setTables(allTables);
+
+    // Keep selectedFloor in sync so currentFloorTables reflects new data
+    setSelectedFloor(prev => {
+      if (prev) {
+        const updatedFloor = floorsData.find(f => f.id === prev.id);
+        return updatedFloor || null;
+      }
+      return prev;
+    });
+
+    // Save to cache for stale-while-revalidate
+    const rid = restaurantIdRef.current;
+    if (rid) {
+      setCache('cache_floors_' + rid, { floors: floorsData, tables: allTables });
+    }
+  }, []);
+
   // Memoize loadFloorsAndTables to prevent recreation
   const loadFloorsAndTables = useCallback(async (restaurantId) => {
     // Prevent multiple simultaneous calls
     if (isRefreshingRef.current) {
       return;
     }
-    
+
     try {
       isRefreshingRef.current = true;
       const response = await apiClient.getFloors(restaurantId);
 
-      let floorsData = [];
-      if (response.floors) {
-        floorsData = response.floors;
-      } else if (Array.isArray(response)) {
-        floorsData = response;
-      }
-
-      setFloors(floorsData);
-
-      const allTables = floorsData.flatMap(floor =>
-        (floor.tables || []).map(t => ({ ...t, _floorName: floor.name, _floorId: floor.id }))
-      );
-      setTables(allTables);
-
-      // Keep selectedFloor in sync so currentFloorTables reflects new data
-      setSelectedFloor(prev => {
-        if (prev) {
-          const updatedFloor = floorsData.find(f => f.id === prev.id);
-          return updatedFloor || null;
-        }
-        return prev;
-      });
-
-      // Save to cache for stale-while-revalidate
-      const rid = restaurantIdRef.current;
-      if (rid) {
-        setCache('cache_floors_' + rid, { floors: floorsData, tables: allTables });
-      }
+      processFloorsData(response);
     } catch (error) {
       console.error('Error loading floors:', error);
       throw error;
     } finally {
       isRefreshingRef.current = false;
     }
-  }, []);
+  }, [processFloorsData]);
 
   // Optimistically update table status — instant, no loading spinner
   const updateTableStatusOptimistically = useCallback((tableId, status, orderId) => {
@@ -351,10 +362,10 @@ export default function TablesScreen() {
   };
 
 
-  // Pusher + LAN Hub: real-time table status updates when orders change on other devices
+  // Firebase RTDB + LAN Hub: real-time table status updates when orders change on other devices
   useEffect(() => {
     const rid = restaurantIdRef.current;
-    if (!rid) return;
+    if (!rid || !database) return;
 
     let debounceTimer = null;
     const debouncedRefresh = () => {
@@ -364,7 +375,7 @@ export default function TablesScreen() {
       }, 800);
     };
 
-    // Event handlers (shared by Pusher and LAN hub)
+    // Event handlers (shared by Firebase RTDB and LAN hub)
     const handleTableStatusUpdated = (data) => {
       if (data?.tableId && data?.status) {
         // Server confirmed — clear pending optimistic entry
@@ -445,25 +456,50 @@ export default function TablesScreen() {
       lanUnsubs.push(lanClient.onEvent('tables-reset', handleTablesReset));
     }
 
-    // Pusher (cloud)
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channelName = `restaurant-${rid}`;
-    const channel = pusher.subscribe(channelName);
+    // Firebase RTDB — subscribe to orders and tables categories
+    const now = Date.now();
 
-    channel.bind('table-status-updated', handleTableStatusUpdated);
-    channel.bind('order-created', handleOrderCreated);
-    channel.bind('order-updated', handleOrderCompletionEvent);
-    channel.bind('order-status-updated', handleOrderCompletionEvent);
-    channel.bind('order-completed', debouncedRefresh);
-    channel.bind('order-deleted', debouncedRefresh);
-    channel.bind('tables-reset', handleTablesReset);
+    const ordersQuery = query(
+      ref(database, `events/${rid}/orders`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const tablesQuery = query(
+      ref(database, `events/${rid}/tables`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const ordersHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+      switch (data.type) {
+        case 'order-created': handleOrderCreated(data); break;
+        case 'order-updated': handleOrderCompletionEvent(data); break;
+        case 'order-status-updated': handleOrderCompletionEvent(data); break;
+        case 'order-completed': debouncedRefresh(); break;
+        case 'order-deleted': debouncedRefresh(); break;
+      }
+    };
+
+    const tablesHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+      switch (data.type) {
+        case 'table-status-updated': handleTableStatusUpdated(data); break;
+        case 'tables-reset': handleTablesReset(); break;
+      }
+    };
+
+    onChildAdded(ordersQuery, ordersHandler);
+    onChildAdded(tablesQuery, tablesHandler);
 
     return () => {
       lanUnsubs.forEach(fn => fn());
       if (debounceTimer) clearTimeout(debounceTimer);
-      channel.unbind_all();
-      pusher.unsubscribe(channelName);
-      pusher.disconnect();
+      off(ordersQuery, 'child_added', ordersHandler);
+      off(tablesQuery, 'child_added', tablesHandler);
     };
   }, [selectedRestaurant?.id, refreshInBackground, updateTableStatusOptimistically]);
 
@@ -1037,19 +1073,26 @@ export default function TablesScreen() {
     setTableForm({ name: '', capacity: '4', type: 'regular', floor: defaultFloorName });
     setBulkForm({ fromNumber: '', toNumber: '', capacity: '4', floor: defaultFloorName });
     setAddTableMode('single');
+    setShowInlineFloorInput(false);
+    setInlineFloorName('');
     setShowAddTableModal(true);
   };
 
   // Save single table
   const handleSaveTable = async () => {
     if (!tableForm.name.trim() || !selectedRestaurant?.id) return;
+    const floorName = tableForm.floor || selectedFloor?.name || '';
+    if (!floorName) {
+      Alert.alert('Floor Required', 'Please select or create a floor first.');
+      return;
+    }
     setSavingTable(true);
     try {
       const data = {
         name: tableForm.name.trim(),
         capacity: parseInt(tableForm.capacity) || 4,
         type: tableForm.type,
-        floor: tableForm.floor || selectedFloor?.name || '',
+        floor: floorName,
         status: 'available',
       };
       const response = await apiClient.createTable(selectedRestaurant.id, data);
@@ -1071,6 +1114,11 @@ export default function TablesScreen() {
     const from = parseInt(bulkForm.fromNumber);
     const to = parseInt(bulkForm.toNumber);
     if (!from || !to || from > to || !selectedRestaurant?.id) return;
+    const floorName = bulkForm.floor || selectedFloor?.name || '';
+    if (!floorName) {
+      Alert.alert('Floor Required', 'Please select or create a floor first.');
+      return;
+    }
     if (to - from > 99) {
       Alert.alert('Error', 'Cannot create more than 100 tables at once');
       return;
@@ -1078,7 +1126,7 @@ export default function TablesScreen() {
     setSavingTable(true);
     try {
       const data = {
-        floor: bulkForm.floor || selectedFloor?.name || '',
+        floor: floorName,
         fromNumber: from,
         toNumber: to,
         capacity: parseInt(bulkForm.capacity) || 4,
@@ -1096,6 +1144,37 @@ export default function TablesScreen() {
       Alert.alert('Error', error.message || 'Failed to create tables');
     } finally {
       setSavingTable(false);
+    }
+  };
+
+  // Create floor inline from Add Table modal
+  const handleInlineFloorCreate = async () => {
+    if (!inlineFloorName.trim() || !selectedRestaurant?.id) return;
+    setSavingInlineFloor(true);
+    try {
+      const response = await apiClient.createFloor(selectedRestaurant.id, {
+        name: inlineFloorName.trim(),
+        description: null,
+        areaChargeType: 'none',
+        areaChargeValue: 0,
+      });
+      if (response.floor) {
+        const newFloorData = { ...response.floor, tables: [] };
+        setFloors(prev => [...prev, newFloorData]);
+        // Auto-select the newly created floor in the table form
+        const floorName = response.floor.name;
+        if (addTableMode === 'single') {
+          setTableForm(prev => ({ ...prev, floor: floorName }));
+        } else {
+          setBulkForm(prev => ({ ...prev, floor: floorName }));
+        }
+      }
+      setInlineFloorName('');
+      setShowInlineFloorInput(false);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to create floor');
+    } finally {
+      setSavingInlineFloor(false);
     }
   };
 
@@ -1840,8 +1919,14 @@ export default function TablesScreen() {
             <ScrollView showsVerticalScrollIndicator={false}>
               {/* Floor selector */}
               <View style={styles.floorFormField}>
-                <Text style={styles.floorFormLabel}>Floor</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                <Text style={styles.floorFormLabel}>Floor *</Text>
+                {floors.length === 0 && !showInlineFloorInput ? (
+                  <View style={{ marginTop: 6, backgroundColor: '#fef3c7', borderRadius: 10, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="warning-outline" size={16} color="#d97706" />
+                    <Text style={{ fontSize: 13, color: '#92400e', flex: 1 }}>No floors yet. Create a floor first to add tables.</Text>
+                  </View>
+                ) : null}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
                   <View style={{ flexDirection: 'row', gap: 6 }}>
                     {floors.map(f => (
                       <TouchableOpacity
@@ -1864,8 +1949,47 @@ export default function TablesScreen() {
                         ]}>{f.name}</Text>
                       </TouchableOpacity>
                     ))}
+                    {/* + New Floor chip */}
+                    <TouchableOpacity
+                      style={[styles.floorPickChip, { borderStyle: 'dashed', flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                      onPress={() => { setShowInlineFloorInput(true); setInlineFloorName(''); }}
+                    >
+                      <Ionicons name="add" size={14} color="#6b7280" />
+                      <Text style={styles.floorPickChipText}>New Floor</Text>
+                    </TouchableOpacity>
                   </View>
                 </ScrollView>
+                {/* Inline floor creation input */}
+                {showInlineFloorInput && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                    <TextInput
+                      style={[styles.floorFormInput, { flex: 1, marginBottom: 0 }]}
+                      value={inlineFloorName}
+                      onChangeText={setInlineFloorName}
+                      placeholder="e.g., Ground Floor, Terrace"
+                      placeholderTextColor={Colors.textLight}
+                      autoFocus
+                      onSubmitEditing={handleInlineFloorCreate}
+                    />
+                    <TouchableOpacity
+                      style={{ backgroundColor: savingInlineFloor ? '#d1d5db' : Colors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                      onPress={handleInlineFloorCreate}
+                      disabled={!inlineFloorName.trim() || savingInlineFloor}
+                    >
+                      {savingInlineFloor ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Add</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ padding: 8 }}
+                      onPress={() => { setShowInlineFloorInput(false); setInlineFloorName(''); }}
+                    >
+                      <Ionicons name="close" size={18} color="#9ca3af" />
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
 
               {addTableMode === 'single' ? (

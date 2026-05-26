@@ -30,6 +30,7 @@ function TabsNavigator() {
   const [pageAccess, setPageAccess] = useState(null);
   const [businessType, setBusinessType] = useState(null);
   const [parkingEnabled, setParkingEnabled] = useState(false);
+  const [isDeliveryPartner, setIsDeliveryPartner] = useState(false);
 
   useEffect(() => {
     // Check authentication on mount
@@ -45,6 +46,7 @@ function TabsNavigator() {
       if (userData) {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
+        if (userData.isDeliveryPartner) setIsDeliveryPartner(true);
         const storedType = userData.restaurant?.businessType;
         if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
@@ -209,6 +211,22 @@ function TabsNavigator() {
           ),
           tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
           tabBarBadgeStyle: pendingCount > 0 ? { backgroundColor: '#3b82f6', fontSize: 10 } : undefined,
+        }}
+      />
+
+      {/* Deliveries — visible when user is delivery partner */}
+      <Tabs.Screen
+        name="deliveries"
+        options={{
+          title: 'Deliveries',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "bicycle" : "bicycle-outline"}
+              size={iconSize}
+              color={color}
+            />
+          ),
+          href: isDeliveryPartner ? undefined : null,
         }}
       />
 

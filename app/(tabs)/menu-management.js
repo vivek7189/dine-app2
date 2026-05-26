@@ -12,7 +12,10 @@ import {
   Image,
   Platform,
   RefreshControl,
+  ScrollView,
+  Share,
 } from 'react-native';
+import * as ExpoClipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -51,6 +54,16 @@ export default function MenuManagementScreen() {
   const [hasDefaultMenu, setHasDefaultMenu] = useState(false);
   const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
   const [activePricingRules, setActivePricingRules] = useState([]);
+  // Category CRUD
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [apiCategories, setApiCategories] = useState([]);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
+  const [savingCategory, setSavingCategory] = useState(false);
+  // QR Code
+  const [showQRModal, setShowQRModal] = useState(false);
+  // Restaurant data for QR
+  const [restaurantData, setRestaurantData] = useState(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -81,6 +94,16 @@ export default function MenuManagementScreen() {
     servingSize: '',
     scoopOptions: '',
     pricingRules: {},
+    // Stock management
+    isStockManaged: false,
+    stockQuantity: '',
+    lowStockThreshold: '',
+    stockUnit: 'pcs',
+    deductionQuantity: 1,
+    // Tax
+    taxInclusive: null,
+    // Recipe
+    generateRecipe: true,
   });
 
   useEffect(() => {
@@ -135,6 +158,17 @@ export default function MenuManagementScreen() {
       setRestaurantId(rid);
       setBusinessType(userData.restaurant?.businessType || 'restaurant');
       setHasDefaultMenu(!!userData.restaurant?.hasDefaultMenu);
+      setRestaurantData(userData.restaurant);
+
+      // Load API categories
+      let loadedApiCats = [];
+      try {
+        const catRes = await apiClient.getCategories(rid);
+        if (catRes?.categories) {
+          loadedApiCats = catRes.categories;
+          setApiCategories(loadedApiCats);
+        }
+      } catch { /* backward compatible */ }
 
       // Load multi-tier pricing rules
       try {
@@ -146,7 +180,7 @@ export default function MenuManagementScreen() {
         }
       } catch { /* backward compatible */ }
 
-      await loadMenu(rid);
+      await loadMenu(rid, loadedApiCats);
     } catch (error) {
       console.error('Error loading menu:', error);
       Alert.alert('Error', 'Failed to load menu. Please try again.');
@@ -170,23 +204,38 @@ export default function MenuManagementScreen() {
     }
   };
 
-  const loadMenu = async (rid) => {
+  const loadMenu = async (rid, overrideCats) => {
     const response = await apiClient.getMenu(rid);
     const items = response.menuItems || [];
     setMenuItems(items);
 
-    const categorySet = new Set(['all-items']);
-    items.forEach(item => {
-      if (item.category) {
-        categorySet.add(item.category.toLowerCase());
+    // Merge API categories + item-derived categories
+    const categoryMap = new Map();
+    categoryMap.set('all-items', { id: 'all-items', name: 'All Items' });
+
+    // Add API categories first (they have emoji/description)
+    const catsToUse = overrideCats || apiCategories;
+    catsToUse.forEach(cat => {
+      const id = cat.id || cat.name?.toLowerCase().replace(/\s+/g, '-');
+      if (id && id !== 'all-items') {
+        categoryMap.set(id, { id, name: cat.name, emoji: cat.emoji, description: cat.description });
       }
     });
 
-    const cats = Array.from(categorySet).map(cat => ({
-      id: cat,
-      name: cat === 'all-items' ? 'All Items' : cat.charAt(0).toUpperCase() + cat.slice(1).replace(/-/g, ' '),
-    }));
-    setCategories(cats);
+    // Add item-derived categories that don't exist in API
+    items.forEach(item => {
+      if (item.category) {
+        const key = item.category.toLowerCase();
+        if (!categoryMap.has(key)) {
+          categoryMap.set(key, {
+            id: key,
+            name: key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' '),
+          });
+        }
+      }
+    });
+
+    setCategories(Array.from(categoryMap.values()));
   };
 
   const uploadAndExtract = async (fileInfo) => {
@@ -347,6 +396,13 @@ export default function MenuManagementScreen() {
       servingSize: '',
       scoopOptions: '',
       pricingRules: {},
+      isStockManaged: false,
+      stockQuantity: '',
+      lowStockThreshold: '',
+      stockUnit: 'pcs',
+      deductionQuantity: 1,
+      taxInclusive: null,
+      generateRecipe: true,
     });
     setEditingItem(null);
   };
@@ -382,6 +438,13 @@ export default function MenuManagementScreen() {
       servingSize: item.servingSize || '',
       scoopOptions: item.scoopOptions?.toString() || '',
       pricingRules: item.pricingRules || {},
+      isStockManaged: item.isStockManaged || false,
+      stockQuantity: typeof item.stockQuantity === 'number' ? item.stockQuantity : '',
+      lowStockThreshold: typeof item.lowStockThreshold === 'number' ? item.lowStockThreshold : '',
+      stockUnit: item.stockUnit || 'pcs',
+      deductionQuantity: item.deductionQuantity || 1,
+      taxInclusive: item.taxInclusive !== undefined ? item.taxInclusive : null,
+      generateRecipe: false, // not applicable when editing
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -562,6 +625,21 @@ export default function MenuManagementScreen() {
         if (formData.scoopOptions) itemData.scoopOptions = parseInt(formData.scoopOptions);
       }
 
+      // Tax pricing per-item
+      if (formData.taxInclusive !== null && formData.taxInclusive !== undefined) {
+        itemData.taxInclusive = formData.taxInclusive;
+      }
+
+      // Stock management
+      itemData.isStockManaged = !!formData.isStockManaged;
+      if (formData.isStockManaged) {
+        itemData.stockQuantity = typeof formData.stockQuantity === 'number' ? formData.stockQuantity : parseInt(formData.stockQuantity) || 0;
+        itemData.lowStockThreshold = typeof formData.lowStockThreshold === 'number' ? formData.lowStockThreshold : parseInt(formData.lowStockThreshold) || 5;
+        itemData.stockUnit = formData.stockUnit || 'pcs';
+        itemData.deductionQuantity = parseInt(formData.deductionQuantity) || 1;
+        itemData.isAvailable = itemData.stockQuantity > 0;
+      }
+
       // Multi-tier pricing rules (per-item)
       if (multiPricingEnabled && formData.pricingRules) {
         const cleaned = {};
@@ -589,6 +667,14 @@ export default function MenuManagementScreen() {
           });
           await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData);
         }
+        // Fire-and-forget recipe generation
+        if (formData.generateRecipe && businessType !== 'bar') {
+          apiClient.generateRecipeSteps(restaurantId, {
+            name: formData.name,
+            category: formData.category,
+            description: formData.description,
+          }).catch(() => {}); // silent failure
+        }
       }
 
       setShowAddModal(false);
@@ -598,6 +684,88 @@ export default function MenuManagementScreen() {
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to save');
     }
+  };
+
+  // ===== Category CRUD =====
+  const handleSaveCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      Alert.alert('Required', 'Please enter a category name');
+      return;
+    }
+    try {
+      setSavingCategory(true);
+      if (editingCategory) {
+        await apiClient.updateCategory(restaurantId, editingCategory.id, categoryForm);
+        setApiCategories(prev => prev.map(c => c.id === editingCategory.id ? { ...c, ...categoryForm } : c));
+      } else {
+        const res = await apiClient.createCategory(restaurantId, categoryForm);
+        if (res?.category) {
+          setApiCategories(prev => [...prev, res.category]);
+        }
+      }
+      setCategoryForm({ name: '', emoji: '🍽️', description: '' });
+      setEditingCategory(null);
+      await loadMenu(restaurantId);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to save category');
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = (category) => {
+    Alert.alert(
+      'Delete Category',
+      `Are you sure you want to delete "${category.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.deleteCategory(restaurantId, category.id);
+              setApiCategories(prev => prev.filter(c => c.id !== category.id));
+              if (selectedCategory === category.id || selectedCategory === category.name?.toLowerCase()) {
+                setSelectedCategory('all-items');
+              }
+              await loadMenu(restaurantId);
+            } catch (error) {
+              Alert.alert('Error', error.message || 'Failed to delete category');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditCategory = (category) => {
+    setEditingCategory(category);
+    setCategoryForm({ name: category.name || '', emoji: category.emoji || '🍽️', description: category.description || '' });
+  };
+
+  // ===== QR Code =====
+  const getQRUrl = () => {
+    const baseUrl = 'https://www.dineopen.com';
+    return `${baseUrl}/placeorder?restaurant=${restaurantId}`;
+  };
+
+  const handleShareQR = async () => {
+    try {
+      const url = getQRUrl();
+      await Share.share({
+        message: `Order online from ${restaurantData?.name || 'our restaurant'}: ${url}`,
+        url: url,
+      });
+    } catch {}
+  };
+
+  const handleCopyQRUrl = async () => {
+    const url = getQRUrl();
+    try {
+      await ExpoClipboard.setStringAsync(url);
+    } catch {}
+    Alert.alert('Copied!', 'URL copied to clipboard. Share with your customers.');
   };
 
   const renderMenuItem = ({ item }) => {
@@ -744,7 +912,7 @@ export default function MenuManagementScreen() {
         onPress={() => setSelectedCategory(item.id)}
       >
         <Text style={[styles.categoryText, isSelected && styles.categoryTextSelected]}>
-          {item.name}
+          {item.emoji ? `${item.emoji} ` : ''}{item.name}
         </Text>
       </TouchableOpacity>
     );
@@ -864,6 +1032,9 @@ export default function MenuManagementScreen() {
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#eef2ff' }]} onPress={handleRefresh} disabled={refreshing}>
             <Ionicons name="sync-outline" size={20} color={refreshing ? '#d1d5db' : '#6366f1'} />
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => setShowQRModal(true)}>
+            <Ionicons name="qr-code-outline" size={20} color="#dc2626" />
+          </TouchableOpacity>
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#ecfdf5' }]} onPress={handleTakePhoto}>
             <Ionicons name="camera-outline" size={20} color="#10b981" />
           </TouchableOpacity>
@@ -896,14 +1067,27 @@ export default function MenuManagementScreen() {
       </View>
 
       {/* Categories */}
-      <FlatList
-        horizontal
-        data={categories}
-        renderItem={renderCategory}
-        keyExtractor={(item) => item.id}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoriesContainer}
-      />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <FlatList
+          horizontal
+          data={categories}
+          renderItem={renderCategory}
+          keyExtractor={(item) => item.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoriesContainer}
+          style={{ flex: 1 }}
+        />
+        <TouchableOpacity
+          style={{ paddingHorizontal: 10, paddingVertical: 8, marginRight: 8 }}
+          onPress={() => {
+            setCategoryForm({ name: '', emoji: '🍽️', description: '' });
+            setEditingCategory(null);
+            setShowCategoryModal(true);
+          }}
+        >
+          <Ionicons name="settings-outline" size={18} color="#6b7280" />
+        </TouchableOpacity>
+      </View>
 
       {/* Demo Menu Banner */}
       {hasDefaultMenu && (
@@ -1041,6 +1225,284 @@ export default function MenuManagementScreen() {
           </View>
         </Modal>
       )}
+
+      {/* Category Management Modal */}
+      <Modal
+        visible={showCategoryModal}
+        animationType="slide"
+        onRequestClose={() => setShowCategoryModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => { setShowCategoryModal(false); setEditingCategory(null); setCategoryForm({ name: '', emoji: '🍽️', description: '' }); }}
+              >
+                <Ionicons name="close" size={24} color={Colors.textDark} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Manage Categories</Text>
+              <View style={styles.closeButtonPlaceholder} />
+            </View>
+            <ScrollView style={{ flex: 1, padding: 16 }}>
+              {/* Add/Edit Category Form */}
+              <View style={{
+                backgroundColor: '#f9fafb',
+                borderRadius: 14,
+                padding: 16,
+                marginBottom: 20,
+                borderWidth: 1,
+                borderColor: '#e5e7eb',
+              }}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#1f2937', marginBottom: 12 }}>
+                  {editingCategory ? 'Edit Category' : 'Add New Category'}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <TextInput
+                    style={{
+                      flex: 0.15,
+                      backgroundColor: '#fff',
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      borderRadius: 10,
+                      padding: 12,
+                      fontSize: 20,
+                      textAlign: 'center',
+                    }}
+                    placeholder="🍽️"
+                    value={categoryForm.emoji}
+                    onChangeText={(text) => setCategoryForm(prev => ({ ...prev, emoji: text }))}
+                    maxLength={2}
+                  />
+                  <TextInput
+                    style={{
+                      flex: 0.85,
+                      backgroundColor: '#fff',
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      borderRadius: 10,
+                      padding: 12,
+                      fontSize: 14,
+                      color: '#1f2937',
+                    }}
+                    placeholder="Category name"
+                    placeholderTextColor="#9ca3af"
+                    value={categoryForm.name}
+                    onChangeText={(text) => setCategoryForm(prev => ({ ...prev, name: text }))}
+                  />
+                </View>
+                <TextInput
+                  style={{
+                    backgroundColor: '#fff',
+                    borderWidth: 1,
+                    borderColor: '#e5e7eb',
+                    borderRadius: 10,
+                    padding: 12,
+                    fontSize: 13,
+                    color: '#1f2937',
+                    marginBottom: 12,
+                  }}
+                  placeholder="Description (optional)"
+                  placeholderTextColor="#9ca3af"
+                  value={categoryForm.description}
+                  onChangeText={(text) => setCategoryForm(prev => ({ ...prev, description: text }))}
+                />
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  {editingCategory && (
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        padding: 12,
+                        borderRadius: 10,
+                        backgroundColor: '#f3f4f6',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        setEditingCategory(null);
+                        setCategoryForm({ name: '', emoji: '🍽️', description: '' });
+                      }}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Cancel</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: '#10b981',
+                      alignItems: 'center',
+                      opacity: savingCategory ? 0.6 : 1,
+                    }}
+                    onPress={handleSaveCategory}
+                    disabled={savingCategory}
+                  >
+                    {savingCategory ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
+                        {editingCategory ? 'Update' : 'Add'} Category
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Existing Categories List */}
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#1f2937', marginBottom: 12 }}>
+                Existing Categories ({apiCategories.length})
+              </Text>
+              {apiCategories.length === 0 && (
+                <View style={{ alignItems: 'center', padding: 24 }}>
+                  <Ionicons name="folder-open-outline" size={40} color="#d1d5db" />
+                  <Text style={{ fontSize: 13, color: '#9ca3af', marginTop: 8 }}>No categories yet. Add one above.</Text>
+                </View>
+              )}
+              {apiCategories.map((cat) => (
+                <View key={cat.id} style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: '#fff',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 8,
+                  borderWidth: 1,
+                  borderColor: '#f3f4f6',
+                }}>
+                  <Text style={{ fontSize: 20, marginRight: 10 }}>{cat.emoji || '🍽️'}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#1f2937' }}>{cat.name}</Text>
+                    {cat.description ? (
+                      <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{cat.description}</Text>
+                    ) : null}
+                  </View>
+                  <TouchableOpacity
+                    style={{ padding: 8 }}
+                    onPress={() => handleEditCategory(cat)}
+                  >
+                    <Ionicons name="create-outline" size={18} color="#3b82f6" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ padding: 8 }}
+                    onPress={() => handleDeleteCategory(cat)}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* QR Code Modal */}
+      <Modal
+        visible={showQRModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowQRModal(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#fff',
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 360,
+            alignItems: 'center',
+          }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Ionicons name="qr-code" size={24} color="#dc2626" />
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#1f2937' }}>Customer QR Code</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowQRModal(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            {/* QR Code Image */}
+            <View style={{
+              backgroundColor: '#fff',
+              padding: 16,
+              borderRadius: 16,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 8,
+              elevation: 4,
+              marginBottom: 16,
+            }}>
+              <Image
+                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getQRUrl())}` }}
+                style={{ width: 220, height: 220 }}
+                resizeMode="contain"
+              />
+            </View>
+
+            {/* Instructions */}
+            <View style={{
+              backgroundColor: '#fef7f0',
+              borderRadius: 12,
+              padding: 14,
+              width: '100%',
+              marginBottom: 16,
+            }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1f2937', marginBottom: 6 }}>How to use:</Text>
+              <Text style={{ fontSize: 12, color: '#6b7280', lineHeight: 18 }}>
+                1. Share this QR code with customers{'\n'}
+                2. Customers scan with their phone camera{'\n'}
+                3. They browse your menu and place orders{'\n'}
+                4. Orders appear in your order system
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: 12,
+                  borderRadius: 10,
+                  backgroundColor: '#f3f4f6',
+                }}
+                onPress={handleCopyQRUrl}
+              >
+                <Ionicons name="copy-outline" size={16} color="#374151" />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Copy URL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  padding: 12,
+                  borderRadius: 10,
+                  backgroundColor: '#10b981',
+                }}
+                onPress={handleShareQR}
+              >
+                <Ionicons name="share-outline" size={16} color="#fff" />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Share</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

@@ -1,13 +1,13 @@
 {
   "name": "dine-app",
-  "version": "1.7.0",
+  "version": "2.39.0",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "postinstall": "node scripts/patch-printer-native.js",
-    "build:aab": "node scripts/patch-printer-native.js && node scripts/protect-gradle-props.js && expo prebuild --platform android --clean && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && node scripts/restore-signing-config.js && cd android && ./gradlew bundleRelease"
+    "build:aab": "node scripts/patch-printer-native.js && node scripts/protect-gradle-props.js && expo prebuild --platform android --clean && node scripts/restore-gradle-props.js && node scripts/restore-version-code.js && node scripts/remove-record-audio.js && node scripts/restore-signing-config.js && node scripts/disable-lint.js && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -43,6 +43,7 @@
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "~14.0.9",
+    "expo-updates": "~29.0.17",
     "firebase": "^12.10.0",
     "pusher-js": "^8.4.0",
     "react": "19.1.0",

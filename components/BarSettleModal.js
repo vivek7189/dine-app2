@@ -186,7 +186,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
               <View style={styles.taxSection}>
                 {taxBreakdown.map((tax, idx) => (
                   <View key={idx} style={styles.taxRow}>
-                    <Text style={styles.taxLabel}>{tax.name} ({tax.rate}%)</Text>
+                    <Text style={styles.taxLabel}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
                     <Text style={styles.taxValue}>₹{tax.amount.toFixed(2)}</Text>
                   </View>
                 ))}

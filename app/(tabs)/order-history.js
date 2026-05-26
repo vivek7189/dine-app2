@@ -112,6 +112,14 @@ export default function OrderHistoryScreen() {
         ...dateRange,
         limit: 200,
         sort: 'newest',
+      }, {
+        onRefreshed: (freshData) => {
+          const allFresh = freshData?.orders || [];
+          const freshHistory = allFresh.filter(o =>
+            ['completed', 'served', 'cancelled', 'refunded'].includes(o.status)
+          );
+          setOrders(freshHistory);
+        },
       });
       const allOrders = response?.orders || [];
       // Show completed, served, cancelled, refunded

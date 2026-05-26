@@ -31,13 +31,16 @@ import { getDisplayImage } from '../../utils/placeholderImages';
 import { canPerform } from '../../utils/permissions';
 // import VoiceOrderModal from '../../components/VoiceOrderModal';
 import CartModal from '../../components/CartModal';
+import ItemCustomizationModal from '../../components/ItemCustomizationModal';
 // WaiterCartModal and CashierCartModal are deprecated — all modes now handled by CartModal with mode prop
 import CashierInvoiceModal from '../../components/CashierInvoiceModal';
 import KOTModal from '../../components/KOTModal';
 import { useToast } from '../../components/Toast';
 import { getCached, setCache } from '../../services/cacheManager';
 // SyncIndicator moved to settings page
-import Pusher from 'pusher-js/react-native';
+// import Pusher from 'pusher-js/react-native';
+import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { database } from '../../config/firebase';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { useTabBar } from '../../contexts/TabBarContext';
@@ -49,8 +52,8 @@ const CHANNEL_NAMES = [...DINEIN_NAMES, ...TAKEAWAY_NAMES, ...DELIVERY_NAMES];
 const isZoneRule = (rule) => !CHANNEL_NAMES.includes((rule?.name || '').toLowerCase().trim());
 const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
 
-const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
-const PUSHER_CLUSTER = 'ap2';
+// const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+// const PUSHER_CLUSTER = 'ap2';
 
 export default function MenuScreen() {
   const router = useRouter();
@@ -86,10 +89,12 @@ export default function MenuScreen() {
   const [existingOrderItems, setExistingOrderItems] = useState(null); // snapshot of items when order was loaded for editing
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
-  const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [] });
+  const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [], taxInclusivePricing: false, defaultTaxRate: 0 });
   const [billingSettings, setBillingSettings] = useState({});
   const [businessType, setBusinessType] = useState('restaurant');
   const [isBarTabMode, setIsBarTabMode] = useState(false);
+  const [customizationModalOpen, setCustomizationModalOpen] = useState(false);
+  const [selectedItemForCustomization, setSelectedItemForCustomization] = useState(null);
   const [isFromTablesPage, setIsFromTablesPage] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -149,7 +154,7 @@ export default function MenuScreen() {
       setBillingSettings({});
       setUpiSettings({});
       setWhatsappConnected(false);
-      setTaxSettings({ enabled: false, rate: 0, taxes: [] });
+      setTaxSettings({ enabled: false, rate: 0, taxes: [], taxInclusivePricing: false, defaultTaxRate: 0 });
       setCart([]);
       setSelectedTable(null);
       setIsFromTablesPage(false);
@@ -165,9 +170,9 @@ export default function MenuScreen() {
     return unsub;
   }, []);
 
-  // Pusher + LAN Hub real-time menu updates
+  // Firebase RTDB + LAN Hub real-time menu updates
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId || !database) return;
 
     let debounceTimer = null;
     const debouncedRefresh = () => {
@@ -188,18 +193,43 @@ export default function MenuScreen() {
       });
     }
 
-    // Pusher (cloud)
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channelName = `restaurant-${restaurantId}`;
-    const channel = pusher.subscribe(channelName);
+    // Firebase RTDB — subscribe to menu and orders categories
+    const now = Date.now();
 
-    menuEvents.forEach(evt => channel.bind(evt, debouncedRefresh));
+    const menuQuery = query(
+      ref(database, `events/${restaurantId}/menu`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const ordersQuery = query(
+      ref(database, `events/${restaurantId}/orders`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const menuHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && menuEvents.includes(data.type)) {
+        debouncedRefresh();
+      }
+    };
+
+    const ordersHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.type === 'order-created') {
+        debouncedRefresh();
+      }
+    };
+
+    onChildAdded(menuQuery, menuHandler);
+    onChildAdded(ordersQuery, ordersHandler);
 
     return () => {
       lanUnsubs.forEach(fn => fn());
       if (debounceTimer) clearTimeout(debounceTimer);
-      channel.unbind_all();
-      pusher.unsubscribe(channelName);
+      off(menuQuery, 'child_added', menuHandler);
+      off(ordersQuery, 'child_added', ordersHandler);
     };
   }, [restaurantId]);
 
@@ -208,6 +238,32 @@ export default function MenuScreen() {
     useCallback(() => {
       tabBar?.reset();
     }, [tabBar])
+  );
+
+  // Silently refresh menu items on focus so stock quantities are up-to-date
+  // (e.g., after completing an order, deleting an order, or navigating back from another tab)
+  const menuRefreshRef = useRef(0);
+  useFocusEffect(
+    useCallback(() => {
+      if (!restaurantId) return;
+      // Skip the very first focus (initial load already fetches menu)
+      menuRefreshRef.current += 1;
+      if (menuRefreshRef.current <= 1) return;
+      // Bypass offline cache layer — fetch directly from API for fresh stock data
+      (async () => {
+        try {
+          apiClient.invalidateCache(`/api/menus/${restaurantId}`);
+          const response = await apiClient.request(`/api/menus/${restaurantId}`);
+          const items = response?.menuItems || response?.menu?.items || [];
+          if (items.length > 0) {
+            applyMenuData(items);
+            setCache('cache_menu_' + restaurantId, items);
+          }
+        } catch (e) {
+          // Silent fail — user still sees previously loaded data
+        }
+      })();
+    }, [restaurantId])
   );
 
   // Refresh tax settings when tab is focused (e.g., after changing settings in Profile)
@@ -229,6 +285,8 @@ export default function MenuScreen() {
               rate: totalRate,
               taxes: cachedSettings.taxes || [],
               taxGroups: cachedSettings.taxGroups || [],
+              taxInclusivePricing: cachedSettings.taxInclusivePricing || false,
+              defaultTaxRate: cachedSettings.defaultTaxRate || 0,
             });
             // Load real categories if tax groups exist
             if (cachedSettings.taxGroups?.length > 0) {
@@ -254,6 +312,8 @@ export default function MenuScreen() {
               rate: totalRate,
               taxes: settings.taxes || [],
               taxGroups: settings.taxGroups || [],
+              taxInclusivePricing: settings.taxInclusivePricing || false,
+              defaultTaxRate: settings.defaultTaxRate || 0,
             });
 
             // Load real categories if tax groups exist
@@ -637,6 +697,8 @@ export default function MenuScreen() {
           rate: totalRate,
           taxes: cachedSettings.taxes || [],
           taxGroups: cachedSettings.taxGroups || [],
+          taxInclusivePricing: cachedSettings.taxInclusivePricing || false,
+          defaultTaxRate: cachedSettings.defaultTaxRate || 0,
         });
         if (cachedSettings.taxGroups?.length > 0) {
           apiClient.getCategories(rid).then(res => {
@@ -666,6 +728,8 @@ export default function MenuScreen() {
           rate: totalRate,
           taxes: settings.taxes || [],
           taxGroups: settings.taxGroups || [],
+          taxInclusivePricing: settings.taxInclusivePricing || false,
+          defaultTaxRate: settings.defaultTaxRate || 0,
         });
 
         // Load real categories if tax groups exist
@@ -847,14 +911,21 @@ export default function MenuScreen() {
           }
         }
       }
-      return { ...item, price: newPrice, originalPrice: basePrice };
+      return { ...item, price: newPrice, originalPrice: basePrice, appliedPricingRuleId: activePricingRuleId || null };
     }));
   }, [activePricingRuleId, multiPricingEnabled]);
 
   // Cart lookup map for O(1) access instead of .find() per item
+  // Aggregates quantity across variant entries sharing the same menu item id
   const cartMap = useMemo(() => {
     const map = {};
-    cart.forEach(c => { map[c.id] = c; });
+    cart.forEach(c => {
+      if (map[c.id]) {
+        map[c.id] = { ...map[c.id], quantity: map[c.id].quantity + c.quantity };
+      } else {
+        map[c.id] = c;
+      }
+    });
     return map;
   }, [cart]);
 
@@ -864,24 +935,53 @@ export default function MenuScreen() {
       Alert.alert('Out of Stock', `"${item.name}" is currently out of stock`);
       return;
     }
+
+    // Items from customization modal have cartId — each variant/customization combo is a separate entry
+    if (item.cartId) {
+      setCart(prev => [...prev, {
+        id: item.id, cartId: item.cartId, name: item.name,
+        price: item.finalPrice || item.price,
+        originalPrice: item.originalPrice || item.price,
+        quantity: item.quantity || 1, menuItemId: item.id,
+        category: item.category || item.categoryId || null,
+        categoryId: item.categoryId || item.category || null,
+        selectedVariant: item.selectedVariant || null,
+        selectedCustomizations: item.selectedCustomizations || [],
+        basePrice: item.basePrice || item.price,
+        taxGroupId: item.taxGroupId || null,
+        pricingRules: item.pricingRules || null,
+        isStockManaged: item.isStockManaged || false,
+        stockQuantity: item.stockQuantity,
+        lowStockThreshold: item.lowStockThreshold,
+        ...(activePricingRuleId ? { appliedPricingRuleId: activePricingRuleId } : {}),
+      }]);
+      return;
+    }
+
     // Check stock limit
     if (item.isStockManaged && typeof item.stockQuantity === 'number') {
       setCart(prev => {
-        const currentInCart = prev.find(c => c.id === item.id)?.quantity || 0;
+        const currentInCart = prev.find(c => c.id === item.id && !c.cartId)?.quantity || 0;
         if (currentInCart >= item.stockQuantity) {
           Alert.alert('Stock Limit', `Only ${item.stockQuantity} "${item.name}" in stock`);
           return prev;
         }
         const adjustedPrice = getItemDisplayPrice(item);
-        const existing = prev.find(c => c.id === item.id);
+        const existing = prev.find(c => c.id === item.id && !c.cartId);
         if (existing) {
-          return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+          return prev.map(c => (c.id === item.id && !c.cartId) ? { ...c, quantity: c.quantity + 1 } : c);
         }
         return [...prev, {
           id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
           quantity: 1, menuItemId: item.id,
           category: item.category || item.categoryId || null,
           categoryId: item.categoryId || item.category || null,
+          taxGroupId: item.taxGroupId || null,
+          pricingRules: item.pricingRules || null,
+          isStockManaged: item.isStockManaged || false,
+          stockQuantity: item.stockQuantity,
+          lowStockThreshold: item.lowStockThreshold,
+          ...(activePricingRuleId ? { appliedPricingRuleId: activePricingRuleId } : {}),
           spiritCategory: item.spiritCategory || null, abv: item.abv || null,
           servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
           unit: item.unit || null, weight: item.weight || null,
@@ -893,39 +993,120 @@ export default function MenuScreen() {
 
     const adjustedPrice = getItemDisplayPrice(item);
     setCart(prev => {
-      const existing = prev.find(c => c.id === item.id);
+      const existing = prev.find(c => c.id === item.id && !c.cartId);
       if (existing) {
-        return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+        return prev.map(c => (c.id === item.id && !c.cartId) ? { ...c, quantity: c.quantity + 1 } : c);
       }
       return [...prev, {
         id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
         quantity: 1, menuItemId: item.id,
         category: item.category || item.categoryId || null,
         categoryId: item.categoryId || item.category || null,
+        taxGroupId: item.taxGroupId || null,
+        pricingRules: item.pricingRules || null,
+        isStockManaged: item.isStockManaged || false,
+        stockQuantity: item.stockQuantity,
+        lowStockThreshold: item.lowStockThreshold,
+        ...(activePricingRuleId ? { appliedPricingRuleId: activePricingRuleId } : {}),
         spiritCategory: item.spiritCategory || null, abv: item.abv || null,
         servingUnit: item.servingUnit || null, bottleSize: item.bottleSize || null,
         unit: item.unit || null, weight: item.weight || null,
         servingSize: item.servingSize || null, scoopOptions: item.scoopOptions || null,
       }];
     });
-  }, [getItemDisplayPrice]);
+  }, [getItemDisplayPrice, activePricingRuleId]);
+
+  // Opens customization modal if item has variants/customizations, otherwise adds directly
+  const handleItemPress = useCallback((item) => {
+    const hasVariants = item?.variants && Array.isArray(item.variants) && item.variants.length > 0;
+    const hasCustomizations = item?.customizations && Array.isArray(item.customizations) && item.customizations.length > 0;
+    if (hasVariants || hasCustomizations) {
+      setSelectedItemForCustomization(item);
+      setCustomizationModalOpen(true);
+    } else {
+      addToCart(item);
+    }
+  }, [addToCart]);
 
   const removeFromCart = useCallback((itemId) => {
-    setCart(prev => prev.filter(item => item.id !== itemId));
+    setCart(prev => prev.filter(item => (item.cartId || item.id) !== itemId));
   }, []);
 
   const updateCartQuantity = useCallback((itemId, quantity) => {
     if (quantity <= 0) {
-      setCart(prev => prev.filter(item => item.id !== itemId));
+      setCart(prev => prev.filter(item => (item.cartId || item.id) !== itemId));
     } else {
       setCart(prev => prev.map(item =>
-        item.id === itemId ? { ...item, quantity } : item
+        (item.cartId || item.id) === itemId ? { ...item, quantity } : item
       ));
     }
   }, []);
 
+  // After a successful order, locally decrement stock so UI updates instantly
+  const decrementLocalStock = useCallback((orderedItems) => {
+    if (!orderedItems || orderedItems.length === 0) return;
+    const qtyMap = {};
+    orderedItems.forEach(item => {
+      const id = item.menuItemId || item.id;
+      qtyMap[id] = (qtyMap[id] || 0) + (item.quantity || 1);
+    });
+    setMenuItems(prev => prev.map(mi => {
+      if (!mi.isStockManaged || typeof mi.stockQuantity !== 'number') return mi;
+      const ordered = qtyMap[mi.id];
+      if (!ordered) return mi;
+      const newQty = Math.max(0, mi.stockQuantity - ordered);
+      return { ...mi, stockQuantity: newQty, isAvailable: newQty > 0 };
+    }));
+  }, []);
+
+  // Returns the effective per-unit price for a cart item (variant + customizations included)
+  const getEffectiveItemPrice = (item) => {
+    let base;
+    if (item?.selectedVariant?.price != null) {
+      base = item.selectedVariant.price;
+    } else if (multiPricingEnabled && activePricingRuleId) {
+      const perItemPrice = item?.pricingRules?.[activePricingRuleId];
+      const parsed = perItemPrice != null ? Number(perItemPrice) : NaN;
+      if (!isNaN(parsed) && parsed >= 0) {
+        base = parsed;
+      } else {
+        base = typeof item?.originalPrice === 'number' ? item.originalPrice
+          : typeof item?.price === 'number' ? item.price : 0;
+      }
+    } else {
+      base = typeof item?.price === 'number' ? item.price : 0;
+    }
+    const extras = Array.isArray(item?.selectedCustomizations)
+      ? item.selectedCustomizations.reduce((s, c) => s + (c?.price || 0), 0)
+      : 0;
+    return (base || 0) + (extras || 0);
+  };
+
+  // Builds a standardized item payload for all API calls (POST/PATCH)
+  const buildItemPayload = (item) => {
+    const effectivePrice = getEffectiveItemPrice(item);
+    return {
+      menuItemId: item.menuItemId || item.id,
+      name: item.name,
+      price: effectivePrice,
+      quantity: item.quantity,
+      total: effectivePrice * (item.quantity || 1),
+      notes: item.notes || '',
+      category: item.category || '',
+      categoryId: item.categoryId || null,
+      taxGroupId: item.taxGroupId || null,
+      selectedVariant: item.selectedVariant || null,
+      selectedCustomizations: Array.isArray(item.selectedCustomizations) ? item.selectedCustomizations : [],
+      basePrice: typeof item.originalPrice === 'number' ? item.originalPrice : item.price,
+      ...(item.appliedPricingRuleId ? { appliedPricingRuleId: item.appliedPricingRuleId } : {}),
+      ...(item.priceEdited === true ? { priceEdited: true } : {}),
+      ...(item.isCustomItem ? { isCustomItem: true } : {}),
+      ...(item.isStockManaged ? { isStockManaged: true, stockQuantity: item.stockQuantity } : {}),
+    };
+  };
+
   const getCartTotal = () => {
-    return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
+    return cart.reduce((total, item) => total + (getEffectiveItemPrice(item) * (item.quantity || 1)), 0);
   };
 
   // Calculate tax based on restaurant settings
@@ -964,12 +1145,7 @@ export default function MenuScreen() {
     // The tableNumber is passed via billingPayload and gets added during updateOrder on completion.
     const orderData = {
       restaurantId,
-      items: cart.map(item => ({
-        menuItemId: item.menuItemId || item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-      })),
+      items: cart.map(buildItemPayload),
       orderType: selectedTable || params.tableNumber ? 'dine-in' : (isCashier ? 'counter' : 'dine-in'),
       paymentMethod: 'cash',
       status: 'pending',
@@ -998,11 +1174,8 @@ export default function MenuScreen() {
         orderId,
         restaurantId,
         cart: cart.map(item => ({
-          menuItemId: item.menuItemId || item.id,
+          ...buildItemPayload(item),
           id: item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
           originalPrice: item.originalPrice || item.price,
           pricingRules: item.pricingRules || {},
         })),
@@ -1083,12 +1256,7 @@ export default function MenuScreen() {
       if (existingOrderId) {
         // Update existing order
         const orderData = {
-          items: cart.map(item => ({
-            menuItemId: item.menuItemId || item.id,
-            name: item.name,
-            price: item.price,
-            quantity: item.quantity,
-          })),
+          items: cart.map(buildItemPayload),
           status: 'confirmed', // Send directly to kitchen
         };
 
@@ -1102,12 +1270,7 @@ export default function MenuScreen() {
           tableId: selectedTable?.id || null,
           floorId: selectedTable?.floorId || null,
           floorName: selectedTable?.floor || null,
-          items: cart.map(item => ({
-            menuItemId: item.menuItemId || item.id,
-            name: item.name,
-            price: item.price,
-            quantity: item.quantity,
-          })),
+          items: cart.map(buildItemPayload),
           orderType: 'dine-in',
           paymentMethod: 'cash',
           status: 'confirmed', // Send directly to kitchen
@@ -1147,15 +1310,40 @@ export default function MenuScreen() {
       // Compute incremental items (new/changed) for KOT when updating an existing order
       let kotItems = cart;
       let isIncremental = false;
+      let removedItems = [];
       if (existingOrderId && existingOrderItems) {
-        const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId, i]));
-        const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id));
+        const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
+        const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
+
+        const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id)).map(item => ({
+          ...item,
+          isNew: true,
+        }));
+
         const updatedItems = cart.filter(item => {
           const existing = existingMap.get(item.menuItemId || item.id);
           return existing && existing.quantity !== item.quantity;
+        }).map(item => {
+          const existing = existingMap.get(item.menuItemId || item.id);
+          return {
+            ...item,
+            isUpdated: true,
+            previousQuantity: existing.quantity,
+            quantityDelta: item.quantity - existing.quantity,
+          };
         });
+
+        // Detect removed items
+        removedItems = existingOrderItems
+          .filter(existing => !cartMap.has(existing.menuItemId || existing.id))
+          .map(item => ({
+            ...item,
+            isRemoved: true,
+            previousQuantity: item.quantity,
+          }));
+
         const incrementalItems = [...newItems, ...updatedItems];
-        if (incrementalItems.length > 0) {
+        if (incrementalItems.length > 0 || removedItems.length > 0) {
           kotItems = incrementalItems;
           isIncremental = true;
         }
@@ -1172,13 +1360,27 @@ export default function MenuScreen() {
         isIncremental,
         items: kotItems.map(item => ({
           name: item.name,
-          quantity: item.quantity,
+          quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
           notes: item.notes || '',
+          isNew: item.isNew || false,
+          isUpdated: item.isUpdated || false,
+          quantityDelta: item.quantityDelta || 0,
+          previousQuantity: item.previousQuantity || 0,
+        })),
+        removedItems: removedItems.map(item => ({
+          name: item.name,
+          quantity: item.previousQuantity || item.quantity,
+          notes: item.notes || '',
+          isRemoved: true,
         })),
         waiterName: user?.name || 'Waiter',
         waiterId: user?.id,
         timestamp: new Date(),
         restaurantName: restaurantName,
+        orderType: selectedTable || tableNumberFromModal ? 'Dine-in' : 'Counter',
+        customerName: customerPhone || '',
+        specialInstructions: specialInstructions || '',
+        dailyOrderId: orderNumber,
       };
 
       // Auto-print KOT silently in background (fire and forget)
@@ -1192,7 +1394,9 @@ export default function MenuScreen() {
       // Show KOT Modal
       setKotOrderData(kotData);
       setShowKOTModal(true);
+      const orderedItems = [...cart];
       setCart([]);
+      decrementLocalStock(orderedItems);
       setShowCart(false);
       setExistingOrderId(null); setExistingOrderItems(null);
     } catch (error) {
@@ -1225,16 +1429,24 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
-      const { taxAmount } = calculateTax(taxableAmount);
-      const afterTax = taxableAmount + taxAmount;
-      const withTip = afterTax + (discountData.tipAmount || 0);
-      let roundOff = 0;
-      if (billingSettings.roundOffEnabled) {
-        const roundTo = billingSettings.roundOffTo || 1;
-        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
-        roundOff = Math.round(roundOff * 100) / 100;
+      // Prefer CartModal's per-item tax; fall back to flat tax
+      const flatTaxPlaceOrder = calculateTax(taxableAmount);
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxPlaceOrder.taxAmount;
+      // Prefer CartModal's grand total (computed with per-item tax)
+      let grandTotal;
+      if (discountData.grandTotal != null) {
+        grandTotal = discountData.grandTotal;
+      } else {
+        const afterTax = taxableAmount + taxAmount;
+        const withTip = afterTax + (discountData.tipAmount || 0);
+        let localRoundOff = 0;
+        if (billingSettings.roundOffEnabled) {
+          const roundTo = billingSettings.roundOffTo || 1;
+          localRoundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+          localRoundOff = Math.round(localRoundOff * 100) / 100;
+        }
+        grandTotal = Math.round((withTip + localRoundOff) * 100) / 100;
       }
-      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
 
       // Build billing fields object
       const billingFields = {};
@@ -1247,7 +1459,7 @@ export default function MenuScreen() {
       if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
-      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.roundOffAmount) billingFields.roundOffAmount = discountData.roundOffAmount;
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
       // Partial payment
@@ -1255,17 +1467,12 @@ export default function MenuScreen() {
       if (discountData.partialPayAmount) {
         partialFields = {
           paidAmount: parseFloat(discountData.partialPayAmount),
-          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
+          outstandingAmount: Math.max(0, Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100),
           paymentStatus: 'partial',
         };
       }
 
-      const items = cart.map(item => ({
-        menuItemId: item.menuItemId || item.id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-      }));
+      const items = cart.map(buildItemPayload);
 
       if (existingOrderId && isBarTabMode) {
         // Settle existing bar tab — update to completed
@@ -1277,8 +1484,8 @@ export default function MenuScreen() {
           totalAmount: subtotal,
           discountAmount: totalDiscount,
           loyaltyDiscount: discountData.loyaltyDiscount || 0,
-          taxAmount: taxAmount,
-          finalAmount: grandTotal,
+          taxAmount: discountData.totalTax || taxAmount,
+          finalAmount: discountData.grandTotal || grandTotal,
           completedAt: new Date().toISOString(),
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
@@ -1286,6 +1493,8 @@ export default function MenuScreen() {
           manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
+          pricingRuleId: activePricingRuleId || null,
+          ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
           ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
           ...(discountData.couponCode && { couponCode: discountData.couponCode }),
           ...(discountData.couponId && { couponId: discountData.couponId }),
@@ -1308,7 +1517,9 @@ export default function MenuScreen() {
         }).catch(() => {}); // Don't block on payment verification
 
         toast.success('Tab settled!');
+        const orderedItems = [...cart];
         setCart([]);
+        decrementLocalStock(orderedItems);
         setShowCart(false);
         setExistingOrderId(null); setExistingOrderItems(null);
         router.back();
@@ -1343,20 +1554,43 @@ export default function MenuScreen() {
         if (printSettings?.autoPrintOnKOT !== false) {
           let kotItems = cart;
           let isIncremental = false;
+          let removedKotItems = [];
           if (existingOrderItems) {
-            const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId, i]));
-            const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id));
+            const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
+            const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
+
+            const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id)).map(item => ({
+              ...item,
+              isNew: true,
+            }));
             const updatedItems = cart.filter(item => {
               const existing = existingMap.get(item.menuItemId || item.id);
               return existing && existing.quantity !== item.quantity;
+            }).map(item => {
+              const existing = existingMap.get(item.menuItemId || item.id);
+              return {
+                ...item,
+                isUpdated: true,
+                previousQuantity: existing.quantity,
+                quantityDelta: item.quantity - existing.quantity,
+              };
             });
+
+            removedKotItems = existingOrderItems
+              .filter(existing => !cartMap.has(existing.menuItemId || existing.id))
+              .map(item => ({
+                name: item.name,
+                quantity: item.quantity,
+                isRemoved: true,
+              }));
+
             const incrementalItems = [...newItems, ...updatedItems];
-            if (incrementalItems.length > 0) {
+            if (incrementalItems.length > 0 || removedKotItems.length > 0) {
               kotItems = incrementalItems;
               isIncremental = true;
             }
           }
-          if (kotItems.length > 0) {
+          if (kotItems.length > 0 || removedKotItems.length > 0) {
             const kotData = {
               orderNumber: existingOrderId?.slice(-6),
               orderId: existingOrderId,
@@ -1365,12 +1599,19 @@ export default function MenuScreen() {
               isIncremental,
               items: kotItems.map(item => ({
                 name: item.name,
-                quantity: item.quantity,
+                quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
                 notes: item.notes || '',
+                isNew: item.isNew || false,
+                isUpdated: item.isUpdated || false,
+                quantityDelta: item.quantityDelta || 0,
+                previousQuantity: item.previousQuantity || 0,
               })),
+              removedItems: removedKotItems,
               waiterName: user?.name || 'Staff',
               timestamp: new Date(),
               restaurantName: restaurantName,
+              orderType: orderType || 'Dine-in',
+              customerName: customerName || '',
             };
             const kotText = printerService.generateKOTText(kotData);
             printerService.printContent({ text: kotText, silentOnly: true })
@@ -1384,7 +1625,9 @@ export default function MenuScreen() {
         }
 
         toast.success('Order updated successfully!');
+        const orderedItems = [...cart];
         setCart([]);
+        decrementLocalStock(orderedItems);
         setShowCart(false);
         setExistingOrderId(null); setExistingOrderItems(null);
         if (selectedTable) {
@@ -1457,6 +1700,8 @@ export default function MenuScreen() {
             waiterId: user?.id,
             timestamp: new Date(),
             restaurantName,
+            orderType: orderType || '',
+            customerName: customerName || '',
           };
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
@@ -1475,12 +1720,16 @@ export default function MenuScreen() {
           }).catch(() => {});
 
           toast.success('Tab settled!');
+          const orderedItems = [...cart];
           setCart([]);
+          decrementLocalStock(orderedItems);
           setShowCart(false);
           router.back();
         } else {
           toast.success('Order placed successfully!');
+          const orderedItems = [...cart];
           setCart([]);
+          decrementLocalStock(orderedItems);
           setShowCart(false);
           if (selectedTable || params.tableId) {
             router.replace({
@@ -1520,16 +1769,26 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
-      const { taxAmount, taxRate, taxLabel } = calculateTax(taxableAmount);
-      const afterTax = taxableAmount + taxAmount;
-      const withTip = afterTax + (discountData.tipAmount || 0);
-      let roundOff = 0;
-      if (billingSettings.roundOffEnabled) {
-        const roundTo = billingSettings.roundOffTo || 1;
-        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
-        roundOff = Math.round(roundOff * 100) / 100;
+      // Prefer CartModal's per-item tax calculation; fall back to flat tax
+      const flatTax = calculateTax(taxableAmount);
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTax.taxAmount;
+      const taxRate = flatTax.taxRate;
+      const taxLabel = flatTax.taxLabel;
+      // Prefer CartModal's grand total (computed with per-item tax) over local flat recalculation
+      let grandTotal;
+      if (discountData.grandTotal != null) {
+        grandTotal = discountData.grandTotal;
+      } else {
+        const afterTax = taxableAmount + taxAmount;
+        const withTip = afterTax + (discountData.tipAmount || 0);
+        let localRoundOff = 0;
+        if (billingSettings.roundOffEnabled) {
+          const roundTo = billingSettings.roundOffTo || 1;
+          localRoundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+          localRoundOff = Math.round(localRoundOff * 100) / 100;
+        }
+        grandTotal = Math.round((withTip + localRoundOff) * 100) / 100;
       }
-      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
 
       // Build billing fields
       const billingFields = {};
@@ -1542,14 +1801,14 @@ export default function MenuScreen() {
       if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
-      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.roundOffAmount) billingFields.roundOffAmount = discountData.roundOffAmount;
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
       let partialFields = {};
       if (discountData.partialPayAmount) {
         partialFields = {
           paidAmount: parseFloat(discountData.partialPayAmount),
-          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
+          outstandingAmount: Math.max(0, Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100),
           paymentStatus: 'partial',
         };
       }
@@ -1557,12 +1816,7 @@ export default function MenuScreen() {
       const orderData = {
         restaurantId,
         ...(tableNumberFromModal ? { tableNumber: tableNumberFromModal } : {}),
-        items: cart.map(item => ({
-          menuItemId: item.menuItemId || item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-        })),
+        items: cart.map(buildItemPayload),
         orderType: orderType,
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         status: 'completed', // Counter sales are completed immediately
@@ -1661,7 +1915,7 @@ export default function MenuScreen() {
         serviceChargeAmount: serviceCharge || 0,
         serviceChargeRate: discountData.serviceChargeRate || 0,
         tipAmount: discountData.tipAmount || 0,
-        roundOffAmount: roundOff || 0,
+        roundOffAmount: discountData.roundOffAmount || 0,
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
         splitPayments: discountData.splitPayments || null,
@@ -1676,7 +1930,9 @@ export default function MenuScreen() {
 
       setLastOrderData(invoiceData);
       setShowInvoiceModal(true);
+      const orderedItems = [...cart];
       setCart([]);
+      decrementLocalStock(orderedItems);
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
@@ -1708,16 +1964,26 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
-      const { taxAmount, taxRate, taxLabel } = calculateTax(taxableAmount);
-      const afterTax = taxableAmount + taxAmount;
-      const withTip = afterTax + (discountData.tipAmount || 0);
-      let roundOff = 0;
-      if (billingSettings.roundOffEnabled) {
-        const roundTo = billingSettings.roundOffTo || 1;
-        roundOff = Math.round(withTip / roundTo) * roundTo - withTip;
-        roundOff = Math.round(roundOff * 100) / 100;
+      // Prefer CartModal's per-item tax; fall back to flat tax
+      const flatTaxResult = calculateTax(taxableAmount);
+      const taxRate = flatTaxResult.taxRate;
+      const taxLabel = flatTaxResult.taxLabel;
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount;
+      // Prefer CartModal's grand total (computed with per-item tax)
+      let grandTotal;
+      if (discountData.grandTotal != null) {
+        grandTotal = discountData.grandTotal;
+      } else {
+        const afterTax = taxableAmount + taxAmount;
+        const withTip = afterTax + (discountData.tipAmount || 0);
+        let localRoundOff = 0;
+        if (billingSettings.roundOffEnabled) {
+          const roundTo = billingSettings.roundOffTo || 1;
+          localRoundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+          localRoundOff = Math.round(localRoundOff * 100) / 100;
+        }
+        grandTotal = Math.round((withTip + localRoundOff) * 100) / 100;
       }
-      const grandTotal = Math.round((withTip + roundOff) * 100) / 100;
 
       // Build billing fields
       const billingFields = {};
@@ -1730,7 +1996,7 @@ export default function MenuScreen() {
       if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
-      if (roundOff) billingFields.roundOffAmount = roundOff;
+      if (discountData.roundOffAmount) billingFields.roundOffAmount = discountData.roundOffAmount;
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
       let partialFields = {};
@@ -1847,7 +2113,7 @@ export default function MenuScreen() {
         couponCode: discountData.couponCode || null,
         serviceChargeAmount: serviceCharge || 0,
         serviceChargeRate: discountData.serviceChargeRate || null,
-        roundOffAmount: roundOff || 0,
+        roundOffAmount: discountData.roundOffAmount || 0,
         tipAmount: discountData.tipAmount || 0,
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
@@ -1863,7 +2129,9 @@ export default function MenuScreen() {
 
       setLastOrderData(invoiceData);
       setShowInvoiceModal(true);
+      const orderedItems = [...cart];
       setCart([]);
+      decrementLocalStock(orderedItems);
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
@@ -1931,7 +2199,9 @@ export default function MenuScreen() {
         });
       }
 
+      const orderedItems = [...cart];
       setCart([]);
+      decrementLocalStock(orderedItems);
       setShowCart(false);
       setExistingOrderId(null); setExistingOrderItems(null);
       // Navigate back to bar billing
@@ -2056,7 +2326,7 @@ export default function MenuScreen() {
       return (
         <TouchableOpacity
           style={[styles.menuItemCard, isOutOfStock && { opacity: 0.45 }]}
-          onPress={() => addToCart(item)}
+          onPress={() => handleItemPress(item)}
           activeOpacity={0.92}
         >
           {/* Image Section — top portion */}
@@ -2114,7 +2384,7 @@ export default function MenuScreen() {
               ) : (
                 <TouchableOpacity
                   style={styles.cardAddButton}
-                  onPress={(e) => { e.stopPropagation(); addToCart(item); }}
+                  onPress={(e) => { e.stopPropagation(); handleItemPress(item); }}
                 >
                   <Ionicons name="add" size={18} color="#fff" />
                 </TouchableOpacity>
@@ -2129,7 +2399,7 @@ export default function MenuScreen() {
     return (
       <TouchableOpacity
         style={[styles.menuItemCard, isOutOfStock && { opacity: 0.45 }]}
-        onPress={() => addToCart(item)}
+        onPress={() => handleItemPress(item)}
         activeOpacity={0.92}
       >
         {/* Placeholder image area */}
@@ -2185,7 +2455,7 @@ export default function MenuScreen() {
             ) : (
               <TouchableOpacity
                 style={styles.cardAddButton}
-                onPress={(e) => { e.stopPropagation(); addToCart(item); }}
+                onPress={(e) => { e.stopPropagation(); handleItemPress(item); }}
               >
                 <Ionicons name="add" size={18} color="#fff" />
               </TouchableOpacity>
@@ -2194,7 +2464,7 @@ export default function MenuScreen() {
         </View>
       </TouchableOpacity>
     );
-  }, [cartMap, addToCart, updateCartQuantity, showImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
+  }, [cartMap, addToCart, handleItemPress, updateCartQuantity, showImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
 
   const renderCategory = ({ item }) => {
     const isSelected = selectedCategory === item.id;
@@ -2772,6 +3042,7 @@ export default function MenuScreen() {
         }}
         orderData={kotOrderData}
         manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
+        printSettings={printSettings || {}}
       />
 
       {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
@@ -2799,6 +3070,7 @@ export default function MenuScreen() {
         whatsappConnected={whatsappConnected}
         tokenBillingEnabled={printSettings?.tokenBillingEnabled || false}
         manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
+        printSettings={printSettings || {}}
         onNewOrder={() => {
           setShowInvoiceModal(false);
           setLastOrderData(null);
@@ -2817,6 +3089,15 @@ export default function MenuScreen() {
           router.replace('/(tabs)/tables');
         }}
       />
+
+      {/* Item Customization Modal - for variant/customization selection */}
+      <ItemCustomizationModal
+        item={selectedItemForCustomization}
+        isOpen={customizationModalOpen}
+        onClose={() => { setCustomizationModalOpen(false); setSelectedItemForCustomization(null); }}
+        onAddToCart={(cartItem) => addToCart(cartItem)}
+      />
+
       {/* Floating Category FAB - bottom right, above checkout bar */}
       {categories.length > 1 && (
         <TouchableOpacity

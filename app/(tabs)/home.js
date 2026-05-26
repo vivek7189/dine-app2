@@ -15,7 +15,9 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Pusher from 'pusher-js/react-native';
+// import Pusher from 'pusher-js/react-native';
+import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { database } from '../../config/firebase';
 import apiClient from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache, clearCache } from '../../services/cacheManager';
@@ -24,8 +26,8 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { HeadquartersContent } from './headquarters';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
-const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
-const PUSHER_CLUSTER = 'ap2';
+// const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
+// const PUSHER_CLUSTER = 'ap2';
 
 // Animated loader shown while home data loads
 function HomeLoader() {
@@ -121,16 +123,13 @@ export default function HomeScreen() {
     return user?.restaurantId || user?.restaurant?.id || restaurant?.id;
   };
 
-  // Keep loadStats ref current for Pusher handler
+  // Keep loadStats ref current for Firebase handler
   useEffect(() => { loadStatsRef.current = loadStats; });
 
-  // Pusher: real-time updates when orders change on other devices
+  // Firebase RTDB: real-time updates when orders change on other devices
   useEffect(() => {
     const rid = getRestaurantId();
-    if (!rid) return;
-
-    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
-    const channel = pusher.subscribe(`restaurant-${rid}`);
+    if (!rid || !database) return;
 
     let debounceTimer = null;
     const handleEvent = () => {
@@ -140,16 +139,43 @@ export default function HomeScreen() {
       }, 1000);
     };
 
-    channel.bind('order-created', handleEvent);
-    channel.bind('order-updated', handleEvent);
-    channel.bind('order-completed', handleEvent);
-    channel.bind('order-deleted', handleEvent);
-    channel.bind('table-status-updated', handleEvent);
+    const now = Date.now();
+
+    const ordersQuery = query(
+      ref(database, `events/${rid}/orders`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const tablesQuery = query(
+      ref(database, `events/${rid}/tables`),
+      orderByChild('ts'),
+      startAt(now)
+    );
+
+    const orderEvents = ['order-created', 'order-updated', 'order-completed', 'order-deleted'];
+
+    const ordersHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && orderEvents.includes(data.type)) {
+        handleEvent();
+      }
+    };
+
+    const tablesHandler = (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.type === 'table-status-updated') {
+        handleEvent();
+      }
+    };
+
+    onChildAdded(ordersQuery, ordersHandler);
+    onChildAdded(tablesQuery, tablesHandler);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      channel.unbind_all();
-      pusher.unsubscribe(`restaurant-${rid}`);
+      off(ordersQuery, 'child_added', ordersHandler);
+      off(tablesQuery, 'child_added', tablesHandler);
     };
   }, [user, restaurant]);
 
