@@ -219,7 +219,7 @@ export default function BarBillingScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await apiClient.updateOrder(tab.id, { status: 'cancelled' });
+            await apiClient.cancelKotOrder(tab.id, 'Voided from bar billing');
             setTabs(prev => prev.filter(t => t.id !== tab.id));
           } catch (e) {
             Alert.alert('Error', e.message);

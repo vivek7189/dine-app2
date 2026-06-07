@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.44.0",
+    "version": "2.45.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -44,7 +44,7 @@
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 89,
+      "versionCode": 90,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#DC4A3A"

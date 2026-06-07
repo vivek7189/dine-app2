@@ -115,7 +115,7 @@ export default function BillingWebViewScreen() {
   const handleBack = async () => {
     // If billing wasn't completed, cancel the pending order in the background
     if (!completedRef.current && orderIdRef.current) {
-      apiClient.updateOrder(orderIdRef.current, { status: 'cancelled' }).catch(() => {});
+      apiClient.cancelKotOrder(orderIdRef.current, 'Billing cancelled').catch(() => {});
     }
     // Signal menu screen to clear stale existingOrderId on next focus
     await AsyncStorage.setItem('billingWebViewResult', JSON.stringify({ action: 'cancelled' })).catch(() => {});
