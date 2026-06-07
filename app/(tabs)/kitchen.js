@@ -61,6 +61,7 @@ export default function KitchenScreen() {
 
   const undoTimeoutRef = useRef(null);
   const loadDataRef = useRef(null);
+  const mountedRef = useRef(true);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const shimmerAnim = useRef(new Animated.Value(1)).current;
 
@@ -202,7 +203,9 @@ export default function KitchenScreen() {
 
   // ─── Cleanup ───
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     };
   }, []);
@@ -273,7 +276,7 @@ export default function KitchenScreen() {
       await apiClient.startCooking(orderId);
       setUpdatingOrderId(null);
       smoothTransition(kotId, orderId, 'preparing', 'cooking', 'Cooking');
-      setTimeout(() => loadKotData(false), 2500);
+      setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 2500);
     } catch (e) {
       setUpdatingOrderId(null);
       Alert.alert('Error', 'Failed to start cooking');
@@ -287,7 +290,7 @@ export default function KitchenScreen() {
       setUpdatingOrderId(null);
       if (soundEnabled) Vibration.vibrate(200);
       smoothTransition(kotId, orderId, 'ready', 'ready', 'Ready');
-      setTimeout(() => loadKotData(false), 2500);
+      setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 2500);
     } catch (e) {
       setUpdatingOrderId(null);
       Alert.alert('Error', 'Failed to mark ready');
@@ -307,12 +310,14 @@ export default function KitchenScreen() {
     undoTimeoutRef.current = setTimeout(async () => {
       try {
         await apiClient.completeOrder(orderId);
-        setTimeout(() => loadKotData(false), 1000);
+        if (mountedRef.current) setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 1000);
       } catch (e) {
-        setKotOrders(orders => orders.map(o => o.kotId === kotId ? { ...o, status: 'ready' } : o));
-        Alert.alert('Error', 'Failed to complete order');
+        if (mountedRef.current) {
+          setKotOrders(orders => orders.map(o => o.kotId === kotId ? { ...o, status: 'ready' } : o));
+          Alert.alert('Error', 'Failed to complete order');
+        }
       }
-      setUndoToast(null);
+      if (mountedRef.current) setUndoToast(null);
       undoTimeoutRef.current = null;
     }, 5000);
   };

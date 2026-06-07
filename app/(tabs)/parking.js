@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 // Parking-specific colors
 const ParkingColors = {
@@ -513,10 +514,6 @@ export default function ParkingScreen() {
   };
 
   // ─── Helpers ───
-
-  const formatCurrency = (amount) => {
-    return `\u20B9${Number(amount || 0).toLocaleString('en-IN')}`;
-  };
 
   const formatDuration = (entryTime) => {
     if (!entryTime) return '--';

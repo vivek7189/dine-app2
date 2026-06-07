@@ -21,9 +21,11 @@ import { database } from '../../config/firebase';
 import apiClient from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 import { getCached, setCache, clearCache } from '../../services/cacheManager';
+import Constants from 'expo-constants';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import { formatCurrency } from '../../utils/formatCurrency';
 import { HeadquartersContent } from './headquarters';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
@@ -106,6 +108,7 @@ export default function HomeScreen() {
   const [showRestaurantModal, setShowRestaurantModal] = useState(false);
   const [switchingRestaurantId, setSwitchingRestaurantId] = useState(null);
   const loadStatsRef = useRef(null);
+  const isLoadingStatsRef = useRef(false);
 
   useEffect(() => {
     loadInitialData();
@@ -113,7 +116,7 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (user && !loading) {
+      if (user && !loading && !isLoadingStatsRef.current) {
         loadStats(getRestaurantId());
       }
     }, [user, loading])
@@ -258,21 +261,21 @@ export default function HomeScreen() {
       }
 
       if (restaurantId) {
-        // Stale-while-revalidate: try cache first
-        const cached = await getCached('cache_home_stats_' + restaurantId);
-        if (cached?.data) {
-          const { todayStats: cs, tableStats: ts, todayOrders: co, openTabs: ct } = cached.data;
-          if (cs) setTodayStats(cs);
-          if (ts) setTableStats(ts);
-          if (co) setTodayOrders(co);
-          if (ct) setOpenTabs(ct);
-          setLoading(false);
-          // Fetch fresh in background
-          setSyncing(true);
-          loadStats(restaurantId).finally(() => setSyncing(false));
-        } else {
-          await loadStats(restaurantId);
+        // Online: always fetch fresh from server (no stale flash).
+        // Offline: show cached data if available.
+        if (effectivelyOffline) {
+          const cached = await getCached('cache_home_stats_' + restaurantId);
+          if (cached?.data) {
+            const { todayStats: cs, tableStats: ts, todayOrders: co, openTabs: ct } = cached.data;
+            if (cs) setTodayStats(cs);
+            if (ts) setTableStats(ts);
+            if (co) setTodayOrders(co);
+            if (ct) setOpenTabs(ct);
+            setLoading(false);
+            return;
+          }
         }
+        await loadStats(restaurantId);
       }
     } catch (error) {
       console.error('Error loading home data:', error);
@@ -282,7 +285,8 @@ export default function HomeScreen() {
   };
 
   const loadStats = async (restaurantId) => {
-    if (!restaurantId) return;
+    if (!restaurantId || isLoadingStatsRef.current) return;
+    isLoadingStatsRef.current = true;
 
     try {
       const today = new Date();
@@ -305,14 +309,35 @@ export default function HomeScreen() {
 
       const completed = orders.filter(o => o.status === 'completed' || o.status === 'delivered');
       const pending = orders.filter(o => o.status === 'pending' || o.status === 'confirmed' || o.status === 'preparing');
-      const revenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || o.total || 0), 0);
+      // Exclude due orders from revenue; use paidAmount for partial orders
+      const revenue = completed.reduce((sum, o) => {
+        if (o.paymentStatus === 'due') return sum;
+        if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) return sum + (Number(o.paidAmount) || 0);
+        return sum + (o.finalAmount || o.totalAmount || o.total || 0);
+      }, 0);
+      const paidOrderCount = completed.filter(o => o.paymentStatus !== 'due').length;
+
+      // Payment method breakdown (exclude due orders)
+      const paymentBreakdown = {};
+      completed.forEach(o => {
+        if (o.paymentStatus === 'due') return;
+        const method = (o.paymentMethod || 'cash').toLowerCase();
+        if (!paymentBreakdown[method]) paymentBreakdown[method] = { count: 0, total: 0 };
+        paymentBreakdown[method].count += 1;
+        if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) {
+          paymentBreakdown[method].total += Number(o.paidAmount) || 0;
+        } else {
+          paymentBreakdown[method].total += o.finalAmount || o.totalAmount || o.total || 0;
+        }
+      });
 
       const newTodayStats = {
         totalOrders: orders.length,
         totalRevenue: revenue,
-        avgOrderValue: completed.length > 0 ? Math.round(revenue / completed.length) : 0,
+        avgOrderValue: paidOrderCount > 0 ? Math.round(revenue / paidOrderCount) : 0,
         pendingOrders: pending.length,
         completedOrders: completed.length,
+        paymentBreakdown,
       };
       setTodayStats(newTodayStats);
 
@@ -336,6 +361,8 @@ export default function HomeScreen() {
       });
     } catch (error) {
       console.error('Error loading stats:', error);
+    } finally {
+      isLoadingStatsRef.current = false;
     }
   };
 
@@ -461,9 +488,6 @@ export default function HomeScreen() {
     }
   };
 
-  const formatCurrency = (amount) => {
-    return `\u20B9${(amount || 0).toLocaleString('en-IN')}`;
-  };
 
   if (loading) {
     return <HomeLoader />;
@@ -499,12 +523,6 @@ export default function HomeScreen() {
               <Ionicons name="time" size={24} color="#ef4444" />
             </View>
             <Text style={styles.actionText}>Attendance</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(tabs)/more')}>
-            <View style={[styles.actionIcon, { backgroundColor: '#f0fdf4' }]}>
-              <Ionicons name="settings" size={24} color="#10b981" />
-            </View>
-            <Text style={styles.actionText}>Manage</Text>
           </TouchableOpacity>
         </View>
 
@@ -614,6 +632,10 @@ export default function HomeScreen() {
             ))}
           </>
         )}
+
+        <Text style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', paddingVertical: 12 }}>
+          v{Constants.expoConfig?.version || '?.?.?'}
+        </Text>
       </View>
     );
 
@@ -719,6 +741,27 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Payment Method Breakdown */}
+        {hasRestaurant && Object.keys(todayStats.paymentBreakdown || {}).length > 0 && (
+          <View style={{ marginHorizontal: 16, marginBottom: 16, backgroundColor: '#fff', borderRadius: 12, padding: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 8 }}>Payment Breakdown</Text>
+            {Object.entries(todayStats.paymentBreakdown).sort((a, b) => b[1].total - a[1].total).map(([method, data]) => {
+              const colorMap = { cash: '#16a34a', upi: '#7c3aed', card: '#2563eb', online: '#0891b2', split: '#ea580c' };
+              return (
+                <View key={method} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colorMap[method] || '#6b7280' }} />
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>{method}</Text>
+                  </View>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#1f2937' }}>
+                    {formatCurrency(data.total)} <Text style={{ fontWeight: '400', color: '#9ca3af', fontSize: 11 }}>({data.count})</Text>
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* First-time owner without restaurant */}
         {isOwnerOrManager && !hasRestaurant && (
           <View style={styles.setupCard}>
@@ -798,17 +841,6 @@ export default function HomeScreen() {
                 <Text style={styles.actionText}>Attendance</Text>
               </TouchableOpacity>
 
-              {isOwnerOrManager && (
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => router.push('/(tabs)/more')}
-                >
-                  <View style={[styles.actionIcon, { backgroundColor: '#f1f5f9' }]}>
-                    <Ionicons name="settings" size={24} color="#64748b" />
-                  </View>
-                  <Text style={styles.actionText}>Manage</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </>
         )}
@@ -1052,6 +1084,10 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        <Text style={{ textAlign: 'center', fontSize: 10, color: '#9ca3af', paddingVertical: 12 }}>
+          v{Constants.expoConfig?.version || '?.?.?'}
+        </Text>
       </ScrollView>
 
       <RestaurantPickerModal

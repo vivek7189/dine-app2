@@ -602,6 +602,7 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
+  const bl = (invoiceData.printSettings || invoiceData)?.billLayout || {};
   const lines = [];
   const r = invoiceData.restaurantInfo || {};
   const fmt = (n) => (n || 0).toFixed(2);
@@ -609,8 +610,8 @@ export const generateBillText = (invoiceData) => {
   // ── Header ──
   // CM = center + double-height (still 32 chars wide, safe for long names)
   wrapText(invoiceData.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
-  if (r.address) wrapText(r.address, CHARS).forEach(l => lines.push(`<C>${l}</C>`));
-  if (r.phone) lines.push(`<C>Phone: ${r.phone}</C>`);
+  if (bl.showAddress !== false && r.address) wrapText(r.address, CHARS).forEach(l => lines.push(`<C>${l}</C>`));
+  if (bl.showPhone !== false && r.phone) lines.push(`<C>Phone: ${r.phone}</C>`);
   if (r.gstin && r.showGstOnInvoice) lines.push(`GSTIN: ${r.gstin}`);
   if (r.fssai && r.showFssaiOnInvoice) lines.push(`FSSAI: ${r.fssai}`);
   lines.push(LINE);
@@ -626,6 +627,10 @@ export const generateBillText = (invoiceData) => {
   lines.push(leftRight('', `Date: ${dateStr}`));
   lines.push(leftRight('', `Time: ${timeStr}`));
   lines.push(leftRight('', `Invoice no: ${invoiceNum}`));
+  if (bl.showTable !== false && invoiceData.tableNumber) lines.push(leftRight('Table', invoiceData.tableNumber));
+  if (bl.showWaiter !== false && invoiceData.waiterName) lines.push(leftRight('Waiter', invoiceData.waiterName));
+  if (bl.showCustomer !== false && invoiceData.customerName) lines.push(leftRight('Customer', invoiceData.customerName));
+  if (bl.showOrderType !== false && invoiceData.orderType) lines.push(leftRight('Order Type', invoiceData.orderType));
   lines.push(LINE);
 
   // ── Item table header ──
@@ -641,6 +646,14 @@ export const generateBillText = (invoiceData) => {
     const name = item.name || 'Item';
     // Item name line
     lines.push(name.length > CHARS ? name.substring(0, CHARS - 1) + '.' : name);
+    // Variant (e.g., Half, Full)
+    if (item.selectedVariant?.name) {
+      lines.push(`  [${item.selectedVariant.name}]`);
+    }
+    // Customizations/toppings
+    if (item.selectedCustomizations?.length > 0) {
+      item.selectedCustomizations.forEach(c => lines.push(`  + ${c.name || c}`));
+    }
     // Qty, Price, Amount line
     const qtyStr = `  x${qty}`;
     const priceStr = fmt(price);
@@ -652,19 +665,21 @@ export const generateBillText = (invoiceData) => {
   lines.push(LINE);
 
   // ── Totals ──
-  lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`));
+  if (bl.showSubtotal !== false) lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`));
   if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`));
   if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`));
   if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`));
   if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`));
-  if (invoiceData.taxBreakdown?.length > 0) {
-    invoiceData.taxBreakdown.forEach(tax => {
-      const inclSuffix = tax.inclusive ? ' (incl.)' : '';
-      const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
-      lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`));
-    });
-  } else if (invoiceData.taxEnabled && invoiceData.tax > 0) {
-    lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`, `${RS}${fmt(invoiceData.tax)}`));
+  if (bl.showTaxBreakdown !== false) {
+    if (invoiceData.taxBreakdown?.length > 0) {
+      invoiceData.taxBreakdown.forEach(tax => {
+        const inclSuffix = tax.inclusive ? ' (incl.)' : '';
+        const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
+        lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`));
+      });
+    } else if (invoiceData.taxEnabled && invoiceData.tax > 0) {
+      lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`, `${RS}${fmt(invoiceData.tax)}`));
+    }
   }
   if (invoiceData.tipAmount > 0) lines.push(leftRight('Tip', `${RS}${fmt(invoiceData.tipAmount)}`));
   if (invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0) {
@@ -676,15 +691,23 @@ export const generateBillText = (invoiceData) => {
   lines.push(DOUBLE_LINE);
 
   // ── Payment ──
-  if (invoiceData.cashReceived > 0) {
+  if (bl.showPayment !== false && invoiceData.cashReceived > 0) {
     lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`));
     if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`));
   }
 
   // ── Footer ──
-  lines.push('');
-  wrapText('Thank you for your visit!', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
-  lines.push('');
+  if (bl.showFooter !== false) {
+    lines.push('');
+    wrapText('Thank you for your visit!', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  }
+  if (bl.showPoweredBy !== false) {
+    lines.push('');
+    wrapText('Powered by DineOpen', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  }
+  if (bl.showFooter !== false || bl.showPoweredBy !== false) {
+    lines.push('');
+  }
 
   return lines.join('\n');
 };
@@ -754,7 +777,8 @@ const formatKOTDate = (date) => {
 };
 
 export const generateKOTText = (data) => {
-  const location = data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}` : '');
+  const kl = (data.printSettings || data)?.kotLayout || {};
+  const location = kl.showTable !== false ? (data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}` : '')) : '';
 
   const formatItemLine = (item, opts = {}) => {
     const subline = getItemSubline(item);
@@ -765,6 +789,10 @@ export const generateKOTText = (data) => {
     const qtyCol = `${qty}x`.padEnd(4);
     const itemLine = `${qtyCol}${name}${tag}`;
     const lines = [itemLine];
+    if (item.selectedVariant?.name) lines.push(`    [${item.selectedVariant.name}]`);
+    if (item.selectedCustomizations?.length > 0) {
+      item.selectedCustomizations.forEach(c => lines.push(`    + ${c.name || c}`));
+    }
     if (subline) lines.push(`    (${subline})`);
     if (item.notes) lines.push(`    Note: ${item.notes}`);
     return lines.join('\n');
@@ -804,21 +832,31 @@ export const generateKOTText = (data) => {
 
   // ── Assemble ──
   const lines = [];
-  wrapText(data.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
-  lines.push(`<CM>--- ${title} ---</CM>`);
+  if (kl.showRestaurantName !== false) {
+    wrapText(data.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+  }
+  if (kl.showKotTitle !== false) lines.push(`<CM>--- ${title} ---</CM>`);
   lines.push(LINE);
 
   // Order info — side by side where possible
   const ordNum = `#${data.orderNumber || data.dailyOrderId || data.orderId?.slice(-6) || ''}`;
-  if (location) {
+  const showOrdNum = kl.showOrderNumber !== false;
+  const showLoc = kl.showTable !== false;
+  if (showOrdNum && showLoc && location) {
     lines.push(leftRight(`Order ${ordNum}`, location));
-  } else {
+  } else if (showOrdNum) {
     lines.push(`Order ${ordNum}`);
+  } else if (showLoc && location) {
+    lines.push(location);
   }
-  lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp)));
-  if (data.orderType) lines.push(`Type: ${data.orderType}`);
-  if (data.waiterName) lines.push(`Staff: ${data.waiterName}`);
-  if (data.customerName) lines.push(`Customer: ${data.customerName}`);
+  if (kl.showDate !== false) {
+    lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp)));
+  } else {
+    lines.push(leftRight('', formatKOTTime(data.timestamp)));
+  }
+  if (kl.showOrderType !== false && data.orderType) lines.push(`Type: ${data.orderType}`);
+  if (kl.showWaiter !== false && data.waiterName) lines.push(`Staff: ${data.waiterName}`);
+  if (kl.showCustomer !== false && data.customerName) lines.push(`Customer: ${data.customerName}`);
   lines.push(LINE);
 
   // Item header — M = double-height bold

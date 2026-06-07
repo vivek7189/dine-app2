@@ -55,6 +55,22 @@ const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_N
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
 
+/**
+ * Filter out items excluded from KOT printing by category or item ID.
+ * Returns items unchanged when the feature is disabled.
+ */
+function filterKotExcludedItems(items, printSettings) {
+  if (!printSettings?.kotExclusionEnabled) return items;
+  const excludedCats = new Set(printSettings.kotExcludedCategories || []);
+  const excludedIds = new Set(printSettings.kotExcludedItemIds || []);
+  if (excludedCats.size === 0 && excludedIds.size === 0) return items;
+  return items.filter(item => {
+    if (excludedIds.has(item.id || item.menuItemId)) return false;
+    if (excludedCats.has(item.categoryId)) return false;
+    return true;
+  });
+}
+
 export default function MenuScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -243,13 +259,17 @@ export default function MenuScreen() {
   // Silently refresh menu items on focus so stock quantities are up-to-date
   // (e.g., after completing an order, deleting an order, or navigating back from another tab)
   const menuRefreshRef = useRef(0);
+  const isMenuRefreshingRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
       if (!restaurantId) return;
       // Skip the very first focus (initial load already fetches menu)
       menuRefreshRef.current += 1;
       if (menuRefreshRef.current <= 1) return;
+      // Skip if a refresh is already in progress (e.g., from Firebase handler)
+      if (isMenuRefreshingRef.current) return;
       // Bypass offline cache layer — fetch directly from API for fresh stock data
+      isMenuRefreshingRef.current = true;
       (async () => {
         try {
           apiClient.invalidateCache(`/api/menus/${restaurantId}`);
@@ -261,6 +281,8 @@ export default function MenuScreen() {
           }
         } catch (e) {
           // Silent fail — user still sees previously loaded data
+        } finally {
+          isMenuRefreshingRef.current = false;
         }
       })();
     }, [restaurantId])
@@ -1358,10 +1380,12 @@ export default function MenuScreen() {
         floorName: selectedTable?.floor || '',
         roomNumber: response.order?.roomNumber || null,
         isIncremental,
-        items: kotItems.map(item => ({
+        items: filterKotExcludedItems(kotItems, printSettings).map(item => ({
           name: item.name,
           quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
           notes: item.notes || '',
+          selectedVariant: item.selectedVariant || null,
+          selectedCustomizations: item.selectedCustomizations || [],
           isNew: item.isNew || false,
           isUpdated: item.isUpdated || false,
           quantityDelta: item.quantityDelta || 0,
@@ -1371,6 +1395,8 @@ export default function MenuScreen() {
           name: item.name,
           quantity: item.previousQuantity || item.quantity,
           notes: item.notes || '',
+          selectedVariant: item.selectedVariant || null,
+          selectedCustomizations: item.selectedCustomizations || [],
           isRemoved: true,
         })),
         waiterName: user?.name || 'Waiter',
@@ -1381,6 +1407,7 @@ export default function MenuScreen() {
         customerName: customerPhone || '',
         specialInstructions: specialInstructions || '',
         dailyOrderId: orderNumber,
+        printSettings: printSettings || {},
       };
 
       // Auto-print KOT silently in background (fire and forget)
@@ -1462,13 +1489,14 @@ export default function MenuScreen() {
       if (discountData.roundOffAmount) billingFields.roundOffAmount = discountData.roundOffAmount;
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
-      // Partial payment
+      // Partial payment (use != null so partialPayAmount of 0 means "full due")
       let partialFields = {};
-      if (discountData.partialPayAmount) {
+      if (discountData.partialPayAmount != null) {
+        const paid = parseFloat(discountData.partialPayAmount) || 0;
         partialFields = {
-          paidAmount: parseFloat(discountData.partialPayAmount),
-          outstandingAmount: Math.max(0, Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100),
-          paymentStatus: 'partial',
+          paidAmount: paid,
+          outstandingAmount: Math.max(0, Math.round((grandTotal - paid) * 100) / 100),
+          paymentStatus: paid === 0 ? 'due' : (paid >= grandTotal ? 'paid' : 'partial'),
         };
       }
 
@@ -1515,6 +1543,13 @@ export default function MenuScreen() {
           restaurantId,
           paymentStatus: 'completed',
         }).catch(() => {}); // Don't block on payment verification
+
+        // Explicitly release table after bar tab settle
+        const barTabTable = selectedTable || (params.tableId ? { id: params.tableId } : null);
+        if (barTabTable?.id) {
+          apiClient.updateTableStatus(barTabTable.id, 'available', null, restaurantId)
+            .catch(err => console.warn('Table release after tab settle failed:', err.message));
+        }
 
         toast.success('Tab settled!');
         const orderedItems = [...cart];
@@ -1597,10 +1632,12 @@ export default function MenuScreen() {
               tableNumber: selectedTable?.name || '',
               floorName: selectedTable?.floor || '',
               isIncremental,
-              items: kotItems.map(item => ({
+              items: filterKotExcludedItems(kotItems, printSettings).map(item => ({
                 name: item.name,
                 quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
                 notes: item.notes || '',
+                selectedVariant: item.selectedVariant || null,
+                selectedCustomizations: item.selectedCustomizations || [],
                 isNew: item.isNew || false,
                 isUpdated: item.isUpdated || false,
                 quantityDelta: item.quantityDelta || 0,
@@ -1612,6 +1649,7 @@ export default function MenuScreen() {
               restaurantName: restaurantName,
               orderType: orderType || 'Dine-in',
               customerName: customerName || '',
+              printSettings: printSettings || {},
             };
             const kotText = printerService.generateKOTText(kotData);
             printerService.printContent({ text: kotText, silentOnly: true })
@@ -1695,13 +1733,14 @@ export default function MenuScreen() {
             tableNumber: orderData.tableNumber || '',
             floorName: selectedTable?.floor || '',
             roomNumber: response.order?.roomNumber || null,
-            items: cart.map(item => ({ name: item.name, quantity: item.quantity, notes: item.notes || '' })),
+            items: filterKotExcludedItems(cart, printSettings).map(item => ({ name: item.name, quantity: item.quantity, notes: item.notes || '', selectedVariant: item.selectedVariant || null, selectedCustomizations: item.selectedCustomizations || [] })),
             waiterName: user?.name || 'Manager',
             waiterId: user?.id,
             timestamp: new Date(),
             restaurantName,
             orderType: orderType || '',
             customerName: customerName || '',
+            printSettings: printSettings || {},
           };
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
@@ -1718,6 +1757,13 @@ export default function MenuScreen() {
             restaurantId,
             paymentStatus: 'completed',
           }).catch(() => {});
+
+          // Release table after new bar tab settle
+          const barTable = selectedTable || (params.tableId ? { id: params.tableId } : null);
+          if (barTable?.id) {
+            apiClient.updateTableStatus(barTable.id, 'available', null, restaurantId)
+              .catch(err => console.warn('Table release after tab settle failed:', err.message));
+          }
 
           toast.success('Tab settled!');
           const orderedItems = [...cart];
@@ -1805,11 +1851,12 @@ export default function MenuScreen() {
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
       let partialFields = {};
-      if (discountData.partialPayAmount) {
+      if (discountData.partialPayAmount != null) {
+        const paid = parseFloat(discountData.partialPayAmount) || 0;
         partialFields = {
-          paidAmount: parseFloat(discountData.partialPayAmount),
-          outstandingAmount: Math.max(0, Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100),
-          paymentStatus: 'partial',
+          paidAmount: paid,
+          outstandingAmount: Math.max(0, Math.round((grandTotal - paid) * 100) / 100),
+          paymentStatus: paid === 0 ? 'due' : (paid >= grandTotal ? 'paid' : 'partial'),
         };
       }
 
@@ -1888,6 +1935,9 @@ export default function MenuScreen() {
           quantity: item.quantity,
           price: item.price,
           total: item.price * item.quantity,
+          selectedVariant: item.selectedVariant || null,
+          selectedCustomizations: item.selectedCustomizations || [],
+          notes: item.notes || '',
         })),
         subtotal: subtotal,
         tax: taxAmount,
@@ -1919,6 +1969,7 @@ export default function MenuScreen() {
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
         splitPayments: discountData.splitPayments || null,
+        printSettings: printSettings || {},
       };
 
       // Auto-print bill silently in background (fire and forget)
@@ -2000,11 +2051,12 @@ export default function MenuScreen() {
       if (discountData.splitPayments) billingFields.paymentMethod = 'split';
 
       let partialFields = {};
-      if (discountData.partialPayAmount) {
+      if (discountData.partialPayAmount != null) {
+        const paid = parseFloat(discountData.partialPayAmount) || 0;
         partialFields = {
-          paidAmount: parseFloat(discountData.partialPayAmount),
-          outstandingAmount: Math.round((grandTotal - parseFloat(discountData.partialPayAmount)) * 100) / 100,
-          paymentStatus: 'partial',
+          paidAmount: paid,
+          outstandingAmount: Math.max(0, Math.round((grandTotal - paid) * 100) / 100),
+          paymentStatus: paid === 0 ? 'due' : (paid >= grandTotal ? 'paid' : 'partial'),
         };
       }
 
@@ -2075,6 +2127,13 @@ export default function MenuScreen() {
         paymentStatus: 'completed',
       }).catch(() => {});
 
+      // Explicitly release table (don't rely solely on Firebase RTDB event)
+      const tableToRelease = selectedTable || (params.tableId ? { id: params.tableId } : null);
+      if (tableToRelease?.id) {
+        apiClient.updateTableStatus(tableToRelease.id, 'available', null, restaurantId)
+          .catch(err => console.warn('Table release after billing failed:', err.message));
+      }
+
       // Fetch latest user data for invoice settings
       const latestUserData = await apiClient.getUser();
       const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
@@ -2090,6 +2149,9 @@ export default function MenuScreen() {
           quantity: item.quantity,
           price: item.price,
           total: item.price * item.quantity,
+          selectedVariant: item.selectedVariant || null,
+          selectedCustomizations: item.selectedCustomizations || [],
+          notes: item.notes || '',
         })),
         subtotal,
         tax: taxAmount,
@@ -2118,6 +2180,7 @@ export default function MenuScreen() {
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
         splitPayments: discountData.splitPayments || null,
+        printSettings: printSettings || {},
       };
 
       // Auto-print bill silently in background (fire and forget)

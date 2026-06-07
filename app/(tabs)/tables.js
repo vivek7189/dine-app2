@@ -22,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // import Pusher from 'pusher-js/react-native';
-import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
+import { ref, onChildAdded, query, orderByChild, startAt } from 'firebase/database';
 import { database } from '../../config/firebase';
 import apiClient from '../../services/api';
 import lanClient from '../../services/lanClient';
@@ -94,6 +94,17 @@ export default function TablesScreen() {
   const lastProcessedTableParamRef = useRef(null);
   const printSettingsRef = useRef(null);
   const pendingOptimisticRef = useRef(new Map()); // Map<tableId, { status, orderId, timestamp }>
+  const selectedRestaurantRef = useRef(null);
+
+  // Keep ref in sync with state for use in callbacks
+  useEffect(() => { selectedRestaurantRef.current = selectedRestaurant; }, [selectedRestaurant]);
+
+  // Tick every 60s to keep elapsed time displays updated
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     loadInitialData();
@@ -137,9 +148,9 @@ export default function TablesScreen() {
       return prev;
     });
 
-    // Save to cache for stale-while-revalidate
+    // Save to cache for stale-while-revalidate (only cache if we have actual data)
     const rid = restaurantIdRef.current;
-    if (rid) {
+    if (rid && floorsData.length > 0) {
       setCache('cache_floors_' + rid, { floors: floorsData, tables: allTables });
     }
   }, []);
@@ -155,7 +166,51 @@ export default function TablesScreen() {
       isRefreshingRef.current = true;
       const response = await apiClient.getFloors(restaurantId);
 
-      processFloorsData(response);
+      // If floors API returned data, use it
+      if (response.floors?.length > 0 || (Array.isArray(response) && response.length > 0)) {
+        processFloorsData(response);
+      } else {
+        // Fallback: try getTables API (same as dine-frontend)
+        try {
+          const tablesResponse = await apiClient.getTables(restaurantId);
+          const tables = tablesResponse?.tables || [];
+          if (tables.length > 0) {
+            const fallbackFloors = [{ id: 'default', name: 'Main Floor', description: 'Main dining area', tables, restaurantId }];
+            processFloorsData({ floors: fallbackFloors });
+          } else {
+            processFloorsData(response);
+          }
+        } catch {
+          processFloorsData(response);
+        }
+      }
+
+      // ── Stale table auto-release ──
+      const posSettings = selectedRestaurantRef.current?.posSettings || {};
+      const autoReleaseHours = posSettings.tableAutoReleaseHours;
+      if (autoReleaseHours && autoReleaseHours > 0) {
+        const floorsArr = response.floors || (Array.isArray(response) ? response : []);
+        const allTablesArr = floorsArr.flatMap(f => f.tables || []);
+        const staleTables = allTablesArr.filter(table => {
+          if (table.status !== 'occupied') return false;
+          if (!table.lastOrderTime) return false;
+          let d;
+          if (table.lastOrderTime._seconds) d = new Date(table.lastOrderTime._seconds * 1000);
+          else if (table.lastOrderTime.toDate) d = table.lastOrderTime.toDate();
+          else d = new Date(table.lastOrderTime);
+          if (isNaN(d.getTime())) return false;
+          return (Date.now() - d.getTime()) / (1000 * 60 * 60) > autoReleaseHours;
+        });
+        if (staleTables.length > 0) {
+          staleTables.forEach(table => {
+            apiClient.updateTableStatus(table.id, 'available', null, restaurantId)
+              .catch(err => console.warn('Auto-release failed:', table.name, err.message));
+          });
+          staleTables.forEach(table => {
+            updateTableStatusOptimistically(table.id, 'available', null);
+          });
+        }
+      }
     } catch (error) {
       console.error('Error loading floors:', error);
       throw error;
@@ -340,9 +395,9 @@ export default function TablesScreen() {
         }).catch(() => {});
       } catch (_) {}
 
-      // Stale-while-revalidate: try cache first
+      // Stale-while-revalidate: try cache first (only if cache has actual floor data)
       const cached = await getCached('cache_floors_' + restaurantId);
-      if (cached?.data?.floors) {
+      if (cached?.data?.floors?.length > 0) {
         setFloors(cached.data.floors);
         setTables(cached.data.tables || []);
         setLoading(false);
@@ -492,14 +547,14 @@ export default function TablesScreen() {
       }
     };
 
-    onChildAdded(ordersQuery, ordersHandler);
-    onChildAdded(tablesQuery, tablesHandler);
+    const unsubOrders = onChildAdded(ordersQuery, ordersHandler);
+    const unsubTables = onChildAdded(tablesQuery, tablesHandler);
 
     return () => {
       lanUnsubs.forEach(fn => fn());
       if (debounceTimer) clearTimeout(debounceTimer);
-      off(ordersQuery, 'child_added', ordersHandler);
-      off(tablesQuery, 'child_added', tablesHandler);
+      unsubOrders();
+      unsubTables();
     };
   }, [selectedRestaurant?.id, refreshInBackground, updateTableStatusOptimistically]);
 
@@ -516,7 +571,7 @@ export default function TablesScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [selectedRestaurant]);
+  }, [selectedRestaurant, loadFloorsAndTables]);
 
   const getTableStats = () => {
     const available = tables.filter(t => t.status === 'available').length;
@@ -636,6 +691,9 @@ export default function TablesScreen() {
         items: (order.items || []).map(i => ({
           name: i.name, quantity: i.quantity || 1, price: i.price || 0,
           total: (i.price || 0) * (i.quantity || 1),
+          selectedVariant: i.selectedVariant || null,
+          selectedCustomizations: i.selectedCustomizations || [],
+          notes: i.notes || '',
         })),
         subtotal,
         tax: order.taxAmount || 0,
@@ -1052,10 +1110,13 @@ export default function TablesScreen() {
           onPress: async () => {
             try {
               await apiClient.deleteFloor(editingFloor.id, selectedRestaurant?.id);
-              setFloors(prev => prev.filter(f => f.id !== editingFloor.id));
-              if (selectedFloor?.id === editingFloor.id) {
-                setSelectedFloor(floors.length > 1 ? floors.find(f => f.id !== editingFloor.id) : null);
-              }
+              setFloors(prev => {
+                const remaining = prev.filter(f => f.id !== editingFloor.id);
+                if (selectedFloor?.id === editingFloor.id) {
+                  setSelectedFloor(remaining.length > 0 ? remaining[0] : null);
+                }
+                return remaining;
+              });
               setShowFloorModal(false);
               setEditingFloor(null);
             } catch (error) {
@@ -1218,7 +1279,7 @@ export default function TablesScreen() {
       // Clear customer info if marking available
       if (newStatus === 'available') {
         const clearCustomer = (t) =>
-          t.id === table.id ? { ...t, status: 'available', customerName: null, reservationTime: null, currentOrderId: null } : t;
+          t.id === table.id ? { ...t, status: 'available', customerName: null, reservationTime: null, currentOrderId: null, bookingId: null, currentBookingId: null } : t;
         setFloors(prev => prev.map(f => ({
           ...f,
           tables: f.tables?.map(clearCustomer) || [],
@@ -1248,6 +1309,10 @@ export default function TablesScreen() {
         actions.push(() => handleTablePress(table));
         options.push('Book Table');
         actions.push(() => openBookingForm(table));
+      }
+      if (status === 'reserved' && (table.bookingId || table.reservationId)) {
+        options.push('Check In');
+        actions.push(() => handleCheckInBooking(table));
       }
       if (status !== 'available') {
         options.push('Mark Available');
@@ -1298,6 +1363,42 @@ export default function TablesScreen() {
   };
 
   // Open booking form
+  const handleCheckInBooking = async (table) => {
+    const bookingId = table.bookingId || table.reservationId || table.currentBookingId;
+    if (!bookingId) {
+      Alert.alert('No Booking', 'No booking found for this table.');
+      return;
+    }
+    const rid = restaurantIdRef.current;
+    try {
+      await apiClient.updateBooking(bookingId, { status: 'arrived' });
+
+      // Explicitly update table status via API so other devices see it
+      apiClient.updateTableStatus(table.id, 'occupied', null, rid)
+        .catch(err => console.warn('Table status update on check-in failed:', err.message));
+
+      // Optimistic: mark occupied but preserve customer info from reservation
+      updateTableStatusOptimistically(table.id, 'occupied', null);
+      const preserveCustomer = (t) =>
+        t.id === table.id ? { ...t, status: 'occupied', lastOrderTime: new Date().toISOString() } : t;
+      setFloors(prev => prev.map(f => ({
+        ...f,
+        tables: f.tables?.map(preserveCustomer) || [],
+      })));
+      setSelectedFloor(prev => {
+        if (!prev) return prev;
+        return { ...prev, tables: prev.tables?.map(preserveCustomer) || [] };
+      });
+
+      if (Platform.OS === 'android') {
+        const { ToastAndroid: Toast } = require('react-native');
+        Toast.show(`Guest checked in at Table ${table.name}`, Toast.SHORT);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Failed to check in');
+    }
+  };
+
   const openBookingForm = (table) => {
     const now = new Date();
     setBookingTable(table);
@@ -1328,15 +1429,29 @@ export default function TablesScreen() {
         notes: bookingForm.notes.trim() || null,
         status: 'confirmed',
       };
-      await apiClient.createBooking(selectedRestaurant.id, data);
-      // Update table status to reserved
+      const bookingRes = await apiClient.createBooking(selectedRestaurant.id, data);
+      const createdBookingId = bookingRes?.booking?.id || bookingRes?.id || null;
+
+      // Explicitly update table status via API so other devices see it
+      apiClient.updateTableStatus(bookingTable.id, 'reserved', null, selectedRestaurant.id)
+        .catch(err => console.warn('Table status update after booking failed:', err.message));
+
+      // Optimistic: update local state immediately
       updateTableStatusOptimistically(bookingTable.id, 'reserved', null);
+      const updateBookingTable = (t) =>
+        t.id === bookingTable.id ? {
+          ...t, status: 'reserved', customerName: data.customerName,
+          reservationTime: data.bookingTime,
+          bookingId: createdBookingId, // Store bookingId for check-in
+        } : t;
       setFloors(prev => prev.map(f => ({
         ...f,
-        tables: f.tables?.map(t =>
-          t.id === bookingTable.id ? { ...t, status: 'reserved', customerName: data.customerName, reservationTime: data.bookingTime } : t
-        ) || [],
+        tables: f.tables?.map(updateBookingTable) || [],
       })));
+      setSelectedFloor(prev => {
+        if (!prev) return prev;
+        return { ...prev, tables: prev.tables?.map(updateBookingTable) || [] };
+      });
       setShowBookingModal(false);
       setBookingTable(null);
       Alert.alert('Success', `Table ${bookingTable.name} booked for ${data.customerName}`);
@@ -2143,6 +2258,13 @@ export default function TablesScreen() {
                     <Text style={styles.actionSheetBtnText}>Book Table</Text>
                   </TouchableOpacity>
                 </>
+              )}
+
+              {actionTable?.status === 'reserved' && (actionTable?.bookingId || actionTable?.reservationId) && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleCheckInBooking(actionTable); }}>
+                  <Ionicons name="log-in-outline" size={20} color="#059669" />
+                  <Text style={styles.actionSheetBtnText}>Check In</Text>
+                </TouchableOpacity>
               )}
 
               {actionTable?.status !== 'available' && (

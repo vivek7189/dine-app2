@@ -39,6 +39,18 @@ import { useOffline } from '../../hooks/useOffline';
 // const PUSHER_KEY = '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
 
+function filterKotExcludedItems(items, printSettings) {
+  if (!printSettings?.kotExclusionEnabled) return items;
+  const excludedCats = new Set(printSettings.kotExcludedCategories || []);
+  const excludedIds = new Set(printSettings.kotExcludedItemIds || []);
+  if (excludedCats.size === 0 && excludedIds.size === 0) return items;
+  return items.filter(item => {
+    if (excludedIds.has(item.id || item.menuItemId)) return false;
+    if (excludedCats.has(item.categoryId)) return false;
+    return true;
+  });
+}
+
 export default function OrdersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -57,10 +69,13 @@ export default function OrdersScreen() {
 
   // Spinning animation for refresh icon
   const spinValue = useState(new Animated.Value(0))[0];
+  const isBackgroundLoadingRef = useRef(false);
 
   // Filter states
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('all');
+  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState('all');
+  const [selectedOrderType, setSelectedOrderType] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [analyticsStats, setAnalyticsStats] = useState(null);
 
@@ -129,7 +144,7 @@ export default function OrdersScreen() {
     if (restaurantId) {
       loadOrders(restaurantId);
     }
-  }, [selectedStatus, selectedPaymentMethod, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
+  }, [selectedStatus, selectedPaymentMethod, selectedPaymentStatus, selectedOrderType, searchTerm, restaurantId, dateFilterMode, customStartDate, customEndDate]);
 
   // Re-check restaurant ID and refresh when tab is focused
   useFocusEffect(
@@ -147,7 +162,7 @@ export default function OrdersScreen() {
         }
       };
       checkAndRefresh();
-    }, [restaurantId, loading, selectedStatus, selectedPaymentMethod, searchTerm, dateFilterMode, customStartDate, customEndDate])
+    }, [restaurantId, loading, selectedStatus, selectedPaymentMethod, selectedPaymentStatus, selectedOrderType, searchTerm, dateFilterMode, customStartDate, customEndDate])
   );
 
   // Spinning animation effect
@@ -246,6 +261,21 @@ export default function OrdersScreen() {
     { value: 'online', label: 'Online' },
   ];
 
+  const paymentStatusOptions = [
+    { value: 'all', label: 'All' },
+    { value: 'paid', label: 'Paid' },
+    { value: 'partial', label: 'Partial/Due' },
+    { value: 'unpaid', label: 'Unpaid' },
+  ];
+
+  const orderTypeOptions = [
+    { value: 'all', label: 'All' },
+    { value: 'dine-in', label: 'Dine-in' },
+    { value: 'takeaway', label: 'Takeaway' },
+    { value: 'delivery', label: 'Delivery' },
+    { value: 'counter', label: 'Counter' },
+  ];
+
   const formatShortDate = (date) => {
     return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   };
@@ -254,9 +284,13 @@ export default function OrdersScreen() {
   useEffect(() => {
     if (!restaurantId || !database) return;
 
+    let debounceTimer = null;
     const handleOrderEvent = (eventName, data) => {
-      console.log(`[Orders] Received '${eventName}' event:`, data);
-      loadOrdersInBackground(restaurantId);
+      // Debounce rapid-fire events (e.g., multiple orders updated in quick succession)
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadOrdersInBackground(restaurantId);
+      }, 1000);
     };
 
     const eventNames = ['order-created', 'order-status-updated', 'order-updated', 'order-deleted'];
@@ -287,6 +321,7 @@ export default function OrdersScreen() {
     onChildAdded(ordersQuery, ordersHandler);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       lanUnsubs.forEach(fn => fn());
       off(ordersQuery, 'child_added', ordersHandler);
     };
@@ -315,22 +350,18 @@ export default function OrdersScreen() {
         if (pRes) setPrintSettings(pRes.printSettings || pRes || {});
       }).catch(() => {});
 
-      // Stale-while-revalidate: show cached data instantly, then refresh in background
-      const cacheKey = `cache_orders_${rid}_${dateFilterMode}`;
-      const cachedOrders = await getCached(cacheKey);
-      if (cachedOrders?.data) {
-        setOrders(cachedOrders.data);
-        setLoading(false);
-        // Background refresh with syncing indicator instead of loading spinner
-        setSyncing(true);
-        try {
-          await loadOrders(rid);
-        } finally {
-          setSyncing(false);
+      // Online: always fetch fresh from server (no stale flash).
+      // Offline: show cached data if available.
+      if (effectivelyOffline) {
+        const cacheKey = `cache_orders_${rid}_${dateFilterMode}`;
+        const cachedOrders = await getCached(cacheKey);
+        if (cachedOrders?.data) {
+          setOrders(cachedOrders.data);
+          setLoading(false);
+          return;
         }
-      } else {
-        await loadOrders(rid);
       }
+      await loadOrders(rid);
     } catch (error) {
       console.error('Error loading orders:', error);
     } finally {
@@ -359,6 +390,8 @@ export default function OrdersScreen() {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         paymentMethod: selectedPaymentMethod !== 'all' ? selectedPaymentMethod : undefined,
+        paymentStatus: selectedPaymentStatus !== 'all' ? selectedPaymentStatus : undefined,
+        orderType: selectedOrderType !== 'all' ? selectedOrderType : undefined,
         search: searchTerm.trim() || undefined,
         ...dateRange,
       };
@@ -409,6 +442,8 @@ export default function OrdersScreen() {
 
   // Background loading - doesn't show full loading state, just updates data
   const loadOrdersInBackground = async (rid) => {
+    if (isBackgroundLoadingRef.current) return;
+    isBackgroundLoadingRef.current = true;
     setBackgroundLoading(true);
     try {
       const dateRange = getDateRange();
@@ -416,6 +451,8 @@ export default function OrdersScreen() {
         limit: 100,
         status: selectedStatus !== 'all' ? selectedStatus : undefined,
         paymentMethod: selectedPaymentMethod !== 'all' ? selectedPaymentMethod : undefined,
+        paymentStatus: selectedPaymentStatus !== 'all' ? selectedPaymentStatus : undefined,
+        orderType: selectedOrderType !== 'all' ? selectedOrderType : undefined,
         search: searchTerm.trim() || undefined,
         ...dateRange,
       };
@@ -440,6 +477,7 @@ export default function OrdersScreen() {
     } catch (error) {
       console.error('Error loading orders in background:', error);
     } finally {
+      isBackgroundLoadingRef.current = false;
       setBackgroundLoading(false);
     }
   };
@@ -580,6 +618,9 @@ export default function OrdersScreen() {
       items: (order.items || []).map(i => ({
         name: i.name, quantity: i.quantity || 1, price: i.price || 0,
         total: (i.price || 0) * (i.quantity || 1),
+        selectedVariant: i.selectedVariant || null,
+        selectedCustomizations: i.selectedCustomizations || [],
+        notes: i.notes || '',
       })),
       subtotal,
       tax: taxAmt,
@@ -605,6 +646,7 @@ export default function OrdersScreen() {
       cashReceived: order.cashReceived || null,
       changeReturned: order.changeReturned || null,
       splitPayments: order.splitPayments || null,
+      printSettings: printSettings || {},
     };
 
     // Generate thermal text for bill
@@ -729,7 +771,7 @@ export default function OrdersScreen() {
           orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
           tableNumber: order.tableNumber || order.tableName || 'N/A',
           roomNumber: order.roomNumber || null,
-          items: (order.items || []).map(i => ({
+          items: filterKotExcludedItems(order.items || [], printSettings).map(i => ({
             name: i.name, quantity: i.quantity || 1,
             variants: i.variants || i.selectedVariants || null,
             addons: i.addons || i.selectedAddons || null,
@@ -741,6 +783,7 @@ export default function OrdersScreen() {
           orderType: order.orderType || '',
           customerName: order.customerInfo?.name || '',
           specialInstructions: order.specialInstructions || order.notes || '',
+          printSettings: printSettings || {},
         };
         const kotText = printerService.generateKOTText(kotData);
         const kotHtml = printerService.wrapKOTTextInHTML(kotText);
@@ -821,23 +864,25 @@ export default function OrdersScreen() {
     try {
       const outstanding = order.outstandingAmount || 0;
       const finalAmt = order.finalAmount || order.totalAmount || 0;
-      await apiClient.updateOrder(order.id, {
-        paidAmount: Math.round(finalAmt * 100) / 100,
-        outstandingAmount: 0,
-        paymentStatus: 'paid',
-      });
-      if (order.customerId) {
-        try {
-          await apiClient.settleCustomerCredit(order.customerId, {
-            amount: outstanding, paymentMethod: 'cash', orderId: order.id
-          });
-        } catch (e) { console.error('Customer credit settle error:', e); }
+      if (order.customerId && outstanding > 0) {
+        // Use settle-credit API — it updates the order, customer totalSpent, and dailyStats in one call
+        await apiClient.settleCustomerCredit(order.customerId, {
+          amount: outstanding,
+          paymentMethod: order.paymentMethod || 'cash',
+          orderId: order.id,
+        });
+      } else {
+        // No customer linked — just update the order directly
+        await apiClient.updateOrder(order.id, {
+          paidAmount: Math.round(finalAmt * 100) / 100,
+          outstandingAmount: 0,
+          paymentStatus: 'paid',
+        });
       }
       setOrders(prev => prev.map(o =>
         o.id === order.id ? { ...o, paidAmount: finalAmt, outstandingAmount: 0, paymentStatus: 'paid' } : o
       ));
       setMarkPaidOrderId(null);
-      // No blocking alert — state change is visible in the list
       if (restaurantId) loadOrdersInBackground(restaurantId);
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to mark as paid');
@@ -849,6 +894,9 @@ export default function OrdersScreen() {
   const executeRefund = async () => {
     if (!selectedOrder) return;
     const orderTotal = selectedOrder.finalAmount || selectedOrder.totalAmount || 0;
+    const paidAmount = typeof selectedOrder.paidAmount === 'number' ? selectedOrder.paidAmount : orderTotal;
+    const alreadyRefunded = typeof selectedOrder.refundAmount === 'number' ? selectedOrder.refundAmount : 0;
+    const refundableAmount = paidAmount - alreadyRefunded;
     const amount = refundType === 'full' ? orderTotal : (parseFloat(refundAmount) || 0);
     if (amount <= 0) {
       Alert.alert('Error', 'Please enter a valid refund amount');
@@ -858,12 +906,16 @@ export default function OrdersScreen() {
       Alert.alert('Error', 'Refund amount cannot exceed the order total');
       return;
     }
+    if (amount > refundableAmount + 0.01) {
+      Alert.alert('Error', `Refund amount (₹${amount}) exceeds refundable amount (₹${Math.round(refundableAmount * 100) / 100}). Only ₹${Math.round(refundableAmount * 100) / 100} has been paid.`);
+      return;
+    }
     setRefundSubmitting(true);
     try {
       await apiClient.processRefund(selectedOrder.id, {
-        type: refundType,
-        amount,
-        reason: refundReason || 'Refund requested',
+        refundType,
+        refundAmount: amount,
+        refundReason: refundReason || 'Refund requested',
       });
       setOrders(prev => prev.map(o =>
         o.id === selectedOrder.id ? { ...o, refundAmount: amount, refundStatus: refundType === 'full' ? 'refunded' : 'partial_refund' } : o
@@ -1016,7 +1068,31 @@ export default function OrdersScreen() {
     const isExpanded = expandedOrders.has(item.id);
     const customerName = item.customerName || item.customerDisplay?.name || 'Walk-in Customer';
     const orderType = (item.orderType || 'dine-in').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    const staffLabel = item.staffInfo?.name || item.source || null;
+    const sourceChip = (() => {
+      const src = item.orderSource;
+      const staff = item.staffInfo;
+      const isStaff = staff && (
+        staff.waiterId || staff.id ||
+        (staff.waiterName && staff.waiterName !== 'Customer Self-Order') ||
+        (staff.name && staff.name !== 'Customer Self-Order')
+      );
+      if (isStaff) {
+        const rawName = staff.waiterName || staff.name || null;
+        const genericNames = ['Customer Self-Order', 'Staff Member', 'Staff', 'staff', 'Restaurant Owner'];
+        const hasRealName = rawName && !genericNames.includes(rawName);
+        const display = hasRealName ? rawName : (staff.phone || staff.loginId || (staff.waiterId ? staff.waiterId.slice(-6) : null));
+        return display ? { label: display, bg: '#f3f4f6', color: '#6b7280' } : null;
+      }
+      if (src === 'online_order') return { label: 'Online', bg: '#eef2ff', color: '#4338ca' };
+      if (src === 'crave_app' || src === 'customer_app') return { label: 'Dine App', bg: '#fdf2f8', color: '#be185d' };
+      if (src === 'talabat') return { label: 'Talabat', bg: '#fff7ed', color: '#c2410c' };
+      if (src === 'deliveroo') return { label: 'Deliveroo', bg: '#f0fdfa', color: '#0d9488' };
+      if (src === 'noon_food') return { label: 'Noon', bg: '#fefce8', color: '#a16207' };
+      if (src === 'careem') return { label: 'Careem', bg: '#f0fdf4', color: '#15803d' };
+      // Fallback to raw staff name
+      const fallback = item.staffInfo?.name || item.source || null;
+      return fallback ? { label: fallback, bg: '#f3f4f6', color: '#9ca3af' } : null;
+    })();
 
     // Build tax summary text — matches web order breakdown format
     const taxSummaryText = (() => {
@@ -1049,9 +1125,9 @@ export default function OrdersScreen() {
                 {getStatusDisplay(item)}
               </Text>
             </View>
-            {staffLabel && (
-              <View style={{ backgroundColor: '#f3f4f6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                <Text style={{ fontSize: 9, fontWeight: '600', color: '#9ca3af' }}>{staffLabel}</Text>
+            {sourceChip && (
+              <View style={{ backgroundColor: sourceChip.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                <Text style={{ fontSize: 9, fontWeight: '600', color: sourceChip.color }}>{sourceChip.label}</Text>
               </View>
             )}
             {(item.isLocal || item.offline || item.syncSource === 'offline') && (
@@ -1402,6 +1478,18 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
+                  {selectedOrder.voidItems?.length > 0 && (
+                    <View style={{ marginBottom: 4 }}>
+                      <Text style={{ fontSize: 13, color: '#dc2626', marginBottom: 2 }}>Void Items:</Text>
+                      {selectedOrder.voidItems.map((vi, i) => (
+                        <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginLeft: 8, marginBottom: 2 }}>
+                          <Text style={{ fontSize: 12, color: '#6b7280' }}>{vi.name || vi.itemName} x{vi.quantity || 1}</Text>
+                          <Text style={{ fontSize: 12, color: '#ef4444' }}>{vi.reason || 'Voided'}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
                   {(selectedOrder.paymentStatus === 'partial' || selectedOrder.outstandingAmount > 0) && (
                     <View style={{ backgroundColor: '#fef3c7', padding: 8, borderRadius: 6, marginTop: 4 }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -1538,9 +1626,15 @@ export default function OrdersScreen() {
   };
 
   // Compute summary from analytics or orders — filter out invalid statuses for revenue (matches web)
+  // Fallback revenue excludes due orders and uses paidAmount for partial orders
   const summaryData = useMemo(() => {
     const validOrders = orders.filter(o => !['cancelled', 'deleted', 'saved', 'refunded'].includes(o.status));
-    const totalRevenueWithTax = analyticsStats?.totalRevenueWithTax || analyticsStats?.totalRevenue || validOrders.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+    const fallbackRevenue = validOrders.reduce((sum, o) => {
+      if (o.paymentStatus === 'due') return sum;
+      if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) return sum + (Number(o.paidAmount) || 0);
+      return sum + (o.finalAmount || o.totalAmount || 0);
+    }, 0);
+    const totalRevenueWithTax = analyticsStats?.totalRevenueWithTax || analyticsStats?.totalRevenue || fallbackRevenue;
     const totalRevenueBeforeTax = analyticsStats?.totalRevenue || totalRevenueWithTax;
     const totalOrders = analyticsStats?.totalOrders || validOrders.length;
     const completedCount = analyticsStats?.completedOrders || orders.filter(o => o.status === 'completed').length;
@@ -1612,7 +1706,7 @@ export default function OrdersScreen() {
   ];
 
   // Check if any filter is active
-  const hasActiveFilters = selectedStatus !== 'all' || selectedPaymentMethod !== 'all' || searchTerm.trim() || dateFilterMode !== 'today';
+  const hasActiveFilters = selectedStatus !== 'all' || selectedPaymentMethod !== 'all' || selectedPaymentStatus !== 'all' || selectedOrderType !== 'all' || searchTerm.trim() || dateFilterMode !== 'today';
 
   if (loading) {
     return (
@@ -1813,6 +1907,40 @@ export default function OrdersScreen() {
                 key={`pay-${option.value}`}
                 style={[styles.chipBase, isActive && styles.chipActivePurple]}
                 onPress={() => setSelectedPaymentMethod(option.value)}
+              >
+                <Text style={[styles.chipText, isActive && { color: '#fff' }]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Separator */}
+          <View style={styles.chipSeparator} />
+
+          {/* Payment status filters */}
+          {paymentStatusOptions.map((option) => {
+            const isActive = selectedPaymentStatus === option.value;
+            return (
+              <TouchableOpacity
+                key={`ps-${option.value}`}
+                style={[styles.chipBase, isActive && styles.chipActiveOrange]}
+                onPress={() => setSelectedPaymentStatus(option.value)}
+              >
+                <Text style={[styles.chipText, isActive && { color: '#fff' }]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Separator */}
+          <View style={styles.chipSeparator} />
+
+          {/* Order type filters */}
+          {orderTypeOptions.map((option) => {
+            const isActive = selectedOrderType === option.value;
+            return (
+              <TouchableOpacity
+                key={`ot-${option.value}`}
+                style={[styles.chipBase, isActive && styles.chipActiveTeal]}
+                onPress={() => setSelectedOrderType(option.value)}
               >
                 <Text style={[styles.chipText, isActive && { color: '#fff' }]}>{option.label}</Text>
               </TouchableOpacity>
@@ -2285,6 +2413,14 @@ const styles = StyleSheet.create({
   chipActivePurple: {
     backgroundColor: '#7c3aed',
     borderColor: '#7c3aed',
+  },
+  chipActiveOrange: {
+    backgroundColor: '#ea580c',
+    borderColor: '#ea580c',
+  },
+  chipActiveTeal: {
+    backgroundColor: '#0d9488',
+    borderColor: '#0d9488',
   },
   chipText: {
     fontSize: 11,

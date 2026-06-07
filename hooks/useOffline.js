@@ -6,12 +6,14 @@ import { initSyncEngine, syncAll, onSyncStatusChange, getSyncStats } from '../se
 import { revertSyncing, getQueueStats, retryAllFailed as retryAllFailedQueue, cleanupSynced } from '../services/syncQueueV2';
 import apiClient from '../services/api';
 
-const OFFLINE_MODE_KEY = 'dineopen_offline_mode';
+const OFFLINE_ENABLED_KEY = 'dineopen_offline_enabled'; // master switch — off by default
+const OFFLINE_MODE_KEY = 'dineopen_offline_mode'; // force-offline toggle (only when enabled)
 const SYNC_DEBOUNCE_MS = 2000;
 const STATS_POLL_INTERVAL_MS = 15000;
 
 const OfflineContext = createContext({
   isOnline: true,
+  offlineEnabled: false,
   isOfflineMode: false,
   effectivelyOffline: false,
   syncStatus: 'idle', // 'idle' | 'syncing' | 'error' | 'complete'
@@ -20,6 +22,7 @@ const OfflineContext = createContext({
   lastSyncAt: null,
   dbReady: false,
   dataSeeded: false,
+  toggleOfflineEnabled: () => {},
   toggleOfflineMode: () => {},
   triggerSync: () => {},
   retryFailed: () => {},
@@ -28,6 +31,7 @@ const OfflineContext = createContext({
 
 export function OfflineProvider({ children }) {
   const [isOnline, setIsOnline] = useState(true);
+  const [offlineEnabled, setOfflineEnabledState] = useState(false); // master switch — off by default
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [pendingCount, setPendingCount] = useState(0);
@@ -40,7 +44,8 @@ export function OfflineProvider({ children }) {
   const statsIntervalRef = useRef(null);
   const prevIsOnlineRef = useRef(true);
 
-  const effectivelyOffline = isOfflineMode || !isOnline;
+  // Only consider offline when offline support is explicitly enabled
+  const effectivelyOffline = offlineEnabled && (isOfflineMode || !isOnline);
 
   // Initialize database and sync engine on mount
   useEffect(() => {
@@ -58,7 +63,11 @@ export function OfflineProvider({ children }) {
         const lastSync = getMeta('last_sync_at');
         if (lastSync) setLastSyncAt(parseInt(lastSync, 10));
 
-        // Restore manual offline mode toggle
+        // Restore offline-enabled master switch (default: off)
+        const savedEnabled = await AsyncStorage.getItem(OFFLINE_ENABLED_KEY);
+        if (savedEnabled === 'true') setOfflineEnabledState(true);
+
+        // Restore manual offline mode toggle (only relevant when offlineEnabled)
         const savedMode = await AsyncStorage.getItem(OFFLINE_MODE_KEY);
         if (savedMode === 'true') setIsOfflineMode(true);
 
@@ -88,15 +97,15 @@ export function OfflineProvider({ children }) {
         // Network just dropped — if we were syncing, reset status so banner doesn't stick
         setSyncStatus(prev => prev === 'syncing' ? 'error' : prev);
         stopStatsPoll();
-      } else if (online && !isOfflineMode && dbReady) {
-        // Came back online — reset any error state and trigger sync
+      } else if (online && offlineEnabled && !isOfflineMode && dbReady) {
+        // Came back online — reset any error state and trigger sync (only if offline support enabled)
         setSyncStatus(prev => prev === 'error' || prev === 'syncing' ? 'idle' : prev);
         scheduleSyncDebounced();
       }
     });
 
     return () => unsubscribe();
-  }, [isOfflineMode, dbReady]);
+  }, [offlineEnabled, isOfflineMode, dbReady]);
 
   // Subscribe to sync engine events
   useEffect(() => {
@@ -142,10 +151,11 @@ export function OfflineProvider({ children }) {
     if (dbReady) {
       apiClient.setOfflineState({
         isEffectivelyOffline: () => effectivelyOffline,
+        isOfflineEnabled: () => offlineEnabled,
         isDbReady: () => dbReady,
       });
     }
-  }, [effectivelyOffline, dbReady]);
+  }, [effectivelyOffline, offlineEnabled, dbReady]);
 
   const updateStats = useCallback(() => {
     try {
@@ -191,16 +201,16 @@ export function OfflineProvider({ children }) {
     }, SYNC_DEBOUNCE_MS);
   }, []);
 
-  // Kick off an initial sync once DB is ready and we're online
+  // Kick off an initial sync once DB is ready and we're online (only if offline support enabled)
   useEffect(() => {
-    if (dbReady && isOnline && !isOfflineMode) {
+    if (dbReady && isOnline && offlineEnabled && !isOfflineMode) {
       scheduleSyncDebounced();
     }
-  }, [dbReady, isOnline, isOfflineMode, scheduleSyncDebounced]);
+  }, [dbReady, isOnline, offlineEnabled, isOfflineMode, scheduleSyncDebounced]);
 
-  // Start background pull to keep local data fresh
+  // Start background pull to keep local data fresh (only when offline support is enabled)
   useEffect(() => {
-    if (dbReady && !isOfflineMode) {
+    if (dbReady && offlineEnabled && !isOfflineMode) {
       (async () => {
         try {
           const user = await apiClient.getUser();
@@ -217,9 +227,26 @@ export function OfflineProvider({ children }) {
     return () => {
       apiClient.stopBackgroundPull();
     };
-  }, [dbReady, isOfflineMode]);
+  }, [dbReady, offlineEnabled, isOfflineMode]);
+
+  const toggleOfflineEnabled = useCallback(async (value) => {
+    const newValue = value !== undefined ? value : !offlineEnabled;
+    setOfflineEnabledState(newValue);
+    await AsyncStorage.setItem(OFFLINE_ENABLED_KEY, String(newValue));
+
+    if (!newValue) {
+      // Turning off offline support — stop background pull, clear force-offline
+      apiClient.stopBackgroundPull();
+      setIsOfflineMode(false);
+      await AsyncStorage.setItem(OFFLINE_MODE_KEY, 'false');
+    } else if (newValue && isOnline) {
+      // Turning on offline support — start syncing
+      scheduleSyncDebounced();
+    }
+  }, [offlineEnabled, isOnline]);
 
   const toggleOfflineMode = useCallback(async (value) => {
+    if (!offlineEnabled) return; // force-offline only available when offline support is enabled
     const newValue = value !== undefined ? value : !isOfflineMode;
     setIsOfflineMode(newValue);
     await AsyncStorage.setItem(OFFLINE_MODE_KEY, String(newValue));
@@ -228,7 +255,7 @@ export function OfflineProvider({ children }) {
     if (!newValue && isOnline) {
       scheduleSyncDebounced();
     }
-  }, [isOfflineMode, isOnline]);
+  }, [offlineEnabled, isOfflineMode, isOnline]);
 
   const retryFailed = useCallback(async () => {
     retryAllFailedQueue();
@@ -250,6 +277,7 @@ export function OfflineProvider({ children }) {
     <OfflineContext.Provider
       value={{
         isOnline,
+        offlineEnabled,
         isOfflineMode,
         effectivelyOffline,
         syncStatus,
@@ -258,6 +286,7 @@ export function OfflineProvider({ children }) {
         lastSyncAt,
         dbReady,
         dataSeeded,
+        toggleOfflineEnabled,
         toggleOfflineMode,
         triggerSync,
         retryFailed,

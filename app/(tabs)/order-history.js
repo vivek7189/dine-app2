@@ -18,6 +18,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import apiClient from '../../services/api';
 import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -28,7 +29,6 @@ const STATUS_COLORS = {
 
 export default function OrderHistoryScreen() {
   const { fs, r, isTablet } = useResponsive();
-  const formatCurrency = (v) => `₹${(v || 0).toFixed(0)}`;
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,10 +43,14 @@ export default function OrderHistoryScreen() {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
-  // Stats
+  // Stats — use paidAmount for due/partial orders so unpaid dues don't inflate revenue
   const stats = useMemo(() => {
     const completed = orders.filter(o => o.status === 'completed' || o.status === 'served');
-    const revenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+    const revenue = completed.reduce((sum, o) => {
+      if (o.paymentStatus === 'due') return sum;
+      if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) return sum + (Number(o.paidAmount) || 0);
+      return sum + (o.finalAmount || o.totalAmount || 0);
+    }, 0);
     return { count: completed.length, total: orders.length, revenue };
   }, [orders]);
 

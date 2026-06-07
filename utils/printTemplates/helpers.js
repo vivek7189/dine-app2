@@ -44,7 +44,7 @@ export const getKOTPrintCSS = (scaleOrPreset, fontId) => {
 export const getBillHeaderHTML = (restaurantName, identityHtml, receiptLogo, billTitle = '--- BILL ---') => {
   const logo = receiptLogo?.enabled ? receiptLogo : null;
   const nameAlign = logo?.nameAlignment || receiptLogo?.nameAlignment || 'center';
-  const logoSize = logo?.size || 60; const logoPos = logo?.position || 'center';
+  const logoSize = logo?.size || 80; const logoPos = logo?.position || 'center';
   const logoImg = logo?.url ? `<img src="${logo.url}" class="bill-logo" style="width:${logoSize}px;height:auto;object-fit:contain;${logoPos === 'center' ? 'margin:0 auto 4px;' : ''}" />` : '';
   const nameBlock = `<div class="restaurant-name" style="text-align:${nameAlign};">${restaurantName}</div>${identityHtml ? `<div style="text-align:${nameAlign};">${identityHtml}</div>` : ''}<div class="bill-title" style="text-align:${nameAlign};">${billTitle}</div>`;
   if (!logoImg) return `<div class="bill-header" style="text-align:${nameAlign};margin-bottom:8px;">${nameBlock}</div>`;
@@ -59,12 +59,13 @@ export const getBillHeaderHTML = (restaurantName, identityHtml, receiptLogo, bil
 export const esc = (str) => String(str ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // Build identity lines (GSTIN, FSSAI, VAT, address, phone) for bill header.
-export function buildIdentityHtml(info) {
+export function buildIdentityHtml(info, printSettings) {
+  const bl = printSettings?.billLayout || {};
   const lines = [];
   if (info.restaurantLegalName && info.restaurantLegalName !== info.restaurantName)
     lines.push(esc(info.restaurantLegalName));
-  if (info.restaurantAddress) lines.push(esc(info.restaurantAddress));
-  if (info.restaurantPhone) lines.push('Tel: ' + info.restaurantPhone);
+  if (bl.showAddress !== false && info.restaurantAddress) lines.push(esc(info.restaurantAddress));
+  if (bl.showPhone !== false && info.restaurantPhone) lines.push('Tel: ' + info.restaurantPhone);
   if (info.showGstOnInvoice && info.gstin) lines.push('GSTIN: ' + info.gstin);
   if (info.showFssaiOnInvoice && info.fssai) lines.push('FSSAI: ' + info.fssai);
   if (info.showTaxIdOnInvoice && info.vatNumber) {
@@ -154,16 +155,18 @@ export function buildKOTItemsSections(kotData, renderRowFn, labels = {}) {
 }
 
 // Build bill items table rows HTML
-export function buildBillItemRows(items, cs) {
+export function buildBillItemRows(items, cs, showAr) {
   return items.map(item =>
-    `<tr><td style="text-align:left;">${esc(item.name)}${getSublineHtml(item)}</td>` +
+    `<tr><td style="text-align:left;">${showAr ? dualItemName(item, showAr) : esc(item.name)}${getSublineHtml(item)}</td>` +
     `<td style="text-align:center;">${item.quantity || 1}</td>` +
     `<td style="text-align:right;">${cs}${((item.price || item.total / (item.quantity || 1) || 0) * (item.quantity || 1)).toFixed(2)}</td></tr>`
   ).join('');
 }
 
 // Build tax breakdown rows HTML
-export function buildTaxHtml(taxBreakdown, cs) {
+export function buildTaxHtml(taxBreakdown, cs, printSettings) {
+  const bl = printSettings?.billLayout || {};
+  if (bl.showTaxBreakdown === false) return '';
   return (taxBreakdown || []).map(tax => {
     const inclSuffix = tax.inclusive ? ' (incl.)' : '';
     return `<tr><td colspan="2" style="text-align:left;">${tax.name} (${tax.rate}%)${inclSuffix}</td>` +
@@ -234,6 +237,97 @@ export function calcGrandTotal(invoice) {
 // Standard HTML document wrapper
 export function wrapInDocument(title, cssString, bodyHtml) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${cssString}</style></head><body>${bodyHtml}</body></html>`;
+}
+
+// ── Dual-language (Arabic) support ──────────────────────────────────────
+// Arabic translations for bill labels
+export const BILL_LABELS_AR = {
+  billTitle: 'فاتورة',
+  revisedBill: 'فاتورة معدلة',
+  billLabel: 'فاتورة',
+  itemCol: 'الصنف',
+  qtyCol: 'الكمية',
+  amt: 'المبلغ',
+  date: 'التاريخ',
+  table: 'طاولة',
+  room: 'غرفة',
+  customer: 'العميل',
+  payment: 'الدفع',
+  subtotal: 'المجموع الفرعي',
+  offer: 'عرض',
+  manualDiscount: 'خصم',
+  loyaltyRedeem: 'ولاء',
+  serviceCharge: 'رسوم الخدمة',
+  tip: 'بقشيش',
+  roundOff: 'تقريب',
+  total: 'الإجمالي',
+  splitPayment: 'دفع مقسم',
+  cashReceived: 'المبلغ المستلم',
+  change: 'الباقي',
+  partialPayment: 'دفع جزئي',
+  paid: 'مدفوع',
+  outstanding: 'المتبقي',
+  walletApplied: 'المحفظة',
+  amountToPay: 'المبلغ المستحق',
+  footer: 'شكرا لزيارتكم!',
+  poweredBy: 'مدعوم من DineOpen',
+};
+
+// Arabic translations for KOT labels
+export const KOT_LABELS_AR = {
+  kitchenOrder: 'طلب مطبخ',
+  kotUpdate: 'تحديث الطلب',
+  orderHash: 'طلب#',
+  table: 'طاولة',
+  room: 'غرفة',
+  time: 'الوقت',
+  date: 'التاريخ',
+  customer: 'العميل',
+  type: 'النوع',
+  waiter: 'النادل',
+  qty: 'الكمية',
+  item: 'الصنف',
+  totalItems: 'إجمالي الأصناف',
+  specialInstructions: 'تعليمات خاصة',
+  note: 'ملاحظة',
+  newItemsOnly: '*** أصناف جديدة فقط ***',
+};
+
+// CSS for dual-language bill/KOT rendering
+export function getBillDualCSS() {
+  return `
+    .dual-label { display: flex; justify-content: space-between; }
+    .dual-label .lbl-en { text-align: left; }
+    .dual-label .lbl-ar { text-align: right; direction: rtl; font-family: 'Arial', sans-serif; }
+    .ar-name { direction: rtl; text-align: right; font-family: 'Arial', sans-serif; font-size: 10px; color: #444; }
+    .dual-title { text-align: center; }
+    .dual-title .title-ar { direction: rtl; font-family: 'Arial', sans-serif; }
+  `;
+}
+
+// Render a dual-language label: "English | العربية"
+export function dualLabel(en, ar, showAr) {
+  if (!showAr) return esc(en);
+  return `<span class="lbl-en">${esc(en)}</span> | <span class="lbl-ar">${esc(ar || '')}</span>`;
+}
+
+// Render a dual-language row with label and value
+export function dualRow(labelEn, labelAr, value, showAr) {
+  if (!showAr) return `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${esc(labelEn)}:</span><span>${esc(value)}</span></div>`;
+  return `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${esc(labelEn)} | ${esc(labelAr || '')}:</span><span>${esc(value)}</span></div>`;
+}
+
+// Render dual-language title (centered, two lines)
+export function dualTitle(en, ar, showAr) {
+  if (!showAr) return en;
+  return `<div class="dual-title">${en}<br/><span class="title-ar">${esc(ar || '')}</span></div>`;
+}
+
+// Render item name with optional Arabic name below
+export function dualItemName(item, showAr) {
+  const name = esc(item.name);
+  if (!showAr || !item.nameAr) return name;
+  return `${name}<div class="ar-name">${esc(item.nameAr)}</div>`;
 }
 
 // Default bill labels with English fallbacks

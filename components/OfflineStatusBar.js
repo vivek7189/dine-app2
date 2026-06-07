@@ -8,6 +8,7 @@ export default function OfflineStatusBar() {
   const [showDetails, setShowDetails] = useState(false);
   const {
     isOnline,
+    offlineEnabled,
     isOfflineMode,
     effectivelyOffline,
     syncStatus,
@@ -17,6 +18,11 @@ export default function OfflineStatusBar() {
     retryFailed,
     triggerSync,
   } = useOffline();
+
+  // When offline support is disabled, only show online/offline network status — no sync details
+  if (!offlineEnabled) {
+    return null;
+  }
 
   // Compact mode: just show a small online/offline icon chip
   // Expanded mode: show full bar when there's something to report

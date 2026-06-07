@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import * as printerService from '../services/printerService';
+import { getPrintStationConfig, printKOTsByStation } from '../services/multiPrinterService';
 import { renderKOT } from '../utils/printTemplates/index';
 import { getItemSubline } from '../utils/itemSubline';
 
@@ -90,6 +91,16 @@ export default function KOTModal({
   // Silent print via connected thermal printer (no dialog fallback)
   const handleSilentPrint = async () => {
     try {
+      // Check if station-based printing is configured
+      const restaurantId = orderData.restaurantId;
+      if (restaurantId) {
+        const { stations, mode, categories } = await getPrintStationConfig(restaurantId);
+        if (stations.length > 1) {
+          await printKOTsByStation(orderData, stations, categories, mode, printSettings);
+          return;
+        }
+      }
+
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
       await printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true });
@@ -106,6 +117,19 @@ export default function KOTModal({
 
     setPrinting(true);
     try {
+      // Check if station-based printing is configured
+      const restaurantId = orderData.restaurantId;
+      if (restaurantId) {
+        const { stations, mode, categories } = await getPrintStationConfig(restaurantId);
+        if (stations.length > 1) {
+          const result = await printKOTsByStation(orderData, stations, categories, mode, printSettings);
+          if (result.printed > 0) {
+            setPrinting(false);
+            return;
+          }
+        }
+      }
+
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
       await printerService.printContent({ html: kotHtml, text: kotText });

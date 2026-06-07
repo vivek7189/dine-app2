@@ -11,6 +11,7 @@ import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
+import { formatCurrency } from '../../utils/formatCurrency';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 const TABS = [
   { key: 'overview', label: 'Overview', icon: 'bar-chart' },
@@ -88,7 +89,6 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
   const dataLoadedRef = useRef(false);
 
   // ── Helpers ──────────────────────────────────────
-  const formatCurrency = (amount) => `₹${(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
   const getRestaurantIds = () => selectedRestaurants.length > 0 ? selectedRestaurants : undefined;
 
   const getHeadline = () => {

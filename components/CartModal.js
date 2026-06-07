@@ -28,6 +28,7 @@ import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
+import DiscountApprovalModal from './DiscountApprovalModal';
 import UpiQrModal from './UpiQrModal';
 import apiClient from '../services/api';
 
@@ -175,6 +176,46 @@ export default function CartModal({
   const [sliderWidth, setSliderWidth] = useState(280);
   const [lookupKey, setLookupKey] = useState(0);
 
+  // Discount approval state
+  const [showDiscountApproval, setShowDiscountApproval] = useState(false);
+  const [pendingOrderAction, setPendingOrderAction] = useState(null); // 'place' | 'complete' | 'kitchen'
+  const [discountApprovalSettings, setDiscountApprovalSettings] = useState(null);
+  const [discountApproved, setDiscountApproved] = useState(false);
+
+  // Load discount approval settings once
+  useEffect(() => {
+    if (!restaurantId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.getRestaurant(restaurantId);
+        const settings = res?.restaurant || res;
+        if (!cancelled && settings?.discountApprovalSettings?.enabled) {
+          setDiscountApprovalSettings(settings.discountApprovalSettings);
+        }
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, [restaurantId]);
+
+  // Reset approval when discount changes
+  useEffect(() => {
+    setDiscountApproved(false);
+  }, [manualDiscount, manualDiscountType]);
+
+  // Check if current role needs discount approval
+  const needsDiscountApproval = useCallback(() => {
+    if (!discountApprovalSettings?.enabled) return false;
+    if (manualDiscountAmount <= 0) return false;
+    if (discountApproved) return false;
+    const roleKey = mode === 'owner' ? null : mode === 'waiter' ? 'waiter' : mode === 'cashier' ? 'cashier' : 'staff';
+    if (!roleKey) return false; // owners don't need approval
+    const config = discountApprovalSettings.roleConfig?.[roleKey];
+    if (!config?.requireApproval) return false;
+    if (config.maxDiscountWithoutApproval > 0 && manualDiscountAmount <= config.maxDiscountWithoutApproval) return false;
+    return true;
+  }, [discountApprovalSettings, manualDiscountAmount, mode, discountApproved]);
+
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState(null);
@@ -319,7 +360,21 @@ export default function CartModal({
     changeReturned: changeAmount > 0 ? changeAmount : null,
     splitPayments: splitPayments.length > 0 ? splitPayments : null,
     paymentMethod: splitPayments.length > 0 ? 'split' : paymentMethod,
-    partialPayAmount: partialPayAmount ? parseFloat(partialPayAmount) : null,
+    partialPayAmount: partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null,
+    // Explicit payment status tracking (matches dine-frontend)
+    ...(() => {
+      const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+      const total = billing.grandTotal || 0;
+      if (pp != null && pp === 0) {
+        // Full due (khata)
+        return { paymentStatus: 'due', paidAmount: 0, outstandingAmount: Math.round(total * 100) / 100 };
+      } else if (pp != null && pp > 0 && pp < total) {
+        // Partial payment
+        return { paymentStatus: 'partial', paidAmount: Math.round(pp * 100) / 100, outstandingAmount: Math.round((total - pp) * 100) / 100 };
+      }
+      // Fully paid
+      return { paymentStatus: 'paid', paidAmount: Math.round(total * 100) / 100, outstandingAmount: 0 };
+    })(),
     specialInstructions: specialInstructions.trim() || null,
     compItems: selectedCompItems.length > 0 ? selectedCompItems.map(item => ({
       menuItemId: item.menuItemId || item.id, name: item.name, quantity: item.quantity,
@@ -467,13 +522,7 @@ export default function CartModal({
     return { overStock, lowStock };
   }, [cart]);
 
-  const handlePlaceOrder = () => {
-    // Block order if any items exceed available stock
-    if (stockWarnings.overStock.length > 0) {
-      Alert.alert('Stock Exceeded',
-        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
-      return;
-    }
+  const proceedPlaceOrder = () => {
     setActiveAction('place');
     if (paymentMethod === 'upi' && upiConfigured) {
       setShowUpiQr(true);
@@ -482,12 +531,7 @@ export default function CartModal({
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
   };
 
-  const handleCompleteBill = () => {
-    if (stockWarnings.overStock.length > 0) {
-      Alert.alert('Stock Exceeded',
-        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
-      return;
-    }
+  const proceedCompleteBill = () => {
     if (onCompleteBill) {
       setActiveAction('complete');
       if (paymentMethod === 'upi' && upiConfigured) {
@@ -496,6 +540,34 @@ export default function CartModal({
       }
       onCompleteBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
     }
+  };
+
+  const handlePlaceOrder = () => {
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
+    if (needsDiscountApproval()) {
+      setPendingOrderAction('place');
+      setShowDiscountApproval(true);
+      return;
+    }
+    proceedPlaceOrder();
+  };
+
+  const handleCompleteBill = () => {
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
+    if (needsDiscountApproval()) {
+      setPendingOrderAction('complete');
+      setShowDiscountApproval(true);
+      return;
+    }
+    proceedCompleteBill();
   };
 
   const handleUpiConfirm = () => {
@@ -513,6 +585,15 @@ export default function CartModal({
         stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
       return;
     }
+    if (needsDiscountApproval()) {
+      setPendingOrderAction('kitchen');
+      setShowDiscountApproval(true);
+      return;
+    }
+    proceedSendToKitchen();
+  };
+
+  const proceedSendToKitchen = () => {
     const discountData = {
       offerDiscount,
       manualDiscountAmount,
@@ -545,6 +626,16 @@ export default function CartModal({
       specialInstructions: specialInstructions.trim() || null,
     };
     onSendToKitchen(customerMobile, specialInstructions.trim() || null, discountData, tableNumber.trim());
+  };
+
+  const handleDiscountApproved = () => {
+    setShowDiscountApproval(false);
+    setDiscountApproved(true);
+    // Resume the pending action
+    if (pendingOrderAction === 'place') proceedPlaceOrder();
+    else if (pendingOrderAction === 'complete') proceedCompleteBill();
+    else if (pendingOrderAction === 'kitchen') proceedSendToKitchen();
+    setPendingOrderAction(null);
   };
 
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
@@ -1672,6 +1763,20 @@ export default function CartModal({
         upiId={upiSettings?.upiId}
         upiQrCodeUrl={upiSettings?.upiQrCodeUrl}
         upiDisplayName={upiSettings?.upiDisplayName}
+      />
+      <DiscountApprovalModal
+        visible={showDiscountApproval}
+        onClose={() => { setShowDiscountApproval(false); setPendingOrderAction(null); }}
+        onApproved={handleDiscountApproved}
+        restaurantId={restaurantId}
+        discountData={{
+          discountType: manualDiscountType,
+          discountValue: parseFloat(manualDiscount) || 0,
+          discountAmount: manualDiscountAmount,
+          subtotal,
+        }}
+        userRole={mode === 'owner' ? 'owner' : mode}
+        userName=""
       />
     </Modal>
   );

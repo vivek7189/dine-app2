@@ -29,7 +29,7 @@ import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 export default function MoreScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
-  const { isOnline, isOfflineMode, effectivelyOffline, pendingCount, failedCount, lastSyncAt, toggleOfflineMode, triggerSync } = useOffline();
+  const { isOnline, offlineEnabled, isOfflineMode, effectivelyOffline, pendingCount, failedCount, lastSyncAt, toggleOfflineEnabled, toggleOfflineMode, triggerSync } = useOffline();
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [settingsExpanded, setSettingsExpanded] = useState(false);
@@ -461,161 +461,187 @@ export default function MoreScreen() {
               )}
             </View>
 
-            {/* Offline Toggle */}
-            <TouchableOpacity style={styles.connectRow} onPress={() => toggleOfflineMode()}>
+            {/* Enable Offline Support — master toggle */}
+            <TouchableOpacity style={styles.connectRow} onPress={() => toggleOfflineEnabled()}>
               <View style={styles.connectLeft}>
-                <Ionicons name={isOfflineMode ? 'cloud-offline' : 'cloud-done'} size={18} color={isOfflineMode ? '#f59e0b' : '#22c55e'} />
+                <Ionicons name={offlineEnabled ? 'cloud-download' : 'cloud-outline'} size={18} color={offlineEnabled ? '#3b82f6' : '#9ca3af'} />
                 <View>
-                  <Text style={styles.connectLabel}>Offline Mode</Text>
-                  <Text style={styles.connectHint}>Work without internet</Text>
+                  <Text style={styles.connectLabel}>Enable Offline Support</Text>
+                  <Text style={styles.connectHint}>{offlineEnabled ? 'Data cached locally' : 'Online only (recommended)'}</Text>
                 </View>
               </View>
-              <View style={[styles.toggle, isOfflineMode && styles.toggleOn]}>
-                <View style={[styles.toggleKnob, isOfflineMode && styles.toggleKnobOn]} />
+              <View style={[styles.toggle, offlineEnabled && styles.toggleOn]}>
+                <View style={[styles.toggleKnob, offlineEnabled && styles.toggleKnobOn]} />
               </View>
             </TouchableOpacity>
 
-            {/* Download Data */}
-            {getRestaurantId() && (
-              <TouchableOpacity
-                style={styles.connectRow}
-                disabled={seedingData || !isOnline}
-                onPress={async () => {
-                  setSeedingData(true);
-                  try {
-                    const result = await apiClient.seedOfflineData(getRestaurantId());
-                    Alert.alert(
-                      result.success ? 'Data Downloaded' : 'Partial Download',
-                      result.success ? 'All data saved for offline use.' : `Some data failed: ${result.errors.join(', ')}`
-                    );
-                  } catch (e) {
-                    Alert.alert('Error', 'Failed to download: ' + e.message);
-                  } finally {
-                    setSeedingData(false);
-                  }
-                }}
-              >
-                <View style={styles.connectLeft}>
-                  <Ionicons name="download-outline" size={18} color="#8b7355" />
-                  <View>
-                    <Text style={styles.connectLabel}>Download Data</Text>
-                    <Text style={styles.connectHint}>Pre-load for offline use</Text>
+            {offlineEnabled && (
+              <>
+                {/* Force Offline Toggle */}
+                <TouchableOpacity style={styles.connectRow} onPress={() => toggleOfflineMode()}>
+                  <View style={styles.connectLeft}>
+                    <Ionicons name={isOfflineMode ? 'cloud-offline' : 'cloud-done'} size={18} color={isOfflineMode ? '#f59e0b' : '#22c55e'} />
+                    <View>
+                      <Text style={styles.connectLabel}>Force Offline Mode</Text>
+                      <Text style={styles.connectHint}>Work without internet</Text>
+                    </View>
                   </View>
-                </View>
-                {seedingData ? (
-                  <ActivityIndicator size="small" color="#8b7355" />
-                ) : (
-                  <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
-                )}
-              </TouchableOpacity>
-            )}
+                  <View style={[styles.toggle, isOfflineMode && styles.toggleOn]}>
+                    <View style={[styles.toggleKnob, isOfflineMode && styles.toggleKnobOn]} />
+                  </View>
+                </TouchableOpacity>
 
-            {/* Sync Status */}
-            <TouchableOpacity style={styles.connectRow} onPress={() => setShowSyncSheet(true)}>
-              <View style={styles.connectLeft}>
-                <Ionicons
-                  name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'sync' : 'checkmark-circle'}
-                  size={18}
-                  color={failedCount > 0 ? '#ef4444' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
-                />
-                <View>
-                  <Text style={styles.connectLabel}>Sync Status</Text>
-                  <Text style={styles.connectHint}>
-                    {failedCount > 0 ? `${failedCount} failed, ${pendingCount} pending`
-                      : pendingCount > 0 ? `${pendingCount} pending`
-                      : 'All synced'}
-                  </Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
-            </TouchableOpacity>
-
-            {/* Manual Sync */}
-            {(pendingCount > 0 || failedCount > 0) && (
-              <TouchableOpacity
-                style={[styles.connectRow, { backgroundColor: failedCount > 0 ? '#fef2f2' : '#f0f9ff' }]}
-                onPress={async () => {
-                  try {
-                    await triggerSync();
-                    Alert.alert('Sync Started', 'Syncing pending changes...');
-                  } catch (e) {
-                    Alert.alert('Sync Error', e.message);
-                  }
-                }}
-              >
-                <View style={styles.connectLeft}>
-                  <Ionicons name="refresh" size={18} color={failedCount > 0 ? '#ef4444' : '#3b82f6'} />
-                  <Text style={[styles.connectLabel, { color: failedCount > 0 ? '#ef4444' : '#3b82f6' }]}>
-                    {failedCount > 0 ? 'Retry Failed' : 'Sync Now'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
-            {/* PIN Lock */}
-            <TouchableOpacity
-              style={[styles.connectRow, { borderBottomWidth: 0 }]}
-              onPress={() => {
-                if (pinEnabled) {
-                  Alert.alert('Remove PIN?', 'This will disable offline PIN lock.', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Remove', style: 'destructive', onPress: async () => { await clearPin(); setPinEnabled(false); } },
-                  ]);
-                } else {
-                  setShowPinSetup(true);
-                  setPinInput('');
-                }
-              }}
-            >
-              <View style={styles.connectLeft}>
-                <Ionicons name="lock-closed-outline" size={18} color={pinEnabled ? '#f59e0b' : '#9ca3af'} />
-                <View>
-                  <Text style={styles.connectLabel}>PIN Lock</Text>
-                  <Text style={styles.connectHint}>{pinEnabled ? 'PIN active — tap to remove' : 'Set 4-digit PIN for offline'}</Text>
-                </View>
-              </View>
-              {pinEnabled ? (
-                <View style={[styles.toggle, styles.toggleOn]}>
-                  <View style={[styles.toggleKnob, styles.toggleKnobOn]} />
-                </View>
-              ) : (
-                <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
-              )}
-            </TouchableOpacity>
-
-            {/* PIN Setup */}
-            {showPinSetup && (
-              <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
-                <Text style={{ fontSize: 13, color: '#9ca3af', marginBottom: 8 }}>Enter a 4-digit PIN:</Text>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                  <TextInput
-                    style={styles.pinInput}
-                    value={pinInput}
-                    onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                    secureTextEntry
-                    placeholder="····"
-                    autoFocus
-                  />
+                {/* Download Data */}
+                {getRestaurantId() && (
                   <TouchableOpacity
-                    style={[styles.pinButton, pinInput.length === 4 && styles.pinButtonActive]}
-                    disabled={pinInput.length !== 4}
+                    style={styles.connectRow}
+                    disabled={seedingData || !isOnline}
                     onPress={async () => {
-                      await setPin(pinInput);
-                      setPinEnabled(true);
-                      setShowPinSetup(false);
-                      setPinInput('');
-                      Alert.alert('PIN Set', 'Offline PIN lock is now active.');
+                      setSeedingData(true);
+                      try {
+                        const result = await apiClient.seedOfflineData(getRestaurantId());
+                        Alert.alert(
+                          result.success ? 'Data Downloaded' : 'Partial Download',
+                          result.success ? 'All data saved for offline use.' : `Some data failed: ${result.errors.join(', ')}`
+                        );
+                      } catch (e) {
+                        Alert.alert('Error', 'Failed to download: ' + e.message);
+                      } finally {
+                        setSeedingData(false);
+                      }
                     }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Set</Text>
+                    <View style={styles.connectLeft}>
+                      <Ionicons name="download-outline" size={18} color="#8b7355" />
+                      <View>
+                        <Text style={styles.connectLabel}>Download Data</Text>
+                        <Text style={styles.connectHint}>Pre-load for offline use</Text>
+                      </View>
+                    </View>
+                    {seedingData ? (
+                      <ActivityIndicator size="small" color="#8b7355" />
+                    ) : (
+                      <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+                    )}
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => { setShowPinSetup(false); setPinInput(''); }}>
-                    <Ionicons name="close-circle" size={22} color="#d1d5db" />
+                )}
+              </>
+            )}
+
+            {/* Sync Status & PIN Lock — only when offline support enabled */}
+            {offlineEnabled && (
+              <>
+                <TouchableOpacity style={styles.connectRow} onPress={() => setShowSyncSheet(true)}>
+                  <View style={styles.connectLeft}>
+                    <Ionicons
+                      name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'sync' : 'checkmark-circle'}
+                      size={18}
+                      color={failedCount > 0 ? '#ef4444' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
+                    />
+                    <View>
+                      <Text style={styles.connectLabel}>Sync Status</Text>
+                      <Text style={styles.connectHint}>
+                        {failedCount > 0 ? `${failedCount} failed, ${pendingCount} pending`
+                          : pendingCount > 0 ? `${pendingCount} pending`
+                          : 'All synced'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+                </TouchableOpacity>
+
+                {/* Manual Sync */}
+                {(pendingCount > 0 || failedCount > 0) && (
+                  <TouchableOpacity
+                    style={[styles.connectRow, { backgroundColor: failedCount > 0 ? '#fef2f2' : '#f0f9ff' }]}
+                    onPress={async () => {
+                      try {
+                        await triggerSync();
+                        Alert.alert('Sync Started', 'Syncing pending changes...');
+                      } catch (e) {
+                        Alert.alert('Sync Error', e.message);
+                      }
+                    }}
+                  >
+                    <View style={styles.connectLeft}>
+                      <Ionicons name="refresh" size={18} color={failedCount > 0 ? '#ef4444' : '#3b82f6'} />
+                      <Text style={[styles.connectLabel, { color: failedCount > 0 ? '#ef4444' : '#3b82f6' }]}>
+                        {failedCount > 0 ? 'Retry Failed' : 'Sync Now'}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
-                </View>
-              </View>
+                )}
+              </>
+            )}
+
+            {/* PIN Lock — only when offline support enabled */}
+            {offlineEnabled && (
+              <>
+                <TouchableOpacity
+                  style={[styles.connectRow, { borderBottomWidth: 0 }]}
+                  onPress={() => {
+                    if (pinEnabled) {
+                      Alert.alert('Remove PIN?', 'This will disable offline PIN lock.', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Remove', style: 'destructive', onPress: async () => { await clearPin(); setPinEnabled(false); } },
+                      ]);
+                    } else {
+                      setShowPinSetup(true);
+                      setPinInput('');
+                    }
+                  }}
+                >
+                  <View style={styles.connectLeft}>
+                    <Ionicons name="lock-closed-outline" size={18} color={pinEnabled ? '#f59e0b' : '#9ca3af'} />
+                    <View>
+                      <Text style={styles.connectLabel}>PIN Lock</Text>
+                      <Text style={styles.connectHint}>{pinEnabled ? 'PIN active — tap to remove' : 'Set 4-digit PIN for offline'}</Text>
+                    </View>
+                  </View>
+                  {pinEnabled ? (
+                    <View style={[styles.toggle, styles.toggleOn]}>
+                      <View style={[styles.toggleKnob, styles.toggleKnobOn]} />
+                    </View>
+                  ) : (
+                    <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
+                  )}
+                </TouchableOpacity>
+
+                {/* PIN Setup */}
+                {showPinSetup && (
+                  <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+                    <Text style={{ fontSize: 13, color: '#9ca3af', marginBottom: 8 }}>Enter a 4-digit PIN:</Text>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                      <TextInput
+                        style={styles.pinInput}
+                        value={pinInput}
+                        onChangeText={(t) => setPinInput(t.replace(/\D/g, '').slice(0, 4))}
+                        keyboardType="number-pad"
+                        maxLength={4}
+                        secureTextEntry
+                        placeholder="····"
+                        autoFocus
+                      />
+                      <TouchableOpacity
+                        style={[styles.pinButton, pinInput.length === 4 && styles.pinButtonActive]}
+                        disabled={pinInput.length !== 4}
+                        onPress={async () => {
+                          await setPin(pinInput);
+                          setPinEnabled(true);
+                          setShowPinSetup(false);
+                          setPinInput('');
+                          Alert.alert('PIN Set', 'Offline PIN lock is now active.');
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Set</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setShowPinSetup(false); setPinInput(''); }}>
+                        <Ionicons name="close-circle" size={22} color="#d1d5db" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </>
             )}
 
             {/* LAN Hub Connection */}

@@ -1,6 +1,7 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState, useRef } from 'react';
-import { View, Platform, Animated, StyleSheet } from 'react-native';
+import { View, Text, Platform, Animated, StyleSheet } from 'react-native';
+import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
@@ -18,6 +19,9 @@ function AnimatedTabBar(props) {
       styles.tabBarWrapper,
       { transform: [{ translateY }] },
     ]}>
+      <Text style={{ textAlign: 'center', fontSize: 9, color: '#c0c0c0', paddingTop: 4, paddingBottom: 2, backgroundColor: '#fff' }}>
+        v{Constants.expoConfig?.version || '?.?.?'}
+      </Text>
       <BottomTabBar {...props} />
     </Animated.View>
   );

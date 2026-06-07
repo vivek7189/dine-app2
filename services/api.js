@@ -44,6 +44,14 @@ class ApiClient {
     return this._offlineState?.isEffectivelyOffline?.() ?? false;
   }
 
+  /**
+   * Check if offline support is explicitly enabled by the user.
+   * When false, the app is online-only — no SQLite reads/writes.
+   */
+  isOfflineEnabled() {
+    return this._offlineState?.isOfflineEnabled?.() ?? false;
+  }
+
   // Cached GET — returns cached data if fresh, deduplicates concurrent requests
   async cachedGet(endpoint, ttlMs = 5 * 60 * 1000) {
     const cached = this._cache.get(endpoint);
@@ -338,9 +346,28 @@ class ApiClient {
    * Then refresh from network in background (fire-and-forget).
    */
   async offlineGet(endpoint, { localRead, onFetched, onRefreshed, ttlMs = 5 * 60 * 1000 } = {}) {
-    // 1. Always try local read first — instant, no network wait
+    const offlineSupported = this.isOfflineEnabled();
+
+    // Online-first: when connected, always fetch from server (no stale data flash).
+    if (!this.isEffectivelyOffline()) {
+      try {
+        const data = await this.cachedGet(endpoint, ttlMs);
+        // Only save to SQLite when offline support is enabled
+        if (offlineSupported && onFetched) {
+          try { onFetched(data); } catch (e) { console.warn('offlineGet onFetched error:', e.message); }
+        }
+        return data;
+      } catch (err) {
+        console.warn(`offlineGet network failed for ${endpoint}:`, err.message);
+        // If offline support is not enabled, don't fall back to SQLite — just propagate error
+        if (!offlineSupported) throw err;
+        // Otherwise fall through to local read below
+      }
+    }
+
+    // Offline (or network failed with offline support enabled): try local read from SQLite
     let localData = null;
-    if (localRead) {
+    if (offlineSupported && localRead) {
       try {
         localData = localRead();
       } catch (e) {
@@ -348,38 +375,8 @@ class ApiClient {
       }
     }
 
-    // 2. If we have local data, return it immediately and refresh in background
     if (localData !== null && localData !== undefined) {
-      // Background refresh: fetch from network and save to SQLite
-      if (!this.isEffectivelyOffline()) {
-        this.cachedGet(endpoint, ttlMs)
-          .then((data) => {
-            if (onFetched) {
-              try { onFetched(data); } catch (e) { console.warn('offlineGet bg onFetched error:', e.message); }
-            }
-            // Notify caller with fresh data so UI can update
-            if (onRefreshed) {
-              try { onRefreshed(data); } catch (e) { console.warn('offlineGet bg onRefreshed error:', e.message); }
-            }
-          })
-          .catch(() => {
-            // Network failed in background — no problem, we already returned local data
-          });
-      }
       return localData;
-    }
-
-    // 3. No local data — try network (blocks UI, but only on first load)
-    if (!this.isEffectivelyOffline()) {
-      try {
-        const data = await this.cachedGet(endpoint, ttlMs);
-        if (onFetched) {
-          try { onFetched(data); } catch (e) { console.warn('offlineGet onFetched error:', e.message); }
-        }
-        return data;
-      } catch (err) {
-        console.warn(`offlineGet network failed for ${endpoint}:`, err.message);
-      }
     }
 
     throw new Error('No data available. Please check your connection.');
@@ -401,6 +398,14 @@ class ApiClient {
     onSuccess,
     idempotencyKey = null,
   }) {
+    // When offline support is not enabled, make a direct API call (no SQLite queue)
+    if (!this.isOfflineEnabled()) {
+      return this.request(endpoint, {
+        method,
+        body: JSON.stringify(data),
+      });
+    }
+
     const { enqueue, generateIdempotencyKey } = require('./syncQueueV2');
     const key = idempotencyKey || generateIdempotencyKey();
 
@@ -585,21 +590,31 @@ class ApiClient {
   /**
    * Start background pull loop to keep local data fresh.
    * Called by OfflineProvider after DB is ready.
-   * HOT data (orders, tables) refreshed every 10s when online.
-   * WARM data (menu, customers) refreshed every 5 min.
+   * HOT data (orders, tables) refreshed every 120s when online & app is active.
+   * WARM data (menu, customers) refreshed every 10 min.
+   * Automatically pauses when app goes to background to save battery & reads.
    */
   _bgPullTimer = null;
   _bgPullRunning = false;
+  _bgPullPaused = false;
+  _bgPullAppStateSub = null;
 
   startBackgroundPull(restaurantId) {
     if (this._bgPullTimer) return;
 
+    // Listen for AppState to pause/resume when app goes to background
+    const { AppState } = require('react-native');
+    this._bgPullPaused = AppState.currentState !== 'active';
+    this._bgPullAppStateSub = AppState.addEventListener('change', (nextState) => {
+      this._bgPullPaused = nextState !== 'active';
+    });
+
     let hotCounter = 0;
-    const INTERVAL = 10_000; // 10 seconds
-    const WARM_EVERY = 30;   // every 30 intervals = 5 min
+    const INTERVAL = 120_000; // 120 seconds (was 10s)
+    const WARM_EVERY = 5;     // every 5 intervals = 10 min
 
     this._bgPullTimer = setInterval(async () => {
-      if (this._bgPullRunning || this.isEffectivelyOffline() || !restaurantId) return;
+      if (this._bgPullRunning || this._bgPullPaused || this.isEffectivelyOffline() || !restaurantId) return;
       this._bgPullRunning = true;
       hotCounter++;
 
@@ -655,7 +670,12 @@ class ApiClient {
       clearInterval(this._bgPullTimer);
       this._bgPullTimer = null;
     }
+    if (this._bgPullAppStateSub) {
+      this._bgPullAppStateSub.remove();
+      this._bgPullAppStateSub = null;
+    }
     this._bgPullRunning = false;
+    this._bgPullPaused = false;
   }
 
   // Staff login
@@ -835,15 +855,19 @@ class ApiClient {
       try {
         this.invalidateCache(endpoint);
         const data = await this.request(endpoint);
-        // Save to offline store for offline fallback
-        const floors = data?.floors || (Array.isArray(data) ? data : []);
-        if (floors.length > 0) {
-          offlineStore.saveFloors(restaurantId, floors);
-          const allTables = [];
-          for (const floor of floors) {
-            if (floor.tables) allTables.push(...floor.tables);
+        // Save to offline store in background (don't let save errors block the return)
+        try {
+          const floors = data?.floors || (Array.isArray(data) ? data : []);
+          if (floors.length > 0) {
+            offlineStore.saveFloors(restaurantId, floors);
+            const allTables = [];
+            for (const floor of floors) {
+              if (floor.tables) allTables.push(...floor.tables);
+            }
+            if (allTables.length > 0) offlineStore.saveTables(restaurantId, allTables);
           }
-          if (allTables.length > 0) offlineStore.saveTables(restaurantId, allTables);
+        } catch (saveErr) {
+          console.warn('getFloors offline save failed (non-blocking):', saveErr.message);
         }
         return data;
       } catch (err) {
@@ -852,8 +876,12 @@ class ApiClient {
     }
 
     // Offline fallback — read from SQLite
-    const floors = offlineStore.getFloors(restaurantId);
-    if (floors && floors.length > 0) return { floors };
+    try {
+      const floors = offlineStore.getFloors(restaurantId);
+      if (floors && floors.length > 0) return { floors };
+    } catch (readErr) {
+      console.warn('getFloors offline read failed:', readErr.message);
+    }
     return { floors: [] };
   }
 
@@ -1003,7 +1031,12 @@ class ApiClient {
         const orders = offlineStore.getOrders(restaurantId, { today: true });
         if (!orders) return null;
         const completed = orders.filter(o => o.status === 'completed' || o.status === 'served');
-        const totalRevenue = completed.reduce((sum, o) => sum + (o.finalAmount || o.totalAmount || 0), 0);
+        // Exclude due orders from revenue; use paidAmount for partial orders
+        const totalRevenue = completed.reduce((sum, o) => {
+          if (o.paymentStatus === 'due') return sum;
+          if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) return sum + (Number(o.paidAmount) || 0);
+          return sum + (o.finalAmount || o.totalAmount || 0);
+        }, 0);
         return {
           totalOrders: orders.length,
           completedOrders: completed.length,
@@ -1633,6 +1666,13 @@ class ApiClient {
   async cancelBooking(bookingId) {
     return this.request(`/api/bookings/${bookingId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async updateBooking(bookingId, updateData) {
+    return this.request(`/api/bookings/${bookingId}`, {
+      method: 'PATCH',
+      data: updateData,
     });
   }
 
@@ -2754,6 +2794,46 @@ class ApiClient {
   }
   getDeliverySettings(restaurantId) {
     return this.request(`/api/delivery/${restaurantId}/settings`);
+  }
+
+  // Print Stations
+  getPrintStations(restaurantId) {
+    return this.request(`/api/admin/print-stations/${restaurantId}`);
+  }
+
+  // Bar Inventory
+  getBarBottles(restaurantId, params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/api/bar/bottles/${restaurantId}${qs ? '?' + qs : ''}`);
+  }
+  createBarBottle(restaurantId, data) {
+    return this.request(`/api/bar/bottles/${restaurantId}`, { method: 'POST', body: data });
+  }
+  updateBarBottle(restaurantId, bottleId, data) {
+    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}`, { method: 'PUT', body: data });
+  }
+  recordBarWastage(restaurantId, bottleId, data) {
+    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}/wastage`, { method: 'POST', body: data });
+  }
+  deleteBarBottle(restaurantId, bottleId) {
+    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}`, { method: 'DELETE' });
+  }
+  getBarReconciliations(restaurantId) {
+    return this.request(`/api/bar/reconciliation/${restaurantId}`);
+  }
+  openBarReconciliation(restaurantId, data) {
+    return this.request(`/api/bar/reconciliation/${restaurantId}`, { method: 'POST', body: data });
+  }
+  closeBarReconciliation(restaurantId, id, data) {
+    return this.request(`/api/bar/reconciliation/${restaurantId}/${id}`, { method: 'PUT', body: data });
+  }
+
+  // Discount Approval
+  requestDiscountApproval(restaurantId, data) {
+    return this.request(`/api/discount-approval/${restaurantId}/request`, { method: 'POST', body: data });
+  }
+  verifyDiscountApproval(restaurantId, data) {
+    return this.request(`/api/discount-approval/${restaurantId}/verify`, { method: 'POST', body: data });
   }
 }
 

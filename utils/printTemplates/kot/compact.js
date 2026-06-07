@@ -5,6 +5,7 @@ import {
   esc, getKOTLabels, buildTableOrRoomHtml, buildSpecialInstructionsHtml,
   buildKOTItemsSections, formatDateTime,
   getPrintFontSizes, getPrintFontFamily, wrapInDocument,
+  KOT_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
 } from '../helpers';
 
 export const id = 'compact';
@@ -27,6 +28,10 @@ function getCompactCSS(scaleOrPreset, fontId) {
 
 export function render(kotData, printSettings = {}, labels = {}) {
   const L = getKOTLabels(labels);
+  const AR = KOT_LABELS_AR;
+  const lang = printSettings.printLanguage || 'en';
+  const showAr = lang === 'dual' || lang === 'ar';
+  const kl = printSettings?.kotLayout || {};
   const k = kotData;
   const tableOrRoom = buildTableOrRoomHtml(k, L);
   const specialInstructionsHtml = buildSpecialInstructionsHtml(k, L);
@@ -45,20 +50,23 @@ export function render(kotData, printSettings = {}, labels = {}) {
   };
 
   const { html: itemsHtml, footerText, hasChanges } = buildKOTItemsSections(k, renderRow, L);
-  const title = hasChanges ? L.kotUpdate : L.kitchenOrder;
+  const titleEn = hasChanges ? L.kotUpdate : L.kitchenOrder;
+  const title = showAr ? dualTitle(titleEn, hasChanges ? AR.kotUpdate : AR.kitchenOrder, showAr) : titleEn;
   const css = getCompactCSS(printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
+  const finalCss = showAr ? css + getBillDualCSS() : css;
 
   // Compact: skip restaurant name, minimal header
   const bodyHtml =
-    `<div class="kot-header"><div class="kot-title">--- ${title} ---</div></div>` +
+    `<div class="kot-header">${kl.showRestaurantName !== false && k.restaurantName ? `<div class="restaurant-name" style="font-size:inherit;font-weight:bold;text-transform:uppercase;">${esc(k.restaurantName)}</div>` : ''}${kl.showKotTitle !== false ? `<div class="kot-title">--- ${title} ---</div>` : ''}</div>` +
     `<div class="divider">- - - - - - - - - - - - - - - -</div>` +
     `<div class="kot-info">` +
-      `<div><strong>#${k.dailyOrderId || k.orderId}</strong>` +
-      (k.tableNumber ? ` | ${L.table}: ${k.tableNumber}` : '') +
-      (k.roomNumber ? ` | ${L.room}: ${k.roomNumber}` : '') +
-      ` | ${timeStr}</div>` +
-      (k.waiterName ? `<div>${L.waiter}: ${esc(k.waiterName)}</div>` : '') +
-      (k.orderType ? `<div>${L.type}: ${k.orderType}</div>` : '') +
+      `<div>${kl.showOrderNumber !== false ? `<strong>#${k.dailyOrderId || k.orderId}</strong>` : ''}` +
+      (kl.showTable !== false && k.tableNumber ? ` | ${dualLabel(L.table, AR.table, showAr)}: ${k.tableNumber}` : '') +
+      (kl.showTable !== false && k.roomNumber ? ` | ${dualLabel(L.room, AR.room, showAr)}: ${k.roomNumber}` : '') +
+      ` | ${timeStr}${kl.showDate !== false ? ` | ${dateStr}` : ''}</div>` +
+      (kl.showWaiter !== false && k.waiterName ? `<div>${dualLabel(L.waiter, AR.waiter, showAr)}: ${esc(k.waiterName)}</div>` : '') +
+      (kl.showOrderType !== false && k.orderType ? `<div>${dualLabel(L.type, AR.type, showAr)}: ${k.orderType}</div>` : '') +
+      (kl.showCustomer !== false && k.customerName ? `<div>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(k.customerName)}</div>` : '') +
     `</div>` +
     `<div class="divider">- - - - - - - - - - - - - - - -</div>` +
     itemsHtml +
@@ -67,5 +75,5 @@ export function render(kotData, printSettings = {}, labels = {}) {
     specialInstructionsHtml +
     `<div class="divider">================================</div>`;
 
-  return wrapInDocument(`KOT - ${k.dailyOrderId || k.orderId}`, css, bodyHtml);
+  return wrapInDocument(`KOT - ${k.dailyOrderId || k.orderId}`, finalCss, bodyHtml);
 }

@@ -5,6 +5,7 @@
 import {
   esc, getKOTLabels, formatDateTime,
   getPrintFontSizes, getPrintFontFamily, wrapInDocument,
+  KOT_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
 } from '../helpers';
 
 export const id = 'bold';
@@ -26,6 +27,10 @@ function getBoldKOTCSS(scaleOrPreset, fontId) {
 
 export function render(kotData, printSettings = {}, labels = {}) {
   const L = getKOTLabels(labels);
+  const AR = KOT_LABELS_AR;
+  const lang = printSettings.printLanguage || 'en';
+  const showAr = lang === 'dual' || lang === 'ar';
+  const kl = printSettings?.kotLayout || {};
   const k = kotData;
   const { dateStr, timeStr } = formatDateTime();
   const removedItems = k.removedItems || [];
@@ -44,7 +49,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
 
     return `<div class="item" style="${strikeStyle}">` +
       `<div style="display:flex;justify-content:space-between;align-items:flex-start;">` +
-        `<div><span class="item-qty">${qty} x</span> <span class="item-name">${esc(item.name)}${cancelLabel}${newLabel}</span></div>` +
+        `<div><span class="item-qty">${qty} x</span> <span class="item-name">${showAr ? dualItemName(item, showAr) : esc(item.name)}${cancelLabel}${newLabel}</span></div>` +
         (itemTotal > 0 && cs ? `<div class="item-price">${cs}${itemTotal.toFixed(2)}</div>` : '') +
       `</div>` +
       (variant ? `<div class="item-variant">${esc(variant)}</div>` : '') +
@@ -81,31 +86,36 @@ export function render(kotData, printSettings = {}, labels = {}) {
   }
 
   const css = getBoldKOTCSS(printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
+  const finalCss = showAr ? css + getBillDualCSS() : css;
+
+  const titleEn = hasChanges ? L.kotUpdate : L.kitchenOrder;
+  const title = showAr ? dualTitle(titleEn, hasChanges ? AR.kotUpdate : AR.kitchenOrder, showAr) : titleEn;
 
   const bodyHtml =
     `<div class="header">` +
-      `<div class="restaurant-name">${esc(k.restaurantName || 'Restaurant')}</div>` +
+      (kl.showRestaurantName !== false ? `<div class="restaurant-name">${esc(k.restaurantName || 'Restaurant')}</div>` : '') +
       (k.restaurantPhone ? `<div class="phone">Tel: ${k.restaurantPhone}</div>` : '') +
-      (k.orderType ? `<div class="order-type">${esc(k.orderType)}</div>` : '') +
+      (kl.showOrderType !== false && k.orderType ? `<div class="order-type">${esc(k.orderType)}</div>` : '') +
     `</div>` +
     `<div class="divider">................................</div>` +
     `<div class="info">` +
-      `<div>Table/Ref.No: ${k.tableNumber || k.roomNumber || k.dailyOrderId || k.orderId}</div>` +
-      `<div style="display:flex;justify-content:space-between;"><span>KOT No: <strong>${k.dailyOrderId || k.orderId}</strong></span><span>${L.totalItems}: ${totalItems}</span></div>` +
+      (kl.showTable !== false ? `<div>${dualLabel(L.table || 'Table/Ref.No', AR.table, showAr)}: ${k.tableNumber || k.roomNumber || k.dailyOrderId || k.orderId}</div>` : '') +
+      `<div style="display:flex;justify-content:space-between;">${kl.showOrderNumber !== false ? `<span>${dualLabel(L.orderHash || 'KOT No', AR.orderHash, showAr)}: <strong>${k.dailyOrderId || k.orderId}</strong></span>` : '<span></span>'}<span>${dualLabel(L.totalItems, AR.totalItems, showAr)}: ${totalItems}</span></div>` +
     `</div>` +
     `<div class="divider">................................</div>` +
     `<div class="info">` +
       (k.billNo ? `<div>Bill No: ${k.billNo}</div>` : '') +
-      (k.waiterName ? `<div>Order by: ${esc(k.waiterName)}</div>` : '') +
-      `<div>Date: ${dateStr}</div>` +
-      `<div>Time: ${timeStr}</div>` +
+      (kl.showWaiter !== false && k.waiterName ? `<div>${dualLabel(L.waiter || 'Order by', AR.waiter, showAr)}: ${esc(k.waiterName)}</div>` : '') +
+      (kl.showDate !== false ? `<div>${dualLabel(L.date || 'Date', AR.date, showAr)}: ${dateStr}</div>` : '') +
+      `<div>${dualLabel(L.time || 'Time', AR.time, showAr)}: ${timeStr}</div>` +
+      (kl.showCustomer !== false && k.customerName ? `<div>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(k.customerName)}</div>` : '') +
     `</div>` +
     `<div class="divider">................................</div>` +
     itemsHtml +
     `<div class="divider">................................</div>` +
-    `<div class="footer">** ${hasChanges ? 'KOT Update' : 'New Order'} **</div>` +
-    (k.specialInstructions ? `<div class="divider">................................</div><div style="text-align:center;font-size:12px;padding:4px;border:1px dashed #000;"><strong>*** ${L.specialInstructions} ***</strong><div style="text-align:left;">${esc(k.specialInstructions)}</div></div>` : '') +
+    (kl.showKotTitle !== false ? `<div class="footer">** ${title} **</div>` : '') +
+    (k.specialInstructions ? `<div class="divider">................................</div><div style="text-align:center;font-size:12px;padding:4px;border:1px dashed #000;"><strong>*** ${dualLabel(L.specialInstructions, AR.specialInstructions, showAr)} ***</strong><div style="text-align:left;">${esc(k.specialInstructions)}</div></div>` : '') +
     `<div class="divider">================================</div>`;
 
-  return wrapInDocument(`KOT - ${k.dailyOrderId || k.orderId}`, css, bodyHtml);
+  return wrapInDocument(`KOT - ${k.dailyOrderId || k.orderId}`, finalCss, bodyHtml);
 }

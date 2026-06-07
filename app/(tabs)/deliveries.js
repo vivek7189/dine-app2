@@ -1,5 +1,5 @@
-import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, AppState } from 'react-native';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
@@ -35,10 +35,18 @@ export default function DeliveriesScreen() {
     }
   }, []);
 
+  // Poll every 60s for new assignments, only when app is active
+  const appActive = useRef(AppState.currentState === 'active');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => { appActive.current = s === 'active'; });
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => {
     fetchDeliveries();
-    // Poll every 15 seconds for new assignments
-    const interval = setInterval(fetchDeliveries, 15000);
+    const interval = setInterval(() => {
+      if (appActive.current) fetchDeliveries();
+    }, 60_000);
     return () => clearInterval(interval);
   }, [fetchDeliveries]);
 
