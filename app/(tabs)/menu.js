@@ -79,7 +79,7 @@ export default function MenuScreen() {
   const tabBar = useTabBar();
   const insets = useSafeAreaInsets();
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, 24) : insets.bottom;
-  const tabBarHeight = r(64, 74) + bottomInset;
+  const tabBarHeight = r(64, 74) + bottomInset + 17; // +17 for version label in AnimatedTabBar
   const cols = gridColumns();
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -3908,8 +3908,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#ffffff',
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingTop: 12,
+    paddingBottom: 14,
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     shadowColor: '#000',

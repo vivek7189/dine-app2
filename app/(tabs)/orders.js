@@ -2518,6 +2518,7 @@ const styles = StyleSheet.create({
   },
   list: {
     padding: 12,
+    paddingBottom: 120,
   },
   orderCard: {
     backgroundColor: '#fff',

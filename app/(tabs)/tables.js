@@ -2615,7 +2615,7 @@ const styles = StyleSheet.create({
   },
   tablesGrid: {
     padding: 8,
-    paddingBottom: 100,
+    paddingBottom: 120,
   },
   tableRow: {
     justifyContent: 'space-between',

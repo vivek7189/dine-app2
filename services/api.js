@@ -406,13 +406,32 @@ class ApiClient {
       });
     }
 
+    // When online, make a direct API call to get real server response
+    // This ensures callers get actual data (order IDs, etc.) instead of mock responses
+    if (!this.isEffectivelyOffline()) {
+      try {
+        const result = await this.request(endpoint, {
+          method,
+          body: JSON.stringify(data),
+        });
+        // Call onSuccess callback with server response
+        if (onSuccess) {
+          try { onSuccess(result); } catch (e) { console.warn('offlineWrite onSuccess error:', e.message); }
+        }
+        return result;
+      } catch (e) {
+        // If direct call fails, fall through to offline queue
+        console.warn('offlineWrite direct call failed, queuing offline:', e.message);
+      }
+    }
+
+    // Offline path: queue for background sync
     const { enqueue, generateIdempotencyKey } = require('./syncQueueV2');
     const key = idempotencyKey || generateIdempotencyKey();
 
     // Add idempotency key to payload
     const payload = { ...data, idempotencyKey: key, syncSource: 'offline' };
 
-    // 1. Always queue for background sync
     enqueue({
       entityType,
       operation,
@@ -424,22 +443,9 @@ class ApiClient {
       idempotencyKey: key,
     });
 
-    // 2. Always do optimistic local update
+    // Do optimistic local update
     if (onOfflineQueue) {
       try { onOfflineQueue(key, payload); } catch (e) { console.warn('offlineWrite onOfflineQueue error:', e.message); }
-    }
-
-    // 3. If online, trigger sync immediately (non-blocking)
-    if (!this.isEffectivelyOffline()) {
-      // Fire-and-forget: the sync engine will pick up this item
-      try {
-        const { syncAll } = require('./syncEngineV2');
-        setTimeout(() => {
-          syncAll(this).catch(() => {});
-        }, 100);
-      } catch {
-        // ignore — sync engine not available
-      }
     }
 
     return { success: true, offline: true, idempotencyKey: key, message: 'Saved locally' };

@@ -854,7 +854,7 @@ const s = StyleSheet.create({
   emptyBtnText: { fontSize: 13, fontWeight: '600', color: 'white' },
 
   // Undo Toast
-  undoToast: { position: 'absolute', bottom: 30, left: 20, right: 20, backgroundColor: '#1f2937', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, ...Shadows.large },
+  undoToast: { position: 'absolute', bottom: 120, left: 20, right: 20, backgroundColor: '#1f2937', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, ...Shadows.large },
   undoToastText: { fontSize: 14, fontWeight: '500', color: 'white', flex: 1 },
   undoBtn: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 8, marginLeft: 10 },
   undoBtnText: { fontSize: 13, fontWeight: '700', color: 'white' },
