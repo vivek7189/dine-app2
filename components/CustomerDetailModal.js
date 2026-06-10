@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { useResponsive } from '../hooks/useResponsive';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 const PURPLE = '#7c3aed';
 const AMBER = '#f59e0b';
 
@@ -25,9 +26,9 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function formatCurrency(amount) {
-  if (amount == null || isNaN(amount)) return '₹0';
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
+function formatCurrencyLocal(amount) {
+  if (amount == null || isNaN(amount)) return `${getCurrencySymbol()}0`;
+  return `${getCurrencySymbol()}${Number(amount).toLocaleString('en-IN')}`;
 }
 
 // Pulsing placeholder for loading state
@@ -159,7 +160,7 @@ export default function CustomerDetailModal({ visible, customerId, restaurantId,
         {/* Stat cards */}
         <View style={styles.statsGrid}>
           <View style={styles.statCard}>
-            <Text style={styles.statValue}>{formatCurrency(customer.totalSpent)}</Text>
+            <Text style={styles.statValue}>{formatCurrencyLocal(customer.totalSpent)}</Text>
             <Text style={styles.statLabel}>Total Spent</Text>
           </View>
           <View style={styles.statCard}>
@@ -246,7 +247,7 @@ export default function CustomerDetailModal({ visible, customerId, restaurantId,
             <Text style={styles.orderNumber}>#{item.orderNumber || item._id?.slice(-6)}</Text>
             <Text style={styles.orderDate}>{formatDate(item.createdAt)}</Text>
           </View>
-          <Text style={styles.orderTotal}>{formatCurrency(item.total)}</Text>
+          <Text style={styles.orderTotal}>{formatCurrencyLocal(item.total)}</Text>
         </View>
         <View style={styles.orderFooter}>
           <StatusBadge status={item.status} />

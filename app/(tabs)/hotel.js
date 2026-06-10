@@ -22,6 +22,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 // Room status colors
 const RoomStatusColors = {
@@ -1075,7 +1076,7 @@ export default function HotelScreen() {
             )}
           </View>
           {room.tariff != null && room.tariff !== 0 && (
-            <Text style={styles.roomTariff}>₹{String(room.tariff)}/night</Text>
+            <Text style={styles.roomTariff}>{getCurrencySymbol()}{String(room.tariff)}/night</Text>
           )}
           {room.currentGuest != null && room.currentGuest !== '' && (
             <View style={styles.currentGuest}>
@@ -1287,11 +1288,11 @@ export default function HotelScreen() {
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.checkInAmount}>
-              ₹{(checkIn.totalRoomCharges || 0).toFixed(0)}
+              {getCurrencySymbol()}{(checkIn.totalRoomCharges || 0).toFixed(0)}
             </Text>
             {isActive && (
               <Text style={styles.checkInBalance}>
-                Balance: ₹{(checkIn.balanceAmount || 0).toFixed(0)}
+                Balance: {getCurrencySymbol()}{(checkIn.balanceAmount || 0).toFixed(0)}
               </Text>
             )}
           </View>
@@ -1304,7 +1305,7 @@ export default function HotelScreen() {
               {' '}Food Orders ({checkIn.foodOrders.length})
             </Text>
             <Text style={styles.foodOrdersAmount}>
-              ₹{checkIn.totalFoodCharges?.toFixed(0) || 0}
+              {getCurrencySymbol()}{checkIn.totalFoodCharges?.toFixed(0) || 0}
             </Text>
           </View>
         )}
@@ -1367,7 +1368,7 @@ export default function HotelScreen() {
             {checkInDate?.toLocaleDateString()} - {checkOutDate?.toLocaleDateString()}
           </Text>
           <Text style={styles.historyNights}>{nights} nights</Text>
-          <Text style={styles.historyAmount}>₹{record.totalCharges || record.totalAmount || 0}</Text>
+          <Text style={styles.historyAmount}>{getCurrencySymbol()}{record.totalCharges || record.totalAmount || 0}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -2016,7 +2017,7 @@ export default function HotelScreen() {
                 />
               </View>
               <View style={[styles.formGroup, { flex: 1, marginLeft: Spacing.sm }]}>
-                <Text style={styles.formLabel}>Tariff (₹/night)</Text>
+                <Text style={styles.formLabel}>Tariff ({getCurrencySymbol()}/night)</Text>
                 <TextInput
                   style={styles.formInput}
                   value={roomForm.tariff}
@@ -2126,7 +2127,7 @@ export default function HotelScreen() {
                 />
               </View>
               <View style={[styles.formGroup, { flex: 1, marginLeft: Spacing.sm }]}>
-                <Text style={styles.formLabel}>Tariff (₹/night)</Text>
+                <Text style={styles.formLabel}>Tariff ({getCurrencySymbol()}/night)</Text>
                 <TextInput
                   style={styles.formInput}
                   value={bulkRoomForm.tariff}
@@ -2252,7 +2253,7 @@ export default function HotelScreen() {
               </View>
             </View>
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Estimated Tariff (₹)</Text>
+              <Text style={styles.formLabel}>Estimated Tariff ({getCurrencySymbol()})</Text>
               <TextInput
                 style={styles.formInput}
                 value={bookingForm.estimatedTariff}
@@ -2392,7 +2393,7 @@ export default function HotelScreen() {
             </View>
             <View style={styles.formRow}>
               <View style={[styles.formGroup, { flex: 1, marginRight: Spacing.sm }]}>
-                <Text style={styles.formLabel}>Room Tariff (₹)</Text>
+                <Text style={styles.formLabel}>Room Tariff ({getCurrencySymbol()})</Text>
                 <TextInput
                   style={styles.formInput}
                   value={checkInForm.roomTariff}
@@ -2402,7 +2403,7 @@ export default function HotelScreen() {
                 />
               </View>
               <View style={[styles.formGroup, { flex: 1, marginLeft: Spacing.sm }]}>
-                <Text style={styles.formLabel}>Advance (₹)</Text>
+                <Text style={styles.formLabel}>Advance ({getCurrencySymbol()})</Text>
                 <TextInput
                   style={styles.formInput}
                   value={checkInForm.advancePayment}
@@ -2508,30 +2509,30 @@ export default function HotelScreen() {
                   </Text>
                   <View style={styles.checkOutRow}>
                     <Text style={styles.checkOutLabel}>Room Charges:</Text>
-                    <Text style={styles.checkOutValue}>₹{(selectedCheckIn.totalRoomCharges || 0).toFixed(2)}</Text>
+                    <Text style={styles.checkOutValue}>{getCurrencySymbol()}{(selectedCheckIn.totalRoomCharges || 0).toFixed(2)}</Text>
                   </View>
                   {selectedCheckIn.totalFoodCharges > 0 && (
                     <View style={styles.checkOutRow}>
                       <Text style={styles.checkOutLabel}>Food Charges:</Text>
-                      <Text style={styles.checkOutValue}>₹{selectedCheckIn.totalFoodCharges.toFixed(2)}</Text>
+                      <Text style={styles.checkOutValue}>{getCurrencySymbol()}{selectedCheckIn.totalFoodCharges.toFixed(2)}</Text>
                     </View>
                   )}
                   <View style={styles.checkOutRow}>
                     <Text style={styles.checkOutLabel}>Advance Paid:</Text>
                     <Text style={[styles.checkOutValue, { color: Colors.success }]}>
-                      -₹{(selectedCheckIn.advancePayment || 0).toFixed(2)}
+                      -{getCurrencySymbol()}{(selectedCheckIn.advancePayment || 0).toFixed(2)}
                     </Text>
                   </View>
                   <View style={[styles.checkOutRow, styles.checkOutTotal]}>
                     <Text style={styles.checkOutTotalLabel}>Balance Due:</Text>
                     <Text style={styles.checkOutTotalValue}>
-                      ₹{((selectedCheckIn.totalRoomCharges || 0) + (selectedCheckIn.totalFoodCharges || 0) - (selectedCheckIn.advancePayment || 0)).toFixed(2)}
+                      {getCurrencySymbol()}{((selectedCheckIn.totalRoomCharges || 0) + (selectedCheckIn.totalFoodCharges || 0) - (selectedCheckIn.advancePayment || 0)).toFixed(2)}
                     </Text>
                   </View>
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Final Payment (₹)</Text>
+                  <Text style={styles.formLabel}>Final Payment ({getCurrencySymbol()})</Text>
                   <TextInput
                     style={styles.formInput}
                     value={checkOutForm.finalPayment}
@@ -2560,7 +2561,7 @@ export default function HotelScreen() {
                   </View>
                 </View>
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Discount (₹)</Text>
+                  <Text style={styles.formLabel}>Discount ({getCurrencySymbol()})</Text>
                   <TextInput
                     style={styles.formInput}
                     value={checkOutForm.discount}
@@ -2649,26 +2650,26 @@ export default function HotelScreen() {
                   <Text style={styles.invoiceSectionTitle}>Charges</Text>
                   <View style={styles.invoiceRow}>
                     <Text style={styles.invoiceLabel}>Room Charges</Text>
-                    <Text style={styles.invoiceAmount}>₹{(invoice.totalRoomCharges || 0).toFixed(2)}</Text>
+                    <Text style={styles.invoiceAmount}>{getCurrencySymbol()}{(invoice.totalRoomCharges || 0).toFixed(2)}</Text>
                   </View>
                   {invoice.totalFoodCharges > 0 && (
                     <View style={styles.invoiceRow}>
                       <Text style={styles.invoiceLabel}>Food Charges</Text>
-                      <Text style={styles.invoiceAmount}>₹{invoice.totalFoodCharges.toFixed(2)}</Text>
+                      <Text style={styles.invoiceAmount}>{getCurrencySymbol()}{invoice.totalFoodCharges.toFixed(2)}</Text>
                     </View>
                   )}
                   {invoice.discountAmount > 0 && (
                     <View style={styles.invoiceRow}>
                       <Text style={styles.invoiceLabel}>Discount</Text>
                       <Text style={[styles.invoiceAmount, { color: Colors.success }]}>
-                        -₹{invoice.discountAmount.toFixed(2)}
+                        -{getCurrencySymbol()}{invoice.discountAmount.toFixed(2)}
                       </Text>
                     </View>
                   )}
                   <View style={[styles.invoiceRow, styles.invoiceTotalRow]}>
                     <Text style={styles.invoiceTotalLabel}>Total</Text>
                     <Text style={styles.invoiceTotalAmount}>
-                      ₹{(invoice.totalCharges || invoice.totalAmount || 0).toFixed(2)}
+                      {getCurrencySymbol()}{(invoice.totalCharges || invoice.totalAmount || 0).toFixed(2)}
                     </Text>
                   </View>
                 </View>
@@ -2677,16 +2678,16 @@ export default function HotelScreen() {
                   <Text style={styles.invoiceSectionTitle}>Payment</Text>
                   <View style={styles.invoiceRow}>
                     <Text style={styles.invoiceLabel}>Advance</Text>
-                    <Text style={styles.invoiceAmount}>₹{(invoice.advancePayment || 0).toFixed(2)}</Text>
+                    <Text style={styles.invoiceAmount}>{getCurrencySymbol()}{(invoice.advancePayment || 0).toFixed(2)}</Text>
                   </View>
                   <View style={styles.invoiceRow}>
                     <Text style={styles.invoiceLabel}>Final Payment</Text>
-                    <Text style={styles.invoiceAmount}>₹{(invoice.finalPayment || 0).toFixed(2)}</Text>
+                    <Text style={styles.invoiceAmount}>{getCurrencySymbol()}{(invoice.finalPayment || 0).toFixed(2)}</Text>
                   </View>
                   <View style={[styles.invoiceRow, styles.invoiceTotalRow]}>
                     <Text style={styles.invoiceTotalLabel}>Total Paid</Text>
                     <Text style={[styles.invoiceTotalAmount, { color: Colors.success }]}>
-                      ₹{(invoice.totalPaid || 0).toFixed(2)}
+                      {getCurrencySymbol()}{(invoice.totalPaid || 0).toFixed(2)}
                     </Text>
                   </View>
                 </View>

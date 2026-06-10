@@ -28,12 +28,14 @@ import PricingRuleSelector from './billing/PricingRuleSelector';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 import DiscountApprovalModal from './DiscountApprovalModal';
 import UpiQrModal from './UpiQrModal';
 import apiClient from '../services/api';
 
 export default function CartModal({
   mode = 'owner',         // 'waiter' | 'cashier' | 'owner'
+  userRole = '',          // actual user role string (e.g. 'owner', 'manager', 'waiter', 'cashier')
   visible,
   onClose,
   cart,
@@ -81,6 +83,13 @@ export default function CartModal({
   const showBillingPanels = !isWaiterMode;
   const showOrderTypes = !isWaiterMode;
   const showPricingRules = !isWaiterMode;
+
+  // Role-based billing feature access (empty array = all roles allowed)
+  const isRoleAllowed = (rolesArray) => {
+    if (!rolesArray || rolesArray.length === 0) return true;
+    const role = (userRole || mode || 'waiter').toLowerCase();
+    return rolesArray.includes(role);
+  };
   // When table came from tables page navigation, lock order type to dine-in and hide tabs
   const lockOrderTypeToDineIn = tableFromNavigation && (selectedTable?.name || hasTable);
 
@@ -678,8 +687,8 @@ export default function CartModal({
       ) : null}
       <View style={styles.cartItemFooter}>
         <View style={styles.cartItemPriceInfo}>
-          <Text style={styles.cartItemSubtotalText}>₹{item.price} × {item.quantity}</Text>
-          <Text style={styles.cartItemTotalPrice}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+          <Text style={styles.cartItemSubtotalText}>{getCurrencySymbol()}{item.price} × {item.quantity}</Text>
+          <Text style={styles.cartItemTotalPrice}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={styles.quantityControls}>
@@ -913,7 +922,7 @@ export default function CartModal({
                         <Text style={{ fontSize: 10, color: '#9ca3af' }}>x{fi.quantity}</Text>
                       </View>
                     </View>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>₹0</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>{getCurrencySymbol()}0</Text>
                   </View>
                 ))}
               </View>
@@ -925,6 +934,7 @@ export default function CartModal({
                 {showBillingPanels && <View style={styles.billingSection}>
                   <BillingToolbar
                     billingSettings={billingSettings}
+                    isRoleAllowed={isRoleAllowed}
                     activeBillingPanel={activeBillingPanel}
                     setActiveBillingPanel={setActiveBillingPanel}
                     serviceChargeAmount={billing.serviceChargeAmount}
@@ -986,38 +996,38 @@ export default function CartModal({
                     <View>
                       <Text style={styles.compactTotalLabel}>TOTAL</Text>
                       {billing.totalDiscount > 0 && (
-                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{fmtAmt(billing.totalDiscount)}</Text>
+                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save {getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>
                       )}
                     </View>
-                    <Text style={styles.compactTotalValue}>₹{fmtAmt(billing.grandTotal)}</Text>
+                    <Text style={styles.compactTotalValue}>{getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breakdownChipsRow}>
                     <View style={styles.breakdownChip}>
-                      <Text style={styles.breakdownChipText}>Sub ₹{fmtAmt(subtotal)}</Text>
+                      <Text style={styles.breakdownChipText}>Sub {getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                     </View>
                     {billing.totalDiscount > 0 && (
                       <View style={[styles.breakdownChip, styles.breakdownChipGreen]}>
-                        <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-₹{fmtAmt(billing.totalDiscount)}</Text>
+                        <Text style={[styles.breakdownChipText, styles.breakdownChipTextGreen]}>-{getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>
                       </View>
                     )}
-                    {billing.serviceChargeAmount > 0 && (
+                    {billing.serviceChargeAmount > 0 && isRoleAllowed(billingSettings.serviceChargeRoles) && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>SC ₹{fmtAmt(billing.serviceChargeAmount)}</Text>
+                        <Text style={styles.breakdownChipText}>SC {getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>
                       </View>
                     )}
                     {billing.totalTax > 0 && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>Tax ₹{fmtAmt(billing.totalTax)}</Text>
+                        <Text style={styles.breakdownChipText}>Tax {getCurrencySymbol()}{fmtAmt(billing.totalTax)}</Text>
                       </View>
                     )}
-                    {tipAmount > 0 && (
+                    {tipAmount > 0 && isRoleAllowed(billingSettings.tipsRoles) && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>Tip ₹{fmtAmt(tipAmount)}</Text>
+                        <Text style={styles.breakdownChipText}>Tip {getCurrencySymbol()}{fmtAmt(tipAmount)}</Text>
                       </View>
                     )}
-                    {billing.roundOffAmount !== 0 && (
+                    {billing.roundOffAmount !== 0 && isRoleAllowed(billingSettings.roundOffRoles) && (
                       <View style={styles.breakdownChip}>
-                        <Text style={styles.breakdownChipText}>Round {billing.roundOffAmount > 0 ? '+' : ''}₹{billing.roundOffAmount.toFixed(1)}</Text>
+                        <Text style={styles.breakdownChipText}>Round {billing.roundOffAmount > 0 ? '+' : ''}{getCurrencySymbol()}{billing.roundOffAmount.toFixed(1)}</Text>
                       </View>
                     )}
                     <TouchableOpacity onPress={() => setShowBreakdownModal(true)} style={styles.breakdownInfoBtn}>
@@ -1031,17 +1041,17 @@ export default function CartModal({
                     <View style={{ flex: 1, marginRight: 10 }}>
                       <Text style={styles.totalCardTitle}>Total</Text>
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                        <Text style={styles.totalCardLabel}>Sub: ₹{fmtAmt(subtotal)}</Text>
-                        {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -₹{fmtAmt(billing.totalDiscount)}</Text>}
-                        {billing.serviceChargeAmount > 0 && <Text style={styles.totalCardLabel}>SC: ₹{fmtAmt(billing.serviceChargeAmount)}</Text>}
-                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: ₹{fmtAmt(billing.totalTax)}{billing.taxBreakdown?.some(t => t.inclusive) ? ' (incl.)' : ''}</Text>}
-                        {tipAmount > 0 && <Text style={styles.totalCardLabel}>Tip: ₹{fmtAmt(tipAmount)}</Text>}
+                        <Text style={styles.totalCardLabel}>Sub: {getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
+                        {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -{getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>}
+                        {billing.serviceChargeAmount > 0 && isRoleAllowed(billingSettings.serviceChargeRoles) && <Text style={styles.totalCardLabel}>SC: {getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>}
+                        {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: {getCurrencySymbol()}{fmtAmt(billing.totalTax)}{billing.taxBreakdown?.some(t => t.inclusive) ? ' (incl.)' : ''}</Text>}
+                        {tipAmount > 0 && isRoleAllowed(billingSettings.tipsRoles) && <Text style={styles.totalCardLabel}>Tip: {getCurrencySymbol()}{fmtAmt(tipAmount)}</Text>}
                       </View>
                     </View>
                     <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
-                      <Text style={styles.totalCardGrand}>₹{fmtAmt(billing.grandTotal)}</Text>
+                      <Text style={styles.totalCardGrand}>{getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
                       {billing.totalDiscount > 0 && (
-                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save ₹{fmtAmt(billing.totalDiscount)}</Text>
+                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save {getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>
                       )}
                       {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && billing.loyaltyPointsToEarn > 0 && (
                         <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{billing.loyaltyPointsToEarn} pts</Text>
@@ -1234,7 +1244,7 @@ export default function CartModal({
                 </View>
                 <View>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Order Details</Text>
-                  <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · ₹{fmtAmt(subtotal)}</Text>
+                  <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · {getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                 </View>
               </View>
               <TouchableOpacity onPress={() => setShowOffersModal(false)} style={styles.offersCloseBtn}>
@@ -1284,7 +1294,7 @@ export default function CartModal({
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Points</Text>
                       </View>
                       <View style={{ flex: 1, padding: 8, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', borderWidth: 1, borderColor: '#fee2e2' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#dc2626' }}>₹{(customerData.totalSpent || 0).toFixed(0)}</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#dc2626' }}>{getCurrencySymbol()}{(customerData.totalSpent || 0).toFixed(0)}</Text>
                         <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '500' }}>Spent</Text>
                       </View>
                     </View>
@@ -1324,7 +1334,7 @@ export default function CartModal({
                           {offer.description ? <Text style={styles.offerCardDesc} numberOfLines={1}>{offer.description}</Text> : null}
                         </View>
                         {saves > 0 && (
-                          <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>-₹{saves.toFixed(0)}</Text>
+                          <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>-{getCurrencySymbol()}{saves.toFixed(0)}</Text>
                         )}
                       </TouchableOpacity>
                     );
@@ -1368,7 +1378,7 @@ export default function CartModal({
                               </View>
                             </View>
                             {saves > 0 && (
-                              <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>-₹{saves.toFixed(0)}</Text>
+                              <Text style={[styles.offerCardSaves, isSelected && { color: '#dc2626' }]}>-{getCurrencySymbol()}{saves.toFixed(0)}</Text>
                             )}
                           </TouchableOpacity>
                         );
@@ -1467,7 +1477,7 @@ export default function CartModal({
                         {/* Value labels */}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                           <Text style={{ fontSize: 12, fontWeight: '700', color: '#b45309' }}>
-                            {redeemPoints > 0 ? `${redeemPoints} pts = -₹${loyaltyDiscount.toFixed(0)}` : 'Tap or slide to redeem'}
+                            {redeemPoints > 0 ? `${redeemPoints} pts = -${getCurrencySymbol()}${loyaltyDiscount.toFixed(0)}` : 'Tap or slide to redeem'}
                           </Text>
                           <Text style={{ fontSize: 10, color: '#92400e' }}>
                             Max: {loyaltyMaxRedeemable} pts ({effectiveLoyaltySettings.maxRedemptionPercent || 20}%)
@@ -1494,7 +1504,7 @@ export default function CartModal({
                     <View style={{ padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#86efac', backgroundColor: '#f0fdf4', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                       <View>
                         <Text style={{ fontSize: 13, fontWeight: '700', color: '#15803d', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{appliedCoupon.code}</Text>
-                        <Text style={{ fontSize: 11, color: '#16a34a', marginTop: 2 }}>Saving ₹{fmtAmt(appliedCoupon.discountAmount)}</Text>
+                        <Text style={{ fontSize: 11, color: '#16a34a', marginTop: 2 }}>Saving {getCurrencySymbol()}{fmtAmt(appliedCoupon.discountAmount)}</Text>
                       </View>
                       <TouchableOpacity onPress={handleRemoveCoupon} style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#fca5a5', backgroundColor: '#fef2f2' }}>
                         <Text style={{ fontSize: 11, fontWeight: '600', color: '#dc2626' }}>Remove</Text>
@@ -1542,7 +1552,7 @@ export default function CartModal({
                                   )}
                                 </View>
                                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>
-                                  {c.discountType === 'percentage' ? `${c.value}% off` : `₹${c.value}`}
+                                  {c.discountType === 'percentage' ? `${c.value}% off` : `${getCurrencySymbol()}${c.value}`}
                                 </Text>
                               </TouchableOpacity>
                             ))}
@@ -1578,7 +1588,7 @@ export default function CartModal({
                     </View>
                     <TextInput
                       style={{ flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, fontWeight: '600', color: '#1f2937' }}
-                      placeholder={manualDiscountType === 'percentage' ? '0%' : '₹0'}
+                      placeholder={manualDiscountType === 'percentage' ? '0%' : '{getCurrencySymbol()}0'}
                       placeholderTextColor="#9ca3af"
                       keyboardType="numeric"
                       value={manualDiscount}
@@ -1587,7 +1597,7 @@ export default function CartModal({
                   </View>
                   {manualDiscountAmount > 0 && (
                     <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '500' }}>
-                      Discount: -₹{fmtAmt(manualDiscountAmount)}
+                      Discount: -{getCurrencySymbol()}{fmtAmt(manualDiscountAmount)}
                     </Text>
                   )}
                 </View>
@@ -1617,47 +1627,47 @@ export default function CartModal({
               <View style={{ marginBottom: 10 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                   <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>₹{fmtAmt(subtotal)}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>{getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                 </View>
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Offers</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{fmtAmt(offerDiscount)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-{getCurrencySymbol()}{fmtAmt(offerDiscount)}</Text>
                   </View>
                 )}
                 {manualDiscountAmount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Manual Discount</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-₹{fmtAmt(manualDiscountAmount)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-{getCurrencySymbol()}{fmtAmt(manualDiscountAmount)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#b45309' }}>Loyalty ({redeemPoints} pts)</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#b45309' }}>-₹{fmtAmt(loyaltyDiscount)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#b45309' }}>-{getCurrencySymbol()}{fmtAmt(loyaltyDiscount)}</Text>
                   </View>
                 )}
-                {billing.serviceChargeAmount > 0 && (
+                {billing.serviceChargeAmount > 0 && isRoleAllowed(billingSettings.serviceChargeRoles) && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>{billingSettings.serviceChargeLabel || 'Service Charge'} ({billing.serviceChargeRate}%)</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{fmtAmt(billing.serviceChargeAmount)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>
                   </View>
                 )}
                 {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>₹{fmtAmt(tax.amount)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{getCurrencySymbol()}{fmtAmt(tax.amount)}</Text>
                   </View>
                 ))}
-                {billing.roundOffAmount !== 0 && (
+                {billing.roundOffAmount !== 0 && isRoleAllowed(billingSettings.roundOffRoles) && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>Round off</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{billing.roundOffAmount > 0 ? '+' : ''}₹{billing.roundOffAmount.toFixed(2)}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{billing.roundOffAmount > 0 ? '+' : ''}{getCurrencySymbol()}{billing.roundOffAmount.toFixed(2)}</Text>
                   </View>
                 )}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4 }}>
                   <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>Total</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>₹{fmtAmt(billing.grandTotal)}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>{getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
                 </View>
               </View>
               <TouchableOpacity
@@ -1666,7 +1676,7 @@ export default function CartModal({
                 activeOpacity={0.85}
               >
                 <Text style={styles.doneBtnText}>
-                  {billing.totalDiscount > 0 ? `Apply & Save ₹${fmtAmt(billing.totalDiscount)}` : 'Done'}
+                  {billing.totalDiscount > 0 ? `Apply & Save ${getCurrencySymbol()}${fmtAmt(billing.totalDiscount)}` : 'Done'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1693,54 +1703,54 @@ export default function CartModal({
               <View style={styles.breakdownBody}>
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownLabel}>Subtotal</Text>
-                  <Text style={styles.breakdownAmount}>₹{subtotal.toFixed(2)}</Text>
+                  <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{subtotal.toFixed(2)}</Text>
                 </View>
                 {offerDiscount > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Offers</Text>
-                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{offerDiscount.toFixed(2)}</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-{getCurrencySymbol()}{offerDiscount.toFixed(2)}</Text>
                   </View>
                 )}
                 {loyaltyDiscount > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Loyalty ({redeemPoints} pts)</Text>
-                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{loyaltyDiscount.toFixed(2)}</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-{getCurrencySymbol()}{loyaltyDiscount.toFixed(2)}</Text>
                   </View>
                 )}
                 {manualDiscountAmount > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Manual Discount</Text>
-                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-₹{manualDiscountAmount.toFixed(2)}</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-{getCurrencySymbol()}{manualDiscountAmount.toFixed(2)}</Text>
                   </View>
                 )}
-                {billing.serviceChargeAmount > 0 && (
+                {billing.serviceChargeAmount > 0 && isRoleAllowed(billingSettings.serviceChargeRoles) && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>{billingSettings.serviceChargeLabel || 'Service Charge'}{billing.serviceChargeRate ? ` ${billing.serviceChargeRate}%` : ''}</Text>
-                    <Text style={styles.breakdownAmount}>₹{billing.serviceChargeAmount.toFixed(2)}</Text>
+                    <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{billing.serviceChargeAmount.toFixed(2)}</Text>
                   </View>
                 )}
                 {billing.taxBreakdown.map((tax, i) => (
                   <View key={`tax-${i}`} style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
-                    <Text style={styles.breakdownAmount}>₹{tax.amount.toFixed(2)}</Text>
+                    <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{tax.amount.toFixed(2)}</Text>
                   </View>
                 ))}
-                {tipAmount > 0 && (
+                {tipAmount > 0 && isRoleAllowed(billingSettings.tipsRoles) && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Tip{tipPercentage ? ` ${tipPercentage}%` : ''}</Text>
-                    <Text style={styles.breakdownAmount}>₹{tipAmount.toFixed(2)}</Text>
+                    <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{tipAmount.toFixed(2)}</Text>
                   </View>
                 )}
-                {billing.roundOffAmount !== 0 && (
+                {billing.roundOffAmount !== 0 && isRoleAllowed(billingSettings.roundOffRoles) && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Round-off</Text>
-                    <Text style={styles.breakdownAmount}>{billing.roundOffAmount > 0 ? '+' : '-'}₹{Math.abs(billing.roundOffAmount).toFixed(2)}</Text>
+                    <Text style={styles.breakdownAmount}>{billing.roundOffAmount > 0 ? '+' : '-'}{getCurrencySymbol()}{Math.abs(billing.roundOffAmount).toFixed(2)}</Text>
                   </View>
                 )}
                 <View style={styles.breakdownDivider} />
                 <View style={styles.breakdownRow}>
                   <Text style={styles.breakdownGrandLabel}>Grand Total</Text>
-                  <Text style={styles.breakdownGrandValue}>₹{billing.grandTotal.toFixed(2)}</Text>
+                  <Text style={styles.breakdownGrandValue}>{getCurrencySymbol()}{billing.grandTotal.toFixed(2)}</Text>
                 </View>
               </View>
             </View>

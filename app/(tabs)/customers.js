@@ -24,6 +24,7 @@ import restaurantEvents from '../../services/restaurantEvents';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { hasFeatureAccess } from '../../utils/permissions';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 // ── Tabs ────────────────────────────────────────────
 const TABS = [
@@ -541,7 +542,7 @@ export default function CustomersScreen() {
   };
 
   const formatCurrency = (amount) => {
-    return `₹${(amount || 0).toLocaleString('en-IN')}`;
+    return `${getCurrencySymbol()}${(amount || 0).toLocaleString('en-IN')}`;
   };
 
   const getInitial = (name) => {
@@ -711,7 +712,7 @@ export default function CustomersScreen() {
             <Text style={styles.offerDetailText}>
               {item.discountType === 'percentage'
                 ? `${item.discountValue}% off`
-                : `₹${item.discountValue} off`}
+                : `${getCurrencySymbol()}${item.discountValue} off`}
             </Text>
           </View>
 
@@ -719,7 +720,7 @@ export default function CustomersScreen() {
           {item.minOrderValue > 0 && (
             <View style={styles.offerDetailChip}>
               <Ionicons name="cart-outline" size={12} color={Colors.textLight} />
-              <Text style={styles.offerDetailText}>Min ₹{item.minOrderValue}</Text>
+              <Text style={styles.offerDetailText}>Min {getCurrencySymbol()}{item.minOrderValue}</Text>
             </View>
           )}
 
@@ -727,7 +728,7 @@ export default function CustomersScreen() {
           {item.maxDiscount > 0 && (
             <View style={styles.offerDetailChip}>
               <Ionicons name="trending-down" size={12} color={Colors.textLight} />
-              <Text style={styles.offerDetailText}>Max ₹{item.maxDiscount}</Text>
+              <Text style={styles.offerDetailText}>Max {getCurrencySymbol()}{item.maxDiscount}</Text>
             </View>
           )}
 
@@ -1041,7 +1042,7 @@ export default function CustomersScreen() {
 
           {/* Min order */}
           <View style={styles.settingsFieldRow}>
-            <Text style={styles.loyaltyRuleLabel}>Minimum Order Amount (₹)</Text>
+            <Text style={styles.loyaltyRuleLabel}>Minimum Order Amount ({getCurrencySymbol()})</Text>
             <TextInput
               style={styles.formInput}
               placeholder="0"
@@ -1081,10 +1082,10 @@ export default function CustomersScreen() {
                 <Ionicons name="trending-up" size={20} color="#16a34a" />
                 <Text style={styles.loyaltyRuleTitle}>Earning Rules</Text>
               </View>
-              <Text style={styles.settingsHint}>For every ₹X spent, earn Y points</Text>
+              <Text style={styles.settingsHint}>For every {getCurrencySymbol()}X spent, earn Y points</Text>
               <View style={styles.row}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Amount (₹)</Text>
+                  <Text style={styles.miniLabel}>Amount ({getCurrencySymbol()})</Text>
                   <TextInput
                     style={styles.formInput}
                     placeholder="100"
@@ -1117,7 +1118,7 @@ export default function CustomersScreen() {
               </View>
               <View style={styles.row}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Points for ₹1</Text>
+                  <Text style={styles.miniLabel}>Points for {getCurrencySymbol()}1</Text>
                   <TextInput
                     style={styles.formInput}
                     placeholder="100"
@@ -1178,10 +1179,10 @@ export default function CustomersScreen() {
                 <Text style={styles.loyaltyRuleTitle}>Example Calculation</Text>
               </View>
               <Text style={styles.exampleText}>
-                Customer spends ₹1,000 → Earns {Math.floor(1000 / (ls.earnPerAmount || 100)) * (ls.pointsEarned || 0)} points
+                Customer spends {getCurrencySymbol()}1,000 → Earns {Math.floor(1000 / (ls.earnPerAmount || 100)) * (ls.pointsEarned || 0)} points
               </Text>
               <Text style={styles.exampleText}>
-                1 point = ₹{(1 / (ls.redemptionRate || 1)).toFixed(2)} redemption value
+                1 point = {getCurrencySymbol()}{(1 / (ls.redemptionRate || 1)).toFixed(2)} redemption value
               </Text>
               <Text style={styles.exampleText}>
                 Max redemption per order: {ls.maxRedemptionPercent || 20}% of order value
@@ -1485,7 +1486,7 @@ export default function CustomersScreen() {
                 </View>
                 <View style={styles.statBox}>
                   <Text style={styles.statBoxValue}>
-                    {c.totalOrders > 0 ? formatCurrency(Math.round((c.totalSpent || 0) / c.totalOrders)) : '₹0'}
+                    {c.totalOrders > 0 ? formatCurrency(Math.round((c.totalSpent || 0) / c.totalOrders)) : `${getCurrencySymbol()}0`}
                   </Text>
                   <Text style={styles.statBoxLabel}>Avg Order</Text>
                 </View>
@@ -1689,7 +1690,7 @@ export default function CustomersScreen() {
                         <View style={[styles.offerDetailChip, { backgroundColor: '#fef3c7' }]}>
                           <Ionicons name="pricetag" size={11} color="#d97706" />
                           <Text style={[styles.offerDetailText, { color: '#d97706' }]}>
-                            Offer -₹{order.discountAmount}
+                            Offer -{getCurrencySymbol()}{order.discountAmount}
                           </Text>
                         </View>
                       )}
@@ -1697,7 +1698,7 @@ export default function CustomersScreen() {
                         <View style={[styles.offerDetailChip, { backgroundColor: '#f5f3ff' }]}>
                           <Ionicons name="diamond" size={11} color="#7c3aed" />
                           <Text style={[styles.offerDetailText, { color: '#7c3aed' }]}>
-                            Loyalty -₹{order.loyaltyDiscount}
+                            Loyalty -{getCurrencySymbol()}{order.loyaltyDiscount}
                           </Text>
                         </View>
                       )}

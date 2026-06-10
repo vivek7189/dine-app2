@@ -20,6 +20,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { buildTokenSlipHTML, buildTokenSlipsDocumentHTML } from '../utils/tokenSlipHTML';
 import * as printerService from '../services/printerService';
 import { renderBill } from '../utils/printTemplates/index';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 export default function CashierInvoiceModal({
   visible,
@@ -77,7 +78,7 @@ export default function CashierInvoiceModal({
   const generateInvoiceText = () => {
     const itemsList = invoiceData.items.map(item => {
       const subline = getItemSubline(item);
-      const line = `${item.quantity} x ${item.name} @ ₹${item.price} = ₹${item.total.toFixed(2)}`;
+      const line = `${item.quantity} x ${item.name} @ ${getCurrencySymbol()}${item.price} = ${getCurrencySymbol()}${item.total.toFixed(2)}`;
       return subline ? `${line}\n  (${subline})` : line;
     }).join('\n');
 
@@ -111,26 +112,26 @@ ITEMS:
 --------------------------------
 ${itemsList}
 --------------------------------
-Subtotal:        ₹${invoiceData.subtotal.toFixed(2)}${invoiceData.appliedOffers?.length > 1
+Subtotal:        ${getCurrencySymbol()}${invoiceData.subtotal.toFixed(2)}${invoiceData.appliedOffers?.length > 1
 ? invoiceData.appliedOffers.map(ao => `
-Offer (${ao.name}): -₹${(ao.discountApplied || 0).toFixed(2)}`).join('')
+Offer (${ao.name}): -${getCurrencySymbol()}${(ao.discountApplied || 0).toFixed(2)}`).join('')
 : (invoiceData.offerDiscount > 0 ? `
-Offer Discount:  -₹${invoiceData.offerDiscount.toFixed(2)}` : '')}${invoiceData.manualDiscount > 0 ? `
-Manual Discount: -₹${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
-Loyalty Points:  -₹${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.couponDiscount > 0 ? `
-Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-₹${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
-Service Charge:  ₹${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
+Offer Discount:  -${getCurrencySymbol()}${invoiceData.offerDiscount.toFixed(2)}` : '')}${invoiceData.manualDiscount > 0 ? `
+Manual Discount: -${getCurrencySymbol()}${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
+Loyalty Points:  -${getCurrencySymbol()}${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.couponDiscount > 0 ? `
+Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-${getCurrencySymbol()}${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
+Service Charge:  ${getCurrencySymbol()}${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
 ? invoiceData.taxBreakdown.map(tax => `
-${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${tax.inclusive ? ' (incl.)' : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '') + (tax.inclusive ? ' (incl.)' : '')).length))}₹${tax.amount.toFixed(2)}`).join('')
+${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${tax.inclusive ? ' (incl.)' : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '') + (tax.inclusive ? ' (incl.)' : '')).length))}${getCurrencySymbol()}${tax.amount.toFixed(2)}`).join('')
 : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
-${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ₹${invoiceData.tax.toFixed(2)}` : '')}${invoiceData.tipAmount > 0 ? `
-Tip:             ₹${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
-Round-off:       ${invoiceData.roundOffAmount > 0 ? '+' : '-'}₹${Math.abs(invoiceData.roundOffAmount).toFixed(2)}` : ''}
+${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ${getCurrencySymbol()}${invoiceData.tax.toFixed(2)}` : '')}${invoiceData.tipAmount > 0 ? `
+Tip:             ${getCurrencySymbol()}${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
+Round-off:       ${invoiceData.roundOffAmount > 0 ? '+' : '-'}${getCurrencySymbol()}${Math.abs(invoiceData.roundOffAmount).toFixed(2)}` : ''}
 ================================
-GRAND TOTAL:     ₹${invoiceData.grandTotal.toFixed(2)}
+GRAND TOTAL:     ${getCurrencySymbol()}${invoiceData.grandTotal.toFixed(2)}
 ================================${invoiceData.cashReceived > 0 ? `
-Cash Received:   ₹${invoiceData.cashReceived.toFixed(2)}${invoiceData.changeReturned > 0 ? `
-Change:          ₹${invoiceData.changeReturned.toFixed(2)}` : ''}` : ''}
+Cash Received:   ${getCurrencySymbol()}${invoiceData.cashReceived.toFixed(2)}${invoiceData.changeReturned > 0 ? `
+Change:          ${getCurrencySymbol()}${invoiceData.changeReturned.toFixed(2)}` : ''}` : ''}
 Payment: ${(invoiceData.paymentMethod || 'cash').toUpperCase()}
 
 Thank you for your order!
@@ -147,7 +148,7 @@ Thank you for your order!
       restaurantName: invoiceData.restaurantName || '',
       dailyOrderId: invoiceData.orderNumber,
       id: invoiceData.orderId,
-      currencySymbol: invoiceData.currencySymbol || '₹',
+      currencySymbol: invoiceData.currencySymbol || getCurrencySymbol(),
       items: invoiceData.items || [],
       subtotal: invoiceData.subtotal || 0,
       taxBreakdown: invoiceData.taxBreakdown || [],
@@ -454,8 +455,8 @@ Thank you for your order!
                     ) : null}
                   </View>
                   <Text style={[styles.itemText, { width: 40, textAlign: 'center' }]}>{item.quantity}</Text>
-                  <Text style={[styles.itemText, { width: 60, textAlign: 'right' }]}>₹{item.price}</Text>
-                  <Text style={[styles.itemAmount, { width: 70, textAlign: 'right' }]}>₹{item.total.toFixed(2)}</Text>
+                  <Text style={[styles.itemText, { width: 60, textAlign: 'right' }]}>{getCurrencySymbol()}{item.price}</Text>
+                  <Text style={[styles.itemAmount, { width: 70, textAlign: 'right' }]}>{getCurrencySymbol()}{item.total.toFixed(2)}</Text>
                 </View>
               ))}
 
@@ -466,31 +467,31 @@ Thank you for your order!
               <View style={styles.totalsSection}>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Subtotal</Text>
-                  <Text style={styles.totalValue}>₹{invoiceData.subtotal.toFixed(2)}</Text>
+                  <Text style={styles.totalValue}>{getCurrencySymbol()}{invoiceData.subtotal.toFixed(2)}</Text>
                 </View>
                 {invoiceData.appliedOffers?.length > 1 ? (
                   invoiceData.appliedOffers.map((ao, i) => (
                     <View key={`offer-${i}`} style={styles.totalRow}>
                       <Text style={[styles.totalLabel, { color: '#10b981' }]}>Offer ({ao.name})</Text>
-                      <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{(ao.discountApplied || 0).toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, { color: '#10b981' }]}>-{getCurrencySymbol()}{(ao.discountApplied || 0).toFixed(2)}</Text>
                     </View>
                   ))
                 ) : invoiceData.offerDiscount > 0 ? (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#10b981' }]}>{invoiceData.offerName || 'Offer'} Discount</Text>
-                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.offerDiscount.toFixed(2)}</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-{getCurrencySymbol()}{invoiceData.offerDiscount.toFixed(2)}</Text>
                   </View>
                 ) : null}
                 {invoiceData.manualDiscount > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#10b981' }]}>Manual Discount</Text>
-                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.manualDiscount.toFixed(2)}</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-{getCurrencySymbol()}{invoiceData.manualDiscount.toFixed(2)}</Text>
                   </View>
                 )}
                 {invoiceData.loyaltyDiscount > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#10b981' }]}>Loyalty Points</Text>
-                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-₹{invoiceData.loyaltyDiscount.toFixed(2)}</Text>
+                    <Text style={[styles.totalValue, { color: '#10b981' }]}>-{getCurrencySymbol()}{invoiceData.loyaltyDiscount.toFixed(2)}</Text>
                   </View>
                 )}
                 {invoiceData.serviceChargeAmount > 0 && (
@@ -498,33 +499,33 @@ Thank you for your order!
                     <Text style={[styles.totalLabel, { color: '#7c3aed' }]}>
                       Service Charge{invoiceData.serviceChargeRate ? ` (${invoiceData.serviceChargeRate}%)` : ''}
                     </Text>
-                    <Text style={[styles.totalValue, { color: '#7c3aed' }]}>₹{invoiceData.serviceChargeAmount.toFixed(2)}</Text>
+                    <Text style={[styles.totalValue, { color: '#7c3aed' }]}>{getCurrencySymbol()}{invoiceData.serviceChargeAmount.toFixed(2)}</Text>
                   </View>
                 )}
                 {invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0 ? (
                   invoiceData.taxBreakdown.map((tax, i) => (
                     <View key={`tax-${i}`} style={styles.totalRow}>
                       <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
-                      <Text style={styles.totalValue}>₹{tax.amount.toFixed(2)}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{tax.amount.toFixed(2)}</Text>
                     </View>
                   ))
                 ) : invoiceData.taxEnabled && invoiceData.tax > 0 ? (
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>{invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}</Text>
-                    <Text style={styles.totalValue}>₹{invoiceData.tax.toFixed(2)}</Text>
+                    <Text style={styles.totalValue}>{getCurrencySymbol()}{invoiceData.tax.toFixed(2)}</Text>
                   </View>
                 ) : null}
                 {invoiceData.tipAmount > 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>
-                    <Text style={[styles.totalValue, { color: '#d97706' }]}>₹{invoiceData.tipAmount.toFixed(2)}</Text>
+                    <Text style={[styles.totalValue, { color: '#d97706' }]}>{getCurrencySymbol()}{invoiceData.tipAmount.toFixed(2)}</Text>
                   </View>
                 )}
                 {invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 && (
                   <View style={styles.totalRow}>
                     <Text style={[styles.totalLabel, { color: '#9ca3af' }]}>Round-off</Text>
                     <Text style={[styles.totalValue, { color: '#9ca3af' }]}>
-                      {invoiceData.roundOffAmount > 0 ? '+' : '-'}₹{Math.abs(invoiceData.roundOffAmount).toFixed(2)}
+                      {invoiceData.roundOffAmount > 0 ? '+' : '-'}{getCurrencySymbol()}{Math.abs(invoiceData.roundOffAmount).toFixed(2)}
                     </Text>
                   </View>
                 )}
@@ -533,7 +534,7 @@ Thank you for your order!
               {/* Grand Total */}
               <View style={styles.grandTotalSection}>
                 <Text style={styles.grandTotalLabel}>TOTAL</Text>
-                <Text style={styles.grandTotalValue}>₹{invoiceData.grandTotal.toFixed(2)}</Text>
+                <Text style={styles.grandTotalValue}>{getCurrencySymbol()}{invoiceData.grandTotal.toFixed(2)}</Text>
               </View>
 
               {/* Payment Info */}
@@ -545,7 +546,7 @@ Thank you for your order!
                     invoiceData.splitPayments.map((sp, i) => (
                       <View key={i} style={styles.totalRow}>
                         <Text style={styles.totalLabel}>{(sp.method || sp.paymentMethod || '').toUpperCase()}</Text>
-                        <Text style={styles.totalValue}>₹{(sp.amount || 0).toFixed(2)}</Text>
+                        <Text style={styles.totalValue}>{getCurrencySymbol()}{(sp.amount || 0).toFixed(2)}</Text>
                       </View>
                     ))
                   ) : (
@@ -558,12 +559,12 @@ Thank you for your order!
                     <>
                       <View style={styles.totalRow}>
                         <Text style={styles.totalLabel}>Cash Received</Text>
-                        <Text style={styles.totalValue}>₹{invoiceData.cashReceived.toFixed(2)}</Text>
+                        <Text style={styles.totalValue}>{getCurrencySymbol()}{invoiceData.cashReceived.toFixed(2)}</Text>
                       </View>
                       {invoiceData.changeReturned > 0 && (
                         <View style={styles.totalRow}>
                           <Text style={[styles.totalLabel, { color: '#3b82f6' }]}>Change</Text>
-                          <Text style={[styles.totalValue, { color: '#3b82f6' }]}>₹{invoiceData.changeReturned.toFixed(2)}</Text>
+                          <Text style={[styles.totalValue, { color: '#3b82f6' }]}>{getCurrencySymbol()}{invoiceData.changeReturned.toFixed(2)}</Text>
                         </View>
                       )}
                     </>

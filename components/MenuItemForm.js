@@ -13,6 +13,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 // Picker options per business type
 const SPIRIT_CATEGORIES = ['Whiskey', 'Vodka', 'Rum', 'Gin', 'Beer', 'Wine', 'Cocktail', 'Mocktail', 'Shots', 'Mixer', 'Bar Snack'];
@@ -362,7 +363,7 @@ export default function MenuItemForm({
                           <Text style={styles.zoneRuleName}>{rule.name}</Text>
                           <TextInput
                             style={[styles.pricingRuleInput, styles.zoneRuleInput, hasCustom ? styles.pricingRuleInputActive : styles.zoneRuleInputInherited]}
-                            placeholder={`₹${inheritedPrice}`}
+                            placeholder={`${getCurrencySymbol()}${inheritedPrice}`}
                             placeholderTextColor="#94a3b8"
                             keyboardType="numeric"
                             value={val}

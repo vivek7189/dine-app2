@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity, StyleSheet, Linking, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 /**
  * Card showing a delivery assignment with order details and accept/reject buttons.
@@ -56,7 +57,7 @@ export default function DeliveryCard({ delivery, onAccept, onReject, showActions
           </View>
         </View>
         <Text style={styles.amount}>
-          {totalAmount ? `₹${Number(totalAmount).toFixed(0)}` : ''}
+          {totalAmount ? `${getCurrencySymbol()}${Number(totalAmount).toFixed(0)}` : ''}
         </Text>
       </View>
 

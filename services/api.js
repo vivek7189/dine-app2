@@ -402,7 +402,7 @@ class ApiClient {
     if (!this.isOfflineEnabled()) {
       return this.request(endpoint, {
         method,
-        body: JSON.stringify(data),
+        data,
       });
     }
 
@@ -412,7 +412,7 @@ class ApiClient {
       try {
         const result = await this.request(endpoint, {
           method,
-          body: JSON.stringify(data),
+          data,
         });
         // Call onSuccess callback with server response
         if (onSuccess) {
@@ -584,6 +584,8 @@ class ApiClient {
    */
   _triggerBackgroundSeed(restaurantId) {
     if (restaurantId) {
+      // Fetch currency settings immediately (before seed delay) so UI shows correct symbol
+      this._prefetchCurrencySettings(restaurantId);
       // Small delay to let navigation complete first
       setTimeout(() => {
         this.seedOfflineData(restaurantId).catch(e =>
@@ -591,6 +593,22 @@ class ApiClient {
         );
       }, 3000);
     }
+  }
+
+  /**
+   * Pre-fetch and cache currency settings so formatCurrency() uses correct symbol.
+   * Called immediately after login — non-blocking.
+   */
+  async _prefetchCurrencySettings(restaurantId) {
+    try {
+      const response = await this.getCurrencySettings(restaurantId);
+      if (response?.success && response?.currencySettings) {
+        await AsyncStorage.setItem('currencySettings', JSON.stringify(response.currencySettings));
+        // Update the in-memory formatCurrency config
+        const { setCurrencyConfig } = require('../utils/formatCurrency');
+        setCurrencyConfig(response.currencySettings);
+      }
+    } catch {} // Non-blocking
   }
 
   /**
@@ -2758,10 +2776,10 @@ class ApiClient {
     const query = Object.entries(filters).filter(([,v]) => v).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
     return this.request(`/api/parking/tickets/${restaurantId}${query ? `?${query}` : ''}`);
   }
-  createParkingEntry(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/entry`, { method: 'POST', body: data }); }
-  processParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit`, { method: 'POST', body: data }); }
-  confirmParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit/confirm`, { method: 'POST', body: data }); }
-  cancelParkingTicket(restaurantId, ticketId, reason) { return this.request(`/api/parking/tickets/${restaurantId}/${ticketId}/cancel`, { method: 'POST', body: { reason } }); }
+  createParkingEntry(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/entry`, { method: 'POST', data }); }
+  processParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit`, { method: 'POST', data }); }
+  confirmParkingExit(restaurantId, data) { return this.request(`/api/parking/tickets/${restaurantId}/exit/confirm`, { method: 'POST', data }); }
+  cancelParkingTicket(restaurantId, ticketId, reason) { return this.request(`/api/parking/tickets/${restaurantId}/${ticketId}/cancel`, { method: 'POST', data: { reason } }); }
   recognizeLicensePlate(restaurantId, formData) {
     return this.request(`/api/parking/ai/recognize-plate/${restaurantId}`, {
       method: 'POST',
@@ -2775,25 +2793,25 @@ class ApiClient {
     return this.request(`/api/delivery/${restaurantId}/partner/${staffId}/active`, { skipCache: true });
   }
   respondToDelivery(restaurantId, orderId, action) {
-    return this.request(`/api/delivery/${restaurantId}/respond`, { method: 'POST', body: { orderId, action } });
+    return this.request(`/api/delivery/${restaurantId}/respond`, { method: 'POST', data: { orderId, action } });
   }
   markDeliveryPickedUp(restaurantId, orderId) {
-    return this.request(`/api/delivery/${restaurantId}/mark-picked-up`, { method: 'POST', body: { orderId } });
+    return this.request(`/api/delivery/${restaurantId}/mark-picked-up`, { method: 'POST', data: { orderId } });
   }
   markDeliveryDelivered(restaurantId, orderId, paymentInfo = {}) {
     return this.request(`/api/delivery/${restaurantId}/mark-delivered`, {
       method: 'POST',
-      body: { orderId, paymentCollected: paymentInfo.paymentCollected, paymentMethod: paymentInfo.paymentMethod },
+      data: { orderId, paymentCollected: paymentInfo.paymentCollected, paymentMethod: paymentInfo.paymentMethod },
     });
   }
   registerDeliveryToken(restaurantId, token, platform) {
-    return this.request(`/api/delivery/${restaurantId}/register-token`, { method: 'POST', body: { token, platform } });
+    return this.request(`/api/delivery/${restaurantId}/register-token`, { method: 'POST', data: { token, platform } });
   }
   getDeliveryPartners(restaurantId) {
     return this.request(`/api/delivery/${restaurantId}/partners`);
   }
   assignDeliveryPartner(restaurantId, orderId, staffId, staffName) {
-    return this.request(`/api/delivery/${restaurantId}/assign`, { method: 'POST', body: { orderId, staffId, staffName } });
+    return this.request(`/api/delivery/${restaurantId}/assign`, { method: 'POST', data: { orderId, staffId, staffName } });
   }
   getActiveDeliveries(restaurantId) {
     return this.request(`/api/delivery/${restaurantId}/active`, { skipCache: true });
@@ -2813,13 +2831,13 @@ class ApiClient {
     return this.request(`/api/bar/bottles/${restaurantId}${qs ? '?' + qs : ''}`);
   }
   createBarBottle(restaurantId, data) {
-    return this.request(`/api/bar/bottles/${restaurantId}`, { method: 'POST', body: data });
+    return this.request(`/api/bar/bottles/${restaurantId}`, { method: 'POST', data });
   }
   updateBarBottle(restaurantId, bottleId, data) {
-    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}`, { method: 'PUT', body: data });
+    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}`, { method: 'PUT', data });
   }
   recordBarWastage(restaurantId, bottleId, data) {
-    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}/wastage`, { method: 'POST', body: data });
+    return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}/wastage`, { method: 'POST', data });
   }
   deleteBarBottle(restaurantId, bottleId) {
     return this.request(`/api/bar/bottles/${restaurantId}/${bottleId}`, { method: 'DELETE' });
@@ -2828,18 +2846,18 @@ class ApiClient {
     return this.request(`/api/bar/reconciliation/${restaurantId}`);
   }
   openBarReconciliation(restaurantId, data) {
-    return this.request(`/api/bar/reconciliation/${restaurantId}`, { method: 'POST', body: data });
+    return this.request(`/api/bar/reconciliation/${restaurantId}`, { method: 'POST', data });
   }
   closeBarReconciliation(restaurantId, id, data) {
-    return this.request(`/api/bar/reconciliation/${restaurantId}/${id}`, { method: 'PUT', body: data });
+    return this.request(`/api/bar/reconciliation/${restaurantId}/${id}`, { method: 'PUT', data });
   }
 
   // Discount Approval
   requestDiscountApproval(restaurantId, data) {
-    return this.request(`/api/discount-approval/${restaurantId}/request`, { method: 'POST', body: data });
+    return this.request(`/api/discount-approval/${restaurantId}/request`, { method: 'POST', data });
   }
   verifyDiscountApproval(restaurantId, data) {
-    return this.request(`/api/discount-approval/${restaurantId}/verify`, { method: 'POST', body: data });
+    return this.request(`/api/discount-approval/${restaurantId}/verify`, { method: 'POST', data });
   }
 }
 

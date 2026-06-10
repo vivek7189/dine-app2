@@ -25,6 +25,7 @@ import { hasPin, setPin, clearPin } from '../../services/pinLock';
 import lanClient from '../../services/lanClient';
 import { resolveFeaturePermissions } from '../../utils/permissions';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
+import { useTabModes } from '../../contexts/TabModeContext';
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -49,6 +50,9 @@ export default function MoreScreen() {
   const [switchingRestaurantId, setSwitchingRestaurantId] = useState(null);
   const [lanPaired, setLanPaired] = useState(false);
   const [lanConfig, setLanConfig] = useState(null);
+  const [displayExpanded, setDisplayExpanded] = useState(false);
+  const displayChevronAnim = useRef(new Animated.Value(0)).current;
+  const { modes: tabModes, setMode: setTabMode } = useTabModes();
 
   useEffect(() => {
     loadUserData();
@@ -246,9 +250,16 @@ export default function MoreScreen() {
     setConnectivityExpanded(!connectivityExpanded);
   };
 
+  const toggleDisplay = () => {
+    const toValue = displayExpanded ? 0 : 1;
+    Animated.spring(displayChevronAnim, { toValue, useNativeDriver: true, tension: 200, friction: 15 }).start();
+    setDisplayExpanded(!displayExpanded);
+  };
+
   const chevronRotation = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
   const bizChevronRotation = bizChevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
   const connChevronRotation = connChevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+  const displayChevronRotation = displayChevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 
   const handleNavigate = (route) => {
     router.push(route);
@@ -435,6 +446,51 @@ export default function MoreScreen() {
             )}
           </View>
         )}
+
+        {/* ── Display — tab view mode toggles ──────────────── */}
+        <View style={styles.sectionContainer}>
+          <TouchableOpacity onPress={toggleDisplay} activeOpacity={0.7} style={styles.collapsibleHeader}>
+            <Ionicons name="eye-outline" size={18} color="#8b7355" />
+            <Text style={styles.collapsibleHeaderText}>Display</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ fontSize: 11, color: '#9ca3af', marginRight: 8 }}>View Modes</Text>
+            <Animated.View style={{ transform: [{ rotate: displayChevronRotation }] }}>
+              <Ionicons name="chevron-down" size={18} color="#9ca3af" />
+            </Animated.View>
+          </TouchableOpacity>
+          {displayExpanded && (
+          <View style={[styles.card, { marginTop: 10 }]}>
+            <Text style={{ fontSize: 12, color: '#9ca3af', paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }}>
+              Switch tabs between Web View (modern) and Native (classic) mode
+            </Text>
+            {[
+              { key: 'home', label: 'Home', icon: 'home-outline' },
+              { key: 'tables', label: 'Tables', icon: 'restaurant-outline' },
+              { key: 'menu', label: 'Menu', icon: 'fast-food-outline' },
+              { key: 'orders', label: 'Orders', icon: 'receipt-outline' },
+              { key: 'billing', label: 'Billing', icon: 'card-outline' },
+            ].map((tab, idx, arr) => (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.connectRow, idx === arr.length - 1 && { borderBottomWidth: 0 }]}
+                onPress={() => setTabMode(tab.key, tabModes[tab.key] === 'webview' ? 'native' : 'webview')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.connectLeft}>
+                  <Ionicons name={tab.icon} size={18} color={tabModes[tab.key] === 'webview' ? '#f59e0b' : '#9ca3af'} />
+                  <View>
+                    <Text style={styles.connectLabel}>{tab.label}</Text>
+                    <Text style={styles.connectHint}>{tabModes[tab.key] === 'webview' ? 'Web View' : 'Native'}</Text>
+                  </View>
+                </View>
+                <View style={[styles.toggle, tabModes[tab.key] === 'webview' && styles.toggleOn]}>
+                  <View style={[styles.toggleKnob, tabModes[tab.key] === 'webview' && styles.toggleKnobOn]} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+          )}
+        </View>
 
         {/* ── Connectivity — collapsible ──────────────── */}
         <View style={styles.sectionContainer}>

@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 /**
  * Expandable billing panels for each feature.
@@ -79,7 +80,7 @@ export default function BillingPanels({
                 setChangeAmount(Math.max(0, Math.round((d - grandTotal) * 100) / 100));
               }}
             >
-              <Text style={styles.denomText}>{d >= 1000 ? `${d / 1000}K` : `₹${d}`}</Text>
+              <Text style={styles.denomText}>{d >= 1000 ? `${d / 1000}K` : `${getCurrencySymbol()}${d}`}</Text>
             </TouchableOpacity>
           ))}
           <TouchableOpacity
@@ -96,7 +97,7 @@ export default function BillingPanels({
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Change to Return:</Text>
             <Text style={[styles.infoValue, { color: changeAmount > 0 ? '#059669' : '#ef4444' }]}>
-              ₹{changeAmount.toFixed(2)}
+              {getCurrencySymbol()}{changeAmount.toFixed(2)}
             </Text>
           </View>
         )}
@@ -132,7 +133,7 @@ export default function BillingPanels({
             </View>
             <TextInput
               style={styles.splitInput}
-              placeholder="₹ Amount"
+              placeholder={`${getCurrencySymbol()} Amount`}
               placeholderTextColor="#9ca3af"
               keyboardType="numeric"
               value={sp.amount ? String(sp.amount) : ''}
@@ -158,7 +159,7 @@ export default function BillingPanels({
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Remaining:</Text>
             <Text style={[styles.infoValue, { color: remaining > 0.01 ? '#ef4444' : '#059669' }]}>
-              ₹{remaining.toFixed(2)}
+              {getCurrencySymbol()}{remaining.toFixed(2)}
             </Text>
           </View>
         )}
@@ -200,7 +201,7 @@ export default function BillingPanels({
         {tipAmount > 0 && (
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Tip:</Text>
-            <Text style={[styles.infoValue, { color: '#ec4899' }]}>₹{tipAmount.toFixed(2)}</Text>
+            <Text style={[styles.infoValue, { color: '#ec4899' }]}>{getCurrencySymbol()}{tipAmount.toFixed(2)}</Text>
           </View>
         )}
       </View>
@@ -216,7 +217,7 @@ export default function BillingPanels({
         {customerData?.outstandingBalance > 0 && (
           <View style={[styles.infoRow, { marginBottom: 8, backgroundColor: '#fef2f2', padding: 8, borderRadius: 6 }]}>
             <Text style={{ fontSize: fs(12), color: '#dc2626' }}>Existing Balance:</Text>
-            <Text style={{ fontSize: fs(13), fontWeight: '700', color: '#dc2626' }}>₹{customerData.outstandingBalance}</Text>
+            <Text style={{ fontSize: fs(13), fontWeight: '700', color: '#dc2626' }}>{getCurrencySymbol()}{customerData.outstandingBalance}</Text>
           </View>
         )}
         <TextInput
@@ -230,7 +231,7 @@ export default function BillingPanels({
         {partialPayAmount ? (
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Outstanding after:</Text>
-            <Text style={[styles.infoValue, { color: '#f59e0b' }]}>₹{outstanding.toFixed(2)}</Text>
+            <Text style={[styles.infoValue, { color: '#f59e0b' }]}>{getCurrencySymbol()}{outstanding.toFixed(2)}</Text>
           </View>
         ) : null}
       </View>
@@ -258,7 +259,7 @@ export default function BillingPanels({
             >
               <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#14b8a6' : '#9ca3af'} />
               <Text style={{ flex: 1, fontSize: fs(13), color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
             </TouchableOpacity>
           );
         })}
@@ -306,7 +307,7 @@ export default function BillingPanels({
             >
               <Ionicons name={isSelected ? 'checkbox' : 'square-outline'} size={20} color={isSelected ? '#ef4444' : '#9ca3af'} />
               <Text style={{ flex: 1, fontSize: fs(13), color: Colors.textDark }}>{item.quantity}x {item.name}</Text>
-              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+              <Text style={{ fontSize: fs(13), fontWeight: '600', color: Colors.textDark }}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
             </TouchableOpacity>
           );
         })}
@@ -339,12 +340,12 @@ export default function BillingPanels({
       <View style={styles.panel}>
         <Text style={styles.title}>Round-off</Text>
         <Text style={{ fontSize: fs(13), color: '#6b7280', marginBottom: 8 }}>
-          Bills will be automatically rounded to the nearest ₹{billingSettings.roundOffTo || 1}.
+          Bills will be automatically rounded to the nearest {getCurrencySymbol()}{billingSettings.roundOffTo || 1}.
         </Text>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Round-off amount:</Text>
           <Text style={[styles.infoValue, { color: roundOffAmount >= 0 ? '#059669' : '#ef4444' }]}>
-            {roundOffAmount >= 0 ? '+' : ''}₹{roundOffAmount.toFixed(2)}
+            {roundOffAmount >= 0 ? '+' : ''}{getCurrencySymbol()}{roundOffAmount.toFixed(2)}
           </Text>
         </View>
       </View>
@@ -362,7 +363,7 @@ export default function BillingPanels({
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Amount:</Text>
-          <Text style={[styles.infoValue, { color: '#059669' }]}>₹{serviceChargeAmount.toFixed(2)}</Text>
+          <Text style={[styles.infoValue, { color: '#059669' }]}>{getCurrencySymbol()}{serviceChargeAmount.toFixed(2)}</Text>
         </View>
       </View>
     );

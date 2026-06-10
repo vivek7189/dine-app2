@@ -631,7 +631,19 @@ export const generateBillText = (invoiceData) => {
   if (bl.showWaiter !== false && invoiceData.waiterName) lines.push(leftRight('Waiter', invoiceData.waiterName));
   if (bl.showCustomer !== false && invoiceData.customerName) lines.push(leftRight('Customer', invoiceData.customerName));
   if (bl.showOrderType !== false && invoiceData.orderType) lines.push(leftRight('Order Type', invoiceData.orderType));
-  lines.push(LINE);
+  // Split Bill banner
+  if (invoiceData.splitInfo) {
+    const si = invoiceData.splitInfo;
+    const methodLabel = si.method === 'equal' ? 'Equal Split' : si.method === 'by-item' ? 'Split by Item' : 'Split by Amount';
+    lines.push(DOUBLE_LINE);
+    lines.push(`<CM>SPLIT BILL</CM>`);
+    const nameDisplay = si.guestName ? `${si.guestName} (${si.guestLabel})` : si.guestLabel;
+    lines.push(`<CM>${nameDisplay} of ${si.guestCount}</CM>`);
+    lines.push(`<C>(${methodLabel})</C>`);
+    lines.push(DOUBLE_LINE);
+  } else {
+    lines.push(LINE);
+  }
 
   // ── Item table header ──
   lines.push(`<M>${leftRight('Item Name', 'Price  Amount')}</M>`);
@@ -654,8 +666,10 @@ export const generateBillText = (invoiceData) => {
     if (item.selectedCustomizations?.length > 0) {
       item.selectedCustomizations.forEach(c => lines.push(`  + ${c.name || c}`));
     }
-    // Qty, Price, Amount line
-    const qtyStr = `  x${qty}`;
+    // Qty, Price, Amount line — weight-based items show weight instead of qty
+    const qtyStr = item.soldByWeight && item.itemWeight
+      ? `  ${item.itemWeight}${item.weightUnit || 'kg'}`
+      : `  x${qty}`;
     const priceStr = fmt(price);
     const totalStr = fmt(total);
     const rightPart = `${priceStr}  ${totalStr}`;

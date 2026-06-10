@@ -19,6 +19,7 @@ import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import { useOffline } from '../../hooks/useOffline';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 export default function BarBillingScreen() {
   const router = useRouter();
@@ -351,7 +352,7 @@ export default function BarBillingScreen() {
               <Ionicons name="fast-food-outline" size={12} color={Colors.textMedium} />
               <Text style={styles.seatsText}>{itemCount} item{itemCount !== 1 ? 's' : ''}</Text>
               {total > 0 && (
-                <Text style={styles.tabTotal}>₹{total.toFixed(0)}</Text>
+                <Text style={styles.tabTotal}>{getCurrencySymbol()}{total.toFixed(0)}</Text>
               )}
             </View>
 
@@ -435,7 +436,7 @@ export default function BarBillingScreen() {
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Ionicons name="cash-outline" size={15} color="#10b981" />
-            <Text style={styles.statValue}>₹{stats.totalRunning.toFixed(0)}</Text>
+            <Text style={styles.statValue}>{getCurrencySymbol()}{stats.totalRunning.toFixed(0)}</Text>
             <Text style={styles.statLabel}>Running</Text>
           </View>
         </View>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useResponsive } from '../../hooks/useResponsive';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 /**
  * Compact billing summary bar with flex-wrap chips for line items
@@ -19,7 +20,7 @@ export default function BillingSummaryBar({
   tipPercentage = null,
   roundOffAmount = 0,
   grandTotal = 0,
-  currencySymbol = '₹',
+  currencySymbol = getCurrencySymbol(),
   offerDiscount = 0,
   offerName = null,
   appliedOffers = [],

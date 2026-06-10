@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 export default function UpiQrModal({
   visible,
@@ -22,7 +23,7 @@ export default function UpiQrModal({
   upiId = '',
   upiQrCodeUrl = '',
   upiDisplayName = '',
-  currencySymbol = '₹',
+  currencySymbol = getCurrencySymbol(),
 }) {
   const insets = useSafeAreaInsets();
   const [copied, setCopied] = useState(false);

@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet } from 'react-native';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 /**
  * Displays the list of items in a delivery order.
@@ -27,7 +28,7 @@ export default function DeliveryOrderDetails({ items }) {
             {item.notes && <Text style={styles.notes}>{item.notes}</Text>}
           </View>
           <Text style={styles.itemPrice}>
-            ₹{((item.price || 0) * (item.quantity || 1)).toFixed(0)}
+            {getCurrencySymbol()}{((item.price || 0) * (item.quantity || 1)).toFixed(0)}
           </Text>
         </View>
       ))}

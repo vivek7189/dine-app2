@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 export default function BarMenuModal({ visible, onClose, menuItems, activeTab, onAddItem, onUpdateQty }) {
   const { gridColumns } = useResponsive();
@@ -101,7 +102,7 @@ export default function BarMenuModal({ visible, onClose, menuItems, activeTab, o
           )}
 
           {/* Price */}
-          <Text style={styles.menuItemPrice}>₹{(item.price || 0).toFixed(2)}</Text>
+          <Text style={styles.menuItemPrice}>{getCurrencySymbol()}{(item.price || 0).toFixed(2)}</Text>
 
           {/* Qty badge or Add button */}
           {qtyInTab > 0 ? (
@@ -227,7 +228,7 @@ export default function BarMenuModal({ visible, onClose, menuItems, activeTab, o
         <View style={styles.footer}>
           <View style={styles.footerInfo}>
             <Text style={styles.footerItemCount}>{tabItemCount} items</Text>
-            <Text style={styles.footerSubtotal}>₹{tabSubtotal.toFixed(2)}</Text>
+            <Text style={styles.footerSubtotal}>{getCurrencySymbol()}{tabSubtotal.toFixed(2)}</Text>
           </View>
           <TouchableOpacity style={styles.doneButton} onPress={handleClose}>
             <Ionicons name="checkmark" size={20} color="#fff" />

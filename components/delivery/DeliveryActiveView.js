@@ -2,6 +2,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Linking, Platform, Alert, Scr
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import DeliveryOrderDetails from './DeliveryOrderDetails';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 /**
  * Active delivery view shown after accepting an order.
@@ -106,7 +107,7 @@ export default function DeliveryActiveView({ delivery, onPickedUp, onDelivered, 
       <View style={styles.section}>
         <View style={styles.orderHeader}>
           <Text style={styles.orderNumber}>Order #{orderNumber}</Text>
-          <Text style={styles.amount}>₹{Number(totalAmount || 0).toFixed(0)}</Text>
+          <Text style={styles.amount}>{getCurrencySymbol()}{Number(totalAmount || 0).toFixed(0)}</Text>
         </View>
         <Text style={styles.itemCount}>
           {items?.length || 0} item{(items?.length || 0) !== 1 ? 's' : ''}

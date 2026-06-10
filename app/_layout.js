@@ -9,6 +9,7 @@ import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineProvider, useOffline } from '../hooks/useOffline';
 import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
+import { loadCurrencyConfig } from '../utils/formatCurrency';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -100,6 +101,11 @@ export default function RootLayout() {
       if (state === 'active') checkForUpdate();
     });
     return () => sub.remove();
+  }, []);
+
+  // Load cached currency settings from AsyncStorage on startup
+  useEffect(() => {
+    loadCurrencyConfig();
   }, []);
 
   useEffect(() => {

@@ -14,6 +14,7 @@ import { getCached, setCache } from '../services/cacheManager';
 import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, userRole }) {
   const { modalWidth } = useResponsive();
@@ -202,7 +203,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                               </Text>
                             ) : null}
                           </View>
-                          <Text style={styles.itemPrice}>₹{itemTotal.toFixed(2)}</Text>
+                          <Text style={styles.itemPrice}>{getCurrencySymbol()}{itemTotal.toFixed(2)}</Text>
                         </View>
                       );
                     })
@@ -218,56 +219,56 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 <View style={styles.totalCard}>
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>Subtotal</Text>
-                    <Text style={styles.totalValue}>₹{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
+                    <Text style={styles.totalValue}>{getCurrencySymbol()}{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
                   </View>
                   {order.discountAmount > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>
                         {typeof order.appliedOffer === 'string' ? order.appliedOffer : (order.appliedOffer?.name || order.selectedOfferName || 'Offer')}
                       </Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.discountAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.discountAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {order.manualDiscount > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>Manual Discount</Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.manualDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.manualDiscount.toFixed(2)}</Text>
                     </View>
                   )}
                   {order.loyaltyDiscount > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>Loyalty</Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−₹{order.loyaltyDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.loyaltyDiscount.toFixed(2)}</Text>
                     </View>
                   )}
                   {(order.serviceChargeAmount || 0) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={styles.totalLabel}>Service Charge{order.serviceChargeRate ? ` (${order.serviceChargeRate}%)` : ''}</Text>
-                      <Text style={styles.totalValue}>₹{order.serviceChargeAmount.toFixed(2)}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{order.serviceChargeAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {(order.taxAmount || 0) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={styles.totalLabel}>{order.taxBreakdown?.length > 0 ? order.taxBreakdown.map(t => `${t.name}${t.rate ? ` ${t.rate}%` : ''}`).join(', ') : 'Tax'}</Text>
-                      <Text style={styles.totalValue}>₹{order.taxAmount.toFixed(2)}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{order.taxAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {(order.tipAmount || 0) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>
-                      <Text style={[styles.totalValue, { color: '#d97706' }]}>₹{order.tipAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, { color: '#d97706' }]}>{getCurrencySymbol()}{order.tipAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   {order.roundOffAmount != null && order.roundOffAmount !== 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, { color: '#9ca3af' }]}>Round Off</Text>
-                      <Text style={[styles.totalValue, { color: '#9ca3af' }]}>{order.roundOffAmount > 0 ? '+' : ''}₹{order.roundOffAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, { color: '#9ca3af' }]}>{order.roundOffAmount > 0 ? '+' : ''}{getCurrencySymbol()}{order.roundOffAmount.toFixed(2)}</Text>
                     </View>
                   )}
                   <View style={styles.totalDivider} />
                   <View style={styles.grandTotalRow}>
                     <Text style={styles.grandTotalLabel}>Total</Text>
-                    <Text style={styles.grandTotalValue}>₹{finalTotal.toFixed(2)}</Text>
+                    <Text style={styles.grandTotalValue}>{getCurrencySymbol()}{finalTotal.toFixed(2)}</Text>
                   </View>
                 </View>
               </>

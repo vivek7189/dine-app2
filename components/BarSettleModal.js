@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 const PAYMENT_METHODS = [
   { key: 'cash', label: 'Cash', icon: 'cash-outline', color: '#10b981' },
@@ -137,7 +138,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
                   <View key={item.menuItemId || idx} style={styles.itemRow}>
                     <Text style={styles.itemQty}>{item.quantity}×</Text>
                     <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.itemAmount}>₹{(item.price * item.quantity).toFixed(2)}</Text>
+                    <Text style={styles.itemAmount}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(2)}</Text>
                   </View>
                 ))}
               </View>
@@ -146,7 +147,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
             {/* Subtotal */}
             <View style={styles.subtotalRow}>
               <Text style={styles.subtotalLabel}>Subtotal</Text>
-              <Text style={styles.subtotalValue}>₹{subtotal.toFixed(2)}</Text>
+              <Text style={styles.subtotalValue}>{getCurrencySymbol()}{subtotal.toFixed(2)}</Text>
             </View>
 
             {/* Discount Section */}
@@ -158,7 +159,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
                     style={[styles.discountTypeBtn, discountType === 'flat' && styles.discountTypeBtnActive]}
                     onPress={() => setDiscountType('flat')}
                   >
-                    <Text style={[styles.discountTypeText, discountType === 'flat' && styles.discountTypeTextActive]}>₹</Text>
+                    <Text style={[styles.discountTypeText, discountType === 'flat' && styles.discountTypeTextActive]}>{getCurrencySymbol()}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.discountTypeBtn, discountType === 'percentage' && styles.discountTypeBtnActive]}
@@ -177,7 +178,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
                 />
               </View>
               {discountAmount > 0 && (
-                <Text style={styles.discountPreview}>-₹{discountAmount.toFixed(2)} discount applied</Text>
+                <Text style={styles.discountPreview}>-{getCurrencySymbol()}{discountAmount.toFixed(2)} discount applied</Text>
               )}
             </View>
 
@@ -187,7 +188,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
                 {taxBreakdown.map((tax, idx) => (
                   <View key={idx} style={styles.taxRow}>
                     <Text style={styles.taxLabel}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
-                    <Text style={styles.taxValue}>₹{tax.amount.toFixed(2)}</Text>
+                    <Text style={styles.taxValue}>{getCurrencySymbol()}{tax.amount.toFixed(2)}</Text>
                   </View>
                 ))}
               </View>
@@ -196,7 +197,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
             {/* Grand Total */}
             <View style={styles.grandTotalContainer}>
               <Text style={styles.grandTotalLabel}>Total</Text>
-              <Text style={styles.grandTotalValue}>₹{grandTotal.toFixed(2)}</Text>
+              <Text style={styles.grandTotalValue}>{getCurrencySymbol()}{grandTotal.toFixed(2)}</Text>
             </View>
 
             {/* Payment Method */}
@@ -251,7 +252,7 @@ export default function BarSettleModal({ visible, onClose, tab, taxSettings, onS
                 <>
                   <Ionicons name="checkmark-circle" size={22} color="#fff" />
                   <Text style={styles.settleButtonText}>
-                    Settle & Close — ₹{grandTotal.toFixed(2)}
+                    Settle & Close — {getCurrencySymbol()}{grandTotal.toFixed(2)}
                   </Text>
                 </>
               )}

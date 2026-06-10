@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { Colors, Spacing, BorderRadius } from '../constants/Theme';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 // Country code → minimum local phone digits
 const PHONE_LENGTH_MAP = {
@@ -422,7 +423,7 @@ export default function CustomerLookup({
                 <Text style={styles.redeemLabel}>Redeem points</Text>
                 {redeemPoints > 0 && (
                   <Text style={styles.redeemValue}>
-                    {redeemPoints} pts = {'\u20B9'}{discountValue.toFixed(0)} off
+                    {redeemPoints} pts = {getCurrencySymbol()}{discountValue.toFixed(0)} off
                   </Text>
                 )}
               </View>

@@ -27,6 +27,7 @@ import MenuItemForm from '../../components/MenuItemForm';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
 import { hasFeatureAccess } from '../../utils/permissions';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
@@ -801,7 +802,7 @@ export default function MenuManagementScreen() {
 
           <View style={styles.menuItemFooter}>
             <View style={styles.priceContainer}>
-              <Text style={styles.menuItemPrice}>₹{item.price}</Text>
+              <Text style={styles.menuItemPrice}>{getCurrencySymbol()}{item.price}</Text>
               {item.shortCode && (
                 <Text style={styles.menuItemShortCode}>#{item.shortCode}</Text>
               )}

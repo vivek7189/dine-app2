@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, BorderRadius } from '../constants/Theme';
 import useOfferEngine from '../hooks/useOfferEngine';
 import { calculateOfferResult } from '../services/offerEngine';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 /**
  * OfferSelector (extended-engine version)
@@ -199,7 +200,7 @@ export default function OfferSelector({
           </Text>
           {preview > 0 ? (
             <Text style={[styles.chipSaves, isSelected && styles.chipSavesSelected]}>
-              saves ₹{preview.toFixed(0)}{matchedGroup ? ` · ${matchedGroup.name}` : ''}
+              saves {getCurrencySymbol()}{preview.toFixed(0)}{matchedGroup ? ` · ${matchedGroup.name}` : ''}
             </Text>
           ) : matchedGroup ? (
             <Text style={styles.chipSaves}>{matchedGroup.name}</Text>
@@ -221,7 +222,7 @@ export default function OfferSelector({
             </Text>
             {offerDiscount > 0 && (
               <Text style={styles.totalDiscountText}>
-                -₹{offerDiscount.toFixed(0)}
+                -{getCurrencySymbol()}{offerDiscount.toFixed(0)}
               </Text>
             )}
           </View>

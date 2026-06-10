@@ -9,6 +9,7 @@ import apiClient, { WEB_BASE_URL } from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
+import { TabModeProvider } from '../../contexts/TabModeContext';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
 
@@ -19,9 +20,6 @@ function AnimatedTabBar(props) {
       styles.tabBarWrapper,
       { transform: [{ translateY }] },
     ]}>
-      <Text style={{ textAlign: 'center', fontSize: 9, color: '#c0c0c0', paddingTop: 4, paddingBottom: 2, backgroundColor: '#fff' }}>
-        v{Constants.expoConfig?.version || '?.?.?'}
-      </Text>
       <BottomTabBar {...props} />
     </Animated.View>
   );
@@ -120,6 +118,7 @@ function TabsNavigator() {
         name="home"
         options={{
           title: 'Home',
+          headerShown: false,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "home" : "home-outline"}
@@ -154,6 +153,22 @@ function TabsNavigator() {
             }
             return null;
           })(),
+        }}
+      />
+
+      {/* Billing (Web POS) — visible to all roles */}
+      <Tabs.Screen
+        name="billing-tab"
+        options={{
+          title: 'Billing',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "card" : "card-outline"}
+              size={iconSize}
+              color={color}
+            />
+          ),
+          headerShown: false,
         }}
       />
 
@@ -213,8 +228,7 @@ function TabsNavigator() {
               color={color}
             />
           ),
-          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
-          tabBarBadgeStyle: pendingCount > 0 ? { backgroundColor: '#3b82f6', fontSize: 10 } : undefined,
+          headerShown: false,
         }}
       />
 
@@ -325,12 +339,14 @@ function BillingPrewarmer() {
 
 export default function TabsLayout() {
   return (
+    <TabModeProvider>
     <TabBarProvider>
       <View style={{ flex: 1 }}>
         <TabsNavigator />
         <BillingPrewarmer />
       </View>
     </TabBarProvider>
+    </TabModeProvider>
   );
 }
 

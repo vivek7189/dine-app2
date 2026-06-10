@@ -9,6 +9,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 const RED = '#ef4444';
 const GRAY_50 = '#f9fafb';
@@ -166,7 +167,7 @@ const ItemCustomizationModal = ({
                         </View>
                       </View>
                       <Text style={[styles.optionPrice, isSelected && { color: RED }]}>
-                        ₹{variant.price}
+                        {getCurrencySymbol()}{variant.price}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -207,7 +208,7 @@ const ItemCustomizationModal = ({
                       </View>
                       {customization.price > 0 && (
                         <Text style={[styles.optionPrice, isSelected && { color: RED }]}>
-                          +₹{customization.price}
+                          +{getCurrencySymbol()}{customization.price}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -241,12 +242,12 @@ const ItemCustomizationModal = ({
             <View style={styles.priceSummary}>
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>Base Price</Text>
-                <Text style={styles.priceValue}>₹{getBasePrice()}</Text>
+                <Text style={styles.priceValue}>{getCurrencySymbol()}{getBasePrice()}</Text>
               </View>
               {selectedCustomizations.length > 0 && (
                 <View style={styles.priceRow}>
                   <Text style={styles.priceLabel}>Toppings/Extras ({selectedCustomizations.length})</Text>
-                  <Text style={styles.priceValue}>+₹{getCustomizationPrice()}</Text>
+                  <Text style={styles.priceValue}>+{getCurrencySymbol()}{getCustomizationPrice()}</Text>
                 </View>
               )}
               {quantity > 1 && (
@@ -257,7 +258,7 @@ const ItemCustomizationModal = ({
               )}
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalValue}>₹{getTotalPrice()}</Text>
+                <Text style={styles.totalValue}>{getCurrencySymbol()}{getTotalPrice()}</Text>
               </View>
             </View>
           </ScrollView>
@@ -271,7 +272,7 @@ const ItemCustomizationModal = ({
               activeOpacity={0.8}
             >
               <Ionicons name="add" size={18} color="#fff" />
-              <Text style={styles.addBtnText}>Add to Cart — ₹{getTotalPrice()}</Text>
+              <Text style={styles.addBtnText}>Add to Cart — {getCurrencySymbol()}{getTotalPrice()}</Text>
             </TouchableOpacity>
             {hasVariants && !selectedVariant && (
               <Text style={styles.validationText}>Please select a size/portion</Text>

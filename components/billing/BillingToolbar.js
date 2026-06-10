@@ -9,6 +9,7 @@ import { useResponsive } from '../../hooks/useResponsive';
  */
 export default function BillingToolbar({
   billingSettings = {},
+  isRoleAllowed = () => true,
   activeBillingPanel,
   setActiveBillingPanel,
   // Active state indicators
@@ -23,25 +24,25 @@ export default function BillingToolbar({
   const { fs } = useResponsive();
   const buttons = [];
 
-  if (billingSettings.serviceChargeEnabled) {
+  if (billingSettings.serviceChargeEnabled && isRoleAllowed(billingSettings.serviceChargeRoles)) {
     buttons.push({ key: 'service', icon: 'add-circle-outline', label: 'SC', color: '#059669' });
   }
-  if (billingSettings.roundOffEnabled) {
+  if (billingSettings.roundOffEnabled && isRoleAllowed(billingSettings.roundOffRoles)) {
     buttons.push({ key: 'roundoff', icon: 'refresh-outline', label: 'Round', color: '#7c3aed' });
   }
-  if (billingSettings.cashTenderingEnabled) {
+  if (billingSettings.cashTenderingEnabled && isRoleAllowed(billingSettings.cashTenderingRoles)) {
     buttons.push({ key: 'cash', icon: 'cash-outline', label: 'Cash', color: '#d97706' });
   }
-  if (billingSettings.splitPaymentEnabled) {
+  if (billingSettings.splitPaymentEnabled && isRoleAllowed(billingSettings.splitPaymentRoles)) {
     buttons.push({ key: 'split', icon: 'git-branch-outline', label: 'Split', color: '#2563eb' });
   }
-  if (billingSettings.tipsEnabled) {
+  if (billingSettings.tipsEnabled && isRoleAllowed(billingSettings.tipsRoles)) {
     buttons.push({ key: 'tip', icon: 'heart-outline', label: 'Tip', color: '#ec4899' });
   }
-  if (billingSettings.partialPaymentEnabled) {
+  if (billingSettings.partialPaymentEnabled && isRoleAllowed(billingSettings.partialPaymentRoles)) {
     buttons.push({ key: 'partial', icon: 'wallet-outline', label: 'Khata', color: '#f59e0b' });
   }
-  if (billingSettings.compVoidEnabled) {
+  if (billingSettings.compVoidEnabled && isRoleAllowed(billingSettings.compVoidRoles)) {
     buttons.push({ key: 'comp', icon: 'gift-outline', label: 'Comp', color: '#14b8a6' });
     buttons.push({ key: 'void', icon: 'close-circle-outline', label: 'Void', color: '#ef4444' });
   }
