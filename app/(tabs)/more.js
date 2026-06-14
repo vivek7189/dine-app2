@@ -468,11 +468,8 @@ export default function MoreScreen() {
               Switch tabs between Web View (modern) and Native (classic) mode
             </Text>
             {[
-              { key: 'home', label: 'Home', icon: 'home-outline' },
               { key: 'tables', label: 'Tables', icon: 'restaurant-outline' },
               { key: 'menu', label: 'Menu', icon: 'fast-food-outline' },
-              { key: 'orders', label: 'Orders', icon: 'receipt-outline' },
-              { key: 'billing', label: 'Billing', icon: 'card-outline' },
             ].map((tab, idx, arr) => (
               <TouchableOpacity
                 key={tab.key}
