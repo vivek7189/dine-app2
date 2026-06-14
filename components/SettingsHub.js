@@ -44,14 +44,14 @@ const SETTINGS_CATEGORIES = [
     title: 'Print Settings',
     subtitle: 'Configure KOT & bill printing',
     icon: 'print-outline',
-    roles: ['owner', 'admin', 'manager', 'cashier'],
+    roles: ['owner', 'admin', 'manager', 'cashier', 'waiter', 'employee', 'sales', 'kitchen', 'delivery'],
   },
   {
     key: 'printerSetup',
     title: 'Printer Setup',
     subtitle: 'Connect Bluetooth/WiFi thermal printer',
     icon: 'hardware-chip-outline',
-    roles: ['owner', 'admin', 'manager', 'cashier'],
+    roles: ['owner', 'admin', 'manager', 'cashier', 'waiter', 'employee', 'sales', 'kitchen', 'delivery'],
   },
   {
     key: 'tax',
@@ -109,9 +109,12 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
 
   const userRole = (user?.role || '').toLowerCase();
 
-  const visibleCategories = SETTINGS_CATEGORIES.filter((cat) =>
-    cat.roles.includes(userRole)
-  );
+  const visibleCategories = SETTINGS_CATEGORIES.filter((cat) => {
+    if (!cat.roles.includes(userRole)) return false;
+    // Respect pageAccess.printer for print/printerSetup categories
+    if ((cat.key === 'print' || cat.key === 'printerSetup') && user?.pageAccess?.printer === false) return false;
+    return true;
+  });
 
   if (visibleCategories.length === 0) return null;
 

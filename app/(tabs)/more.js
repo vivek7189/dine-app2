@@ -148,7 +148,7 @@ export default function MoreScreen() {
         { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null },
-        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: ['owner', 'admin', 'manager', 'cashier'], feature: 'print' },
+        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, feature: 'printer' },
       ],
     },
     {
@@ -219,7 +219,11 @@ export default function MoreScreen() {
   })();
 
   const shouldShowItem = (item) => {
-    if (!item.roles) return true;
+    // For items with no role restriction, show by default — but allow owner to disable via pageAccess
+    if (!item.roles) {
+      if (item.feature && user?.pageAccess && user.pageAccess[item.feature] === false) return false;
+      return true;
+    }
     if (!role) return false;
     // If role is in the hardcoded list, show it
     if (item.roles.includes(role)) return true;

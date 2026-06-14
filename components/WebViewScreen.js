@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../services/api';
 import * as printerService from '../services/printerService';
+import { useResponsive } from '../hooks/useResponsive';
 
 /**
  * Shared WebView screen for tab navigation.
@@ -17,6 +18,8 @@ import * as printerService from '../services/printerService';
 export default function WebViewScreen({ route, screenName = 'Page' }) {
   const webViewRef = useRef(null);
   const router = useRouter();
+  const { isTablet, isLandscape } = useResponsive();
+  const useDesktopLayout = isTablet || isLandscape;
   const [loading, setLoading] = useState(true);
   const [authUrl, setAuthUrl] = useState(null);
   const [userData, setUserData] = useState(null);
@@ -80,6 +83,9 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
+      if (useDesktopLayout) {
+        parts.push(`window.__DINEOPEN_FORCE_DESKTOP__ = true;`);
+      }
       // Prevent zoom on iOS + suppress alert/confirm dialogs
       parts.push(`
         (function() {
@@ -112,7 +118,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       `);
       return parts.join('\n') + '\ntrue;';
     } catch { return 'true;'; }
-  }, [authUrl, userData]);
+  }, [authUrl, userData, useDesktopLayout]);
 
   // Handle messages from WebView (print bridge + navigation signals)
   const handleWebViewMessage = useCallback(async (event) => {
@@ -322,6 +328,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
           onMessage={handleWebViewMessage}
           injectedJavaScript={`
             window.__DINEOPEN_MOBILE_EMBED__ = true;
+            ${useDesktopLayout ? 'window.__DINEOPEN_FORCE_DESKTOP__ = true;' : ''}
             true;
           `}
         />
