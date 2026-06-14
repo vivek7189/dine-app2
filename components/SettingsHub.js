@@ -22,6 +22,7 @@ import ZonePricingSettings from './ZonePricingSettings';
 import CurrencySettings from './CurrencySettings';
 import OrderManagementSettings from './OrderManagementSettings';
 import BillingSettings from './BillingSettings';
+import GeoFenceSettings from './GeoFenceSettings';
 import MultiTierPricingSettings from './MultiTierPricingSettings';
 
 const SETTINGS_CATEGORIES = [
@@ -100,6 +101,13 @@ const SETTINGS_CATEGORIES = [
     title: 'Billing Settings',
     subtitle: 'Service charge, tips, split pay & more',
     icon: 'card-outline',
+    roles: ['owner', 'admin'],
+  },
+  {
+    key: 'geoFence',
+    title: 'Geo-Fence',
+    subtitle: 'Location-based attendance check-in',
+    icon: 'location-outline',
     roles: ['owner', 'admin'],
   },
 ];
@@ -181,6 +189,12 @@ export default function SettingsHub({ restaurantId, user, restaurant, onRestaura
       case 'billing':
         return (
           <BillingSettings restaurantId={restaurantId} />
+        );
+      case 'geoFence':
+        return (
+          <ScrollView contentContainerStyle={styles.scrollPadding}>
+            <GeoFenceSettings restaurantId={restaurantId} />
+          </ScrollView>
         );
       default:
         return null;

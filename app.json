@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.54.0",
+    "version": "2.55.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,9 +19,7 @@
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD"
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "2.55.0",
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -44,7 +42,7 @@
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 99,
+      "versionCode": 100,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#DC4A3A"

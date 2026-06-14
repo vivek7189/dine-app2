@@ -2747,6 +2747,13 @@ class ApiClient {
     return this.request(`/api/attendance/${restaurantId}/leave/config`);
   }
 
+  async saveLeaveConfig(restaurantId, config) {
+    return this.request(`/api/attendance/${restaurantId}/leave/config`, {
+      method: 'PUT',
+      data: config,
+    });
+  }
+
   async applyLeave(restaurantId, data) {
     return this.request(`/api/attendance/${restaurantId}/leave/apply`, {
       method: 'POST',
