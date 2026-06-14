@@ -138,14 +138,74 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
 
       if (data.type !== 'PRINT_KOT' && data.type !== 'PRINT_BILL') return;
 
-      console.log(`[${screenName}] Print request:`, data.type, data.orderId);
+      console.log(`[${screenName}] Print request:`, data.type, data.orderId, data.orderData ? '(embedded data)' : '(no embedded data)');
 
       let text = null;
       const html = data.html || null;
       const restaurantId = data.restaurantId || userData?.restaurantId || userData?.restaurant?.id;
+      const ps = data.printSettings || {};
 
-      // Fetch order data to generate ESC/POS text for thermal printers
-      if (data.orderId && restaurantId) {
+      // ── Priority 1: Use embedded orderData from WebView (no API call needed) ──
+      // This is the same approach as test print — data is already available locally
+      if (data.orderData) {
+        try {
+          const od = data.orderData;
+          if (data.type === 'PRINT_KOT') {
+            text = printerService.generateKOTText({
+              restaurantName: od.restaurantName || userData?.restaurant?.name || '',
+              tableNumber: od.tableNumber || od.tableName || '',
+              orderNumber: od.orderNumber || od.dailyOrderId || od.orderId?.slice?.(-6) || '',
+              orderId: od.orderId || data.orderId,
+              orderType: od.orderType || 'dine-in',
+              waiterName: od.waiterName || '',
+              customerName: od.customerName || od.customerInfo?.name || '',
+              timestamp: od.timestamp || od.createdAt || new Date(),
+              items: od.items || [],
+              printSettings: ps,
+            });
+          } else {
+            const items = (od.items || []).map(i => ({
+              name: i.name, quantity: i.quantity || 1, price: i.price || 0,
+              total: (i.price || 0) * (i.quantity || 1),
+              selectedVariant: i.selectedVariant || null,
+              selectedCustomizations: i.selectedCustomizations || [],
+            }));
+            const subtotal = od.subtotal || items.reduce((s, i) => s + (i.total || 0), 0);
+            text = printerService.generateBillText({
+              orderId: od.orderId || od.id || data.orderId,
+              orderNumber: od.orderNumber || od.dailyOrderId || od.orderId?.slice?.(-6) || '',
+              restaurantName: od.restaurantName || userData?.restaurant?.name || '',
+              restaurantInfo: od.restaurantInfo || {},
+              items,
+              subtotal,
+              tax: od.taxAmount || od.tax || 0,
+              taxRate: od.taxRate || 0,
+              taxEnabled: !!(od.taxAmount > 0 || od.taxBreakdown?.length),
+              taxBreakdown: od.taxBreakdown || null,
+              grandTotal: od.finalAmount || od.totalAmount || od.grandTotal || subtotal,
+              customerName: od.customerName || od.customerInfo?.name || 'Walk-in Customer',
+              orderType: od.orderType || 'dine-in',
+              paymentMethod: od.paymentMethod || 'cash',
+              timestamp: od.completedAt || od.timestamp || od.createdAt || new Date(),
+              offerDiscount: od.discountAmount || od.offerDiscount || 0,
+              manualDiscount: od.manualDiscount || 0,
+              serviceChargeAmount: od.serviceChargeAmount || 0,
+              tipAmount: od.tipAmount || 0,
+              roundOffAmount: od.roundOffAmount || 0,
+              cashReceived: od.cashReceived || null,
+              changeReturned: od.changeReturned || null,
+              splitPayments: od.splitPayments || null,
+              printSettings: ps,
+            });
+          }
+          console.log(`[${screenName}] ESC/POS text generated from embedded data`);
+        } catch (embedErr) {
+          console.warn(`[${screenName}] Failed to generate ESC/POS from embedded data:`, embedErr.message);
+        }
+      }
+
+      // ── Priority 2: Fetch order from API (fallback if no embedded data) ──
+      if (!text && data.orderId && restaurantId) {
         try {
           const order = await apiClient.getOrderById(restaurantId, data.orderId);
           if (order) {
@@ -160,7 +220,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
                 customerName: order.customerInfo?.name || '',
                 timestamp: order.createdAt || new Date(),
                 items: order.items || [],
-                printSettings: data.printSettings || {},
+                printSettings: ps,
               });
             } else {
               const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
@@ -170,9 +230,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
                 restaurantName: order.restaurantName || userData?.restaurant?.name || '',
                 restaurantInfo: order.restaurantInfo || {},
                 items: (order.items || []).map(i => ({
-                  name: i.name,
-                  quantity: i.quantity || 1,
-                  price: i.price || 0,
+                  name: i.name, quantity: i.quantity || 1, price: i.price || 0,
                   total: (i.price || 0) * (i.quantity || 1),
                   selectedVariant: i.selectedVariant || null,
                   selectedCustomizations: i.selectedCustomizations || [],
@@ -195,74 +253,39 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
                 cashReceived: order.cashReceived || null,
                 changeReturned: order.changeReturned || null,
                 splitPayments: order.splitPayments || null,
-                printSettings: data.printSettings || {},
+                printSettings: ps,
               });
             }
+            console.log(`[${screenName}] ESC/POS text generated from API fetch`);
           }
         } catch (fetchErr) {
           console.warn(`[${screenName}] Could not fetch order for ESC/POS text:`, fetchErr.message);
         }
       }
 
-      // Split Bill: generate and print per-guest receipts for thermal
-      if (data.orderId && restaurantId && !text) {
-        try {
-          const order = data._order || (data.orderId ? await apiClient.getOrderById(restaurantId, data.orderId).catch(() => null) : null);
-          if (order?.splitBill?.splits?.length >= 2 && data.type === 'PRINT_BILL') {
-            const sb = order.splitBill;
-            const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
-            const baseBillData = {
-              orderId: order.id,
-              orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
-              restaurantName: order.restaurantName || userData?.restaurant?.name || '',
-              restaurantInfo: order.restaurantInfo || {},
-              timestamp: order.completedAt || order.createdAt || new Date(),
-              printSettings: data.printSettings || {},
-            };
-            for (let si = 0; si < sb.splits.length; si++) {
-              const split = sb.splits[si];
-              const guestText = printerService.generateBillText({
-                ...baseBillData,
-                items: (sb.method === 'by-item' && split.items) ? split.items.map(i => ({
-                  name: i.name, quantity: i.quantity || 1, price: i.price || 0,
-                  total: (i.price || 0) * (i.quantity || 1),
-                  selectedVariant: i.selectedVariant || null,
-                  selectedCustomizations: i.selectedCustomizations || [],
-                })) : (order.items || []).map(i => ({
-                  name: i.name, quantity: i.quantity || 1, price: i.price || 0,
-                  total: (i.price || 0) * (i.quantity || 1),
-                  selectedVariant: i.selectedVariant || null,
-                  selectedCustomizations: i.selectedCustomizations || [],
-                })),
-                subtotal: split.subtotal,
-                taxBreakdown: split.taxBreakdown || null,
-                grandTotal: split.totalAmount,
-                customerName: order.customerInfo?.name || 'Walk-in Customer',
-                orderType: order.orderType || 'dine-in',
-                paymentMethod: split.paymentMethod || 'cash',
-                offerDiscount: 0,
-                manualDiscount: split.discountAmount || 0,
-                serviceChargeAmount: split.serviceChargeAmount || 0,
-                tipAmount: split.tipAmount || 0,
-                roundOffAmount: 0,
-                cashReceived: split.cashReceived || null,
-                changeReturned: split.changeReturned || null,
-                splitInfo: {
-                  guestLabel: split.guestLabel || `Guest ${si + 1}`,
-                  guestCount: sb.guestCount || sb.splits.length,
-                  method: sb.method,
-                },
-              });
-              await printerService.printContent({ text: guestText, silentOnly: true });
-            }
-            return; // Already printed all guest receipts
-          }
-        } catch (splitErr) {
-          console.warn(`[${screenName}] Split bill thermal print error:`, splitErr.message);
-        }
+      // ── Priority 3: Always print SOMETHING — never silently skip ──
+      // If text is still null, generate a minimal receipt so we know printing works
+      // but data was the issue (same philosophy as test print — always prints)
+      if (!text) {
+        console.warn(`[${screenName}] No ESC/POS text generated — printing fallback receipt`);
+        const LINE = '--------------------------------';
+        const label = data.type === 'PRINT_KOT' ? 'KOT' : 'BILL';
+        text = [
+          LINE,
+          `        ${label} PRINT`,
+          LINE,
+          '',
+          `Order: ${data.orderId || 'N/A'}`,
+          `Time: ${new Date().toLocaleString()}`,
+          '',
+          '(Data unavailable — check',
+          ' WebView print settings)',
+          '',
+          LINE,
+        ].join('\n');
       }
 
-      // Print: text for thermal printers, html for AirPrint/dialog
+      // Print — text is always available now, thermal printer will always fire
       await printerService.printContent({ html, text, silentOnly: true });
     } catch (err) {
       console.error(`[${screenName}] WebView message error:`, err);
