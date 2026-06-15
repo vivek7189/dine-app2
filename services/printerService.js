@@ -548,9 +548,14 @@ export const autoReconnect = async () => {
 
 // ==================== TEXT GENERATION (ESC/POS for thermal printers) ====================
 
-const CHARS = 32; // 58mm paper = 32 chars; 80mm = 48 chars — use 32 for safe compat
+const CHARS_80 = 48; // 80mm paper = 48 chars
+const CHARS_58 = 32; // 58mm paper = 32 chars
+const CHARS = CHARS_80; // default
+const getChars = (ps) => (ps?.printerWidth === 58 ? CHARS_58 : CHARS_80);
 const LINE = '-'.repeat(CHARS);
 const DOUBLE_LINE = '='.repeat(CHARS);
+const getLine = (w) => '-'.repeat(w);
+const getDoubleLine = (w) => '='.repeat(w);
 
 const center = (text, width = CHARS) => {
   const t = String(text || '');
@@ -602,53 +607,62 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
-  const bl = (invoiceData.printSettings || invoiceData)?.billLayout || {};
+  const ps = invoiceData.printSettings || invoiceData || {};
+  const bl = ps.billLayout || {};
+  const W = getChars(ps);
+  const _LINE = getLine(W);
+  const _DLINE = getDoubleLine(W);
   const lines = [];
   const r = invoiceData.restaurantInfo || {};
   const fmt = (n) => (n || 0).toFixed(2);
 
+  // ── Logo (for receipt logo — only works on AirPrint/HTML path, thermal ignores it) ──
+  const rLogo = ps.receiptLogo;
+  if (rLogo?.enabled && rLogo?.url) {
+    lines.push(`<LOGO:${rLogo.url}>`);
+  }
+
   // ── Header ──
-  // CM = center + double-height (still 32 chars wide, safe for long names)
-  wrapText(invoiceData.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
-  if (bl.showAddress !== false && r.address) wrapText(r.address, CHARS).forEach(l => lines.push(`<C>${l}</C>`));
+  wrapText(invoiceData.restaurantName || '', W).forEach(l => lines.push(`<CM>${l}</CM>`));
+  if (bl.showAddress !== false && r.address) wrapText(r.address, W).forEach(l => lines.push(`<C>${l}</C>`));
   if (bl.showPhone !== false && r.phone) lines.push(`<C>Phone: ${r.phone}</C>`);
   if (r.gstin && r.showGstOnInvoice) lines.push(`GSTIN: ${r.gstin}`);
   if (r.fssai && r.showFssaiOnInvoice) lines.push(`FSSAI: ${r.fssai}`);
-  lines.push(LINE);
+  lines.push(_LINE);
 
   // ── Invoice info ──
   if (r.showGstOnInvoice) lines.push(`<CM>Bill of Supply</CM>`);
   const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
-  lines.push(leftRight(payMethod + ' Sale', ''));
+  lines.push(leftRight(payMethod + ' Sale', '', W));
   const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-';
   const now = invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date();
   const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-  lines.push(leftRight('', `Date: ${dateStr}`));
-  lines.push(leftRight('', `Time: ${timeStr}`));
-  lines.push(leftRight('', `Invoice no: ${invoiceNum}`));
-  if (bl.showTable !== false && invoiceData.tableNumber) lines.push(leftRight('Table', invoiceData.tableNumber));
-  if (bl.showWaiter !== false && invoiceData.waiterName) lines.push(leftRight('Waiter', invoiceData.waiterName));
-  if (bl.showCustomer !== false && invoiceData.customerName) lines.push(leftRight('Customer', invoiceData.customerName));
-  if (bl.showOrderType !== false && invoiceData.orderType) lines.push(leftRight('Order Type', invoiceData.orderType));
+  lines.push(leftRight('', `Date: ${dateStr}`, W));
+  lines.push(leftRight('', `Time: ${timeStr}`, W));
+  lines.push(leftRight('', `Invoice no: ${invoiceNum}`, W));
+  if (bl.showTable !== false && invoiceData.tableNumber) lines.push(leftRight('Table', invoiceData.tableNumber, W));
+  if (bl.showWaiter !== false && invoiceData.waiterName) lines.push(leftRight('Waiter', invoiceData.waiterName, W));
+  if (bl.showCustomer !== false && invoiceData.customerName) lines.push(leftRight('Customer', invoiceData.customerName, W));
+  if (bl.showOrderType !== false && invoiceData.orderType) lines.push(leftRight('Order Type', invoiceData.orderType, W));
   // Split Bill banner
   if (invoiceData.splitInfo) {
     const si = invoiceData.splitInfo;
     const methodLabel = si.method === 'equal' ? 'Equal Split' : si.method === 'by-item' ? 'Split by Item' : 'Split by Amount';
-    lines.push(DOUBLE_LINE);
+    lines.push(_DLINE);
     lines.push(`<CM>SPLIT BILL</CM>`);
     const nameDisplay = si.guestName ? `${si.guestName} (${si.guestLabel})` : si.guestLabel;
     lines.push(`<CM>${nameDisplay} of ${si.guestCount}</CM>`);
     lines.push(`<C>(${methodLabel})</C>`);
-    lines.push(DOUBLE_LINE);
+    lines.push(_DLINE);
   } else {
-    lines.push(LINE);
+    lines.push(_LINE);
   }
 
   // ── Item table header ──
-  lines.push(`<M>${leftRight('Item Name', 'Price  Amount')}</M>`);
-  lines.push(`<M>${leftRight('  Qty', '')}</M>`);
-  lines.push(LINE);
+  lines.push(`<M>${leftRight('Item Name', 'Price  Amount', W)}</M>`);
+  lines.push(`<M>${leftRight('  Qty', '', W)}</M>`);
+  lines.push(_LINE);
 
   // ── Items ──
   (invoiceData.items || []).forEach(item => {
@@ -657,7 +671,7 @@ export const generateBillText = (invoiceData) => {
     const total = item.total || 0;
     const name = item.name || 'Item';
     // Item name line
-    lines.push(name.length > CHARS ? name.substring(0, CHARS - 1) + '.' : name);
+    lines.push(name.length > W ? name.substring(0, W - 1) + '.' : name);
     // Variant (e.g., Half, Full)
     if (item.selectedVariant?.name) {
       lines.push(`  [${item.selectedVariant.name}]`);
@@ -673,51 +687,51 @@ export const generateBillText = (invoiceData) => {
     const priceStr = fmt(price);
     const totalStr = fmt(total);
     const rightPart = `${priceStr}  ${totalStr}`;
-    lines.push(leftRight(qtyStr, rightPart));
+    lines.push(leftRight(qtyStr, rightPart, W));
   });
 
-  lines.push(LINE);
+  lines.push(_LINE);
 
   // ── Totals ──
-  if (bl.showSubtotal !== false) lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`));
-  if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`));
-  if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`));
-  if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`));
-  if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`));
+  if (bl.showSubtotal !== false) lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`, W));
+  if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`, W));
+  if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`, W));
+  if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`, W));
+  if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`, W));
   if (bl.showTaxBreakdown !== false) {
     if (invoiceData.taxBreakdown?.length > 0) {
       invoiceData.taxBreakdown.forEach(tax => {
         const inclSuffix = tax.inclusive ? ' (incl.)' : '';
         const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
-        lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`));
+        lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`, W));
       });
     } else if (invoiceData.taxEnabled && invoiceData.tax > 0) {
-      lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`, `${RS}${fmt(invoiceData.tax)}`));
+      lines.push(leftRight(invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`, `${RS}${fmt(invoiceData.tax)}`, W));
     }
   }
-  if (invoiceData.tipAmount > 0) lines.push(leftRight('Tip', `${RS}${fmt(invoiceData.tipAmount)}`));
+  if (invoiceData.tipAmount > 0) lines.push(leftRight('Tip', `${RS}${fmt(invoiceData.tipAmount)}`, W));
   if (invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0) {
     const sign = invoiceData.roundOffAmount > 0 ? '+' : '-';
-    lines.push(leftRight('Round-off', `${sign}${RS}${fmt(Math.abs(invoiceData.roundOffAmount))}`));
+    lines.push(leftRight('Round-off', `${sign}${RS}${fmt(Math.abs(invoiceData.roundOffAmount))}`, W));
   }
-  lines.push(LINE);
-  lines.push(`<M>${leftRight('Total', `${RS}${fmt(invoiceData.grandTotal)}`)}</M>`);
-  lines.push(DOUBLE_LINE);
+  lines.push(_LINE);
+  lines.push(`<M>${leftRight('Total', `${RS}${fmt(invoiceData.grandTotal)}`, W)}</M>`);
+  lines.push(_DLINE);
 
   // ── Payment ──
   if (bl.showPayment !== false && invoiceData.cashReceived > 0) {
-    lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`));
-    if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`));
+    lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`, W));
+    if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`, W));
   }
 
   // ── Footer ──
   if (bl.showFooter !== false) {
     lines.push('');
-    wrapText('Thank you for your visit!', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+    wrapText('Thank you for your visit!', W).forEach(l => lines.push(`<CM>${l}</CM>`));
   }
   if (bl.showPoweredBy !== false) {
     lines.push('');
-    wrapText('Powered by DineOpen', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+    wrapText('Powered by DineOpen', W).forEach(l => lines.push(`<CM>${l}</CM>`));
   }
   if (bl.showFooter !== false || bl.showPoweredBy !== false) {
     lines.push('');
@@ -791,7 +805,10 @@ const formatKOTDate = (date) => {
 };
 
 export const generateKOTText = (data) => {
-  const kl = (data.printSettings || data)?.kotLayout || {};
+  const ps = data.printSettings || data || {};
+  const kl = ps.kotLayout || {};
+  const W = getChars(ps);
+  const _LINE = getLine(W);
   const location = kl.showTable !== false ? (data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}` : '')) : '';
 
   const formatItemLine = (item, opts = {}) => {
@@ -847,46 +864,46 @@ export const generateKOTText = (data) => {
   // ── Assemble ──
   const lines = [];
   if (kl.showRestaurantName !== false) {
-    wrapText(data.restaurantName || '', CHARS).forEach(l => lines.push(`<CM>${l}</CM>`));
+    wrapText(data.restaurantName || '', W).forEach(l => lines.push(`<CM>${l}</CM>`));
   }
   if (kl.showKotTitle !== false) lines.push(`<CM>--- ${title} ---</CM>`);
-  lines.push(LINE);
+  lines.push(_LINE);
 
   // Order info — side by side where possible
   const ordNum = `#${data.orderNumber || data.dailyOrderId || data.orderId?.slice(-6) || ''}`;
   const showOrdNum = kl.showOrderNumber !== false;
   const showLoc = kl.showTable !== false;
   if (showOrdNum && showLoc && location) {
-    lines.push(leftRight(`Order ${ordNum}`, location));
+    lines.push(leftRight(`Order ${ordNum}`, location, W));
   } else if (showOrdNum) {
     lines.push(`Order ${ordNum}`);
   } else if (showLoc && location) {
     lines.push(location);
   }
   if (kl.showDate !== false) {
-    lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp)));
+    lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp), W));
   } else {
-    lines.push(leftRight('', formatKOTTime(data.timestamp)));
+    lines.push(leftRight('', formatKOTTime(data.timestamp), W));
   }
   if (kl.showOrderType !== false && data.orderType) lines.push(`Type: ${data.orderType}`);
   if (kl.showWaiter !== false && data.waiterName) lines.push(`Staff: ${data.waiterName}`);
   if (kl.showCustomer !== false && data.customerName) lines.push(`Customer: ${data.customerName}`);
-  lines.push(LINE);
+  lines.push(_LINE);
 
   // Item header — M = double-height bold
-  lines.push(`<M>${leftRight('Qty Item', '')}</M>`);
-  lines.push(LINE);
+  lines.push(`<M>${leftRight('Qty Item', '', W)}</M>`);
+  lines.push(_LINE);
 
   // Items
   lines.push(itemLines.join('\n'));
-  lines.push(LINE);
+  lines.push(_LINE);
 
   // Footer
   lines.push(footerText);
 
   // Special instructions
   if (data.specialInstructions) {
-    lines.push(LINE);
+    lines.push(_LINE);
     lines.push('NOTE: ' + data.specialInstructions);
   }
   lines.push('');
@@ -895,10 +912,18 @@ export const generateKOTText = (data) => {
 };
 
 export const wrapKOTTextInHTML = (text) => {
+  // Extract and render logo tag if present
+  let logoHtml = '';
+  let cleanText = text;
+  const logoMatch = text.match(/^<LOGO:(.+?)>\n?/);
+  if (logoMatch) {
+    logoHtml = `<div style="text-align:center;margin-bottom:8px;"><img src="${logoMatch[1]}" style="max-width:80px;height:auto;" /></div>`;
+    cleanText = text.replace(logoMatch[0], '');
+  }
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
-</head><body><pre>${text}</pre></body></html>`;
+</head><body>${logoHtml}<pre>${cleanText}</pre></body></html>`;
 };
 
 // Generate KOT HTML using the template system (for AirPrint / WebView)
@@ -982,8 +1007,10 @@ const tryReconnect = async () => {
 const printViaThermal = async (text) => {
   const mod = getThermalModule();
   if (!mod) throw new Error('No thermal printer connected');
+  // Strip logo tag — thermal printers don't support images via ESC/POS text
+  const cleanText = text.replace(/^<LOGO:.+?>\n?/, '');
   try {
-    await mod.printBill(text + '\n\n\n', { beep: false, cut: true, tailingLine: true });
+    await mod.printBill(cleanText + '\n\n\n', { beep: false, cut: true, tailingLine: true });
   } catch (firstErr) {
     console.warn('Print failed, attempting reconnect...', firstErr.message);
     emitPrinterEvent({ type: 'reconnecting' });

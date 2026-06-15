@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -63,6 +64,7 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [original, setOriginal] = useState(DEFAULT_SETTINGS);
   const [isDirty, setIsDirty] = useState(false);
+  const [restaurantLogo, setRestaurantLogo] = useState(null); // Logo URL from restaurant data
 
   useEffect(() => {
     loadSettings();
@@ -82,6 +84,11 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
     } catch {
       fetchSettings();
     }
+    // Fetch restaurant logo (read-only, set by admin on web/Electron)
+    apiClient.getRestaurant(restaurantId).then(res => {
+      const r = res?.restaurant || res;
+      if (r?.logo) setRestaurantLogo(r.logo);
+    }).catch(() => {});
   };
 
   const fetchSettings = async () => {
@@ -153,6 +160,70 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
           />
         </View>
       ))}
+
+      {/* Paper Size */}
+      <View style={styles.sectionDivider}>
+        <Text style={styles.sectionLabel}>Paper Size</Text>
+      </View>
+      <View style={styles.paperSizeRow}>
+        <View style={[styles.toggleIconWrap, { backgroundColor: '#fef3c7' }]}>
+          <Ionicons name="resize-outline" size={18} color="#d97706" />
+        </View>
+        <View style={styles.toggleInfo}>
+          <Text style={styles.toggleLabel}>Printer Paper Width</Text>
+          <Text style={styles.toggleHint}>Select your thermal printer's paper size</Text>
+        </View>
+      </View>
+      <View style={styles.paperBtnRow}>
+        {[80, 58].map(size => {
+          const isActive = (settings.printerWidth || 80) === size;
+          return (
+            <TouchableOpacity
+              key={size}
+              style={[styles.paperBtn, isActive && styles.paperBtnActive]}
+              onPress={() => { handleToggle('printerWidth', size); }}
+            >
+              <Text style={[styles.paperBtnText, isActive && styles.paperBtnTextActive]}>{size}mm</Text>
+              <Text style={[styles.paperBtnHint, isActive && styles.paperBtnHintActive]}>
+                {size === 80 ? 'Standard' : 'Compact'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Receipt Logo */}
+      <View style={styles.sectionDivider}>
+        <Text style={styles.sectionLabel}>Receipt Logo</Text>
+      </View>
+      {restaurantLogo ? (
+        <View style={styles.logoSection}>
+          <Image source={{ uri: restaurantLogo }} style={styles.logoPreview} resizeMode="contain" />
+          <View style={styles.logoInfo}>
+            <View style={styles.logoToggleRow}>
+              <Text style={styles.toggleLabel}>Show Logo on Bill</Text>
+              <Switch
+                value={!!settings.receiptLogo?.enabled}
+                onValueChange={(val) => {
+                  setSettings(prev => ({
+                    ...prev,
+                    receiptLogo: { ...(prev.receiptLogo || {}), enabled: val, url: restaurantLogo },
+                  }));
+                  setIsDirty(true);
+                }}
+                trackColor={{ false: '#e5e7eb', true: '#ef444440' }}
+                thumbColor={settings.receiptLogo?.enabled ? '#ef4444' : '#d1d5db'}
+              />
+            </View>
+            <Text style={styles.logoHint}>Logo is uploaded by admin from the web dashboard. It will appear at the top of printed bills.</Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.noLogoSection}>
+          <Ionicons name="image-outline" size={24} color="#d1d5db" />
+          <Text style={styles.noLogoText}>No logo uploaded. Admin can upload from web dashboard.</Text>
+        </View>
+      )}
 
       {/* Save/Cancel bar */}
       {isDirty && (
@@ -267,5 +338,101 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#fff',
+  },
+  sectionDivider: {
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  paperSizeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  paperBtnRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  paperBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  paperBtnActive: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#ef4444',
+  },
+  paperBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#6b7280',
+  },
+  paperBtnTextActive: {
+    color: '#ef4444',
+  },
+  paperBtnHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  paperBtnHintActive: {
+    color: '#ef4444',
+  },
+  logoSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  logoPreview: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  logoInfo: {
+    flex: 1,
+  },
+  logoToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  logoHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  noLogoSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  noLogoText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    flex: 1,
   },
 });
