@@ -125,6 +125,7 @@ export default function MenuScreen() {
   const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [taxCategories, setTaxCategories] = useState([]); // Real categories from API (with taxGroupId) for tax resolution
   const [printSettings, setPrintSettings] = useState(null);
+  const [printStationCount, setPrintStationCount] = useState(0); // Enabled station count for multi-station skip
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -690,6 +691,15 @@ export default function MenuScreen() {
           try {
             const pRes = await apiClient.getPrintSettings(rid);
             if (pRes) setPrintSettings(pRes.printSettings || pRes || {});
+          } catch { /* ignore */ }
+        })(),
+        (async () => {
+          try {
+            const sRes = await apiClient.getPrintStations(rid);
+            if (sRes?.success) {
+              const enabled = (sRes.printStations || []).filter(s => s.enabled).length;
+              setPrintStationCount(enabled);
+            }
           } catch { /* ignore */ }
         })(),
         // Auto-reconnect saved printer for silent printing
@@ -1414,7 +1424,8 @@ export default function MenuScreen() {
       };
 
       // Auto-print KOT silently in background (fire and forget)
-      if (printSettings?.autoPrintOnKOT !== false) {
+      // Skip when multi-station configured (2+ stations) - Electron handles station routing
+      if (printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
         const kotText = printerService.generateKOTText(kotData);
         const kotHtml = printerService.wrapKOTTextInHTML(kotText);
         printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true })
@@ -1589,7 +1600,8 @@ export default function MenuScreen() {
         await apiClient.updateOrder(existingOrderId, updateData);
 
         // Auto-print KOT for newly added/changed items (fire and forget)
-        if (printSettings?.autoPrintOnKOT !== false) {
+        // Skip when multi-station configured (2+ stations) - Electron handles station routing
+        if (printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
           let kotItems = cart;
           let isIncremental = false;
           let removedKotItems = [];
@@ -1729,7 +1741,8 @@ export default function MenuScreen() {
         }
 
         // Auto-print KOT silently for confirmed orders (fire and forget)
-        if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false) {
+        // Skip when multi-station configured (2+ stations) - Electron handles station routing
+        if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
           const kotData = {
             orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
             orderId: response.order?.id,

@@ -21,6 +21,7 @@ export default function PrinterSettingsScreen() {
   const router = useRouter();
   const [restaurantId, setRestaurantId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [multiStationCount, setMultiStationCount] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -36,6 +37,17 @@ export default function PrinterSettingsScreen() {
     };
     load();
   }, []);
+
+  // Fetch print station config to show multi-station info banner
+  useEffect(() => {
+    if (!restaurantId) return;
+    apiClient.getPrintStations(restaurantId).then(res => {
+      if (res?.success) {
+        const enabled = (res.printStations || []).filter(s => s.enabled);
+        setMultiStationCount(enabled.length);
+      }
+    }).catch(() => {});
+  }, [restaurantId]);
 
   return (
     <View style={styles.container}>
@@ -70,6 +82,20 @@ export default function PrinterSettingsScreen() {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Multi-station info banner */}
+          {multiStationCount >= 2 && (
+            <View style={styles.multiStationBanner}>
+              <Ionicons name="information-circle" size={20} color="#2563eb" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.multiStationTitle}>Multi-Station KOT Routing Active</Text>
+                <Text style={styles.multiStationText}>
+                  KOT prints will be handled by the main POS machine. Your connected printer will be used for bill printing only.
+                </Text>
+                <Text style={styles.multiStationHint}>Contact admin to change station settings.</Text>
+              </View>
+            </View>
+          )}
+
           {/* Printer Connection */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -207,5 +233,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
+  },
+  multiStationBanner: {
+    flexDirection: 'row',
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 10,
+    padding: 14,
+    gap: 10,
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  multiStationTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e40af',
+    marginBottom: 4,
+  },
+  multiStationText: {
+    fontSize: 12,
+    color: '#1e3a5f',
+    lineHeight: 18,
+  },
+  multiStationHint: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 4,
   },
 });
