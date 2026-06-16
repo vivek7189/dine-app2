@@ -6,10 +6,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export default function BillingWebViewScreen() {
   const { billingData, returnTo, tableId, tableNumber } = useLocalSearchParams();
   const router = useRouter();
+  const { isTablet, isLandscape } = useResponsive();
+  const useDesktopLayout = isTablet || isLandscape;
   const webViewRef = useRef(null);
   const completedRef = useRef(false);
   const shellReadyRef = useRef(false);
@@ -72,6 +75,9 @@ export default function BillingWebViewScreen() {
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
       parts.push(`window.__DINEOPEN_BILLING_MODE__ = true;`);
+      if (useDesktopLayout) {
+        parts.push(`window.__DINEOPEN_FORCE_DESKTOP__ = true;`);
+      }
       // Prevent zoom on iOS + suppress alert() dialogs
       parts.push(`
         (function() {
@@ -84,7 +90,7 @@ export default function BillingWebViewScreen() {
       `);
       return parts.join('\n') + '\ntrue;';
     } catch { return 'true;'; }
-  }, [authUrl, userData]);
+  }, [authUrl, userData, useDesktopLayout]);
 
   // Send billing data to the WebView once the shell is ready
   const sendBillingData = useCallback(() => {
@@ -227,6 +233,7 @@ export default function BillingWebViewScreen() {
           injectedJavaScript={`
             window.__DINEOPEN_MOBILE_EMBED__ = true;
             window.__DINEOPEN_BILLING_MODE__ = true;
+            ${useDesktopLayout ? 'window.__DINEOPEN_FORCE_DESKTOP__ = true;' : ''}
             true;
           `}
         />

@@ -38,7 +38,7 @@ const getTimerColor = (minutes) => {
 
 export default function KitchenScreen() {
   const router = useRouter();
-  const { gridColumns } = useResponsive();
+  const { gridColumns, r, fs, sp, isTablet } = useResponsive();
   const { effectivelyOffline } = useOffline();
   const cols = gridColumns(1);
   const [kotOrders, setKotOrders] = useState([]);
@@ -420,7 +420,7 @@ export default function KitchenScreen() {
     const itemCount = Array.isArray(kot.items) ? kot.items.length : 0;
 
     return (
-      <View style={[s.card, (isUpdating || isTransitioning) && { opacity: 0.6 }]}>
+      <View style={[s.card, (isUpdating || isTransitioning) && { opacity: 0.6 }, isTablet && { borderRadius: 18, marginBottom: sp(12) }]}>
         {/* Updating Spinner */}
         {isUpdating && (
           <View style={s.cardOverlay}>
@@ -439,9 +439,9 @@ export default function KitchenScreen() {
         )}
 
         {/* Header */}
-        <View style={s.cardHeader}>
+        <View style={[s.cardHeader, isTablet && { paddingHorizontal: sp(14), paddingVertical: sp(12) }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
-            <Text style={s.orderId}>#{kot.id.slice(-6).toUpperCase()}</Text>
+            <Text style={[s.orderId, { fontSize: fs(15) }]}>#{kot.id.slice(-6).toUpperCase()}</Text>
             {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>T{kot.tableNumber}</Text></View>}
             <Text style={s.typeLabel}>{getTypeLabel(kot.orderType)}</Text>
             {kot.orderSource === 'customer_app' && <View style={s.appBadge}><Text style={s.appBadgeText}>App</Text></View>}
@@ -467,9 +467,9 @@ export default function KitchenScreen() {
           <Text style={s.itemCountLabel}>{itemCount} item{itemCount !== 1 ? 's' : ''}</Text>
           {Array.isArray(kot.items) && kot.items.map((item, idx) => (
             <View key={idx} style={[s.itemRow, idx < itemCount - 1 && s.itemRowBorder]}>
-              <Text style={s.itemQty}>{item.quantity}×</Text>
+              <Text style={[s.itemQty, { fontSize: fs(14) }]}>{item.quantity}×</Text>
               <View style={{ flex: 1 }}>
-                <Text style={s.itemName}>{item.name}</Text>
+                <Text style={[s.itemName, { fontSize: fs(14) }]}>{item.name}</Text>
                 {(getVariantName(item) || getToppings(item).length > 0) && (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
                     {getVariantName(item) && <View style={s.variantPill}><Text style={s.variantPillText}>{getVariantName(item)}</Text></View>}
@@ -651,8 +651,8 @@ export default function KitchenScreen() {
         keyExtractor={item => item.id}
         key={`kitchen-grid-${cols}`}
         numColumns={cols}
-        columnWrapperStyle={cols > 1 ? { gap: 12 } : undefined}
-        contentContainerStyle={{ padding: Spacing.md, paddingBottom: 100 }}
+        columnWrapperStyle={cols > 1 ? { gap: r(12, 16, 20) } : undefined}
+        contentContainerStyle={{ padding: r(Spacing.md, Spacing.md + 4), paddingBottom: 100 }}
         onScrollBeginDrag={() => setOpenMenuId(null)}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadKotData(false); }} tintColor={Colors.primary} />

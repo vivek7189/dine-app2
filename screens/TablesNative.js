@@ -47,7 +47,7 @@ export default function TablesScreen() {
   const { effectivelyOffline } = useOffline();
   const tabBar = useTabBar();
   const params = useLocalSearchParams();
-  const { gridColumns, r } = useResponsive();
+  const { gridColumns, r, fs, sp, isTablet } = useResponsive();
   const cols = gridColumns();
   const [floors, setFloors] = useState([]);
   const [tables, setTables] = useState([]);
@@ -920,15 +920,16 @@ export default function TablesScreen() {
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
         {/* Card Inner */}
-        <View style={styles.cardInner}>
+        <View style={[styles.cardInner, isTablet && { padding: sp(12) }]}>
           {/* Table Content */}
           <View style={styles.tableContent}>
             {/* Table Name Row: dot + name + elapsed time */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: r(7, 10) }}>
               <View style={[styles.statusDotInline, {
+                width: r(9, 11), height: r(9, 11), borderRadius: r(5, 6),
                 backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
               }]} />
-              <Text style={[styles.tableNumber, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{table.name}</Text>
+              <Text style={[styles.tableNumber, { fontSize: fs(17) }, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{table.name}</Text>
               {!selectedFloor && table._floorName && floors.length > 1 && (
                 <Text style={styles.floorLabel} numberOfLines={1}>{table._floorName}</Text>
               )}
@@ -1488,10 +1489,10 @@ export default function TablesScreen() {
       >
         <Ionicons
           name="layers-outline"
-          size={14}
+          size={r(14, 16)}
           color={isSelected ? '#fff' : Colors.textMedium}
         />
-        <Text style={[styles.floorChipText, isSelected && styles.floorChipTextSelected]}>
+        <Text style={[styles.floorChipText, { fontSize: fs(13) }, isSelected && styles.floorChipTextSelected]}>
           {floor.name}
         </Text>
         {hasAreaCharge && (
@@ -1728,9 +1729,9 @@ export default function TablesScreen() {
           tabBar?.handleScroll(y);
         }}
         scrollEventThrottle={16}
-        contentContainerStyle={styles.tablesGrid}
+        contentContainerStyle={[styles.tablesGrid, { paddingHorizontal: r(10, 16) }]}
         showsVerticalScrollIndicator={false}
-        columnWrapperStyle={styles.tableRow}
+        columnWrapperStyle={[styles.tableRow, { gap: r(6, 10) }]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />

@@ -69,7 +69,7 @@ export default function CartModal({
   tableFromNavigation = false,
   onClearTable,
 }) {
-  const { fs } = useResponsive();
+  const { fs, sp, r, isTablet } = useResponsive();
   const { effectivelyOffline } = useOffline();
 
   // Format amount: 2 decimals when round-off disabled, 0 decimals when enabled
@@ -650,10 +650,10 @@ export default function CartModal({
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
 
   const renderCartItem = ({ item }) => (
-    <View style={styles.cartItemCard}>
+    <View style={[styles.cartItemCard, isTablet && { paddingHorizontal: 16, paddingVertical: 12 }]}>
       <View style={styles.cartItemHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-          <Text style={styles.cartItemName} numberOfLines={1}>{item.name}</Text>
+          <Text style={[styles.cartItemName, { fontSize: fs(12) }]} numberOfLines={1}>{item.name}</Text>
           {item.isVeg !== undefined && (
             <View style={[styles.vegBadge, !item.isVeg && styles.nonVegBadge]}>
               <Text style={[styles.vegBadgeText, !item.isVeg && styles.nonVegBadgeText]}>{item.isVeg ? 'V' : 'N'}</Text>
@@ -728,7 +728,7 @@ export default function CartModal({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={[styles.modalContent, { paddingTop: insets.top }]}>
+      <View style={[styles.modalContent, { paddingTop: insets.top }, isTablet && styles.tabletContent]}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerRow}>
@@ -1243,7 +1243,7 @@ export default function CartModal({
                   <Ionicons name="pricetag" size={14} color="#fff" />
                 </View>
                 <View>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Order Details</Text>
+                  <Text style={{ fontSize: fs(16), fontWeight: '700', color: '#1e293b' }}>Order Details</Text>
                   <Text style={{ fontSize: 11, color: '#94a3b8' }}>{cart.length} items · {getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                 </View>
               </View>
@@ -1627,7 +1627,7 @@ export default function CartModal({
               <View style={{ marginBottom: 10 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                   <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151' }}>{getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
+                  <Text style={{ fontSize: fs(12), fontWeight: '600', color: '#374151' }}>{getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                 </View>
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
@@ -1666,8 +1666,8 @@ export default function CartModal({
                   </View>
                 )}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#e5e7eb', marginTop: 4 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>Total</Text>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>{getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
+                  <Text style={{ fontSize: fs(14), fontWeight: '700', color: '#1e293b' }}>Total</Text>
+                  <Text style={{ fontSize: fs(14), fontWeight: '700', color: '#1e293b' }}>{getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
                 </View>
               </View>
               <TouchableOpacity
@@ -1796,6 +1796,14 @@ const styles = StyleSheet.create({
   modalContent: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  tabletContent: {
+    maxWidth: 600,
+    width: '80%',
+    alignSelf: 'center',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#e5e7eb',
   },
   // Header
   header: {
@@ -2713,7 +2721,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 420,
     overflow: 'hidden',
   },
   breakdownHeader: {

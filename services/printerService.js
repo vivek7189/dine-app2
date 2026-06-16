@@ -836,17 +836,17 @@ export const generateKOTText = (data) => {
   const itemLines = [];
   if (hasChanges) {
     if (removedItems.length > 0) {
-      itemLines.push(center('*** CANCELLED ***'));
+      itemLines.push(center('*** CANCELLED ***', W));
       removedItems.forEach(item => itemLines.push(formatItemLine(item, { isRemoved: true })));
     }
     const reducedItems = data.items.filter(i => i.isUpdated && i.quantityDelta < 0);
     if (reducedItems.length > 0) {
-      itemLines.push(center('*** REDUCED ***'));
+      itemLines.push(center('*** REDUCED ***', W));
       reducedItems.forEach(item => itemLines.push(formatItemLine({ ...item, quantity: Math.abs(item.quantityDelta) }, { isRemoved: true })));
     }
     const newAndIncreased = data.items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0));
     if (newAndIncreased.length > 0) {
-      itemLines.push(center('*** NEW ITEMS ***'));
+      itemLines.push(center('*** NEW ITEMS ***', W));
       newAndIncreased.forEach(item => itemLines.push(formatItemLine(item, { showDelta: item.isUpdated })));
     }
     const unmarked = data.items.filter(i => !i.isNew && !i.isUpdated);
@@ -1026,7 +1026,7 @@ const printViaThermal = async (text) => {
       throw firstErr;
     }
     try {
-      await newMod.printBill(text + '\n\n\n', { beep: false, cut: true, tailingLine: true });
+      await newMod.printBill(cleanText + '\n\n\n', { beep: false, cut: true, tailingLine: true });
       emitPrinterEvent({ type: 'reconnected' });
     } catch (retryErr) {
       emitPrinterEvent({ type: 'disconnected', message: 'Printer disconnected. Please check the printer and reconnect.' });

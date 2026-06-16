@@ -5,10 +5,13 @@ import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import { useResponsive } from '../../hooks/useResponsive';
 
 export default function WebViewScreen() {
   const { url, title } = useLocalSearchParams();
   const router = useRouter();
+  const { isTablet, isLandscape } = useResponsive();
+  const useDesktopLayout = isTablet || isLandscape;
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [authUrl, setAuthUrl] = useState(null);
@@ -54,9 +57,12 @@ export default function WebViewScreen() {
       if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
+      if (useDesktopLayout) {
+        parts.push(`window.__DINEOPEN_FORCE_DESKTOP__ = true;`);
+      }
       return parts.join('\n') + '\ntrue;';
     } catch { return 'true;'; }
-  }, [authUrl, userData]);
+  }, [authUrl, userData, useDesktopLayout]);
 
   const handleRetry = () => {
     setLoadFailed(false);
@@ -127,6 +133,7 @@ export default function WebViewScreen() {
           }}
           injectedJavaScript={`
             window.__DINEOPEN_MOBILE_EMBED__ = true;
+            ${useDesktopLayout ? 'window.__DINEOPEN_FORCE_DESKTOP__ = true;' : ''}
             true;
           `}
         />

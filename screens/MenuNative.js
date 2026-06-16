@@ -75,7 +75,7 @@ function filterKotExcludedItems(items, printSettings) {
 export default function MenuScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { gridColumns, r } = useResponsive();
+  const { gridColumns, r, fs, sp, isTablet } = useResponsive();
   const { effectivelyOffline, pendingCount } = useOffline();
   const tabBar = useTabBar();
   const insets = useSafeAreaInsets();
@@ -2409,7 +2409,7 @@ export default function MenuScreen() {
           activeOpacity={0.92}
         >
           {/* Image Section — top portion */}
-          <View style={styles.cardImageSection}>
+          <View style={[styles.cardImageSection, { height: r(110, 140, 160) }]}>
             <Image
               source={{ uri: imageUrl }}
               style={styles.cardImage}
@@ -2428,15 +2428,15 @@ export default function MenuScreen() {
           </View>
 
           {/* Info Section — white bottom */}
-          <View style={styles.cardInfoSection}>
-            <Text style={styles.cardItemName} numberOfLines={2}>{item.name}</Text>
+          <View style={[styles.cardInfoSection, isTablet && { padding: 14 }]}>
+            <Text style={[styles.cardItemName, { fontSize: fs(13) }]} numberOfLines={2}>{item.name}</Text>
             {typeSubtitle && (
               <Text style={styles.cardTypeSubtitle} numberOfLines={1}>{typeSubtitle}</Text>
             )}
             <StockExpiryBadges />
             <View style={styles.cardPriceRow}>
               <View>
-                <Text style={styles.cardPrice}>{getCurrencySymbol()}{getItemDisplayPrice(item)}</Text>
+                <Text style={[styles.cardPrice, { fontSize: fs(15) }]}>{getCurrencySymbol()}{getItemDisplayPrice(item)}</Text>
                 {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
                   const tp = getItemTakeawayPrice(item);
                   return tp && tp !== getItemDisplayPrice(item) ? (
@@ -2482,8 +2482,8 @@ export default function MenuScreen() {
         activeOpacity={0.92}
       >
         {/* Placeholder image area */}
-        <View style={[styles.cardImageSection, styles.cardPlaceholderSection]}>
-          <Ionicons name="restaurant-outline" size={32} color="#d1d5db" />
+        <View style={[styles.cardImageSection, styles.cardPlaceholderSection, { height: r(110, 140, 160) }]}>
+          <Ionicons name="restaurant-outline" size={r(32, 40)} color="#d1d5db" />
           {/* Veg/Non-Veg Badge */}
           <View style={[styles.cardVegBadge, { backgroundColor: isVeg ? '#22c55e' : '#ef4444' }]}>
             <Ionicons name={isVeg ? "leaf" : "nutrition"} size={9} color="#fff" />
@@ -2496,8 +2496,8 @@ export default function MenuScreen() {
         </View>
 
         {/* Info Section */}
-        <View style={styles.cardInfoSection}>
-          <Text style={styles.cardItemName} numberOfLines={2}>{item.name}</Text>
+        <View style={[styles.cardInfoSection, isTablet && { padding: 14 }]}>
+          <Text style={[styles.cardItemName, { fontSize: fs(13) }]} numberOfLines={2}>{item.name}</Text>
           {item.description && (
             <Text style={styles.cardDescription} numberOfLines={1}>{item.description}</Text>
           )}
@@ -2507,7 +2507,7 @@ export default function MenuScreen() {
           <StockExpiryBadges />
           <View style={styles.cardPriceRow}>
             <View>
-              <Text style={styles.cardPrice}>{getCurrencySymbol()}{getItemDisplayPrice(item)}</Text>
+              <Text style={[styles.cardPrice, { fontSize: fs(15) }]}>{getCurrencySymbol()}{getItemDisplayPrice(item)}</Text>
               {takeawayRule && activePricingRuleId !== takeawayRule.id && (() => {
                 const tp = getItemTakeawayPrice(item);
                 return tp && tp !== getItemDisplayPrice(item) ? (
@@ -2943,8 +2943,8 @@ export default function MenuScreen() {
         keyExtractor={(item) => item.id}
         key={`menu-grid-${cols}`}
         numColumns={cols}
-        contentContainerStyle={styles.menuList}
-        columnWrapperStyle={styles.menuRow}
+        contentContainerStyle={[styles.menuList, { paddingHorizontal: r(16, 24) }]}
+        columnWrapperStyle={[styles.menuRow, { gap: r(12, 16, 20) }]}
         maxToRenderPerBatch={12}
         updateCellsBatchingPeriod={50}
         initialNumToRender={10}

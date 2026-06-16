@@ -14,11 +14,13 @@ import Constants from 'expo-constants';
 import apiClient from '../../services/api';
 import PrinterSetup from '../../components/PrinterSetup';
 import PrintSettings from '../../components/PrintSettings';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const APP_VERSION = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
 
 export default function PrinterSettingsScreen() {
   const router = useRouter();
+  const { isTablet } = useResponsive();
   const [restaurantId, setRestaurantId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [multiStationCount, setMultiStationCount] = useState(0);
@@ -79,7 +81,7 @@ export default function PrinterSettingsScreen() {
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, isTablet && { maxWidth: 600, alignSelf: 'center', width: '100%' }]}
           keyboardShouldPersistTaps="handled"
         >
           {/* Multi-station info banner */}
