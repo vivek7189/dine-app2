@@ -39,11 +39,13 @@ export default function CashierInvoiceModal({
   const [tokenPrinting, setTokenPrinting] = React.useState(false);
   const [printerNotice, setPrinterNotice] = React.useState(null);
   // Listen for printer events (disconnect, reconnect, fallback)
+  // Skip disconnect alerts when remote print is enabled — no local printer expected
   React.useEffect(() => {
-    const unsub = printerService.onPrinterEvent((event) => {
+    const unsub = printerService.onPrinterEvent(async (event) => {
       if (event.type === 'disconnected' || event.type === 'fallback') {
+        const remotePrint = await printerService.getRemotePrintEnabled();
+        if (remotePrint) return;
         setPrinterNotice({ type: 'error', message: event.message });
-        // Auto-dismiss after 8 seconds
         setTimeout(() => setPrinterNotice(null), 8000);
       } else if (event.type === 'reconnected') {
         setPrinterNotice({ type: 'success', message: 'Printer reconnected successfully.' });

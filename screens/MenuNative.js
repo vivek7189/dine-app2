@@ -102,6 +102,7 @@ export default function MenuScreen() {
   const [isCashier, setIsCashier] = useState(false);
   const [canCompleteBill, setCanCompleteBill] = useState(false);
   const [showImages, setShowImages] = useState(true);
+  const [globalHideImages, setGlobalHideImages] = useState(false);
   const [existingOrderId, setExistingOrderId] = useState(null);
   const [existingOrderItems, setExistingOrderItems] = useState(null); // snapshot of items when order was loaded for editing
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -143,9 +144,12 @@ export default function MenuScreen() {
   }, []);
 
   // Listen for printer disconnect events — show alert so user knows
+  // Skip when remote print is enabled — no local printer expected
   useEffect(() => {
-    const unsub = printerService.onPrinterEvent((event) => {
+    const unsub = printerService.onPrinterEvent(async (event) => {
       if (event.type === 'disconnected') {
+        const remotePrint = await printerService.getRemotePrintEnabled();
+        if (remotePrint) return; // Remote print mode — no local printer needed
         Alert.alert(
           'Printer Disconnected',
           'Could not reach the printer. Please check it is powered on and on the same WiFi, then go to Printer Settings to reconnect.',
@@ -162,6 +166,9 @@ export default function MenuScreen() {
       setRestaurantId(newRid);
       setRestaurantName(newRest?.name || 'Restaurant');
       setBusinessType(newRest?.businessType || 'restaurant');
+      const hideGlobal = newRest?.posSettings?.hideMenuImages === true;
+      setGlobalHideImages(hideGlobal);
+      if (hideGlobal) setShowImages(false);
       setMenuItems([]);
       setCategories([{ id: 'all-items', name: 'All Items' }]);
       setSelectedCategory('all-items');
@@ -424,6 +431,7 @@ export default function MenuScreen() {
 
   const loadImagePreference = async () => {
     try {
+      if (globalHideImages) { setShowImages(false); return; }
       const saved = await AsyncStorage.getItem('menu_show_images');
       if (saved !== null) {
         setShowImages(saved === 'true');
@@ -434,6 +442,7 @@ export default function MenuScreen() {
   };
 
   const toggleImages = async () => {
+    if (globalHideImages) return; // Global setting overrides — can't enable images
     const newValue = !showImages;
     setShowImages(newValue);
     try {
@@ -652,6 +661,10 @@ export default function MenuScreen() {
       setRestaurantName(userData.restaurant?.name || 'Restaurant');
       const bType = userData.restaurant?.businessType || 'restaurant';
       setBusinessType(bType);
+      if (userData.restaurant?.posSettings?.hideMenuImages) {
+        setGlobalHideImages(true);
+        setShowImages(false);
+      }
 
       // Show cached menu IMMEDIATELY — don't wait for settings
       const cached = await getCached('cache_menu_' + rid);
@@ -2325,10 +2338,10 @@ export default function MenuScreen() {
   };
 
   const getItemImage = useCallback((item) => {
-    if (!showImages) return null;
+    if (!showImages || globalHideImages || item.hideImage) return null;
     // Use the placeholder images utility which handles all cases
     return getDisplayImage(item, 'https://dineopen.com');
-  }, [showImages]);
+  }, [showImages, globalHideImages]);
 
   const getCategoryName = (categoryId) => {
     const category = categories.find(c => c.id === categoryId);
@@ -2363,7 +2376,7 @@ export default function MenuScreen() {
   const renderMenuItem = useCallback(({ item }) => {
     const cartItem = cartMap[item.id];
     const quantity = cartItem?.quantity || 0;
-    const imageUrl = showImages ? getItemImage(item) : null;
+    const imageUrl = (showImages && !globalHideImages && !item.hideImage) ? getItemImage(item) : null;
     const isVeg = item.isVeg !== false;
     const hasImage = imageUrl !== null;
     const typeSubtitle = getTypeSubtitle(item);
@@ -2550,7 +2563,7 @@ export default function MenuScreen() {
         </View>
       </TouchableOpacity>
     );
-  }, [cartMap, addToCart, handleItemPress, updateCartQuantity, showImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
+  }, [cartMap, addToCart, handleItemPress, updateCartQuantity, showImages, globalHideImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
 
   const renderCategory = ({ item }) => {
     const isSelected = selectedCategory === item.id;
