@@ -105,6 +105,8 @@ export function render(invoice, printSettings = {}, labels = {}) {
       `<div class="grand-total"><span>${dualLabel(L.total, AR.total, showAr)}</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
       (bl.showPayment !== false ? paymentHtml : '') +
     `</div>` +
+    // Pre-bill banner
+    (invoice.isPreBill ? `<div style="text-align:center;margin:8px 0;"><div style="font-size:16px;font-weight:900;letter-spacing:2px;">*** PRE-BILL ***</div><div style="font-size:11px;color:#666;">This is not a final bill</div></div>` : '') +
     // Footer
     (bl.showFooter !== false || bl.showPoweredBy !== false ? `<div class="footer">${bl.showFooter !== false ? `<p>${dualLabel(L.footer, AR.footer, showAr)}</p>` : ''}${bl.showPoweredBy !== false ? `<p style="margin-top:4px;">${dualLabel(L.poweredBy, AR.poweredBy, showAr)}</p>` : ''}</div>` : '');
 

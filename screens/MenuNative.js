@@ -1423,13 +1423,14 @@ export default function MenuScreen() {
         printSettings: printSettings || {},
       };
 
-      // Auto-print KOT silently in background (fire and forget)
+      // Auto-print KOT silently — show toast if print fails so waiter knows
       // Skip when multi-station configured (2+ stations) - Electron handles station routing
       if (printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
         const kotText = printerService.generateKOTText(kotData);
         const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-        printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true })
-          .catch(err => console.error('KOT auto-print failed:', err));
+        printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+          .catch(() => {});
       }
 
       // Show KOT Modal
@@ -1664,11 +1665,13 @@ export default function MenuScreen() {
               restaurantName: restaurantName,
               orderType: orderType || 'Dine-in',
               customerName: customerName || '',
+              specialInstructions: discountData.specialInstructions || '',
               printSettings: printSettings || {},
             };
             const kotText = printerService.generateKOTText(kotData);
-            printerService.printContent({ text: kotText, silentOnly: true })
-              .catch(err => console.error('KOT auto-print failed:', err));
+            printerService.printWithFeedback({ text: kotText, silentOnly: true, label: 'KOT' })
+              .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+              .catch(() => {});
           }
         }
 
@@ -1756,12 +1759,14 @@ export default function MenuScreen() {
             restaurantName,
             orderType: orderType || '',
             customerName: customerName || '',
+            specialInstructions: discountData.specialInstructions || '',
             printSettings: printSettings || {},
           };
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-          printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true })
-            .catch(err => console.error('KOT auto-print failed:', err));
+          printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+            .catch(() => {});
         }
 
         if (isBarTabMode) {
@@ -1988,11 +1993,12 @@ export default function MenuScreen() {
         printSettings: printSettings || {},
       };
 
-      // Auto-print bill silently in background (fire and forget)
+      // Auto-print bill silently — show toast if print fails
       if (printSettings?.autoPrintOnBilling !== false) {
         const billText = printerService.generateBillText(invoiceData);
-        printerService.printContent({ text: billText, silentOnly: true })
-          .catch(err => console.error('Bill auto-print failed:', err));
+        printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+          .catch(() => {});
       }
 
       setLastOrderData(invoiceData);
@@ -2199,11 +2205,12 @@ export default function MenuScreen() {
         printSettings: printSettings || {},
       };
 
-      // Auto-print bill silently in background (fire and forget)
+      // Auto-print bill silently — show toast if print fails
       if (printSettings?.autoPrintOnBilling !== false) {
         const billText = printerService.generateBillText(invoiceData);
-        printerService.printContent({ text: billText, silentOnly: true })
-          .catch(err => console.error('Bill auto-print failed:', err));
+        printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+          .catch(() => {});
       }
 
       setLastOrderData(invoiceData);
@@ -3087,6 +3094,7 @@ export default function MenuScreen() {
         setActivePricingRuleId={setActivePricingRuleId}
         autoSelectedRule={autoSelectedRule}
         isUpdateOrder={!!existingOrderId}
+        existingOrderItems={existingOrderItems}
         floors={floors}
         onTableSelect={handleCashierTableSelect}
         selectedTable={selectedTable}
@@ -3121,7 +3129,6 @@ export default function MenuScreen() {
           }
         }}
         orderData={kotOrderData}
-        manualPrintEnabled={printSettings?.manualPrintEnabled !== false}
         printSettings={printSettings || {}}
       />
 

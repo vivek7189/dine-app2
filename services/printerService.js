@@ -39,6 +39,8 @@ import { renderKOT } from '../utils/printTemplates/index';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
+const PRINT_NOTIF_KEY = 'dine_print_notifications'; // 'true' | 'false'
+const REMOTE_PRINT_KEY = 'dine_remote_print'; // 'true' | 'false' — print from desktop app
 
 // ==================== PRINTER STATE ====================
 
@@ -47,8 +49,45 @@ let connectionType = null; // 'bluetooth' | 'network' | 'usb' | 'airprint'
 let printerInitialized = { bluetooth: false, network: false, usb: false };
 let activeScanCancelled = false;
 let activeZeroconf = null;
-let reconnectInProgress = false;
+let _reconnectPromise = null; // shared Promise so concurrent callers wait for reconnect
 let printerEventListeners = [];
+let _heartbeatTimer = null; // WiFi heartbeat interval ID
+
+// ==================== PRINT QUEUE ====================
+// Serializes all print jobs so only one runs at a time.
+// Prevents concurrent access to the global printer connection.
+
+let _printQueueChain = Promise.resolve();
+
+const enqueuePrint = (fn) => {
+  return new Promise((resolve, reject) => {
+    // Use .catch(() => {}) on the chain so a failed print doesn't break the queue.
+    // The actual error is forwarded to the caller via reject().
+    _printQueueChain = _printQueueChain
+      .catch(() => {}) // recover from previous failure so chain continues
+      .then(() => fn())
+      .then(resolve, reject);
+  });
+};
+
+// ==================== PRINT TIMEOUT & RETRY CONFIG ====================
+
+const PRINT_TIMEOUT_MS = 10000; // 10 seconds
+const MAX_PRINT_RETRIES = 3; // Total attempts (1 original + 2 retries)
+const RETRY_DELAYS = [800, 1500]; // ms delay before 2nd and 3rd attempt
+
+const withPrintTimeout = (promise, label = 'Print') => {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${PRINT_TIMEOUT_MS}ms`)),
+      PRINT_TIMEOUT_MS,
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+};
 
 // Simple event system for printer status notifications
 export const onPrinterEvent = (callback) => {
@@ -76,6 +115,34 @@ export const getPrinterMode = async () => {
 
 export const setPrinterMode = async (mode) => {
   await AsyncStorage.setItem(PRINTER_MODE_KEY, mode);
+};
+
+// Print notification preference (toast on print failure)
+export const getPrintNotificationsEnabled = async () => {
+  try {
+    const val = await AsyncStorage.getItem(PRINT_NOTIF_KEY);
+    return val !== 'false'; // enabled by default
+  } catch {
+    return true;
+  }
+};
+
+export const setPrintNotificationsEnabled = async (enabled) => {
+  await AsyncStorage.setItem(PRINT_NOTIF_KEY, enabled ? 'true' : 'false');
+};
+
+// Remote print preference — delegate printing to desktop (Electron) app
+export const getRemotePrintEnabled = async () => {
+  try {
+    const val = await AsyncStorage.getItem(REMOTE_PRINT_KEY);
+    return val === 'true'; // disabled by default
+  } catch {
+    return false;
+  }
+};
+
+export const setRemotePrintEnabled = async (enabled) => {
+  await AsyncStorage.setItem(REMOTE_PRINT_KEY, enabled ? 'true' : 'false');
 };
 
 export const getSavedPrinter = async () => {
@@ -448,6 +515,14 @@ export const connectNetworkPrinter = async (host, port = 9100) => {
   await NetPrinter.connectPrinter(host, port);
   connectedPrinter = `${host}:${port}`;
   connectionType = 'network';
+  // Start heartbeat to keep WiFi connection alive and detect stale sockets
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+  // Delay first heartbeat so the connection has time to stabilize
+  setTimeout(() => {
+    if (connectionType === 'network' && connectedPrinter) {
+      _heartbeatTimer = setInterval(heartbeatCheck, HEARTBEAT_INTERVAL_MS);
+    }
+  }, 5000);
   return true;
 };
 
@@ -469,6 +544,8 @@ export const connectUSBPrinter = async (vendorId, productId) => {
 };
 
 export const disconnectPrinter = async () => {
+  // Stop heartbeat (defined below — safe because disconnect is called at runtime, not import time)
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
   try {
     if (connectionType === 'bluetooth' && BLEPrinter) {
       const hasPerms = await ensureBluetoothPermissions();
@@ -495,10 +572,29 @@ export const hasNativeSupport = () => {
 };
 
 // Verify the connection is actually alive by attempting a reconnect if needed.
+// For network printers, also verifies the TCP socket is still open.
 // Returns true if connected (or successfully reconnected), false otherwise.
 export const ensureConnected = async () => {
   if (!connectedPrinter) {
     return await tryReconnect();
+  }
+  // For network printers, verify socket with a quick no-op write
+  if (connectionType === 'network') {
+    const mod = getThermalModule();
+    if (mod) {
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('verify timeout')), 3000);
+          mod.printBill('', { beep: false, cut: false, tailingLine: false })
+            .then(() => { clearTimeout(timer); resolve(); })
+            .catch((e) => { clearTimeout(timer); reject(e); });
+        });
+      } catch {
+        // Socket dead — reconnect
+        console.warn('ensureConnected: network socket dead, reconnecting...');
+        return await tryReconnect();
+      }
+    }
   }
   return true;
 };
@@ -542,6 +638,8 @@ export const autoReconnect = async () => {
     }
   } catch (err) {
     console.error('Auto-reconnect failed:', err);
+    // Don't emit printer event here — callers (PrinterSetup, etc.) handle
+    // failure with their own UI (Alert dialog, status indicator).
   }
   return false;
 };
@@ -725,6 +823,14 @@ export const generateBillText = (invoiceData) => {
   }
 
   // ── Footer ──
+  // ── Pre-bill banner (shown before footer when isPreBill is set) ──
+  if (invoiceData.isPreBill) {
+    lines.push(_DLINE);
+    lines.push(`<CB>*** PRE-BILL ***</CB>`);
+    lines.push(`<C>This is not a final bill</C>`);
+    lines.push(_DLINE);
+  }
+
   if (bl.showFooter !== false) {
     lines.push('');
     wrapText('Thank you for your visit!', W).forEach(l => lines.push(`<CM>${l}</CM>`));
@@ -961,78 +1067,118 @@ const getThermalModule = () => {
 };
 
 // Try to reconnect to the saved printer (used when print fails due to dead connection)
+// If a reconnect is already in progress, concurrent callers wait for it instead of failing.
 const tryReconnect = async () => {
-  if (reconnectInProgress) return false;
-  reconnectInProgress = true;
-  try {
-    const saved = await getSavedPrinter();
-    if (!saved) return false;
-    // Close stale connection first (BT needs runtime permissions on Android 12+)
+  // If a reconnect is already in progress, wait for it
+  if (_reconnectPromise) {
     try {
-      if (connectionType === 'bluetooth' && BLEPrinter) {
-        const hasPerms = await ensureBluetoothPermissions();
-        if (hasPerms) await BLEPrinter.closeConn();
-      } else if (connectionType === 'network' && NetPrinter) {
-        await NetPrinter.closeConn();
-      } else if (connectionType === 'usb' && USBPrinter) {
-        await USBPrinter.closeConn();
-      }
-    } catch { /* ignore close errors on dead socket */ }
-    connectedPrinter = null;
-    connectionType = null;
-    // Re-establish connection
-    if (saved.type === 'network' && saved.host) {
-      await connectNetworkPrinter(saved.host, saved.port || 9100);
-      return true;
-    } else if (saved.type === 'bluetooth' && saved.macAddress) {
-      const hasPerms = await ensureBluetoothPermissions();
-      if (!hasPerms) return false;
-      await connectBluetoothPrinter(saved.macAddress);
-      return true;
-    } else if (saved.type === 'usb' && saved.vendorId) {
-      await connectUSBPrinter(saved.vendorId, saved.productId);
-      return true;
+      return await _reconnectPromise;
+    } catch {
+      return false;
     }
-    return false;
-  } catch (err) {
-    console.error('Reconnect failed:', err);
-    return false;
-  } finally {
-    reconnectInProgress = false;
   }
+
+  _reconnectPromise = (async () => {
+    try {
+      const saved = await getSavedPrinter();
+      if (!saved) return false;
+      // Close stale connection first (BT needs runtime permissions on Android 12+)
+      try {
+        if (connectionType === 'bluetooth' && BLEPrinter) {
+          const hasPerms = await ensureBluetoothPermissions();
+          if (hasPerms) await BLEPrinter.closeConn();
+        } else if (connectionType === 'network' && NetPrinter) {
+          await NetPrinter.closeConn();
+        } else if (connectionType === 'usb' && USBPrinter) {
+          await USBPrinter.closeConn();
+        }
+      } catch { /* ignore close errors on dead socket */ }
+      connectedPrinter = null;
+      connectionType = null;
+      // Re-establish connection (with timeout to avoid blocking queue on unreachable printer)
+      if (saved.type === 'network' && saved.host) {
+        await withPrintTimeout(connectNetworkPrinter(saved.host, saved.port || 9100), 'reconnect-network');
+        return true;
+      } else if (saved.type === 'bluetooth' && saved.macAddress) {
+        const hasPerms = await ensureBluetoothPermissions();
+        if (!hasPerms) return false;
+        await withPrintTimeout(connectBluetoothPrinter(saved.macAddress), 'reconnect-bluetooth');
+        return true;
+      } else if (saved.type === 'usb' && saved.vendorId) {
+        await withPrintTimeout(connectUSBPrinter(saved.vendorId, saved.productId), 'reconnect-usb');
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Reconnect failed:', err);
+      return false;
+    } finally {
+      _reconnectPromise = null;
+    }
+  })();
+
+  return _reconnectPromise;
 };
 
+// Delay helper for retry backoff
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Silent print via thermal printer (Bluetooth / WiFi / USB)
-// On failure, attempts one reconnect before giving up
+// On failure, reconnects and retries up to MAX_PRINT_RETRIES times with backoff
 const printViaThermal = async (text) => {
   const mod = getThermalModule();
   if (!mod) throw new Error('No thermal printer connected');
   // Strip logo tag — thermal printers don't support images via ESC/POS text
   const cleanText = text.replace(/^<LOGO:.+?>\n?/, '');
-  try {
-    await mod.printBill(cleanText + '\n\n\n', { beep: false, cut: true, tailingLine: true });
-  } catch (firstErr) {
-    console.warn('Print failed, attempting reconnect...', firstErr.message);
-    emitPrinterEvent({ type: 'reconnecting' });
-    const reconnected = await tryReconnect();
-    if (!reconnected) {
-      emitPrinterEvent({ type: 'disconnected', message: 'Printer disconnected. Please check the printer and reconnect.' });
-      throw firstErr;
-    }
-    // Retry with fresh connection
-    const newMod = getThermalModule();
-    if (!newMod) {
-      emitPrinterEvent({ type: 'disconnected', message: 'Printer disconnected. Please check the printer and reconnect.' });
-      throw firstErr;
-    }
-    try {
-      await newMod.printBill(cleanText + '\n\n\n', { beep: false, cut: true, tailingLine: true });
+  const printOpts = { beep: false, cut: true, tailingLine: true };
+  const payload = cleanText + '\n\n\n';
+
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < MAX_PRINT_RETRIES; attempt++) {
+    // Wait before retries (not before first attempt)
+    if (attempt > 0) {
+      const backoffMs = RETRY_DELAYS[attempt - 1] || 1500;
+      console.log(`Print retry ${attempt}/${MAX_PRINT_RETRIES - 1} in ${backoffMs}ms...`);
+      emitPrinterEvent({ type: 'retrying', attempt, maxRetries: MAX_PRINT_RETRIES });
+      await delay(backoffMs);
+
+      // Reconnect before retry
+      emitPrinterEvent({ type: 'reconnecting' });
+      const reconnected = await tryReconnect();
+      if (!reconnected) {
+        continue; // try next attempt — tryReconnect may succeed on next try
+      }
       emitPrinterEvent({ type: 'reconnected' });
-    } catch (retryErr) {
-      emitPrinterEvent({ type: 'disconnected', message: 'Printer disconnected. Please check the printer and reconnect.' });
-      throw retryErr;
+    }
+
+    try {
+      const currentMod = getThermalModule();
+      if (!currentMod) {
+        lastErr = new Error('No thermal printer module available');
+        continue;
+      }
+      await withPrintTimeout(
+        currentMod.printBill(payload, printOpts),
+        `printBill attempt ${attempt + 1}`,
+      );
+      // Success — emit event and return
+      if (attempt > 0) {
+        emitPrinterEvent({ type: 'print_recovered', attempt: attempt + 1 });
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`Print attempt ${attempt + 1}/${MAX_PRINT_RETRIES} failed:`, err.message);
     }
   }
+
+  // All attempts exhausted
+  emitPrinterEvent({
+    type: 'print_failed',
+    message: 'Print failed after multiple retries. Check printer connection.',
+  });
+  throw lastErr;
 };
 
 // Silent print via AirPrint (iOS - no dialog when printer URL is saved)
@@ -1055,54 +1201,59 @@ const printViaAirPrint = async (html, printerUrl) => {
  * @returns {Promise<{method: string}>}
  */
 export const printContent = async ({ html, text, silentOnly = false }) => {
-  const mode = await getPrinterMode();
+  return enqueuePrint(async () => {
+    const mode = await getPrinterMode();
 
-  if ((mode === 'silent' || silentOnly) && connectedPrinter) {
-    // iOS AirPrint - silent with saved printer URL
-    if (connectionType === 'airprint' && html) {
-      try {
-        await printViaAirPrint(html, connectedPrinter);
-        return { method: 'silent-airprint' };
-      } catch (err) {
-        console.error('AirPrint silent failed:', err);
-        if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
-        // fall through to dialog
+    if ((mode === 'silent' || silentOnly) && connectedPrinter) {
+      // iOS AirPrint - silent with saved printer URL
+      if (connectionType === 'airprint' && html) {
+        try {
+          await printViaAirPrint(html, connectedPrinter);
+          return { method: 'silent-airprint' };
+        } catch (err) {
+          console.error('AirPrint silent failed:', err);
+          if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
+          // fall through to dialog
+        }
       }
-    }
 
-    // Thermal printers (Bluetooth / WiFi / USB) - silent with ESC/POS text
-    if (connectionType !== 'airprint' && text) {
-      try {
-        await printViaThermal(text);
-        return { method: `silent-${connectionType}` };
-      } catch (err) {
-        console.error(`${connectionType} silent print failed:`, err);
-        if (silentOnly) return { method: 'skipped', reason: `${connectionType}-failed` };
-        // fall through to dialog
+      // Thermal printers (Bluetooth / WiFi / USB) - silent with ESC/POS text
+      if (connectionType !== 'airprint' && text) {
+        try {
+          await printViaThermal(text);
+          return { method: `silent-${connectionType}` };
+        } catch (err) {
+          console.error(`${connectionType} silent print failed:`, err);
+          if (silentOnly) return { method: 'skipped', reason: `${connectionType}-failed` };
+          // fall through to dialog
+        }
       }
+
+      // silentOnly but no matching print path — skip
+      if (silentOnly) return { method: 'skipped', reason: 'no-printer-match' };
     }
 
-    // silentOnly but no matching print path — skip
-    if (silentOnly) return { method: 'skipped', reason: 'no-printer-match' };
-  }
-
-  // silentOnly mode: never open dialog
-  if (silentOnly) return { method: 'skipped', reason: 'no-connected-printer' };
-
-  // Fallback: system print dialog
-  if (html) {
-    if (mode === 'silent') {
-      // We were supposed to print silently but couldn't — notify user
-      emitPrinterEvent({
-        type: 'fallback',
-        message: 'Silent print failed. Printer may be disconnected. Opening print dialog as fallback.',
-      });
+    // silentOnly mode: never open dialog — notify user that printer is not connected
+    if (silentOnly) {
+      emitPrinterEvent({ type: 'disconnected', message: 'Printer not connected. Please connect a printer in Settings.' });
+      return { method: 'skipped', reason: 'no-connected-printer' };
     }
-    await Print.printAsync({ html });
-    return { method: 'dialog' };
-  }
 
-  throw new Error('No printable content provided');
+    // Fallback: system print dialog
+    if (html) {
+      if (mode === 'silent') {
+        // We were supposed to print silently but couldn't — notify user
+        emitPrinterEvent({
+          type: 'fallback',
+          message: 'Silent print failed. Printer may be disconnected. Opening print dialog as fallback.',
+        });
+      }
+      await Print.printAsync({ html });
+      return { method: 'dialog' };
+    }
+
+    throw new Error('No printable content provided');
+  });
 };
 
 /**
@@ -1136,4 +1287,120 @@ export const printTestPage = async () => {
 </head><body><pre>${testText}</pre></body></html>`;
 
   return printContent({ html: testHtml, text: testText });
+};
+
+// ==================== HEARTBEAT (WiFi keep-alive) ====================
+// Periodically checks if the WiFi printer connection is alive.
+// If it detects a stale connection, proactively reconnects so the next
+// print job doesn't fail due to a dead socket.
+
+const HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
+
+const heartbeatCheck = async () => {
+  // Only heartbeat for WiFi/network printers — BLE and USB have their own keep-alive
+  if (connectionType !== 'network' || !connectedPrinter) return;
+
+  const mod = getThermalModule();
+  if (!mod) return;
+
+  try {
+    // Send a no-op print (empty data) to verify socket is alive.
+    // Most thermal printers ignore empty payloads. We use a short timeout
+    // so this doesn't block anything if the printer is slow.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('heartbeat timeout')), 5000);
+      // printBill with empty string — printer ignores it but TCP write confirms socket
+      mod.printBill('', { beep: false, cut: false, tailingLine: false })
+        .then(() => { clearTimeout(timer); resolve(); })
+        .catch((e) => { clearTimeout(timer); reject(e); });
+    });
+  } catch (err) {
+    console.warn('Heartbeat failed, WiFi printer may be disconnected:', err.message);
+    emitPrinterEvent({ type: 'connection_stale' });
+    // Proactively reconnect
+    try {
+      const reconnected = await tryReconnect();
+      if (reconnected) {
+        emitPrinterEvent({ type: 'reconnected', source: 'heartbeat' });
+        console.log('Heartbeat: reconnected to WiFi printer');
+      } else {
+        emitPrinterEvent({ type: 'disconnected', message: 'Printer connection lost. Will retry on next print.', source: 'heartbeat' });
+      }
+    } catch {
+      // Reconnect failed — will retry on next heartbeat or next print
+    }
+  }
+};
+
+export const startHeartbeat = () => {
+  stopHeartbeat(); // clear any existing timer
+  if (connectionType === 'network' && connectedPrinter) {
+    _heartbeatTimer = setInterval(heartbeatCheck, HEARTBEAT_INTERVAL_MS);
+  }
+};
+
+export const stopHeartbeat = () => {
+  if (_heartbeatTimer) {
+    clearInterval(_heartbeatTimer);
+    _heartbeatTimer = null;
+  }
+};
+
+// Note: heartbeat auto-starts from connectNetworkPrinter via setTimeout.
+// External callers can also use startHeartbeat() / stopHeartbeat() directly.
+
+// ==================== PRINT WITH FEEDBACK ====================
+// Convenience wrapper around printContent that returns a structured result
+// indicating success/failure — callers use this to show toast/alerts.
+// Works for both native screens and WebView bridge.
+
+/**
+ * Print content and return a detailed result object.
+ * Never throws — always returns { success, method, error }.
+ *
+ * @param {object} options - Same as printContent options
+ * @param {string} options.html - HTML content
+ * @param {string} options.text - ESC/POS text content
+ * @param {boolean} options.silentOnly - If true, skip dialog fallback
+ * @param {string} options.label - Label for logs/events (e.g. 'KOT', 'Bill')
+ * @returns {Promise<{success: boolean, method: string, error?: string}>}
+ */
+export const printWithFeedback = async ({ html, text, silentOnly = true, label = 'Print' }) => {
+  // If remote print is enabled, skip local printing — desktop app handles it via Firebase RTDB
+  const remotePrint = await getRemotePrintEnabled();
+  if (remotePrint) {
+    return { success: true, method: 'remote', notify: false };
+  }
+
+  const notifEnabled = await getPrintNotificationsEnabled();
+  try {
+    const result = await printContent({ html, text, silentOnly });
+
+    if (result?.method?.startsWith('silent-') || result?.method === 'dialog') {
+      return { success: true, method: result.method, notify: false };
+    }
+
+    if (result?.method === 'skipped') {
+      const reason = result.reason || 'unknown';
+      // Distinguish between "no printer" vs "print attempt failed"
+      const isPrinterMissing = reason === 'no-connected-printer' || reason === 'no-printer-match';
+      return {
+        success: false,
+        method: 'skipped',
+        notify: notifEnabled,
+        error: isPrinterMissing
+          ? `${label} not printed — no printer connected`
+          : `${label} print failed — ${reason}`,
+      };
+    }
+
+    return { success: true, method: result?.method || 'unknown', notify: false };
+  } catch (err) {
+    return {
+      success: false,
+      method: 'error',
+      notify: notifEnabled,
+      error: `${label} print failed — ${err.message || 'unknown error'}`,
+    };
+  }
 };

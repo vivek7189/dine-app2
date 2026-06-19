@@ -16,13 +16,19 @@ import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 
-export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, userRole }) {
+export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole }) {
   const { modalWidth } = useResponsive();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const canCompleteBill = ['owner', 'admin', 'manager'].includes(userRole?.toLowerCase());
+
+  // Safe number helper — Firestore can return strings or undefined for numeric fields
+  const num = (val) => {
+    const n = Number(val);
+    return isNaN(n) ? 0 : n;
+  };
 
   useEffect(() => {
     if (visible && orderId && restaurantId) {
@@ -49,9 +55,9 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
     try {
       const response = await apiClient.getOrders(restaurantId, { search: orderId, limit: 1 });
       let freshOrder = null;
-      if (response.orders && response.orders.length > 0) {
+      if (response?.orders && response.orders.length > 0) {
         freshOrder = response.orders[0];
-      } else if (response.order) {
+      } else if (response?.order) {
         freshOrder = response.order;
       }
       if (freshOrder) {
@@ -61,8 +67,15 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
         setError('Order not found');
       }
     } catch (err) {
+      console.warn('OrderDetailsModal: Failed to load order', orderId, err?.message);
       if (!cached?.data) {
-        setError(err.message || 'Failed to load order details');
+        // Show user-friendly message for permission errors
+        const msg = err?.message || '';
+        if (msg.includes('403') || msg.includes('Access denied') || msg.includes('permission')) {
+          setError('You don\'t have permission to view order details. Contact your admin.');
+        } else {
+          setError(msg || 'Failed to load order details');
+        }
       }
     } finally {
       setLoading(false);
@@ -70,8 +83,8 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   };
 
   const calculateTotal = () => {
-    if (!order?.items) return 0;
-    return order.items.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
+    if (!order?.items || !Array.isArray(order.items)) return 0;
+    return order.items.reduce((sum, item) => sum + (num(item.price) * num(item.quantity || 1)), 0);
   };
 
   const formatDate = (dateInput) => {
@@ -100,44 +113,67 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
     return { bg: '#e5e7eb', fg: '#374151', dot: '#6b7280' };
   };
 
-  const finalTotal = order?.finalAmount || calculateTotal();
+  const finalTotal = num(order?.finalAmount) || calculateTotal();
   const sStyle = statusStyle(order?.status);
-  const orderNumberShort = order?.dailyOrderId || order?.orderNumber || orderId?.slice(-6);
+  const orderNumberShort = order?.dailyOrderId || order?.orderNumber || (orderId ? String(orderId).slice(-6) : '');
+
+  // Safely render content — catch any unexpected data shape issues
+  let renderError = null;
+  let headerContent = null;
+  try {
+    headerContent = (
+      <View style={styles.header}>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerIconWrap}>
+            <Ionicons name="receipt" size={22} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerLabel}>ORDER</Text>
+            <Text style={styles.headerTitle}>#{orderNumberShort}</Text>
+          </View>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+            <Ionicons name="close" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {order?.status && (
+          <View style={styles.headerMetaRow}>
+            <View style={[styles.statusPill, { backgroundColor: sStyle.bg }]}>
+              <View style={[styles.statusDot, { backgroundColor: sStyle.dot }]} />
+              <Text style={[styles.statusPillText, { color: sStyle.fg }]}>{String(order.status || '').toUpperCase()}</Text>
+            </View>
+            {(tableNumber || order?.tableNumber) ? (
+              <View style={styles.headerChipWhite}>
+                <Ionicons name="restaurant" size={12} color="#fff" />
+                <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}{order?.floorName ? ` · ${order.floorName}` : ''}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+      </View>
+    );
+  } catch (e) {
+    console.error('OrderDetailsModal: header render error', e);
+    renderError = e?.message || 'Failed to render order';
+  }
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={[styles.modalContainer, modalWidth(520)]}>
           {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerTopRow}>
-              <View style={styles.headerIconWrap}>
-                <Ionicons name="receipt" size={22} color="#fff" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.headerLabel}>ORDER</Text>
-                <Text style={styles.headerTitle}>#{orderNumberShort}</Text>
-              </View>
-              <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
-            {order?.status && (
-              <View style={styles.headerMetaRow}>
-                <View style={[styles.statusPill, { backgroundColor: sStyle.bg }]}>
-                  <View style={[styles.statusDot, { backgroundColor: sStyle.dot }]} />
-                  <Text style={[styles.statusPillText, { color: sStyle.fg }]}>{order.status.toUpperCase()}</Text>
+          {renderError ? (
+            <View style={styles.header}>
+              <View style={styles.headerTopRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.headerTitle}>Order</Text>
                 </View>
-                {(tableNumber || order?.tableNumber) ? (
-                  <View style={styles.headerChipWhite}>
-                    <Ionicons name="restaurant" size={12} color="#fff" />
-                    <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}{order?.floorName ? ` · ${order.floorName}` : ''}</Text>
-                  </View>
-                ) : null}
+                <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+                  <Ionicons name="close" size={22} color="#fff" />
+                </TouchableOpacity>
               </View>
-            )}
-          </View>
+            </View>
+          ) : headerContent}
 
           {/* Content */}
           <ScrollView
@@ -145,7 +181,12 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            {loading ? (
+            {renderError ? (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
+                <Text style={styles.errorText}>{renderError}</Text>
+              </View>
+            ) : loading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={Colors.primary} />
                 <Text style={styles.loadingText}>Loading order…</Text>
@@ -183,10 +224,11 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                   {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
                     order.items.map((item, index) => {
                       const itemName = item.name || item.menuItem?.name || item.itemName || 'Unknown Item';
-                      const itemPrice = item.price || item.unitPrice || item.itemPrice || item.menuItem?.price || 0;
-                      const itemQuantity = item.quantity || 1;
-                      const itemTotal = item.total || (itemPrice * itemQuantity);
-                      const subline = getItemSubline(item);
+                      const itemPrice = num(item.price || item.unitPrice || item.itemPrice || item.menuItem?.price);
+                      const itemQuantity = num(item.quantity || 1);
+                      const itemTotal = num(item.total) || (itemPrice * itemQuantity);
+                      let subline = '';
+                      try { subline = getItemSubline(item); } catch (e) {}
 
                       return (
                         <View key={`item-${index}-${item.menuItemId || item.id || index}`} style={styles.itemRow}>
@@ -219,50 +261,50 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 <View style={styles.totalCard}>
                   <View style={styles.totalRow}>
                     <Text style={styles.totalLabel}>Subtotal</Text>
-                    <Text style={styles.totalValue}>{getCurrencySymbol()}{(order.subtotal || calculateTotal()).toFixed(2)}</Text>
+                    <Text style={styles.totalValue}>{getCurrencySymbol()}{(num(order.subtotal) || calculateTotal()).toFixed(2)}</Text>
                   </View>
-                  {order.discountAmount > 0 && (
+                  {num(order.discountAmount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>
                         {typeof order.appliedOffer === 'string' ? order.appliedOffer : (order.appliedOffer?.name || order.selectedOfferName || 'Offer')}
                       </Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.discountAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{num(order.discountAmount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {order.manualDiscount > 0 && (
+                  {num(order.manualDiscount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>Manual Discount</Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.manualDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{num(order.manualDiscount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {order.loyaltyDiscount > 0 && (
+                  {num(order.loyaltyDiscount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, styles.discountText]}>Loyalty</Text>
-                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{order.loyaltyDiscount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, styles.discountText]}>−{getCurrencySymbol()}{num(order.loyaltyDiscount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {(order.serviceChargeAmount || 0) > 0 && (
+                  {num(order.serviceChargeAmount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={styles.totalLabel}>Service Charge{order.serviceChargeRate ? ` (${order.serviceChargeRate}%)` : ''}</Text>
-                      <Text style={styles.totalValue}>{getCurrencySymbol()}{order.serviceChargeAmount.toFixed(2)}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{num(order.serviceChargeAmount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {(order.taxAmount || 0) > 0 && (
+                  {num(order.taxAmount) > 0 && (
                     <View style={styles.totalRow}>
-                      <Text style={styles.totalLabel}>{order.taxBreakdown?.length > 0 ? order.taxBreakdown.map(t => `${t.name}${t.rate ? ` ${t.rate}%` : ''}`).join(', ') : 'Tax'}</Text>
-                      <Text style={styles.totalValue}>{getCurrencySymbol()}{order.taxAmount.toFixed(2)}</Text>
+                      <Text style={styles.totalLabel}>{Array.isArray(order.taxBreakdown) && order.taxBreakdown.length > 0 ? order.taxBreakdown.map(t => `${t.name || 'Tax'}${t.rate ? ` ${t.rate}%` : ''}`).join(', ') : 'Tax'}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{num(order.taxAmount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {(order.tipAmount || 0) > 0 && (
+                  {num(order.tipAmount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, { color: '#d97706' }]}>Tip</Text>
-                      <Text style={[styles.totalValue, { color: '#d97706' }]}>{getCurrencySymbol()}{order.tipAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, { color: '#d97706' }]}>{getCurrencySymbol()}{num(order.tipAmount).toFixed(2)}</Text>
                     </View>
                   )}
-                  {order.roundOffAmount != null && order.roundOffAmount !== 0 && (
+                  {order.roundOffAmount != null && num(order.roundOffAmount) !== 0 && (
                     <View style={styles.totalRow}>
                       <Text style={[styles.totalLabel, { color: '#9ca3af' }]}>Round Off</Text>
-                      <Text style={[styles.totalValue, { color: '#9ca3af' }]}>{order.roundOffAmount > 0 ? '+' : ''}{getCurrencySymbol()}{order.roundOffAmount.toFixed(2)}</Text>
+                      <Text style={[styles.totalValue, { color: '#9ca3af' }]}>{num(order.roundOffAmount) > 0 ? '+' : ''}{getCurrencySymbol()}{num(order.roundOffAmount).toFixed(2)}</Text>
                     </View>
                   )}
                   <View style={styles.totalDivider} />
@@ -276,32 +318,47 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
           </ScrollView>
 
           {/* Footer Actions */}
-          {order && !loading && !error && order.status !== 'completed' && order.status !== 'cancelled' && (
+          {order && !loading && !error && !renderError && order.status !== 'completed' && order.status !== 'cancelled' && (
             <View style={styles.footer}>
-              {typeof onAddItems === 'function' && (
-                <TouchableOpacity
-                  style={styles.addButton}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    onClose();
-                    if (order.items) {
-                      const cartItems = order.items.map(item => ({
-                        id: item.menuItemId || item.id,
-                        menuItemId: item.menuItemId || item.id,
-                        name: item.name,
-                        price: item.price || 0,
-                        quantity: item.quantity || 1,
-                        description: item.description,
-                      }));
-                      onAddItems(order, cartItems);
-                    }
-                  }}
-                >
-                  <Ionicons name="add" size={18} color="#dc2626" />
-                  <Text style={styles.addButtonText}>Add Items</Text>
-                </TouchableOpacity>
-              )}
+              {/* Top row: Add Items + Pre-Bill */}
+              <View style={styles.footerTopRow}>
+                {typeof onAddItems === 'function' && (
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      onClose();
+                      if (order.items) {
+                        const cartItems = order.items.map(item => ({
+                          id: item.menuItemId || item.id,
+                          menuItemId: item.menuItemId || item.id,
+                          name: item.name,
+                          price: item.price || 0,
+                          quantity: item.quantity || 1,
+                          description: item.description,
+                        }));
+                        onAddItems(order, cartItems);
+                      }
+                    }}
+                  >
+                    <Ionicons name="add-circle-outline" size={18} color="#dc2626" />
+                    <Text style={styles.addButtonText}>Add Items</Text>
+                  </TouchableOpacity>
+                )}
 
+                {typeof onPrintPreBill === 'function' && (
+                  <TouchableOpacity
+                    style={styles.preBillButton}
+                    activeOpacity={0.85}
+                    onPress={() => onPrintPreBill(order)}
+                  >
+                    <Ionicons name="print-outline" size={18} color="#7c3aed" />
+                    <Text style={styles.preBillButtonText}>Pre-Bill</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Bottom row: Complete Bill full width */}
               {canCompleteBill && typeof onCompleteBill === 'function' && (
                 <TouchableOpacity
                   style={styles.completeBillButton}
@@ -584,49 +641,69 @@ const styles = StyleSheet.create({
 
   // Footer
   footer: {
-    flexDirection: 'row',
     padding: 16,
-    gap: 12,
+    gap: 10,
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
     backgroundColor: '#fff',
   },
+  footerTopRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   addButton: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     borderRadius: 12,
-    backgroundColor: '#fff',
+    backgroundColor: '#fef2f2',
     borderWidth: 1.5,
-    borderColor: '#dc2626',
+    borderColor: '#fecaca',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
   },
   addButtonText: {
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#dc2626',
   },
-  completeBillButton: {
+  preBillButton: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1.5,
+    borderColor: '#ddd6fe',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  preBillButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#7c3aed',
+  },
+  completeBillButton: {
+    flexDirection: 'row',
+    paddingVertical: 15,
     paddingHorizontal: 16,
     borderRadius: 12,
     backgroundColor: '#059669',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
   },
   completeBillButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
     color: '#fff',
   },

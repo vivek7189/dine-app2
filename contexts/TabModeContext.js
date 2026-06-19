@@ -6,8 +6,8 @@ const STORAGE_KEY = 'dine_tab_modes';
 
 const DEFAULT_MODES = {
   home: 'webview',
-  tables: 'webview',
-  menu: 'webview',
+  tables: 'native',
+  menu: 'native',
   orders: 'webview',
   billing: 'webview',
 };

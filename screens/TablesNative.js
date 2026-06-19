@@ -22,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // import Pusher from 'pusher-js/react-native';
-import { ref, onChildAdded, query, orderByChild, startAt } from 'firebase/database';
+import { ref, push, onChildAdded, query, orderByChild, startAt } from 'firebase/database';
 import { database } from '../config/firebase';
 import apiClient from '../services/api';
 import lanClient from '../services/lanClient';
@@ -38,6 +38,7 @@ import { useOffline } from '../hooks/useOffline';
 import { canPerform } from '../utils/permissions';
 import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
+import { useToast } from '../components/Toast';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
@@ -88,6 +89,7 @@ export default function TablesScreen() {
   const [savingBooking, setSavingBooking] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [moveModalTable, setMoveModalTable] = useState(null);
+  const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
   const isRefreshingRef = useRef(false);
@@ -722,14 +724,17 @@ export default function TablesScreen() {
         splitPayments: order.splitPayments || null,
       };
       const billText = printerService.generateBillText(invoiceData);
-      printerService.printContent({ text: billText, silentOnly: true })
-        .then(() => {
+      printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+        .then(r => {
+          if (!r.success && r.notify !== false) {
+            toast.warning(r.error || 'Bill could not be printed. Check printer connection.', 4000, 'Print Failed');
+          }
           // Print food court token slips after bill (category-wise, each as separate cut)
           if (printSettingsRef.current?.tokenBillingEnabled && selectedRestaurant?.id && order.id) {
             autoPrintTokens(selectedRestaurant.id, order.id);
           }
         })
-        .catch(err => console.error('Bill auto-print failed:', err));
+        .catch(() => {});
     } catch (err) {
       console.error('Bill auto-print build failed:', err);
     }
@@ -747,6 +752,73 @@ export default function TablesScreen() {
       }
     } catch (err) {
       console.error('Token auto-print failed:', err);
+    }
+  };
+
+  // Print pre-bill: same as autoPrintBill but with isPreBill flag, does NOT complete the order.
+  // When remote printing is enabled, sends event to Firebase RTDB for desktop app to print.
+  const handlePrintPreBill = async (order) => {
+    try {
+      // Check if remote printing is enabled (delegate to desktop Electron app via backend API)
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) {
+        // Route through backend API which has RTDB write access (Admin SDK)
+        await apiClient.triggerPrint(order.id, 'pre-bill');
+        toast.success('Pre-bill sent to desktop printer', 3000);
+        return;
+      }
+
+      // Local printing
+      const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
+      const invoiceData = {
+        orderId: order.id,
+        orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+        restaurantName: selectedRestaurant?.name || '',
+        restaurantInfo: selectedRestaurant || {},
+        items: (order.items || []).map(i => ({
+          name: i.name, quantity: i.quantity || 1, price: i.price || 0,
+          total: (i.price || 0) * (i.quantity || 1),
+          selectedVariant: i.selectedVariant || null,
+          selectedCustomizations: i.selectedCustomizations || [],
+          notes: i.notes || '',
+        })),
+        subtotal,
+        tax: order.taxAmount || 0,
+        taxRate: order.taxRate || 0,
+        taxEnabled: !!(order.taxAmount > 0 || order.taxBreakdown?.length),
+        taxBreakdown: order.taxBreakdown || null,
+        grandTotal: order.finalAmount || order.totalAmount || subtotal,
+        customerName: order.customerInfo?.name || 'Walk-in Customer',
+        customerMobile: order.customerInfo?.phone || order.customerPhone || '',
+        orderType: order.orderType || 'dine-in',
+        paymentMethod: order.paymentMethod || 'cash',
+        timestamp: new Date(),
+        staffName: user?.name || 'Staff',
+        tableNumber: order.tableNumber || selectedTableForOrder?.name || '',
+        floorName: order.floorName || '',
+        waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || user?.name || '',
+        offerDiscount: order.discountAmount || 0,
+        manualDiscount: order.manualDiscount || 0,
+        loyaltyDiscount: order.loyaltyDiscount || 0,
+        couponDiscount: order.couponDiscount || 0,
+        couponCode: order.couponCode || null,
+        serviceChargeAmount: order.serviceChargeAmount || 0,
+        serviceChargeRate: order.serviceChargeRate || 0,
+        tipAmount: order.tipAmount || 0,
+        roundOffAmount: order.roundOffAmount || 0,
+        printSettings: printSettingsRef.current || {},
+        isPreBill: true,
+      };
+      const billText = printerService.generateBillText(invoiceData);
+      const result = await printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Pre-Bill' });
+      if (result.success) {
+        toast.success('Pre-bill printed successfully', 3000);
+      } else if (result.notify !== false) {
+        toast.warning(result.error || 'Pre-bill could not be printed. Check printer connection.', 4000, 'Print Failed');
+      }
+    } catch (err) {
+      console.error('Pre-bill print failed:', err?.message || err, err?.response?.data || '');
+      toast.error(`Pre-bill failed: ${err?.message || 'Unknown error'}`, 4000);
     }
   };
 
@@ -1763,6 +1835,7 @@ export default function TablesScreen() {
         restaurantId={selectedRestaurant?.id}
         userRole={user?.role}
         onAddItems={handleAddItemsToOrder}
+        onPrintPreBill={handlePrintPreBill}
         onCompleteBill={async (order) => {
           // Complete the bill inline — no navigation, no duplicate confirmations.
           const tableForOrder = selectedTableForOrder;
@@ -2471,6 +2544,8 @@ export default function TablesScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ToastView />
     </SafeAreaView>
   );
 }

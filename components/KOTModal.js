@@ -25,13 +25,11 @@ export default function KOTModal({
   onClose,
   orderData,
   onPrint,
-  manualPrintEnabled = true,
   printSettings = {},
 }) {
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
   const [sharingWhatsApp, setSharingWhatsApp] = useState(false);
-  const [showFullInstructions, setShowFullInstructions] = useState(false);
 
   if (!orderData) return null;
 
@@ -103,7 +101,10 @@ export default function KOTModal({
 
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
-      await printerService.printContent({ html: kotHtml, text: kotText, silentOnly: true });
+      const result = await printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' });
+      if (!result.success) {
+        console.warn('KOT auto-print failed:', result.error);
+      }
     } catch (err) {
       console.error('KOT auto-print failed:', err);
     }
@@ -398,82 +399,13 @@ export default function KOTModal({
               </View>
             </View>
 
-            {/* Extra spacing before instructions */}
+            {/* Extra spacing before footer */}
             <View style={{ height: Spacing.xl }} />
-
-            {/* Print Instructions Section */}
-            <View style={styles.instructionsSection}>
-              <View style={styles.instructionsHeader}>
-                <Ionicons name="print-outline" size={18} color={Colors.primary} />
-                <Text style={styles.instructionsTitle}>How to Print</Text>
-              </View>
-              
-              <View style={styles.instructionsContent}>
-                <Text style={styles.instructionText}>
-                  <Text style={styles.instructionBold}>WiFi Thermal Printers:</Text> Connect your phone and printer to the same WiFi network. Use the Print button and select your printer app.
-                </Text>
-                
-                {showFullInstructions ? (
-                  <>
-                    <Text style={styles.instructionText}>
-                      <Text style={styles.instructionBold}>Bluetooth Printers:</Text> Pair your printer via Bluetooth settings, then use the Print button to select your printer.
-                    </Text>
-                    <Text style={styles.instructionText}>
-                      <Text style={styles.instructionBold}>USB/OTG Printers:</Text> Connect printer via USB cable or OTG adapter. Install a printer app that supports USB printing.
-                    </Text>
-                    <Text style={styles.instructionText}>
-                      <Text style={styles.instructionBold}>Cloud Printers:</Text> Ensure your printer is connected to the internet. Use the printer's mobile app to print.
-                    </Text>
-                    <Text style={styles.instructionText}>
-                      <Text style={styles.instructionBold}>Recommended Apps:</Text> Star Print, ESC/POS Print, PrintNode, or your printer's official app.
-                    </Text>
-                    <Text style={styles.instructionText}>
-                      <Text style={styles.instructionBold}>Note:</Text> This KOT is formatted for 80mm thermal paper. Ensure your printer supports ESC/POS commands for best results.
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => setShowFullInstructions(false)}
-                      style={styles.readMoreButton}
-                    >
-                      <Text style={styles.readMoreText}>Show Less</Text>
-                      <Ionicons name="chevron-up" size={16} color={Colors.primary} />
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <TouchableOpacity
-                    onPress={() => setShowFullInstructions(true)}
-                    style={styles.readMoreButton}
-                  >
-                    <Text style={styles.readMoreText}>Read More</Text>
-                    <Ionicons name="chevron-down" size={16} color={Colors.primary} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
           </ScrollView>
 
           {/* Footer Actions */}
           <View style={styles.footer}>
             <View style={styles.actionButtonsRow}>
-              {manualPrintEnabled && (
-                <TouchableOpacity
-                  style={[styles.printButton, printing && styles.printButtonDisabled]}
-                  onPress={handlePrint}
-                  disabled={printing}
-                >
-                  {printing ? (
-                    <>
-                      <ActivityIndicator size="small" color="#fff" />
-                      <Text style={styles.printButtonText}>Printing...</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Ionicons name="print" size={20} color="#fff" />
-                      <Text style={styles.printButtonText}>Print KOT</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-
               <TouchableOpacity
                 style={[styles.whatsappButton, sharingWhatsApp && styles.printButtonDisabled]}
                 onPress={handleWhatsAppShare}

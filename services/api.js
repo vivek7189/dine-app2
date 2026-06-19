@@ -1191,6 +1191,14 @@ class ApiClient {
     return result;
   }
 
+  // Trigger remote print (KOT, bill, or pre-bill) via backend → RTDB
+  async triggerPrint(orderId, printType = 'kot') {
+    return this.request(`/api/orders/${orderId}/manual-print`, {
+      method: 'POST',
+      data: { printType },
+    });
+  }
+
   // Update order status
   async updateOrderStatus(orderId, status, restaurantId) {
     const result = await this.offlineWrite(`/api/orders/${orderId}/status`, {

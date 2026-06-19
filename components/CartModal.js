@@ -61,6 +61,7 @@ export default function CartModal({
   setActivePricingRuleId,
   autoSelectedRule = false,
   isUpdateOrder = false,
+  existingOrderItems = [],
   floors = [],
   onTableSelect,
   selectedTable,
@@ -649,11 +650,19 @@ export default function CartModal({
 
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
 
-  const renderCartItem = ({ item }) => (
+  const renderCartItem = ({ item }) => {
+    const isNewItem = isUpdateOrder && existingOrderItems?.length > 0 &&
+      !existingOrderItems.some(e => (e.menuItemId || e.id) === (item.menuItemId || item.id));
+    return (
     <View style={[styles.cartItemCard, isTablet && { paddingHorizontal: 16, paddingVertical: 12 }]}>
       <View style={styles.cartItemHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
           <Text style={[styles.cartItemName, { fontSize: fs(12) }]} numberOfLines={1}>{item.name}</Text>
+          {isNewItem && (
+            <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+              <Text style={{ fontSize: 9, fontWeight: '700', color: '#16a34a' }}>NEW</Text>
+            </View>
+          )}
           {item.isVeg !== undefined && (
             <View style={[styles.vegBadge, !item.isVeg && styles.nonVegBadge]}>
               <Text style={[styles.vegBadgeText, !item.isVeg && styles.nonVegBadgeText]}>{item.isVeg ? 'V' : 'N'}</Text>
@@ -720,6 +729,7 @@ export default function CartModal({
       </View>
     </View>
   );
+  };
 
   return (
     <Modal
@@ -1160,8 +1170,8 @@ export default function CartModal({
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
-                        <Ionicons name="restaurant" size={16} color="#fff" />
-                        <Text style={styles.actionBtnText}>Send to Kitchen</Text>
+                        <Ionicons name={isUpdateOrder ? "refresh" : "restaurant"} size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update Order' : 'Send to Kitchen'}</Text>
                       </>
                     )}
                   </TouchableOpacity>

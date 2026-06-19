@@ -12,6 +12,7 @@ import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
 import { TabModeProvider } from '../../contexts/TabModeContext';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
+import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -156,18 +157,11 @@ function TabsNavigator() {
         }}
       />
 
-      {/* Billing (Web POS) — visible to all roles */}
+      {/* Billing — hidden from bottom nav, accessible via More screen */}
       <Tabs.Screen
         name="billing-tab"
         options={{
-          title: 'Billing',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "card" : "card-outline"}
-              size={iconSize}
-              color={color}
-            />
-          ),
+          href: null,
           headerShown: false,
         }}
       />
@@ -344,6 +338,7 @@ export default function TabsLayout() {
       <View style={{ flex: 1 }}>
         <TabsNavigator />
         <BillingPrewarmer />
+        <PrinterNotificationOverlay />
       </View>
     </TabBarProvider>
     </TabModeProvider>

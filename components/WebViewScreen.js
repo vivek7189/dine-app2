@@ -285,8 +285,33 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
         ].join('\n');
       }
 
-      // Print — text is always available now, thermal printer will always fire
-      await printerService.printContent({ html, text, silentOnly: true });
+      // Print with feedback — notify WebView of success/failure so it can show toast
+      const printLabel = data.type === 'PRINT_KOT' ? 'KOT' : 'Bill';
+      const result = await printerService.printWithFeedback({ html, text, silentOnly: true, label: printLabel });
+
+      // Post print result back to WebView so the frontend can show toast/notification
+      if (webViewRef.current) {
+        const msg = JSON.stringify({
+          type: 'PRINT_RESULT',
+          success: result.success,
+          method: result.method,
+          error: result.error || null,
+          label: printLabel,
+        });
+        webViewRef.current.injectJavaScript(`
+          try {
+            window.dispatchEvent(new CustomEvent('nativePrintResult', { detail: ${msg} }));
+            if (!${result.success} && window.__dinePrintFailToast) {
+              window.__dinePrintFailToast(${JSON.stringify(result.error || `${printLabel} print failed`)});
+            }
+          } catch(e) {}
+          true;
+        `);
+      }
+
+      if (!result.success) {
+        console.warn(`[${screenName}] ${printLabel} print failed: ${result.error}`);
+      }
     } catch (err) {
       console.error(`[${screenName}] WebView message error:`, err);
     }

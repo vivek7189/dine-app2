@@ -148,7 +148,8 @@ export default function MoreScreen() {
         { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null },
-        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, feature: 'printer' },
+        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: null },
+        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null },
       ],
     },
     {
@@ -470,6 +471,7 @@ export default function MoreScreen() {
             {[
               { key: 'tables', label: 'Tables', icon: 'restaurant-outline' },
               { key: 'menu', label: 'Menu', icon: 'fast-food-outline' },
+              { key: 'billing', label: 'Billing', icon: 'card-outline' },
             ].map((tab, idx, arr) => (
               <TouchableOpacity
                 key={tab.key}
