@@ -41,6 +41,7 @@ const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
 const PRINT_NOTIF_KEY = 'dine_print_notifications'; // 'true' | 'false'
 const REMOTE_PRINT_KEY = 'dine_remote_print'; // 'true' | 'false' — print from desktop app
+const DISCONNECT_ALERT_KEY = 'dine_printer_disconnect_alert'; // 'true' | 'false' — show disconnect alert when no remote print
 
 // ==================== PRINTER STATE ====================
 
@@ -143,6 +144,21 @@ export const getRemotePrintEnabled = async () => {
 
 export const setRemotePrintEnabled = async (enabled) => {
   await AsyncStorage.setItem(REMOTE_PRINT_KEY, enabled ? 'true' : 'false');
+};
+
+// Printer disconnect alert preference — shown when no local printer connected & remote print off
+// Enabled by default. User can dismiss from the alert itself or toggle in printer settings.
+export const getDisconnectAlertEnabled = async () => {
+  try {
+    const val = await AsyncStorage.getItem(DISCONNECT_ALERT_KEY);
+    return val !== 'false'; // enabled by default
+  } catch {
+    return true;
+  }
+};
+
+export const setDisconnectAlertEnabled = async (enabled) => {
+  await AsyncStorage.setItem(DISCONNECT_ALERT_KEY, enabled ? 'true' : 'false');
 };
 
 export const getSavedPrinter = async () => {

@@ -16,7 +16,7 @@ import apiClient from '../../services/api';
 import PrinterSetup from '../../components/PrinterSetup';
 import PrintSettings from '../../components/PrintSettings';
 import { useResponsive } from '../../hooks/useResponsive';
-import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled } from '../../services/printerService';
+import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled } from '../../services/printerService';
 
 const APP_VERSION = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
 
@@ -30,6 +30,7 @@ export default function PrinterSettingsScreen() {
   const [printNotifEnabled, setPrintNotifEnabled] = useState(true);
   const [remotePrintOn, setRemotePrintOn] = useState(false);
   const [remotePrintSaving, setRemotePrintSaving] = useState(false);
+  const [disconnectAlertOn, setDisconnectAlertOn] = useState(true);
 
   useEffect(() => {
     const load = async () => {
@@ -42,6 +43,8 @@ export default function PrinterSettingsScreen() {
         setPrintNotifEnabled(notifPref);
         const remotePref = await getRemotePrintEnabled();
         setRemotePrintOn(remotePref);
+        const disconnectAlertPref = await getDisconnectAlertEnabled();
+        setDisconnectAlertOn(disconnectAlertPref);
       } catch (e) {
         console.error('Error loading user for printer settings:', e);
       } finally {
@@ -234,6 +237,30 @@ export default function PrinterSettingsScreen() {
                 />
               </View>
             </View>
+            {/* Disconnect alert toggle — only relevant when remote print is OFF */}
+            {!remotePrintOn && (
+              <>
+                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 14 }} />
+                <View style={styles.notifRow}>
+                  <View style={[styles.notifIconWrap, { backgroundColor: '#fef2f2' }]}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#ef4444" />
+                  </View>
+                  <View style={styles.notifInfo}>
+                    <Text style={styles.notifLabel}>Printer Disconnect Alert</Text>
+                    <Text style={styles.notifHint}>Show alert when printer connection is lost (local printing mode)</Text>
+                  </View>
+                  <Switch
+                    value={disconnectAlertOn}
+                    onValueChange={(val) => {
+                      setDisconnectAlertOn(val);
+                      setDisconnectAlertEnabled(val);
+                    }}
+                    trackColor={{ false: '#e5e7eb', true: '#ef444440' }}
+                    thumbColor={disconnectAlertOn ? '#ef4444' : '#d1d5db'}
+                  />
+                </View>
+              </>
+            )}
           </View>
 
           {/* Footer */}

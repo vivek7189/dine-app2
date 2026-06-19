@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { onPrinterEvent, getRemotePrintEnabled } from '../services/printerService';
+import { onPrinterEvent, getRemotePrintEnabled, getDisconnectAlertEnabled } from '../services/printerService';
 
 const EVENT_CONFIG = {
   disconnected: {
@@ -44,9 +44,12 @@ export default function PrinterNotificationOverlay() {
       const config = EVENT_CONFIG[event.type];
       if (!config) return;
       // Skip disconnect/fallback notifications when remote print is enabled — no local printer expected
+      // Also skip when user has disabled the disconnect alert
       if (event.type === 'disconnected' || event.type === 'fallback') {
         const remotePrint = await getRemotePrintEnabled();
         if (remotePrint) return;
+        const alertEnabled = await getDisconnectAlertEnabled();
+        if (!alertEnabled) return;
       }
       // Dedup: suppress same event type within 2 seconds
       const now = Date.now();

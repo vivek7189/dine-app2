@@ -45,6 +45,8 @@ export default function CashierInvoiceModal({
       if (event.type === 'disconnected' || event.type === 'fallback') {
         const remotePrint = await printerService.getRemotePrintEnabled();
         if (remotePrint) return;
+        const alertEnabled = await printerService.getDisconnectAlertEnabled();
+        if (!alertEnabled) return;
         setPrinterNotice({ type: 'error', message: event.message });
         setTimeout(() => setPrinterNotice(null), 8000);
       } else if (event.type === 'reconnected') {

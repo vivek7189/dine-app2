@@ -143,17 +143,20 @@ export default function MenuScreen() {
     loadImagePreference();
   }, []);
 
-  // Listen for printer disconnect events — show alert so user knows
+  // Printer disconnect modal state (replaces Alert.alert with actionable modal)
+  const [showPrinterDisconnectModal, setShowPrinterDisconnectModal] = useState(false);
+
+  // Listen for printer disconnect events — show modal so user knows
   // Skip when remote print is enabled — no local printer expected
+  // Skip when user has disabled this alert
   useEffect(() => {
     const unsub = printerService.onPrinterEvent(async (event) => {
       if (event.type === 'disconnected') {
         const remotePrint = await printerService.getRemotePrintEnabled();
         if (remotePrint) return; // Remote print mode — no local printer needed
-        Alert.alert(
-          'Printer Disconnected',
-          'Could not reach the printer. Please check it is powered on and on the same WiFi, then go to Printer Settings to reconnect.',
-        );
+        const alertEnabled = await printerService.getDisconnectAlertEnabled();
+        if (!alertEnabled) return; // User dismissed this alert
+        setShowPrinterDisconnectModal(true);
       }
     });
     return unsub;
@@ -3276,6 +3279,58 @@ export default function MenuScreen() {
           </View>
         </Modal>
       )}
+
+      {/* Printer Disconnected Modal — replaces Alert.alert with actionable options */}
+      <Modal
+        visible={showPrinterDisconnectModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPrinterDisconnectModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, overflow: 'hidden' }}>
+            {/* Header */}
+            <View style={{ alignItems: 'center', paddingTop: 24, paddingHorizontal: 24 }}>
+              <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#fef2f2', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
+                <Ionicons name="print-outline" size={26} color="#ef4444" />
+              </View>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#1f2937', marginBottom: 8 }}>Printer Disconnected</Text>
+              <Text style={{ fontSize: 13, color: '#6b7280', textAlign: 'center', lineHeight: 19 }}>
+                Could not reach the printer. Please check it is powered on and on the same WiFi network.
+              </Text>
+            </View>
+            {/* Actions */}
+            <View style={{ padding: 20, gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowPrinterDisconnectModal(false);
+                  router.push('/(tabs)/printer-settings');
+                }}
+                style={{ backgroundColor: '#ef4444', borderRadius: 12, paddingVertical: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+              >
+                <Ionicons name="settings-outline" size={18} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>Setup Printer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowPrinterDisconnectModal(false);
+                  printerService.setDisconnectAlertEnabled(false);
+                }}
+                style={{ backgroundColor: '#f3f4f6', borderRadius: 12, paddingVertical: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+              >
+                <Ionicons name="notifications-off-outline" size={18} color="#6b7280" />
+                <Text style={{ color: '#374151', fontSize: 15, fontWeight: '600' }}>Don't Show Again</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowPrinterDisconnectModal(false)}
+                style={{ paddingVertical: 10, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#9ca3af', fontSize: 13 }}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <ToastView />
     </SafeAreaView>
