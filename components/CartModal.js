@@ -651,8 +651,11 @@ export default function CartModal({
   const paymentIcons = { cash: 'cash-outline', upi: 'phone-portrait-outline', card: 'card-outline' };
 
   const renderCartItem = ({ item }) => {
-    const isNewItem = isUpdateOrder && existingOrderItems?.length > 0 &&
-      !existingOrderItems.some(e => (e.menuItemId || e.id) === (item.menuItemId || item.id));
+    const existingItem = isUpdateOrder && existingOrderItems?.length > 0
+      ? existingOrderItems.find(e => (e.menuItemId || e.id) === (item.menuItemId || item.id))
+      : null;
+    const isNewItem = isUpdateOrder && existingOrderItems?.length > 0 && !existingItem;
+    const quantityDelta = existingItem ? item.quantity - existingItem.quantity : 0;
     return (
     <View style={[styles.cartItemCard, isTablet && { paddingHorizontal: 16, paddingVertical: 12 }]}>
       <View style={styles.cartItemHeader}>
@@ -661,6 +664,11 @@ export default function CartModal({
           {isNewItem && (
             <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
               <Text style={{ fontSize: 9, fontWeight: '700', color: '#16a34a' }}>NEW</Text>
+            </View>
+          )}
+          {!isNewItem && quantityDelta > 0 && (
+            <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+              <Text style={{ fontSize: 9, fontWeight: '700', color: '#2563eb' }}>+{quantityDelta} new</Text>
             </View>
           )}
           {item.isVeg !== undefined && (
@@ -698,6 +706,11 @@ export default function CartModal({
         <View style={styles.cartItemPriceInfo}>
           <Text style={styles.cartItemSubtotalText}>{getCurrencySymbol()}{item.price} × {item.quantity}</Text>
           <Text style={styles.cartItemTotalPrice}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
+          {!isNewItem && quantityDelta > 0 && existingItem && (
+            <Text style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>
+              was {existingItem.quantity}, +{quantityDelta} new added
+            </Text>
+          )}
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={styles.quantityControls}>

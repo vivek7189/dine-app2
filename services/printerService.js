@@ -992,7 +992,7 @@ export const generateKOTText = (data) => {
     lines.push(leftRight('', formatKOTTime(data.timestamp), W));
   }
   if (kl.showOrderType !== false && data.orderType) lines.push(`Type: ${data.orderType}`);
-  if (kl.showWaiter !== false && data.waiterName) lines.push(`Staff: ${data.waiterName}`);
+  if (kl.showWaiter !== false && data.waiterName) lines.push(`Waiter: ${data.waiterName}`);
   if (kl.showCustomer !== false && data.customerName) lines.push(`Customer: ${data.customerName}`);
   lines.push(_LINE);
 
@@ -1007,10 +1007,11 @@ export const generateKOTText = (data) => {
   // Footer
   lines.push(footerText);
 
-  // Special instructions
+  // Special instructions (matches frontend KOT template label)
   if (data.specialInstructions) {
     lines.push(_LINE);
-    lines.push('NOTE: ' + data.specialInstructions);
+    lines.push(center('*** SPECIAL INSTRUCTIONS ***', W));
+    lines.push(data.specialInstructions);
   }
   lines.push('');
 
