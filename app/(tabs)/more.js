@@ -141,41 +141,41 @@ export default function MoreScreen() {
     {
       title: 'Management',
       items: [
-        { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'] },
-        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu' },
-        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers' },
-        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory' },
-        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot' },
-        { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'] },
-        { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null },
-        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: null },
-        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null },
+        { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'], color: '#6366f1', iconBg: '#eef2ff' },
+        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu', color: '#f59e0b', iconBg: '#fef3c7' },
+        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers', color: '#ec4899', iconBg: '#fdf2f8' },
+        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', color: '#8b5cf6', iconBg: '#f5f3ff' },
+        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot', color: '#ef4444', iconBg: '#fef2f2' },
+        { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], color: '#eab308', iconBg: '#fefce8' },
+        { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
+        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: null, color: '#3b82f6', iconBg: '#eff6ff' },
+        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, color: '#64748b', iconBg: '#f1f5f9' },
       ],
     },
     {
       title: 'Finance',
       items: [
-        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin' },
-        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice' },
+        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin', color: '#10b981', iconBg: '#ecfdf5' },
+        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice', color: '#f97316', iconBg: '#fff7ed' },
       ],
     },
     {
       title: 'History',
       items: [
-        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history' },
-        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'] },
+        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history', color: '#8b5cf6', iconBg: '#f5f3ff' },
+        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'], color: '#06b6d4', iconBg: '#ecfeff' },
       ],
     },
     ...(isHotelType ? [{
       title: 'Hotel',
       items: [
-        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: null },
+        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: null, color: '#a855f7', iconBg: '#faf5ff' },
       ],
     }] : []),
     ...(restaurant?.parkingEnabled ? [{
       title: 'Parking',
       items: [
-        { title: 'Parking Management', icon: 'car-outline', route: '/(tabs)/parking', roles: ['owner', 'admin', 'manager'] },
+        { title: 'Parking Management', icon: 'car-outline', route: '/(tabs)/parking', roles: ['owner', 'admin', 'manager'], color: '#0ea5e9', iconBg: '#f0f9ff' },
       ],
     }] : []),
   ];
@@ -432,6 +432,24 @@ export default function MoreScreen() {
             </View>
           )}
         </View>
+
+        {/* ── Printer Settings Quick Access ──────────── */}
+        <TouchableOpacity
+          style={styles.printerCard}
+          onPress={() => handleNavigate('/(tabs)/printer-settings')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.printerIconContainer}>
+            <Ionicons name="print" size={20} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.printerCardTitle}>Printer Settings</Text>
+            <Text style={styles.printerCardSubtitle}>Configure printers, paper size & receipts</Text>
+          </View>
+          <View style={styles.printerArrow}>
+            <Ionicons name="chevron-forward" size={16} color="#8b7355" />
+          </View>
+        </TouchableOpacity>
 
         {/* ── Business Info — collapsible (owner, admin, cashier, manager) ── */}
         {['owner', 'admin', 'cashier', 'manager'].includes(role) && getRestaurantId() && (
@@ -755,8 +773,8 @@ export default function MoreScreen() {
                       onPress={() => handleNavigate(item.route)}
                       activeOpacity={0.6}
                     >
-                      <View style={styles.menuIconBg}>
-                        <Ionicons name={item.icon} size={18} color="#8b7355" />
+                      <View style={[styles.menuIconBg, item.iconBg && { backgroundColor: item.iconBg }]}>
+                        <Ionicons name={item.icon} size={18} color={item.color || '#8b7355'} />
                       </View>
                       <Text style={styles.menuItemText}>{item.title}</Text>
                       <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
@@ -867,12 +885,12 @@ const styles = StyleSheet.create({
 
   // ── Header Banner ───────────────────────────────
   headerBanner: {
-    backgroundColor: '#8b7355',
+    backgroundColor: '#6b5744',
     paddingTop: Platform.OS === 'android' ? 48 : 60,
-    paddingBottom: 28,
+    paddingBottom: 32,
     paddingHorizontal: 22,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
     alignItems: 'center',
   },
   brandRow: {
@@ -880,51 +898,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 22,
   },
   brandIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   brandName: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '800',
     color: '#fff',
     letterSpacing: -0.5,
   },
   avatarContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 14,
     borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(212,197,169,0.5)',
   },
   avatarText: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 1,
   },
   userName: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '700',
     color: '#fff',
     marginBottom: 8,
     letterSpacing: -0.3,
   },
   rolePill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: 'rgba(212,197,169,0.3)',
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(212,197,169,0.25)',
   },
   rolePillText: {
     fontSize: 12,
@@ -936,16 +956,18 @@ const styles = StyleSheet.create({
   // ── Profile Card ──────────────────────────────────
   profileCard: {
     marginHorizontal: 16,
-    marginTop: -12,
+    marginTop: -14,
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+    shadowColor: '#6b5744',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(139,115,85,0.06)',
   },
   profileRow: {
     flexDirection: 'row',
@@ -993,23 +1015,25 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8b7355',
-    marginBottom: 8,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#6b5744',
+    marginBottom: 10,
     marginLeft: 4,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 1,
   },
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowColor: '#6b5744',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(139,115,85,0.06)',
   },
 
   // ── Connectivity ──────────────────────────────────
@@ -1056,7 +1080,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   toggleOn: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#8b7355',
   },
   toggleKnob: {
     width: 20,
@@ -1084,7 +1108,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   pinButtonActive: {
-    backgroundColor: '#8b7355',
+    backgroundColor: '#6b5744',
   },
 
   // ── Menu Items ────────────────────────────────────
@@ -1092,15 +1116,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingVertical: 14,
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f3ef',
+    borderBottomColor: '#f8f6f2',
   },
   menuIconBg: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     backgroundColor: '#f5f3ef',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1108,7 +1132,7 @@ const styles = StyleSheet.create({
   menuItemText: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#374151',
   },
 
@@ -1121,16 +1145,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowColor: '#6b5744',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
+    borderLeftWidth: 3,
+    borderLeftColor: '#d4c5a9',
   },
   collapsibleHeaderText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#8b7355',
+    color: '#6b5744',
   },
 
   // ── Admin Settings Grid ───────────────────────────
@@ -1178,11 +1204,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 8,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowColor: '#6b5744',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(139,115,85,0.05)',
   },
   adminTileIcon: {
     width: 40,
@@ -1205,13 +1233,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginHorizontal: 16,
-    marginTop: 24,
+    marginTop: 28,
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     backgroundColor: '#fff',
     borderWidth: 1.5,
     borderColor: '#fecaca',
     gap: 8,
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
   signOutText: {
     fontSize: 15,
@@ -1251,7 +1284,7 @@ const styles = StyleSheet.create({
   footerRolePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#8b7355',
+    backgroundColor: '#6b5744',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
@@ -1280,5 +1313,51 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#9ca3af',
+  },
+
+  // ── Printer Card ──────────────────────────────────
+  printerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    gap: 14,
+    shadowColor: '#6b5744',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(139,115,85,0.08)',
+  },
+  printerIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: '#6b5744',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  printerCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 2,
+  },
+  printerCardSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
+  printerArrow: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: '#f5f3ef',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
