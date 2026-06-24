@@ -743,6 +743,10 @@ export default function TablesScreen() {
   // Print food court token slips — one per category, each as a separate print (cut command between)
   const autoPrintTokens = async (restaurantId, orderId) => {
     try {
+      // Skip local token printing when remote print is enabled — desktop handles it
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) return;
+
       const tokenRes = await apiClient.getTokenRender(restaurantId, orderId);
       const tokens = tokenRes?.tokens || [];
       if (!tokenRes?.success || tokens.length === 0) return;
@@ -924,6 +928,7 @@ export default function TablesScreen() {
         floorName,
         floorId: tableFloor?.id || '',
         orderId: order.id,
+        dailyOrderId: order.dailyOrderId || order.orderNumber || null,
         cartItems,
         timestamp: Date.now(),
       }));

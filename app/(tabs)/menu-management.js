@@ -61,6 +61,7 @@ export default function MenuManagementScreen() {
   const [editingCategory, setEditingCategory] = useState(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
   const [savingCategory, setSavingCategory] = useState(false);
+  const [userRole, setUserRole] = useState('');
   // QR Code
   const [showQRModal, setShowQRModal] = useState(false);
   // Restaurant data for QR
@@ -105,6 +106,12 @@ export default function MenuManagementScreen() {
     taxInclusive: null,
     // Recipe
     generateRecipe: true,
+    // Sold by weight
+    soldByWeight: false,
+    priceUnit: 'per_kg',
+    pluCode: '',
+    // Hide image
+    hideImage: false,
   });
 
   useEffect(() => {
@@ -121,6 +128,7 @@ export default function MenuManagementScreen() {
 
       // owner/admin always allowed; manager/cashier kept for backwards compat; custom roles check pageAccess
       const role = userData.role?.toLowerCase();
+      setUserRole(role || '');
       if (!['owner', 'admin', 'manager', 'cashier'].includes(role) && !hasFeatureAccess(userData, 'menu')) {
         Alert.alert(
           'Access Denied',
@@ -404,6 +412,10 @@ export default function MenuManagementScreen() {
       deductionQuantity: 1,
       taxInclusive: null,
       generateRecipe: true,
+      soldByWeight: false,
+      priceUnit: 'per_kg',
+      pluCode: '',
+      hideImage: false,
     });
     setEditingItem(null);
   };
@@ -446,6 +458,10 @@ export default function MenuManagementScreen() {
       deductionQuantity: item.deductionQuantity || 1,
       taxInclusive: item.taxInclusive !== undefined ? item.taxInclusive : null,
       generateRecipe: false, // not applicable when editing
+      soldByWeight: item.soldByWeight || false,
+      priceUnit: item.priceUnit || 'per_kg',
+      pluCode: item.pluCode || '',
+      hideImage: item.hideImage || false,
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -463,7 +479,7 @@ export default function MenuManagementScreen() {
           onPress: async () => {
             try {
               setActionLoading(item.id);
-              await apiClient.deleteMenuItem(item.id);
+              await apiClient.deleteMenuItem(item.id, restaurantId);
               await loadMenu(restaurantId);
             } catch (error) {
               Alert.alert('Error', error.message || 'Failed to delete');
@@ -594,12 +610,32 @@ export default function MenuManagementScreen() {
       if (formData.variants?.length > 0) {
         itemData.variants = formData.variants
           .filter(v => v.name?.trim())
-          .map(v => ({ name: v.name.trim(), price: v.price ? parseFloat(v.price) : 0 }));
+          .map(v => ({
+            name: v.name.trim(),
+            price: v.price ? parseFloat(v.price) : 0,
+            ...(v.description?.trim() ? { description: v.description.trim() } : {}),
+          }));
       }
       if (formData.customizations?.length > 0) {
         itemData.customizations = formData.customizations
           .filter(c => c.name?.trim())
-          .map(c => ({ name: c.name.trim(), price: c.price ? parseFloat(c.price) : 0 }));
+          .map(c => ({
+            name: c.name.trim(),
+            price: c.price ? parseFloat(c.price) : 0,
+            ...(c.description?.trim() ? { description: c.description.trim() } : {}),
+          }));
+      }
+
+      // Sold by weight
+      itemData.soldByWeight = !!formData.soldByWeight;
+      if (formData.soldByWeight) {
+        itemData.priceUnit = formData.priceUnit || 'per_kg';
+        if (formData.pluCode) itemData.pluCode = formData.pluCode;
+      }
+
+      // Hide image
+      if (formData.hideImage !== undefined) {
+        itemData.hideImage = !!formData.hideImage;
       }
 
       // Bar fields
@@ -652,7 +688,7 @@ export default function MenuManagementScreen() {
       }
 
       if (editingItem) {
-        await apiClient.updateMenuItem(editingItem.id, itemData);
+        await apiClient.updateMenuItem(editingItem.id, itemData, restaurantId);
       } else {
         const response = await apiClient.createMenuItem(restaurantId, itemData);
         // Upload local images for new item
@@ -1005,6 +1041,7 @@ export default function MenuManagementScreen() {
                 businessType={businessType}
                 multiPricingEnabled={multiPricingEnabled}
                 activePricingRules={activePricingRules}
+                isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
               />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
@@ -1200,6 +1237,7 @@ export default function MenuManagementScreen() {
               businessType={businessType}
               multiPricingEnabled={multiPricingEnabled}
               activePricingRules={activePricingRules}
+              isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>

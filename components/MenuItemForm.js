@@ -24,6 +24,11 @@ const SERVING_SIZES = ['scoop', 'cup', 'cone', 'sundae', 'shake', 'tub', 'stick'
 
 const STOCK_UNITS = ['pcs', 'kg', 'gram', 'liter', 'ml', 'bottle', 'dozen', 'box', 'plate', 'slice'];
 const TAX_PRICING_OPTIONS = ['Follow restaurant setting', 'Price includes tax', 'Add tax on top'];
+const PRICE_UNIT_OPTIONS = [
+  { value: 'per_kg', label: 'per kg' },
+  { value: 'per_100g', label: 'per 100g' },
+  { value: 'per_lb', label: 'per lb' },
+];
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -55,6 +60,7 @@ export default function MenuItemForm({
   businessType = 'restaurant',
   multiPricingEnabled = false,
   activePricingRules = [],
+  isOwnerOrAdmin = false,
 }) {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSpiritPicker, setShowSpiritPicker] = useState(false);
@@ -64,6 +70,7 @@ export default function MenuItemForm({
   const [showServingSizePicker, setShowServingSizePicker] = useState(false);
   const [showTaxPricingPicker, setShowTaxPricingPicker] = useState(false);
   const [showStockUnitPicker, setShowStockUnitPicker] = useState(false);
+  const [showPriceUnitPicker, setShowPriceUnitPicker] = useState(false);
 
   const isBar = businessType === 'bar';
   const isBakery = businessType === 'bakery';
@@ -121,7 +128,7 @@ export default function MenuItemForm({
 
   // --- Variant helpers ---
   const addVariant = () => {
-    const variants = [...(formData.variants || []), { name: '', price: '' }];
+    const variants = [...(formData.variants || []), { name: '', price: '', description: '' }];
     setFormData({ ...formData, variants });
   };
 
@@ -146,7 +153,7 @@ export default function MenuItemForm({
 
   // --- Customization helpers ---
   const addCustomization = () => {
-    const customizations = [...(formData.customizations || []), { name: '', price: '' }];
+    const customizations = [...(formData.customizations || []), { name: '', price: '', description: '' }];
     setFormData({ ...formData, customizations });
   };
 
@@ -538,28 +545,37 @@ export default function MenuItemForm({
 
         {/* Variant rows */}
         {(formData.variants || []).map((variant, index) => (
-          <View key={index} style={styles.variantRow}>
+          <View key={index} style={styles.variantCard}>
+            <View style={styles.variantRow}>
+              <TextInput
+                style={[styles.input, { flex: 2 }]}
+                placeholder="Name (e.g., Large)"
+                placeholderTextColor={Colors.textLight}
+                value={variant.name}
+                onChangeText={(text) => updateVariant(index, 'name', text)}
+              />
+              <TextInput
+                style={[styles.input, { flex: 1, marginLeft: Spacing.xs }]}
+                placeholder="Price"
+                placeholderTextColor={Colors.textLight}
+                keyboardType="decimal-pad"
+                value={variant.price?.toString() || ''}
+                onChangeText={(text) => updateVariant(index, 'price', text)}
+              />
+              <TouchableOpacity
+                style={styles.removeRowButton}
+                onPress={() => removeVariant(index)}
+              >
+                <Ionicons name="close-circle" size={22} color={Colors.error} />
+              </TouchableOpacity>
+            </View>
             <TextInput
-              style={[styles.input, { flex: 2 }]}
-              placeholder="Name (e.g., Large)"
+              style={[styles.input, styles.variantDescInput]}
+              placeholder="Description (optional)"
               placeholderTextColor={Colors.textLight}
-              value={variant.name}
-              onChangeText={(text) => updateVariant(index, 'name', text)}
+              value={variant.description || ''}
+              onChangeText={(text) => updateVariant(index, 'description', text)}
             />
-            <TextInput
-              style={[styles.input, { flex: 1, marginLeft: Spacing.xs }]}
-              placeholder="Price"
-              placeholderTextColor={Colors.textLight}
-              keyboardType="decimal-pad"
-              value={variant.price?.toString() || ''}
-              onChangeText={(text) => updateVariant(index, 'price', text)}
-            />
-            <TouchableOpacity
-              style={styles.removeRowButton}
-              onPress={() => removeVariant(index)}
-            >
-              <Ionicons name="close-circle" size={22} color={Colors.error} />
-            </TouchableOpacity>
           </View>
         ))}
       </View>
@@ -581,28 +597,37 @@ export default function MenuItemForm({
         </Text>
 
         {(formData.customizations || []).map((custom, index) => (
-          <View key={index} style={styles.variantRow}>
+          <View key={index} style={styles.variantCard}>
+            <View style={styles.variantRow}>
+              <TextInput
+                style={[styles.input, { flex: 2 }]}
+                placeholder={isIceCream ? 'Topping name' : 'Add-on name'}
+                placeholderTextColor={Colors.textLight}
+                value={custom.name}
+                onChangeText={(text) => updateCustomization(index, 'name', text)}
+              />
+              <TextInput
+                style={[styles.input, { flex: 1, marginLeft: Spacing.xs }]}
+                placeholder="Price"
+                placeholderTextColor={Colors.textLight}
+                keyboardType="decimal-pad"
+                value={custom.price?.toString() || ''}
+                onChangeText={(text) => updateCustomization(index, 'price', text)}
+              />
+              <TouchableOpacity
+                style={styles.removeRowButton}
+                onPress={() => removeCustomization(index)}
+              >
+                <Ionicons name="close-circle" size={22} color={Colors.error} />
+              </TouchableOpacity>
+            </View>
             <TextInput
-              style={[styles.input, { flex: 2 }]}
-              placeholder={isIceCream ? 'Topping name' : 'Add-on name'}
+              style={[styles.input, styles.variantDescInput]}
+              placeholder="Description (optional)"
               placeholderTextColor={Colors.textLight}
-              value={custom.name}
-              onChangeText={(text) => updateCustomization(index, 'name', text)}
+              value={custom.description || ''}
+              onChangeText={(text) => updateCustomization(index, 'description', text)}
             />
-            <TextInput
-              style={[styles.input, { flex: 1, marginLeft: Spacing.xs }]}
-              placeholder="Price"
-              placeholderTextColor={Colors.textLight}
-              keyboardType="decimal-pad"
-              value={custom.price?.toString() || ''}
-              onChangeText={(text) => updateCustomization(index, 'price', text)}
-            />
-            <TouchableOpacity
-              style={styles.removeRowButton}
-              onPress={() => removeCustomization(index)}
-            >
-              <Ionicons name="close-circle" size={22} color={Colors.error} />
-            </TouchableOpacity>
           </View>
         ))}
       </View>
@@ -809,6 +834,71 @@ export default function MenuItemForm({
         </View>
       )}
 
+      {/* ========== SOLD BY WEIGHT ========== */}
+      <View style={[styles.soldByWeightContainer, formData.soldByWeight && styles.soldByWeightActive]}>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+          onPress={() => setFormData({ ...formData, soldByWeight: !formData.soldByWeight })}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={formData.soldByWeight ? 'checkbox' : 'square-outline'}
+            size={20}
+            color={formData.soldByWeight ? '#ca8a04' : Colors.textLight}
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: formData.soldByWeight ? '#854d0e' : Colors.textDark }}>
+              Sold by Weight
+            </Text>
+            <Text style={{ fontSize: 11, color: formData.soldByWeight ? '#a16207' : Colors.textLight, marginTop: 2 }}>
+              {formData.soldByWeight ? 'Price is calculated based on weight from the scale' : 'Enable for items priced per kg/lb (requires weighing scale)'}
+            </Text>
+          </View>
+          {formData.soldByWeight && (
+            <View style={{ backgroundColor: '#fef9c3', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#ca8a04' }}>Active</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {formData.soldByWeight && (
+          <View style={{ marginTop: 12, gap: 10 }}>
+            {/* Price Unit */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: '#374151' }}>Price Unit:</Text>
+              {renderDropdownPicker(
+                PRICE_UNIT_OPTIONS.map(o => o.label),
+                PRICE_UNIT_OPTIONS.find(o => o.value === (formData.priceUnit || 'per_kg'))?.label || 'per kg',
+                (val) => {
+                  const opt = PRICE_UNIT_OPTIONS.find(o => o.label === val);
+                  setFormData({ ...formData, priceUnit: opt?.value || 'per_kg' });
+                },
+                showPriceUnitPicker,
+                setShowPriceUnitPicker,
+                'per kg'
+              )}
+            </View>
+
+            {/* PLU Code */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: '#374151', flexShrink: 0 }}>PLU Code:</Text>
+              <TextInput
+                style={[styles.input, { width: 90, fontFamily: 'monospace', letterSpacing: 2, textAlign: 'center' }]}
+                placeholder="0001"
+                placeholderTextColor={Colors.textLight}
+                keyboardType="number-pad"
+                maxLength={5}
+                value={formData.pluCode || ''}
+                onChangeText={(text) => setFormData({ ...formData, pluCode: text.replace(/\D/g, '').slice(0, 5) })}
+              />
+              <Text style={{ fontSize: 10, color: '#6b7280', flex: 1 }}>
+                Code programmed in your weighing scale
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
+
       {/* Images Section */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Images (Max 4)</Text>
@@ -858,6 +948,31 @@ export default function MenuItemForm({
           )}
         </View>
       </View>
+
+      {/* Hide Image Toggle — only when editing and owner/admin */}
+      {isEditing && isOwnerOrAdmin && (
+        <View style={[styles.hideImageContainer, formData.hideImage && styles.hideImageActive]}>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+            onPress={() => setFormData({ ...formData, hideImage: !formData.hideImage })}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={formData.hideImage ? 'checkbox' : 'square-outline'}
+              size={20}
+              color={formData.hideImage ? '#ef4444' : Colors.textLight}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: formData.hideImage ? '#991b1b' : Colors.textDark }}>
+                Hide image for this item
+              </Text>
+              <Text style={{ fontSize: 11, color: formData.hideImage ? '#b91c1c' : Colors.textLight, marginTop: 2 }}>
+                Image will not be shown on POS menu across all devices
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Stock Suggestion Banner */}
       {!formData.isStockManaged && (() => {
@@ -1291,6 +1406,47 @@ const styles = StyleSheet.create({
     color: Colors.textMedium,
   },
   // Variant / Customization rows
+  variantCard: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: Spacing.sm,
+  },
+  variantDescInput: {
+    marginTop: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    fontSize: 12,
+    minHeight: 0,
+  },
+  // Sold by weight
+  soldByWeightContainer: {
+    marginBottom: Spacing.md,
+    padding: 12,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+  },
+  soldByWeightActive: {
+    backgroundColor: '#fefce8',
+    borderColor: '#fde047',
+  },
+  // Hide image
+  hideImageContainer: {
+    marginBottom: Spacing.md,
+    padding: 10,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  hideImageActive: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

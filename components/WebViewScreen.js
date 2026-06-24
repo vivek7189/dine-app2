@@ -154,13 +154,19 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
             text = printerService.generateKOTText({
               restaurantName: od.restaurantName || userData?.restaurant?.name || '',
               tableNumber: od.tableNumber || od.tableName || '',
+              floorName: od.floorName || '',
+              roomNumber: od.roomNumber || '',
               orderNumber: od.orderNumber || od.dailyOrderId || od.orderId?.slice?.(-6) || '',
+              dailyOrderId: od.dailyOrderId || od.orderNumber || od.orderId?.slice?.(-6) || '',
               orderId: od.orderId || data.orderId,
               orderType: od.orderType || 'dine-in',
               waiterName: od.waiterName || '',
               customerName: od.customerName || od.customerInfo?.name || '',
               timestamp: od.timestamp || od.createdAt || new Date(),
               items: od.items || [],
+              removedItems: od.removedItems || [],
+              isIncremental: od.isIncremental || false,
+              specialInstructions: od.specialInstructions || od.notes || '',
               printSettings: ps,
             });
           } else {

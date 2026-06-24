@@ -60,3 +60,5 @@ android/gradle.properties.backup
 
 # @end expo-cli
 *.aab
+*.apk
+*.aab

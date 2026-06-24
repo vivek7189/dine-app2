@@ -73,9 +73,9 @@ const enqueuePrint = (fn) => {
 
 // ==================== PRINT TIMEOUT & RETRY CONFIG ====================
 
-const PRINT_TIMEOUT_MS = 10000; // 10 seconds
-const MAX_PRINT_RETRIES = 3; // Total attempts (1 original + 2 retries)
-const RETRY_DELAYS = [800, 1500]; // ms delay before 2nd and 3rd attempt
+const PRINT_TIMEOUT_MS = 15000; // 15 seconds — WiFi printers can be slow to ACK
+const MAX_PRINT_RETRIES = 1; // Single attempt — retries cause duplicate prints on WiFi
+const RETRY_DELAYS = []; // No retry delays needed with single attempt
 
 const withPrintTimeout = (promise, label = 'Print') => {
   return new Promise((resolve, reject) => {
@@ -594,24 +594,10 @@ export const ensureConnected = async () => {
   if (!connectedPrinter) {
     return await tryReconnect();
   }
-  // For network printers, verify socket with a quick no-op write
-  if (connectionType === 'network') {
-    const mod = getThermalModule();
-    if (mod) {
-      try {
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('verify timeout')), 3000);
-          mod.printBill('', { beep: false, cut: false, tailingLine: false })
-            .then(() => { clearTimeout(timer); resolve(); })
-            .catch((e) => { clearTimeout(timer); reject(e); });
-        });
-      } catch {
-        // Socket dead — reconnect
-        console.warn('ensureConnected: network socket dead, reconnecting...');
-        return await tryReconnect();
-      }
-    }
-  }
+  // For network printers, trust the connection state rather than sending
+  // empty printBill('') which some printers render as blank paper strips.
+  // If the socket is dead, the next real printViaThermal call will fail
+  // and trigger a reconnect at that point.
   return true;
 };
 
@@ -750,8 +736,9 @@ export const generateBillText = (invoiceData) => {
   lines.push(leftRight(payMethod + ' Sale', '', W));
   const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-';
   const now = invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date();
-  const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const dateStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+  let _h = now.getHours(); const _ampm = _h >= 12 ? 'pm' : 'am'; _h = _h % 12 || 12;
+  const timeStr = `${_h}:${String(now.getMinutes()).padStart(2,'0')} ${_ampm}`;
   lines.push(leftRight('', `Date: ${dateStr}`, W));
   lines.push(leftRight('', `Time: ${timeStr}`, W));
   lines.push(leftRight('', `Invoice no: ${invoiceNum}`, W));
@@ -914,16 +901,25 @@ export const generateTokenText = (token) => {
 
 // ==================== KOT TEXT GENERATION ====================
 
+// ASCII-safe time/date formatters — toLocaleTimeString('en-IN') produces Unicode
+// narrow no-break space (U+202F) before am/pm which thermal printers render as garbled chars.
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 const formatKOTTime = (date) => {
-  if (!date) return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const d = date ? (date instanceof Date ? date : new Date(date)) : new Date();
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
 };
 
 const formatKOTDate = (date) => {
-  if (!date) return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const d = date ? (date instanceof Date ? date : new Date(date)) : new Date();
+  const day = String(d.getDate()).padStart(2, '0');
+  const mon = MONTHS_SHORT[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day} ${mon} ${year}`;
 };
 
 export const generateKOTText = (data) => {
@@ -931,7 +927,7 @@ export const generateKOTText = (data) => {
   const kl = ps.kotLayout || {};
   const W = getChars(ps);
   const _LINE = getLine(W);
-  const location = kl.showTable !== false ? (data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}` : '')) : '';
+  const location = kl.showTable !== false ? (data.roomNumber ? `Room: ${data.roomNumber}` : (data.tableNumber ? `Table: ${data.tableNumber}${data.floorName ? ' \u00b7 ' + data.floorName : ''}` : '')) : '';
 
   const formatItemLine = (item, opts = {}) => {
     const subline = getItemSubline(item);
@@ -1002,12 +998,17 @@ export const generateKOTText = (data) => {
   } else if (showLoc && location) {
     lines.push(location);
   }
-  if (kl.showDate !== false) {
-    lines.push(leftRight(formatKOTDate(data.timestamp), formatKOTTime(data.timestamp), W));
-  } else {
-    lines.push(leftRight('', formatKOTTime(data.timestamp), W));
+  const dateTimeStr = kl.showDate !== false
+    ? `${formatKOTDate(data.timestamp)}, ${formatKOTTime(data.timestamp)}`
+    : formatKOTTime(data.timestamp);
+  const typeStr = (kl.showOrderType !== false && data.orderType) ? `Type: ${data.orderType}` : '';
+  if (dateTimeStr && typeStr) {
+    lines.push(leftRight(dateTimeStr, typeStr, W));
+  } else if (dateTimeStr) {
+    lines.push(dateTimeStr);
+  } else if (typeStr) {
+    lines.push(typeStr);
   }
-  if (kl.showOrderType !== false && data.orderType) lines.push(`Type: ${data.orderType}`);
   if (kl.showWaiter !== false && data.waiterName) lines.push(`Waiter: ${data.waiterName}`);
   if (kl.showCustomer !== false && data.customerName) lines.push(`Customer: ${data.customerName}`);
   lines.push(_LINE);
@@ -1147,6 +1148,11 @@ const printViaThermal = async (text) => {
   if (!mod) throw new Error('No thermal printer connected');
   // Strip logo tag — thermal printers don't support images via ESC/POS text
   const cleanText = text.replace(/^<LOGO:.+?>\n?/, '');
+  // Guard against empty payloads — sending just newlines causes blank paper + cut
+  if (!cleanText || !cleanText.trim()) {
+    console.warn('printViaThermal: skipping empty payload');
+    return;
+  }
   const printOpts = { beep: false, cut: true, tailingLine: true };
   const payload = cleanText + '\n\n\n';
 
@@ -1321,16 +1327,15 @@ const heartbeatCheck = async () => {
   if (!mod) return;
 
   try {
-    // Send a no-op print (empty data) to verify socket is alive.
-    // Most thermal printers ignore empty payloads. We use a short timeout
-    // so this doesn't block anything if the printer is slow.
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('heartbeat timeout')), 5000);
-      // printBill with empty string — printer ignores it but TCP write confirms socket
-      mod.printBill('', { beep: false, cut: false, tailingLine: false })
-        .then(() => { clearTimeout(timer); resolve(); })
-        .catch((e) => { clearTimeout(timer); reject(e); });
-    });
+    // Verify socket is alive by checking the connection state.
+    // We no longer send printBill('') because some thermal printers
+    // print a blank strip or feed paper even with empty payloads,
+    // causing mysterious small blank receipts.
+    // Instead, just check if the printer module reports connected.
+    const isStillConnected = mod.getStatus ? await mod.getStatus() : true;
+    if (!isStillConnected) throw new Error('printer reports disconnected');
+    // If getStatus isn't available, we trust the connection until the next
+    // real print fails — printViaThermal will handle reconnect then.
   } catch (err) {
     console.warn('Heartbeat failed, WiFi printer may be disconnected:', err.message);
     emitPrinterEvent({ type: 'connection_stale' });

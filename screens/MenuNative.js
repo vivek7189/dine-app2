@@ -104,6 +104,7 @@ export default function MenuScreen() {
   const [showImages, setShowImages] = useState(true);
   const [globalHideImages, setGlobalHideImages] = useState(false);
   const [existingOrderId, setExistingOrderId] = useState(null);
+  const [existingDailyOrderId, setExistingDailyOrderId] = useState(null); // daily order number for KOT updates
   const [existingOrderItems, setExistingOrderItems] = useState(null); // snapshot of items when order was loaded for editing
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [lastOrderData, setLastOrderData] = useState(null);
@@ -186,7 +187,7 @@ export default function MenuScreen() {
       setCart([]);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       setSearchTerm('');
       setShortCodeSearch('');
       tableParamsStampRef.current = null;
@@ -476,7 +477,7 @@ export default function MenuScreen() {
       freshParamsRef.current = true;
       setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '', floorId: params.floorId || '' });
       setIsFromTablesPage(true);
-      setExistingOrderId(null); setExistingOrderItems(null); // Clear stale order when switching tables
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
       const paramsKey = `bartab_${params.tableNumber}`;
       if (consumedParamsKeyRef.current === paramsKey) return;
@@ -487,7 +488,7 @@ export default function MenuScreen() {
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: null, name: params.tableNumber });
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       setIsBarTabMode(true);
     }
 
@@ -511,7 +512,7 @@ export default function MenuScreen() {
       AsyncStorage.getItem('billingWebViewResult').then(result => {
         if (result) {
           AsyncStorage.removeItem('billingWebViewResult');
-          setExistingOrderId(null); setExistingOrderItems(null);
+          setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
@@ -543,6 +544,7 @@ export default function MenuScreen() {
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
+              if (data.dailyOrderId) setExistingDailyOrderId(data.dailyOrderId);
               if (data.cartItems) {
                 setCart(data.cartItems);
                 setExistingOrderItems(data.cartItems.map(i => ({ menuItemId: i.menuItemId || i.id, name: i.name, quantity: i.quantity })));
@@ -565,7 +567,7 @@ export default function MenuScreen() {
         if (hasBlurredRef.current && selectedTableRef.current && tableParamsStampRef.current !== null) {
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null); setExistingOrderItems(null);
+          setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
           setCart([]);
           setIsBarTabMode(false);
           setAutoSelectedRule(false);
@@ -1456,7 +1458,7 @@ export default function MenuScreen() {
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
     } catch (error) {
       console.error('Error sending order:', error);
       toast.error(error.message || 'Failed to send order to kitchen. Please try again.');
@@ -1587,7 +1589,7 @@ export default function MenuScreen() {
         setCart([]);
         decrementLocalStock(orderedItems);
         setShowCart(false);
-        setExistingOrderId(null); setExistingOrderItems(null);
+        setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
         router.back();
       } else if (existingOrderId) {
         // Update existing order (adding items to occupied table)
@@ -1614,7 +1616,7 @@ export default function MenuScreen() {
           ...partialFields,
         };
 
-        await apiClient.updateOrder(existingOrderId, updateData);
+        const updateResponse = await apiClient.updateOrder(existingOrderId, updateData);
 
         // Auto-print KOT for newly added/changed items (fire and forget)
         // Skip when multi-station configured (2+ stations) - Electron handles station routing
@@ -1659,8 +1661,9 @@ export default function MenuScreen() {
           }
           if (kotItems.length > 0 || removedKotItems.length > 0) {
             const kotData = {
-              orderNumber: existingOrderId?.slice(-6),
+              orderNumber: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || existingOrderId?.slice(-6),
               orderId: existingOrderId,
+              dailyOrderId: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || existingOrderId?.slice(-6),
               tableNumber: selectedTable?.name || '',
               floorName: selectedTable?.floor || '',
               isIncremental,
@@ -1701,7 +1704,7 @@ export default function MenuScreen() {
         setCart([]);
         decrementLocalStock(orderedItems);
         setShowCart(false);
-        setExistingOrderId(null); setExistingOrderItems(null);
+        setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
         if (selectedTable) {
           router.replace({
             pathname: '/(tabs)/tables',
@@ -2025,7 +2028,7 @@ export default function MenuScreen() {
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
       tableParamsStampRef.current = null;
@@ -2237,7 +2240,7 @@ export default function MenuScreen() {
       setShowCart(false);
       setSelectedTable(null);
       setIsFromTablesPage(false);
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       setAutoSelectedRule(false);
       setActivePricingRuleId(null);
       tableParamsStampRef.current = null;
@@ -2305,7 +2308,7 @@ export default function MenuScreen() {
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
-      setExistingOrderId(null); setExistingOrderItems(null);
+      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       // Navigate back to bar billing
       router.back();
     } catch (error) {
@@ -2321,7 +2324,7 @@ export default function MenuScreen() {
     setSelectedTable(null);
     setIsFromTablesPage(false);
     setCart([]);
-    setExistingOrderId(null); setExistingOrderItems(null);
+    setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
     setIsBarTabMode(false);
     setAutoSelectedRule(false);
     setActivePricingRuleId(null);
@@ -2631,7 +2634,7 @@ export default function MenuScreen() {
                     setSelectedTable(null);
                     setIsFromTablesPage(false);
                     setCart([]);
-                    setExistingOrderId(null); setExistingOrderItems(null);
+                    setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
                     setIsBarTabMode(false);
                     setAutoSelectedRule(false);
                     setActivePricingRuleId(null);
@@ -2936,7 +2939,7 @@ export default function MenuScreen() {
               setSelectedTable(null);
               setIsFromTablesPage(false);
               setCart([]);
-              setExistingOrderId(null); setExistingOrderItems(null);
+              setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
               setIsBarTabMode(false);
               setAutoSelectedRule(false);
               setActivePricingRuleId(null);
@@ -3127,7 +3130,7 @@ export default function MenuScreen() {
           setKotOrderData(null);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null); setExistingOrderItems(null);
+          setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
@@ -3157,7 +3160,7 @@ export default function MenuScreen() {
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null); setExistingOrderItems(null);
+          setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;
@@ -3180,7 +3183,7 @@ export default function MenuScreen() {
           setCart([]);
           setSelectedTable(null);
           setIsFromTablesPage(false);
-          setExistingOrderId(null); setExistingOrderItems(null);
+          setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
           setActivePricingRuleId(null);
           setAutoSelectedRule(false);
           tableParamsStampRef.current = null;

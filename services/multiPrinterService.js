@@ -138,6 +138,10 @@ export function generateStationKOTText(orderData, stationName) {
  * @param {Object} printSettings - Print settings for template rendering
  */
 export async function printKOTsByStation(orderData, printStations, categories, kotPrintingMode, printSettings = {}) {
+  // Skip local station printing when remote print is enabled — desktop handles station routing
+  const remotePrint = await printerService.getRemotePrintEnabled();
+  if (remotePrint) return { printed: 0, total: 0 };
+
   const stationGroups = splitOrderByStation(orderData.items || [], printStations, categories, printSettings);
 
   // Filter out empty groups

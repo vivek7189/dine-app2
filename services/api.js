@@ -1471,19 +1471,27 @@ class ApiClient {
     return result;
   }
 
-  async updateMenuItem(itemId, itemData) {
-    const result = await this.request(`/api/menus/item/${itemId}`, {
+  async updateMenuItem(itemId, itemData, restaurantId) {
+    const query = restaurantId ? `?restaurantId=${restaurantId}` : '';
+    const result = await this.request(`/api/menus/item/${itemId}${query}`, {
       method: 'PATCH',
       data: itemData,
     });
+    if (restaurantId) {
+      this.invalidateCache(`/api/menus/${restaurantId}`);
+    }
     this.invalidateCache('/api/menus/');
     return result;
   }
 
-  async deleteMenuItem(itemId) {
-    const result = await this.request(`/api/menus/item/${itemId}`, {
+  async deleteMenuItem(itemId, restaurantId) {
+    const query = restaurantId ? `?restaurantId=${restaurantId}` : '';
+    const result = await this.request(`/api/menus/item/${itemId}${query}`, {
       method: 'DELETE',
     });
+    if (restaurantId) {
+      this.invalidateCache(`/api/menus/${restaurantId}`);
+    }
     this.invalidateCache('/api/menus/');
     return result;
   }
