@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   Platform,
   ActivityIndicator,
   Switch,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,9 +18,23 @@ import apiClient from '../../services/api';
 import PrinterSetup from '../../components/PrinterSetup';
 import PrintSettings from '../../components/PrintSettings';
 import { useResponsive } from '../../hooks/useResponsive';
-import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled } from '../../services/printerService';
+import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled, discoverNetworkPrinters, scanSubnetForPrinters, printToStationPrinter } from '../../services/printerService';
+import { getLocalKotPrintingEnabled, setLocalKotPrintingEnabled, getStationPrinters, saveStationPrinter, removeStationPrinter } from '../../services/multiPrinterService';
 
 const APP_VERSION = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
+
+// Station type display config
+const STATION_TYPE_CONFIG = {
+  kitchen: { icon: 'flame-outline', color: '#ef4444', bg: '#fef2f2', label: 'Kitchen' },
+  bar: { icon: 'beer-outline', color: '#8b5cf6', bg: '#f5f3ff', label: 'Bar' },
+  expo: { icon: 'layers-outline', color: '#f59e0b', bg: '#fffbeb', label: 'Expo' },
+  pastry: { icon: 'cafe-outline', color: '#ec4899', bg: '#fdf2f8', label: 'Pastry' },
+  grill: { icon: 'bonfire-outline', color: '#f97316', bg: '#fff7ed', label: 'Grill' },
+  drinks: { icon: 'wine-outline', color: '#06b6d4', bg: '#ecfeff', label: 'Drinks' },
+  packing: { icon: 'cube-outline', color: '#6366f1', bg: '#eef2ff', label: 'Packing' },
+};
+
+const getStationTypeConfig = (type) => STATION_TYPE_CONFIG[type] || { icon: 'grid-outline', color: '#6b7280', bg: '#f9fafb', label: type || 'Station' };
 
 export default function PrinterSettingsScreen() {
   const router = useRouter();
@@ -27,10 +43,21 @@ export default function PrinterSettingsScreen() {
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
   const [multiStationCount, setMultiStationCount] = useState(0);
+  const [printStations, setPrintStations] = useState([]);
   const [printNotifEnabled, setPrintNotifEnabled] = useState(true);
   const [remotePrintOn, setRemotePrintOn] = useState(false);
   const [remotePrintSaving, setRemotePrintSaving] = useState(false);
   const [disconnectAlertOn, setDisconnectAlertOn] = useState(true);
+
+  // Multi-station local printing
+  const [localKotPrinting, setLocalKotPrinting] = useState(false);
+  const [stationPrinterMap, setStationPrinterMap] = useState({}); // { stationId: { type, host, port } }
+  const [scanningStationId, setScanningStationId] = useState(null);
+  const [discoveredPrinters, setDiscoveredPrinters] = useState([]);
+  const [manualIpStation, setManualIpStation] = useState(null); // stationId showing manual IP input
+  const [manualIpValue, setManualIpValue] = useState('');
+  const [manualPortValue, setManualPortValue] = useState('9100');
+  const [testingStationId, setTestingStationId] = useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -45,6 +72,10 @@ export default function PrinterSettingsScreen() {
         setRemotePrintOn(remotePref);
         const disconnectAlertPref = await getDisconnectAlertEnabled();
         setDisconnectAlertOn(disconnectAlertPref);
+        const localKotPref = await getLocalKotPrintingEnabled();
+        setLocalKotPrinting(localKotPref);
+        const savedStationPrinters = await getStationPrinters();
+        setStationPrinterMap(savedStationPrinters);
       } catch (e) {
         console.error('Error loading user for printer settings:', e);
       } finally {
@@ -61,9 +92,119 @@ export default function PrinterSettingsScreen() {
       if (res?.success) {
         const enabled = (res.printStations || []).filter(s => s.enabled);
         setMultiStationCount(enabled.length);
+        setPrintStations(enabled);
       }
     }).catch(() => {});
   }, [restaurantId]);
+
+  // Scan for WiFi printers for a station
+  const handleScanForStation = useCallback(async (stationId) => {
+    setScanningStationId(stationId);
+    setDiscoveredPrinters([]);
+    setManualIpStation(null);
+
+    try {
+      // First try mDNS/Bonjour discovery
+      const mdnsPrinters = await discoverNetworkPrinters(5000);
+      const networkOnly = (mdnsPrinters || []).filter(p => p.type === 'network' || p.host);
+      setDiscoveredPrinters(networkOnly);
+
+      // Then do subnet scan in background for printers not advertising via mDNS
+      scanSubnetForPrinters((printer) => {
+        setDiscoveredPrinters(prev => {
+          const exists = prev.some(p => p.host === printer.host || p.id === printer.id);
+          if (exists) return prev;
+          return [...prev, { ...printer, type: 'network' }];
+        });
+      }, 8000).catch(() => {});
+    } catch (err) {
+      console.warn('Network printer scan failed:', err.message);
+    }
+  }, []);
+
+  // Assign a discovered printer to a station
+  const handleAssignPrinter = useCallback(async (stationId, printer) => {
+    const config = {
+      type: 'network',
+      host: printer.host || printer.address,
+      port: printer.port || 9100,
+      name: printer.name || printer.host || 'Network Printer',
+    };
+    await saveStationPrinter(stationId, config);
+    setStationPrinterMap(prev => ({ ...prev, [stationId]: config }));
+    setScanningStationId(null);
+    setDiscoveredPrinters([]);
+  }, []);
+
+  // Assign manual IP to a station
+  const handleAssignManualIp = useCallback(async (stationId) => {
+    const host = manualIpValue.trim();
+    if (!host) return;
+    const port = parseInt(manualPortValue, 10) || 9100;
+    const config = {
+      type: 'network',
+      host,
+      port,
+      name: `${host}:${port}`,
+    };
+    await saveStationPrinter(stationId, config);
+    setStationPrinterMap(prev => ({ ...prev, [stationId]: config }));
+    setManualIpStation(null);
+    setManualIpValue('');
+    setManualPortValue('9100');
+    setScanningStationId(null);
+    setDiscoveredPrinters([]);
+  }, [manualIpValue, manualPortValue]);
+
+  // Remove station printer assignment
+  const handleRemoveStationPrinter = useCallback(async (stationId) => {
+    await removeStationPrinter(stationId);
+    setStationPrinterMap(prev => {
+      const next = { ...prev };
+      delete next[stationId];
+      return next;
+    });
+  }, []);
+
+  // Test print to a specific station printer
+  const handleTestStationPrint = useCallback(async (stationId, stationName) => {
+    const config = stationPrinterMap[stationId];
+    if (!config) {
+      Alert.alert('No Printer', 'Assign a printer to this station first.');
+      return;
+    }
+    setTestingStationId(stationId);
+    try {
+      const testText = [
+        '--------------------------------',
+        '       STATION PRINTER TEST',
+        '--------------------------------',
+        '',
+        `  Station: ${stationName}`,
+        `  Printer: ${config.host}:${config.port}`,
+        `  Date: ${new Date().toLocaleString('en-IN')}`,
+        `  Platform: ${Platform.OS}`,
+        '',
+        '--------------------------------',
+        '    If you can read this,',
+        '    the station printer is',
+        '    working correctly!',
+        '',
+        '--------------------------------',
+      ].join('\n');
+
+      const result = await printToStationPrinter(config, testText);
+      if (result.success) {
+        Alert.alert('Success', `Test page printed to ${stationName} printer.`);
+      } else {
+        Alert.alert('Print Failed', result.error || `Could not reach printer at ${config.host}:${config.port}. Check the printer is on and connected to the same WiFi network.`);
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Test print failed.');
+    } finally {
+      setTestingStationId(null);
+    }
+  }, [stationPrinterMap]);
 
   return (
     <View style={styles.container}>
@@ -98,16 +239,232 @@ export default function PrinterSettingsScreen() {
           contentContainerStyle={[styles.scrollContent, isTablet && { maxWidth: 600, alignSelf: 'center', width: '100%' }]}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Multi-station info banner */}
-          {multiStationCount >= 2 && (
+          {/* Multi-station: Local KOT printing toggle + station printer assignment */}
+          {multiStationCount >= 2 && !remotePrintOn && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionIconWrap, { backgroundColor: '#2563eb' }]}>
+                  <Ionicons name="git-branch-outline" size={16} color="#fff" />
+                </View>
+                <Text style={styles.sectionTitle}>Multi-Station KOT Printing</Text>
+              </View>
+
+              {/* Toggle: Print KOTs from this device */}
+              <View style={styles.notifCard}>
+                <View style={styles.notifRow}>
+                  <View style={[styles.notifIconWrap, { backgroundColor: '#dbeafe' }]}>
+                    <Ionicons name="print-outline" size={18} color="#2563eb" />
+                  </View>
+                  <View style={styles.notifInfo}>
+                    <Text style={styles.notifLabel}>Print KOTs from this device</Text>
+                    <Text style={styles.notifHint}>
+                      {localKotPrinting
+                        ? 'KOTs will print directly to station printers from this device'
+                        : 'KOTs are handled by the desktop terminal'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={localKotPrinting}
+                    onValueChange={(val) => {
+                      setLocalKotPrinting(val);
+                      setLocalKotPrintingEnabled(val);
+                    }}
+                    trackColor={{ false: '#e5e7eb', true: '#2563eb40' }}
+                    thumbColor={localKotPrinting ? '#2563eb' : '#d1d5db'}
+                  />
+                </View>
+              </View>
+
+              {/* Station Printer Cards — visible when local KOT printing is ON */}
+              {localKotPrinting && printStations.length > 0 && (
+                <View style={styles.stationCardsContainer}>
+                  <Text style={styles.stationCardsTitle}>Assign Printers to Stations</Text>
+                  <Text style={styles.stationCardsHint}>
+                    Each station can have its own WiFi printer. Stations without a printer will use the default printer.
+                  </Text>
+
+                  {printStations.map((station) => {
+                    const typeConfig = getStationTypeConfig(station.type);
+                    const assignedPrinter = stationPrinterMap[station.id];
+                    const isScanning = scanningStationId === station.id;
+                    const isTesting = testingStationId === station.id;
+                    const showManualIp = manualIpStation === station.id;
+
+                    return (
+                      <View key={station.id} style={styles.stationCard}>
+                        {/* Station Header */}
+                        <View style={styles.stationCardHeader}>
+                          <View style={[styles.stationTypeIcon, { backgroundColor: typeConfig.bg }]}>
+                            <Ionicons name={typeConfig.icon} size={16} color={typeConfig.color} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.stationCardName}>{station.name}</Text>
+                            <Text style={styles.stationCardMeta}>
+                              {typeConfig.label} {station.isDefault ? '(Default)' : ''} · {(station.categoryIds || []).length} categories
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Assigned Printer */}
+                        {assignedPrinter ? (
+                          <View style={styles.assignedPrinterRow}>
+                            <View style={styles.assignedPrinterInfo}>
+                              <Ionicons name="wifi" size={14} color="#16a34a" />
+                              <Text style={styles.assignedPrinterText}>
+                                {assignedPrinter.name || `${assignedPrinter.host}:${assignedPrinter.port}`}
+                              </Text>
+                            </View>
+                            <View style={styles.assignedPrinterActions}>
+                              <TouchableOpacity
+                                style={styles.stationActionBtn}
+                                onPress={() => handleTestStationPrint(station.id, station.name)}
+                                disabled={isTesting}
+                              >
+                                {isTesting ? (
+                                  <ActivityIndicator size="small" color="#2563eb" />
+                                ) : (
+                                  <Text style={styles.stationActionText}>Test</Text>
+                                )}
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[styles.stationActionBtn, styles.stationRemoveBtn]}
+                                onPress={() => handleRemoveStationPrinter(station.id)}
+                              >
+                                <Ionicons name="close" size={14} color="#ef4444" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.noPrinterRow}>
+                            <Ionicons name="alert-circle-outline" size={14} color="#9ca3af" />
+                            <Text style={styles.noPrinterText}>No printer assigned (will use default)</Text>
+                          </View>
+                        )}
+
+                        {/* Scan / Assign Actions */}
+                        {!isScanning && !showManualIp && (
+                          <View style={styles.stationActions}>
+                            <TouchableOpacity
+                              style={styles.scanBtn}
+                              onPress={() => handleScanForStation(station.id)}
+                            >
+                              <Ionicons name="search-outline" size={14} color="#2563eb" />
+                              <Text style={styles.scanBtnText}>Scan WiFi Printers</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.manualIpBtn}
+                              onPress={() => {
+                                setManualIpStation(station.id);
+                                setScanningStationId(null);
+                              }}
+                            >
+                              <Text style={styles.manualIpBtnText}>Manual IP</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+
+                        {/* Scan Results */}
+                        {isScanning && (
+                          <View style={styles.scanResultsContainer}>
+                            <View style={styles.scanHeader}>
+                              <ActivityIndicator size="small" color="#2563eb" />
+                              <Text style={styles.scanHeaderText}>Scanning network...</Text>
+                              <TouchableOpacity onPress={() => { setScanningStationId(null); setDiscoveredPrinters([]); }}>
+                                <Text style={styles.scanCancelText}>Cancel</Text>
+                              </TouchableOpacity>
+                            </View>
+                            {discoveredPrinters.length === 0 ? (
+                              <Text style={styles.scanEmptyText}>Searching for WiFi printers on your network...</Text>
+                            ) : (
+                              discoveredPrinters.map((printer, idx) => (
+                                <TouchableOpacity
+                                  key={printer.id || printer.host || idx}
+                                  style={styles.discoveredPrinterRow}
+                                  onPress={() => handleAssignPrinter(station.id, printer)}
+                                >
+                                  <Ionicons name="wifi" size={16} color="#2563eb" />
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.discoveredPrinterName}>{printer.name || 'Network Printer'}</Text>
+                                    <Text style={styles.discoveredPrinterAddr}>{printer.host}:{printer.port || 9100}</Text>
+                                  </View>
+                                  <Ionicons name="add-circle-outline" size={20} color="#2563eb" />
+                                </TouchableOpacity>
+                              ))
+                            )}
+                            {/* Manual IP fallback inside scan */}
+                            <TouchableOpacity
+                              style={styles.scanManualFallback}
+                              onPress={() => {
+                                setManualIpStation(station.id);
+                                setScanningStationId(null);
+                                setDiscoveredPrinters([]);
+                              }}
+                            >
+                              <Ionicons name="keypad-outline" size={14} color="#6b7280" />
+                              <Text style={styles.scanManualFallbackText}>Enter IP address manually</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+
+                        {/* Manual IP Input */}
+                        {showManualIp && (
+                          <View style={styles.manualIpContainer}>
+                            <Text style={styles.manualIpLabel}>Enter printer IP address</Text>
+                            <View style={styles.manualIpInputRow}>
+                              <TextInput
+                                style={styles.manualIpInput}
+                                placeholder="192.168.1.100"
+                                placeholderTextColor="#9ca3af"
+                                value={manualIpValue}
+                                onChangeText={setManualIpValue}
+                                keyboardType="decimal-pad"
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                              />
+                              <Text style={styles.manualIpColon}>:</Text>
+                              <TextInput
+                                style={styles.manualPortInput}
+                                placeholder="9100"
+                                placeholderTextColor="#9ca3af"
+                                value={manualPortValue}
+                                onChangeText={setManualPortValue}
+                                keyboardType="number-pad"
+                              />
+                            </View>
+                            <View style={styles.manualIpActions}>
+                              <TouchableOpacity
+                                style={styles.manualIpConnectBtn}
+                                onPress={() => handleAssignManualIp(station.id)}
+                                disabled={!manualIpValue.trim()}
+                              >
+                                <Text style={[styles.manualIpConnectText, !manualIpValue.trim() && { opacity: 0.4 }]}>Assign</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.manualIpCancelBtn}
+                                onPress={() => { setManualIpStation(null); setManualIpValue(''); setManualPortValue('9100'); }}
+                              >
+                                <Text style={styles.manualIpCancelText}>Cancel</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Multi-station info banner (when remote print is ON) */}
+          {multiStationCount >= 2 && remotePrintOn && (
             <View style={styles.multiStationBanner}>
               <Ionicons name="information-circle" size={20} color="#2563eb" />
               <View style={{ flex: 1 }}>
                 <Text style={styles.multiStationTitle}>Multi-Station KOT Routing Active</Text>
                 <Text style={styles.multiStationText}>
-                  KOT prints will be handled by the main POS machine. Your connected printer will be used for bill printing only.
+                  KOT prints are handled by the desktop terminal. Disable "Print from Desktop" to print KOTs directly from this device.
                 </Text>
-                <Text style={styles.multiStationHint}>Contact admin to change station settings.</Text>
               </View>
             </View>
           )}
@@ -168,6 +525,11 @@ export default function PrinterSettingsScreen() {
                       }
                       setRemotePrintOn(val);
                       setRemotePrintEnabled(val);
+                      // Disable local KOT printing when switching to remote
+                      if (val && localKotPrinting) {
+                        setLocalKotPrinting(false);
+                        setLocalKotPrintingEnabled(false);
+                      }
                     }}
                     trackColor={{ false: '#e5e7eb', true: '#2563eb40' }}
                     thumbColor={remotePrintOn ? '#2563eb' : '#d1d5db'}
@@ -453,5 +815,271 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6b7280',
     marginTop: 4,
+  },
+
+  // ── Station Printer Assignment Styles ──
+  stationCardsContainer: {
+    marginTop: 14,
+  },
+  stationCardsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+    marginLeft: 2,
+  },
+  stationCardsHint: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginBottom: 12,
+    marginLeft: 2,
+    lineHeight: 16,
+  },
+  stationCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    padding: 14,
+    marginBottom: 10,
+  },
+  stationCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  stationTypeIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stationCardName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  stationCardMeta: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 1,
+  },
+  assignedPrinterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  assignedPrinterInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  assignedPrinterText: {
+    fontSize: 12,
+    color: '#16a34a',
+    fontWeight: '500',
+  },
+  assignedPrinterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stationActionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#eff6ff',
+    borderRadius: 6,
+  },
+  stationActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  stationRemoveBtn: {
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 6,
+  },
+  noPrinterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  noPrinterText: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  stationActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scanBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    backgroundColor: '#eff6ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  scanBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  manualIpBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  manualIpBtnText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+  },
+  scanResultsContainer: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 10,
+  },
+  scanHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  scanHeaderText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  scanCancelText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ef4444',
+  },
+  scanEmptyText: {
+    fontSize: 11,
+    color: '#9ca3af',
+    textAlign: 'center',
+    paddingVertical: 12,
+  },
+  discoveredPrinterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  discoveredPrinterName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#1f2937',
+  },
+  discoveredPrinterAddr: {
+    fontSize: 11,
+    color: '#9ca3af',
+  },
+  scanManualFallback: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  scanManualFallbackText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  manualIpContainer: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 12,
+  },
+  manualIpLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  manualIpInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 10,
+  },
+  manualIpInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#1f2937',
+  },
+  manualIpColon: {
+    fontSize: 16,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  manualPortInput: {
+    width: 70,
+    height: 40,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 10,
+    fontSize: 14,
+    color: '#1f2937',
+    textAlign: 'center',
+  },
+  manualIpActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  manualIpConnectBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  manualIpConnectText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  manualIpCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  manualIpCancelText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6b7280',
   },
 });

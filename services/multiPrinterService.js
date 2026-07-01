@@ -3,6 +3,7 @@ import * as printerService from './printerService';
 import apiClient from './api';
 
 const STATION_PRINTERS_KEY = 'dine_station_printers';
+const LOCAL_KOT_KEY = 'dine_local_kot_printing';
 
 /**
  * Multi-Printer Service for Station-based KOT Routing
@@ -10,6 +11,23 @@ const STATION_PRINTERS_KEY = 'dine_station_printers';
  * Manages per-station printer configs and orchestrates printing
  * KOTs to the correct printer based on print station assignments.
  */
+
+// ── Local KOT Printing Preference ──
+// When true, this device prints KOTs directly to station printers.
+// When false (default), desktop terminal handles station routing.
+
+export const getLocalKotPrintingEnabled = async () => {
+  try {
+    const val = await AsyncStorage.getItem(LOCAL_KOT_KEY);
+    return val === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const setLocalKotPrintingEnabled = async (enabled) => {
+  await AsyncStorage.setItem(LOCAL_KOT_KEY, enabled ? 'true' : 'false');
+};
 
 // ── Station Printer Config Storage ──
 
@@ -126,6 +144,29 @@ export function generateStationKOTText(orderData, stationName) {
   return lines.join('\n');
 }
 
+// ── KOT Data Builder (shared by single and multi modes) ──
+
+function buildKotRenderData(orderData, group) {
+  return {
+    restaurantName: orderData.restaurantName || '',
+    restaurantPhone: orderData.restaurantPhone || '',
+    orderId: orderData.orderId,
+    dailyOrderId: orderData.orderNumber || orderData.dailyOrderId,
+    tableNumber: orderData.tableNumber || '',
+    roomNumber: orderData.roomNumber || '',
+    floorName: orderData.floorName || '',
+    customerName: orderData.customerName || '',
+    orderType: orderData.orderType || '',
+    waiterName: orderData.waiterName || '',
+    specialInstructions: orderData.specialInstructions || '',
+    items: group.items,
+    removedItems: orderData.removedItems || [],
+    isIncremental: orderData.isIncremental || false,
+    currencySymbol: orderData.currencySymbol || '',
+    stationName: group.stationName,
+  };
+}
+
 // ── Main Orchestrator ──
 
 /**
@@ -142,11 +183,17 @@ export async function printKOTsByStation(orderData, printStations, categories, k
   const remotePrint = await printerService.getRemotePrintEnabled();
   if (remotePrint) return { printed: 0, total: 0 };
 
+  // For multi-printer mode, check if local KOT printing is enabled on this device
+  if (kotPrintingMode === 'multi') {
+    const localKot = await getLocalKotPrintingEnabled();
+    if (!localKot) return { printed: 0, total: 0 };
+  }
+
   const stationGroups = splitOrderByStation(orderData.items || [], printStations, categories, printSettings);
 
   // Filter out empty groups
   const nonEmpty = stationGroups.filter(g => g.items.length > 0);
-  if (nonEmpty.length === 0) return { printed: 0 };
+  if (nonEmpty.length === 0) return { printed: 0, total: 0 };
 
   let printed = 0;
 
@@ -161,29 +208,17 @@ export async function printKOTsByStation(orderData, printStations, categories, k
       const text = generateStationKOTText(stationOrderData, group.stationName);
 
       // Generate HTML via template system
-      const { renderKOT } = require('../utils/printTemplates/index');
-      const kotData = {
-        restaurantName: orderData.restaurantName || '',
-        restaurantPhone: orderData.restaurantPhone || '',
-        orderId: orderData.orderId,
-        dailyOrderId: orderData.orderNumber || orderData.dailyOrderId,
-        tableNumber: orderData.tableNumber || '',
-        roomNumber: orderData.roomNumber || '',
-        floorName: orderData.floorName || '',
-        customerName: orderData.customerName || '',
-        orderType: orderData.orderType || '',
-        waiterName: orderData.waiterName || '',
-        specialInstructions: orderData.specialInstructions || '',
-        items: group.items,
-        removedItems: orderData.removedItems || [],
-        isIncremental: orderData.isIncremental || false,
-        currencySymbol: orderData.currencySymbol || '',
-        stationName: group.stationName,
-      };
-      const html = renderKOT(kotData, printSettings, {});
+      let html = null;
+      try {
+        const { renderKOT } = require('../utils/printTemplates/index');
+        const kotData = buildKotRenderData(orderData, group);
+        html = renderKOT(kotData, printSettings, {});
+      } catch (err) {
+        console.warn('Failed to render KOT HTML for single mode:', err.message);
+      }
 
       try {
-        await printerService.printContent({ html, text, silentOnly: false });
+        await printerService.printContent({ html, text, silentOnly: true });
         printed++;
       } catch (err) {
         console.error(`Failed to print KOT for station ${group.stationName}:`, err);
@@ -196,15 +231,10 @@ export async function printKOTsByStation(orderData, printStations, categories, k
     }
   } else if (kotPrintingMode === 'multi') {
     // Multi-printer mode: each station has its own printer
+    // Uses queue-safe printToStationPrinter for thread-safe connect→print→restore
     const stationPrinters = await getStationPrinters();
 
     for (const group of nonEmpty) {
-      const printerConfig = stationPrinters[group.stationId];
-      if (!printerConfig) {
-        console.warn(`No printer configured for station "${group.stationName}" — skipping`);
-        continue;
-      }
-
       const stationOrderData = {
         ...orderData,
         items: group.items,
@@ -212,32 +242,33 @@ export async function printKOTsByStation(orderData, printStations, categories, k
 
       const text = generateStationKOTText(stationOrderData, group.stationName);
 
-      try {
-        // Connect to station-specific printer, print, then restore default
-        const savedPrinter = await printerService.getSavedPrinter();
+      const printerConfig = stationPrinters[group.stationId];
 
-        // Temporarily connect to station printer
-        if (printerConfig.type === 'bluetooth' && printerConfig.macAddress) {
-          await printerService.connectBluetoothPrinter(printerConfig.macAddress);
-        } else if (printerConfig.type === 'network' && printerConfig.host) {
-          await printerService.connectNetworkPrinter(printerConfig.host, printerConfig.port || 9100);
-        } else if (printerConfig.type === 'usb' && printerConfig.vendorId) {
-          await printerService.connectUSBPrinter(printerConfig.vendorId, printerConfig.productId);
+      if (!printerConfig || printerConfig.type !== 'network' || !printerConfig.host) {
+        // No station printer configured — fall back to default printer
+        console.warn(`No network printer for station "${group.stationName}" — printing to default`);
+        try {
+          await printerService.printContent({ html: null, text, silentOnly: true });
+          printed++;
+        } catch (err) {
+          console.error(`Default fallback print for station "${group.stationName}" failed:`, err);
         }
-
-        await printerService.printContent({ html: null, text, silentOnly: true });
-        printed++;
-
-        // Restore default printer connection
-        if (savedPrinter) {
-          if (savedPrinter.type === 'bluetooth' && savedPrinter.macAddress) {
-            await printerService.connectBluetoothPrinter(savedPrinter.macAddress);
-          } else if (savedPrinter.type === 'network' && savedPrinter.host) {
-            await printerService.connectNetworkPrinter(savedPrinter.host, savedPrinter.port || 9100);
+      } else {
+        // Print to station-specific printer via queue-safe function
+        const result = await printerService.printToStationPrinter(printerConfig, text);
+        if (result.success) {
+          printed++;
+        } else {
+          console.error(`Station "${group.stationName}" print failed: ${result.error}`);
+          // Fallback: try default printer
+          try {
+            await printerService.printContent({ html: null, text, silentOnly: true });
+            printed++;
+            console.log(`Fallback to default printer succeeded for station "${group.stationName}"`);
+          } catch (fallbackErr) {
+            console.error(`Default fallback also failed for "${group.stationName}":`, fallbackErr);
           }
         }
-      } catch (err) {
-        console.error(`Failed to print to station "${group.stationName}" printer:`, err);
       }
 
       if (nonEmpty.indexOf(group) < nonEmpty.length - 1) {

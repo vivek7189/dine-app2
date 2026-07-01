@@ -164,14 +164,18 @@ export function buildBillItemRows(items, cs, showAr) {
 }
 
 // Build tax breakdown rows HTML
-export function buildTaxHtml(taxBreakdown, cs, printSettings) {
+// options.showInclusiveTax: when false, hides inclusive tax lines from the bill
+export function buildTaxHtml(taxBreakdown, cs, printSettings, options) {
   const bl = printSettings?.billLayout || {};
   if (bl.showTaxBreakdown === false) return '';
-  return (taxBreakdown || []).map(tax => {
-    const inclSuffix = tax.inclusive ? ' (incl.)' : '';
-    return `<tr><td colspan="2" style="text-align:left;">${tax.name} (${tax.rate}%)${inclSuffix}</td>` +
-    `<td style="text-align:right;">${cs}${(tax.amount || 0).toFixed(2)}</td></tr>`;
-  }).join('');
+  const showIncl = !options || options.showInclusiveTax !== false;
+  return (taxBreakdown || [])
+    .filter(tax => !tax.inclusive || showIncl)
+    .map(tax => {
+      const inclSuffix = tax.inclusive ? ' (incl.)' : '';
+      return `<tr><td colspan="2" style="text-align:left;">${tax.name} (${tax.rate}%)${inclSuffix}</td>` +
+      `<td style="text-align:right;">${cs}${(tax.amount || 0).toFixed(2)}</td></tr>`;
+    }).join('');
 }
 
 // Build discount HTML (offer, manual, loyalty)

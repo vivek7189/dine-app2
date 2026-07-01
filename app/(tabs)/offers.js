@@ -18,6 +18,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
+import { getCurrencySymbol } from '../../utils/formatCurrency';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -197,7 +198,7 @@ export default function OffersScreen() {
       return `Buy ${bc.buyQty || 2} Get ${bc.getQty || 1}`;
     }
     if (offer.discountType === 'percentage') return `${offer.discountValue}% OFF`;
-    return `Rs. ${offer.discountValue} OFF`;
+    return `${getCurrencySymbol()} ${offer.discountValue} OFF`;
   };
 
   const isOfferActiveNow = (offer) => {
@@ -279,10 +280,10 @@ export default function OffersScreen() {
             ) : null}
             <View style={styles.offerMeta}>
               {offer.minOrderValue > 0 && (
-                <Text style={styles.offerMetaText}>Min: Rs.{offer.minOrderValue}</Text>
+                <Text style={styles.offerMetaText}>Min: {getCurrencySymbol()}{offer.minOrderValue}</Text>
               )}
               {offer.maxDiscount ? (
-                <Text style={styles.offerMetaText}>Max: Rs.{offer.maxDiscount}</Text>
+                <Text style={styles.offerMetaText}>Max: {getCurrencySymbol()}{offer.maxDiscount}</Text>
               ) : null}
               {offer.usageLimit ? (
                 <Text style={styles.offerMetaText}>Used: {offer.usageCount || 0}/{offer.usageLimit}</Text>
@@ -402,7 +403,7 @@ export default function OffersScreen() {
                     style={[styles.segmentBtn, formData.discountType === 'flat' && styles.segmentBtnActive]}
                     onPress={() => updateForm('discountType', 'flat')}
                   >
-                    <Text style={[styles.segmentText, formData.discountType === 'flat' && styles.segmentTextActive]}>Rs.</Text>
+                    <Text style={[styles.segmentText, formData.discountType === 'flat' && styles.segmentTextActive]}>{getCurrencySymbol()}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -422,7 +423,7 @@ export default function OffersScreen() {
             {/* Min Order + Max Discount */}
             <View style={styles.row}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Min Order (Rs.)</Text>
+                <Text style={styles.label}>Min Order ({getCurrencySymbol()})</Text>
                 <TextInput
                   style={styles.input}
                   value={formData.minOrderValue}
@@ -433,7 +434,7 @@ export default function OffersScreen() {
                 />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.label}>Max Discount (Rs.)</Text>
+                <Text style={styles.label}>Max Discount ({getCurrencySymbol()})</Text>
                 <TextInput
                   style={styles.input}
                   value={formData.maxDiscount}

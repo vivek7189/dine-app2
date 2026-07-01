@@ -305,7 +305,8 @@ export default function KitchenScreen() {
     }, 1500);
 
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
-    setUndoToast({ orderId, kotId });
+    const kotOrder = kotOrders.find(o => o.kotId === kotId);
+    setUndoToast({ orderId, kotId, dailyOrderId: kotOrder?.dailyOrderId });
 
     undoTimeoutRef.current = setTimeout(async () => {
       try {
@@ -357,7 +358,9 @@ export default function KitchenScreen() {
   };
 
   const deleteOrder = (orderId) => {
-    Alert.alert('Delete Order', `Delete #${orderId.slice(-6).toUpperCase()}? This cannot be undone.`, [
+    const kot = kotOrders.find(o => o.id === orderId);
+    const displayId = kot?.dailyOrderId || orderId.slice(-6).toUpperCase();
+    Alert.alert('Delete Order', `Delete #${displayId}? This cannot be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         setUpdatingOrderId(orderId);
@@ -441,7 +444,7 @@ export default function KitchenScreen() {
         {/* Header */}
         <View style={[s.cardHeader, isTablet && { paddingHorizontal: sp(14), paddingVertical: sp(12) }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
-            <Text style={[s.orderId, { fontSize: fs(15) }]}>#{kot.id.slice(-6).toUpperCase()}</Text>
+            <Text style={[s.orderId, { fontSize: fs(15) }]}>#{kot.dailyOrderId || kot.id.slice(-6).toUpperCase()}</Text>
             {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>T{kot.tableNumber}</Text></View>}
             <Text style={s.typeLabel}>{getTypeLabel(kot.orderType)}</Text>
             {kot.orderSource === 'customer_app' && <View style={s.appBadge}><Text style={s.appBadgeText}>App</Text></View>}
@@ -681,7 +684,7 @@ export default function KitchenScreen() {
       {/* Undo Toast */}
       {undoToast && (
         <View style={s.undoToast}>
-          <Text style={s.undoToastText}>Order #{undoToast.orderId.slice(-6).toUpperCase()} marked done</Text>
+          <Text style={s.undoToastText}>Order #{undoToast.dailyOrderId || undoToast.orderId.slice(-6).toUpperCase()} marked done</Text>
           <TouchableOpacity onPress={undoMarkDone} style={s.undoBtn}>
             <Text style={s.undoBtnText}>UNDO</Text>
           </TouchableOpacity>
@@ -700,7 +703,7 @@ export default function KitchenScreen() {
                       <Ionicons name="flame" size={18} color="white" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.modalTitle}>Order #{selectedKot.id.slice(-6).toUpperCase()}</Text>
+                      <Text style={s.modalTitle}>Order #{selectedKot.dailyOrderId || selectedKot.id.slice(-6).toUpperCase()}</Text>
                       <Text style={s.modalSub}>
                         {getTypeLabel(selectedKot.orderType)}
                         {selectedKot.tableNumber && ` · Table ${selectedKot.tableNumber}`}

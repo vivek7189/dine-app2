@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 import { Colors, Spacing } from '../constants/Theme';
 
 const STORAGE_KEY = 'dine_zone_pricing';
@@ -208,7 +209,7 @@ export default function ZonePricingSettings({ restaurantId, onSettingsChange }) 
               <View style={styles.zoneInfo}>
                 <Text style={styles.zoneName}>{zone.name}</Text>
                 <Text style={styles.zoneDetail}>
-                  {zone.markupType === 'percentage' ? `+${zone.markupValue}%` : `+₹${zone.markupValue}`}
+                  {zone.markupType === 'percentage' ? `+${zone.markupValue}%` : `+${getCurrencySymbol()}${zone.markupValue}`}
                   {zone.sectionMatch ? ` · Match: "${zone.sectionMatch}"` : ''}
                 </Text>
               </View>

@@ -671,8 +671,10 @@ const leftRight = (left, right, width = CHARS) => {
   return l + ' '.repeat(gap) + r;
 };
 
-// Thermal-safe currency: ₹ is not supported by most thermal printers (Code Page 437/850)
-const RS = 'Rs.';
+// Thermal-safe currency: ₹ may not be supported by all thermal printers (Code Page 437/850)
+// Falls back to 'Rs.' if getCurrencySymbol returns a non-ASCII symbol
+import { getCurrencySymbol as _getCS } from '../utils/formatCurrency';
+const RS = _getCS();
 
 // Wrap long text into multiple centered lines
 const wrapText = (text, width = CHARS) => {
@@ -707,6 +709,7 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
+  const RS = invoiceData.currencySymbol || _getCS();
   const ps = invoiceData.printSettings || invoiceData || {};
   const bl = ps.billLayout || {};
   const W = getChars(ps);
@@ -734,7 +737,7 @@ export const generateBillText = (invoiceData) => {
   if (r.showGstOnInvoice) lines.push(`<CM>Bill of Supply</CM>`);
   const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
   lines.push(leftRight(payMethod + ' Sale', '', W));
-  const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || invoiceData.orderId?.slice(-6) || '-';
+  const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || '-';
   const now = invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date();
   const dateStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
   let _h = now.getHours(); const _ampm = _h >= 12 ? 'pm' : 'am'; _h = _h % 12 || 12;
@@ -785,8 +788,8 @@ export const generateBillText = (invoiceData) => {
     const qtyStr = item.soldByWeight && item.itemWeight
       ? `  ${item.itemWeight}${item.weightUnit || 'kg'}`
       : `  x${qty}`;
-    const priceStr = fmt(price);
-    const totalStr = fmt(total);
+    const priceStr = `${RS}${fmt(price)}`;
+    const totalStr = `${RS}${fmt(total)}`;
     const rightPart = `${priceStr}  ${totalStr}`;
     lines.push(leftRight(qtyStr, rightPart, W));
   });
@@ -800,8 +803,9 @@ export const generateBillText = (invoiceData) => {
   if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`, W));
   if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`, W));
   if (bl.showTaxBreakdown !== false) {
+    const showIncl = invoiceData.showInclusiveTaxOnBill !== false;
     if (invoiceData.taxBreakdown?.length > 0) {
-      invoiceData.taxBreakdown.forEach(tax => {
+      invoiceData.taxBreakdown.filter(tax => !tax.inclusive || showIncl).forEach(tax => {
         const inclSuffix = tax.inclusive ? ' (incl.)' : '';
         const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
         lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`, W));
@@ -988,7 +992,7 @@ export const generateKOTText = (data) => {
   lines.push(_LINE);
 
   // Order info — side by side where possible
-  const ordNum = `#${data.orderNumber || data.dailyOrderId || data.orderId?.slice(-6) || ''}`;
+  const ordNum = `#${data.orderNumber || data.dailyOrderId || ''}`;
   const showOrdNum = kl.showOrderNumber !== false;
   const showLoc = kl.showTable !== false;
   if (showOrdNum && showLoc && location) {
@@ -1387,6 +1391,97 @@ export const stopHeartbeat = () => {
  * @param {string} options.label - Label for logs/events (e.g. 'KOT', 'Bill')
  * @returns {Promise<{success: boolean, method: string, error?: string}>}
  */
+// ==================== STATION PRINTER (MULTI-STATION) ====================
+// Queue-safe connect→print→restore for printing to a specific station printer.
+// Used by multiPrinterService for multi-printer KOT routing.
+// Only network (WiFi) printers are supported for station assignment.
+
+/**
+ * Print to a specific station printer, then restore the default printer connection.
+ * Runs inside the print queue to prevent concurrent printer access.
+ *
+ * @param {{ type: string, host: string, port?: number }} stationConfig - Station printer config
+ * @param {string} text - ESC/POS text content
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export const printToStationPrinter = async (stationConfig, text) => {
+  if (!stationConfig?.host || stationConfig.type !== 'network') {
+    return { success: false, error: 'Only network printers supported for station assignment' };
+  }
+
+  // Strip logo tag and validate payload
+  const cleanText = (text || '').replace(/^<LOGO:.+?>\n?/, '');
+  if (!cleanText || !cleanText.trim()) {
+    return { success: false, error: 'Empty print payload' };
+  }
+
+  return enqueuePrint(async () => {
+    const savedPrinter = await getSavedPrinter();
+    const stationHost = stationConfig.host;
+    const stationPort = stationConfig.port || 9100;
+
+    // Pause heartbeat during station switch to avoid interference
+    if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+
+    try {
+      // 1. Close current connection cleanly
+      try {
+        if (connectionType === 'network' && NetPrinter) await NetPrinter.closeConn();
+        else if (connectionType === 'bluetooth' && BLEPrinter) await BLEPrinter.closeConn();
+        else if (connectionType === 'usb' && USBPrinter) await USBPrinter.closeConn();
+      } catch { /* ignore close errors */ }
+      connectedPrinter = null;
+      connectionType = null;
+
+      // 2. Connect to station printer
+      if (!NetPrinter) throw new Error('Network printing not available');
+      if (!printerInitialized.network) {
+        await NetPrinter.init();
+        printerInitialized.network = true;
+      }
+      await withPrintTimeout(
+        NetPrinter.connectPrinter(stationHost, stationPort),
+        `connect-station-${stationHost}`,
+      );
+      connectedPrinter = `${stationHost}:${stationPort}`;
+      connectionType = 'network';
+
+      // 3. Print
+      const payload = cleanText + '\n\n\n';
+      await withPrintTimeout(
+        NetPrinter.printBill(payload, { beep: false, cut: true, tailingLine: true }),
+        `print-station-${stationHost}`,
+      );
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message || 'Station print failed' };
+    } finally {
+      // 4. Always restore default printer connection
+      try {
+        if (NetPrinter) await NetPrinter.closeConn();
+      } catch { /* ignore */ }
+      connectedPrinter = null;
+      connectionType = null;
+
+      if (savedPrinter) {
+        try {
+          if (savedPrinter.type === 'network' && savedPrinter.host) {
+            await connectNetworkPrinter(savedPrinter.host, savedPrinter.port || 9100);
+          } else if (savedPrinter.type === 'bluetooth' && savedPrinter.macAddress) {
+            const hasPerms = await ensureBluetoothPermissions();
+            if (hasPerms) await connectBluetoothPrinter(savedPrinter.macAddress);
+          } else if (savedPrinter.type === 'usb' && savedPrinter.vendorId) {
+            await connectUSBPrinter(savedPrinter.vendorId, savedPrinter.productId);
+          }
+        } catch (restoreErr) {
+          console.warn('Failed to restore default printer after station print:', restoreErr.message);
+        }
+      }
+    }
+  });
+};
+
 export const printWithFeedback = async ({ html, text, silentOnly = true, label = 'Print' }) => {
   // If remote print is enabled, skip local printing — desktop app handles it via Firebase RTDB
   const remotePrint = await getRemotePrintEnabled();

@@ -13,12 +13,19 @@ import {
   Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
+import { Spacing, BorderRadius } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import * as printerService from '../services/printerService';
 import { getPrintStationConfig, printKOTsByStation } from '../services/multiPrinterService';
 import { renderKOT } from '../utils/printTemplates/index';
 import { getItemSubline } from '../utils/itemSubline';
+
+// ─── Theme ───
+const PRIMARY = '#c0392b';
+const PRIMARY_DARK = '#922b21';
+const PRIMARY_BG = '#fdedec';
+const DARK = '#1a1a2e';
+const DARK_SEC = '#2d2d44';
 
 export default function KOTModal({
   visible,
@@ -26,6 +33,7 @@ export default function KOTModal({
   orderData,
   onPrint,
   printSettings = {},
+  userRole,
 }) {
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
@@ -36,6 +44,7 @@ export default function KOTModal({
   const {
     orderNumber,
     orderId,
+    dailyOrderId,
     tableNumber,
     roomNumber,
     items = [],
@@ -45,13 +54,27 @@ export default function KOTModal({
     waiterId,
     timestamp,
     restaurantName,
+    orderType,
+    floorName,
+    customerName,
+    specialInstructions,
+    notes,
   } = orderData;
+
+  const isWaiter = userRole?.toLowerCase() === 'waiter';
 
   // Categorize items for update display
   const hasChanges = isIncremental && (items.length > 0 || removedItems.length > 0);
-  const newAndIncItems = hasChanges ? items.filter(i => i.isNew || (i.isUpdated && i.quantityDelta > 0)) : [];
+  const newItems = hasChanges ? items.filter(i => i.isNew) : [];
+  const increasedItems = hasChanges ? items.filter(i => i.isUpdated && i.quantityDelta > 0) : [];
   const reducedItems = hasChanges ? items.filter(i => i.isUpdated && i.quantityDelta < 0) : [];
-  const unmarkedItems = hasChanges ? items.filter(i => !i.isNew && !i.isUpdated) : items;
+  const unchangedItems = hasChanges ? items.filter(i => !i.isNew && !i.isUpdated) : items;
+
+  const totalQty = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+  const displayOrderNum = orderNumber || dailyOrderId || 'N/A';
+  const locationLabel = roomNumber ? `Room ${roomNumber}` : tableNumber ? `Table ${tableNumber}` : null;
+
+  const changeCount = newItems.length + increasedItems.length + reducedItems.length + removedItems.length;
 
   const formatTime = (date) => {
     if (!date) return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -59,15 +82,8 @@ export default function KOTModal({
     return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const formatDate = (date) => {
-    if (!date) return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    const d = date instanceof Date ? date : new Date(date);
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  };
-
   const { generateKOTText } = printerService;
 
-  // Build kotData object for the template system
   const buildKotData = () => ({
     restaurantName: orderData.restaurantName || '',
     restaurantPhone: orderData.restaurantPhone || '',
@@ -86,10 +102,8 @@ export default function KOTModal({
     currencySymbol: orderData.currencySymbol || '',
   });
 
-  // Silent print via connected thermal printer (no dialog fallback)
   const handleSilentPrint = async () => {
     try {
-      // Check if station-based printing is configured
       const restaurantId = orderData.restaurantId;
       if (restaurantId) {
         const { stations, mode, categories } = await getPrintStationConfig(restaurantId);
@@ -98,7 +112,6 @@ export default function KOTModal({
           return;
         }
       }
-
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
       const result = await printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' });
@@ -115,10 +128,8 @@ export default function KOTModal({
       onPrint(orderData);
       return;
     }
-
     setPrinting(true);
     try {
-      // Check if station-based printing is configured
       const restaurantId = orderData.restaurantId;
       if (restaurantId) {
         const { stations, mode, categories } = await getPrintStationConfig(restaurantId);
@@ -130,7 +141,6 @@ export default function KOTModal({
           }
         }
       }
-
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
       await printerService.printContent({ html: kotHtml, text: kotText });
@@ -142,27 +152,19 @@ export default function KOTModal({
     }
   };
 
-
   const handleWhatsAppShare = async () => {
     setSharingWhatsApp(true);
     try {
       const kotText = generateKOTText(orderData);
       const whatsappMessage = `*KITCHEN ORDER TICKET*\n\n${kotText}`;
-      
-      // WhatsApp URL format: whatsapp://send?text=message
       const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(whatsappMessage)}`;
-      
       const canOpen = await Linking.canOpenURL(whatsappUrl);
-      
       if (canOpen) {
         await Linking.openURL(whatsappUrl);
       } else {
-        // Fallback: Try to open WhatsApp Business or regular WhatsApp
-        const whatsappBusinessUrl = `whatsapp://send?text=${encodeURIComponent(whatsappMessage)}`;
         try {
-          await Linking.openURL(whatsappBusinessUrl);
+          await Linking.openURL(whatsappUrl);
         } catch (error) {
-          // If WhatsApp is not installed, use Share API
           await Share.share({
             message: whatsappMessage,
             title: 'KOT - Kitchen Order Ticket',
@@ -177,26 +179,56 @@ export default function KOTModal({
     }
   };
 
-  // Generate KOT HTML using the template system
-  const generateKOTHTML = (data) => {
-    const kotData = {
-      restaurantName: data.restaurantName || '',
-      restaurantPhone: data.restaurantPhone || '',
-      orderId: data.orderId,
-      dailyOrderId: data.orderNumber || data.dailyOrderId || data.orderId,
-      tableNumber: data.tableNumber || '',
-      roomNumber: data.roomNumber || '',
-      floorName: data.floorName || '',
-      customerName: data.customerName || '',
-      orderType: data.orderType || '',
-      waiterName: data.waiterName || '',
-      specialInstructions: data.specialInstructions || data.notes || '',
-      items: data.items || [],
-      removedItems: data.removedItems || [],
-      isIncremental: data.isIncremental || false,
-      currencySymbol: data.currencySymbol || '',
-    };
-    return renderKOT(kotData, printSettings, {});
+  const renderItemRow = (item, index, opts = {}) => {
+    const { tagColor, tagBg, tagText, strikethrough, showDelta } = opts;
+    const subline = getItemSubline(item);
+    const qty = showDelta ? Math.abs(item.quantityDelta || item.quantity) : (item.quantity || 1);
+
+    return (
+      <View key={index} style={[st.itemRow, strikethrough && { opacity: 0.7 }]}>
+        <View style={[st.itemQtyBadge, tagBg && { backgroundColor: tagBg }]}>
+          <Text style={[st.itemQtyText, tagColor && { color: tagColor }]}>{qty}x</Text>
+        </View>
+        <View style={st.itemInfo}>
+          <Text
+            style={[st.itemName, strikethrough && { textDecorationLine: 'line-through', color: '#94a3b8' }]}
+            numberOfLines={2}
+          >
+            {item.name}
+          </Text>
+          {subline ? <Text style={st.itemSub} numberOfLines={1}>{subline}</Text> : null}
+          {item.notes ? (
+            <View style={st.itemNoteRow}>
+              <Ionicons name="chatbubble-outline" size={10} color="#f59e0b" />
+              <Text style={st.itemNotes}>{item.notes}</Text>
+            </View>
+          ) : null}
+        </View>
+        {tagText && (
+          <View style={[st.itemTag, { backgroundColor: tagBg || '#f3f4f6' }]}>
+            <Text style={[st.itemTagText, { color: tagColor || '#6b7280' }]}>{tagText}</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderChangeSection = (label, icon, items, color, bgColor, opts = {}) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <View style={st.changeSection}>
+        <View style={[st.changeLabelRow, { borderLeftColor: color }]}>
+          <Ionicons name={icon} size={14} color={color} />
+          <Text style={[st.changeLabelText, { color }]}>{label}</Text>
+          <View style={[st.changeCount, { backgroundColor: bgColor }]}>
+            <Text style={[st.changeCountText, { color }]}>{items.length}</Text>
+          </View>
+        </View>
+        {items.map((item, idx) => renderItemRow(item, `${label}-${idx}`, {
+          tagColor: color, tagBg: bgColor, tagText: opts.tagText, strikethrough: opts.strikethrough, showDelta: opts.showDelta,
+        }))}
+      </View>
+    );
   };
 
   return (
@@ -206,230 +238,159 @@ export default function KOTModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
-        <View style={[styles.modalContent, modalWidth(400)]}>
-          {/* Header - Sleek and Compact */}
-          <View style={styles.header}>
-            <View style={styles.headerTop}>
-              <View style={styles.restaurantBadge}>
-                <Ionicons name="restaurant" size={18} color="#fff" />
-                <Text style={styles.restaurantName}>{restaurantName || 'RESTAURANT'}</Text>
+      <View style={st.overlay}>
+        <View style={[st.modal, modalWidth(420)]}>
+          {/* ─── Header ─── */}
+          <View style={st.header}>
+            <View style={st.headerTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.headerLabel}>
+                  {hasChanges ? 'ORDER UPDATE' : 'KITCHEN ORDER'}
+                </Text>
+                <View style={st.orderNumRow}>
+                  <Text style={st.orderNum}>#{displayOrderNum}</Text>
+                  {hasChanges && (
+                    <View style={st.updateBadge}>
+                      <Ionicons name="sync" size={10} color="#fff" />
+                      <Text style={st.updateBadgeText}>UPDATED</Text>
+                    </View>
+                  )}
+                </View>
               </View>
-              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                <Ionicons name="close" size={20} color="#fff" />
+              <TouchableOpacity onPress={onClose} style={st.closeBtn}>
+                <Ionicons name="close" size={20} color="rgba(255,255,255,0.7)" />
               </TouchableOpacity>
+            </View>
+
+            {/* Info pills */}
+            <View style={st.pillRow}>
+              {locationLabel && (
+                <View style={st.pill}>
+                  <Ionicons name={roomNumber ? 'bed-outline' : 'grid-outline'} size={12} color="#fff" />
+                  <Text style={st.pillText}>{locationLabel}</Text>
+                </View>
+              )}
+              {floorName ? (
+                <View style={st.pill}>
+                  <Ionicons name="layers-outline" size={12} color="#fff" />
+                  <Text style={st.pillText}>{floorName}</Text>
+                </View>
+              ) : null}
+              <View style={st.pill}>
+                <Ionicons name="time-outline" size={12} color="#fff" />
+                <Text style={st.pillText}>{formatTime(timestamp)}</Text>
+              </View>
+              {waiterName ? (
+                <View style={st.pill}>
+                  <Ionicons name="person-outline" size={12} color="#fff" />
+                  <Text style={st.pillText}>{waiterName}</Text>
+                </View>
+              ) : null}
+              {orderType && orderType.toLowerCase() !== 'dine-in' ? (
+                <View style={[st.pill, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+                  <Ionicons name={orderType === 'delivery' ? 'bicycle-outline' : 'bag-handle-outline'} size={12} color="#fff" />
+                  <Text style={st.pillText}>{orderType === 'delivery' ? 'Delivery' : 'Pickup'}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* Order Info Section - Two Column Layout */}
-            <View style={styles.orderInfoSection}>
-              <View style={styles.orderInfoGrid}>
-                <View style={styles.orderInfoColumn}>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Order #:</Text>
-                    <Text style={styles.infoValue}>{orderNumber || orderId?.slice(-6) || 'N/A'}</Text>
-                  </View>
-                  
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>
-                      {roomNumber ? 'Room:' : 'Table:'}
-                    </Text>
-                    <Text style={styles.infoValueBold}>
-                      {roomNumber || tableNumber || 'N/A'}
-                    </Text>
-                  </View>
-                </View>
+          {/* ─── Items ─── */}
+          <ScrollView style={st.content} showsVerticalScrollIndicator={false}>
+            {hasChanges ? (
+              <>
+                {/* New items added */}
+                {renderChangeSection('New Items', 'add-circle', newItems, '#16a34a', '#f0fdf4', { tagText: 'NEW' })}
 
-                <View style={styles.orderInfoColumn}>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Date:</Text>
-                    <Text style={styles.infoValue}>{formatDate(timestamp)}</Text>
-                  </View>
+                {/* Quantity increased */}
+                {renderChangeSection('Qty Increased', 'arrow-up-circle', increasedItems, '#2563eb', '#eff6ff', { tagText: '+QTY', showDelta: true })}
 
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Time:</Text>
-                    <Text style={styles.infoValue}>{formatTime(timestamp)}</Text>
-                  </View>
+                {/* Quantity reduced */}
+                {renderChangeSection('Qty Reduced', 'arrow-down-circle', reducedItems, '#d97706', '#fffbeb', { tagText: '-QTY', showDelta: true })}
 
-                  {waiterName && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Staff:</Text>
-                      <Text style={styles.infoValue}>{waiterName}</Text>
-                    </View>
-                  )}
-                </View>
+                {/* Cancelled items */}
+                {renderChangeSection('Cancelled', 'close-circle', removedItems, '#dc2626', '#fef2f2', { tagText: 'CANCEL', strikethrough: true })}
+
+                {/* Unchanged items */}
+                {unchangedItems.length > 0 && (
+                  <View style={st.unchangedSection}>
+                    <Text style={st.unchangedLabel}>Unchanged Items</Text>
+                    {unchangedItems.map((item, idx) => renderItemRow(item, `unch-${idx}`))}
+                  </View>
+                )}
+              </>
+            ) : (
+              items.map((item, idx) => renderItemRow(item, idx))
+            )}
+
+            {/* Special instructions */}
+            {(specialInstructions || notes) ? (
+              <View style={st.notesBox}>
+                <Ionicons name="chatbubble-ellipses" size={14} color="#f59e0b" />
+                <Text style={st.notesText}>{specialInstructions || notes}</Text>
               </View>
-            </View>
-
-            {/* Divider */}
-            <View style={styles.divider} />
-
-            {/* Items Section */}
-            <View style={styles.itemsSection}>
-              <Text style={styles.sectionTitle}>{hasChanges ? 'KOT UPDATE' : 'ITEMS'}</Text>
-
-              {hasChanges ? (
-                <>
-                  {/* Cancelled items */}
-                  {removedItems.length > 0 && (
-                    <>
-                      <View style={{ backgroundColor: '#fee2e2', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626', textAlign: 'center' }}>CANCELLED</Text>
-                      </View>
-                      {removedItems.map((item, index) => (
-                        <View key={`rem-${index}`} style={[styles.itemRow, { opacity: 0.6 }]}>
-                          <View style={styles.itemLeft}>
-                            <Text style={[styles.itemName, { textDecorationLine: 'line-through', color: '#ef4444' }]}>{item.name}</Text>
-                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
-                          </View>
-                          <View style={styles.itemRight}>
-                            <View style={[styles.quantityBadge, { backgroundColor: '#fee2e2' }]}>
-                              <Text style={[styles.quantityText, { color: '#ef4444' }]}>{item.quantity}x</Text>
-                            </View>
-                          </View>
-                        </View>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Reduced quantity items */}
-                  {reducedItems.length > 0 && (
-                    <>
-                      <View style={{ backgroundColor: '#fef3c7', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4, marginTop: removedItems.length > 0 ? 8 : 0 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706', textAlign: 'center' }}>REDUCED</Text>
-                      </View>
-                      {reducedItems.map((item, index) => (
-                        <View key={`dec-${index}`} style={styles.itemRow}>
-                          <View style={styles.itemLeft}>
-                            <Text style={[styles.itemName, { color: '#d97706' }]}>{item.name}</Text>
-                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
-                          </View>
-                          <View style={styles.itemRight}>
-                            <View style={[styles.quantityBadge, { backgroundColor: '#fef3c7' }]}>
-                              <Text style={[styles.quantityText, { color: '#d97706' }]}>{Math.abs(item.quantityDelta)}x</Text>
-                            </View>
-                          </View>
-                        </View>
-                      ))}
-                    </>
-                  )}
-
-                  {/* New / increased items */}
-                  {newAndIncItems.length > 0 && (
-                    <>
-                      <View style={{ backgroundColor: '#dcfce7', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginBottom: 4, marginTop: (removedItems.length > 0 || reducedItems.length > 0) ? 8 : 0 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a', textAlign: 'center' }}>NEW ITEMS</Text>
-                      </View>
-                      {newAndIncItems.map((item, index) => (
-                        <View key={`new-${index}`} style={styles.itemRow}>
-                          <View style={styles.itemLeft}>
-                            <Text style={styles.itemName}>{item.name}</Text>
-                            {getItemSubline(item) ? (
-                              <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
-                            ) : null}
-                            {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
-                          </View>
-                          <View style={styles.itemRight}>
-                            <View style={[styles.quantityBadge, { backgroundColor: '#dcfce7' }]}>
-                              <Text style={[styles.quantityText, { color: '#16a34a' }]}>{item.quantity}x</Text>
-                            </View>
-                          </View>
-                        </View>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Unmarked items (fallback) */}
-                  {unmarkedItems.length > 0 && unmarkedItems.map((item, index) => (
-                    <View key={`unk-${index}`} style={styles.itemRow}>
-                      <View style={styles.itemLeft}>
-                        <Text style={styles.itemName}>{item.name}</Text>
-                        {getItemSubline(item) ? (
-                          <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
-                        ) : null}
-                        {item.notes ? <Text style={styles.itemNotes}>{item.notes}</Text> : null}
-                      </View>
-                      <View style={styles.itemRight}>
-                        <View style={styles.quantityBadge}>
-                          <Text style={styles.quantityText}>{item.quantity}x</Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </>
-              ) : (
-                // Normal order — all items flat
-                items.map((item, index) => (
-                  <View key={index} style={styles.itemRow}>
-                    <View style={styles.itemLeft}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      {getItemSubline(item) ? (
-                        <Text style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }} numberOfLines={1}>{getItemSubline(item)}</Text>
-                      ) : null}
-                      {item.notes && (
-                        <Text style={styles.itemNotes}>{item.notes}</Text>
-                      )}
-                    </View>
-                    <View style={styles.itemRight}>
-                      <View style={styles.quantityBadge}>
-                        <Text style={styles.quantityText}>{item.quantity}x</Text>
-                      </View>
-                    </View>
-                  </View>
-                ))
-              )}
-            </View>
-
-            {/* Divider */}
-            <View style={styles.divider} />
-
-            {/* Summary */}
-            <View style={styles.summarySection}>
-              <View style={styles.infoRow}>
-                <Text style={styles.summaryLabel}>
-                  {hasChanges ? 'Changes:' : 'Total Items:'}
-                </Text>
-                <Text style={styles.summaryValue}>
-                  {hasChanges
-                    ? `+${newAndIncItems.length} new, ${removedItems.length + reducedItems.length} removed`
-                    : items.reduce((sum, item) => sum + (item.quantity || 1), 0)
-                  }
-                </Text>
-              </View>
-            </View>
-
-            {/* Extra spacing before footer */}
-            <View style={{ height: Spacing.xl }} />
+            ) : null}
           </ScrollView>
 
-          {/* Footer Actions */}
-          <View style={styles.footer}>
-            <View style={styles.actionButtonsRow}>
+          {/* ─── Summary ─── */}
+          <View style={st.summaryBar}>
+            <View style={st.summaryChip}>
+              <Text style={st.summaryChipNum}>{totalQty}</Text>
+              <Text style={st.summaryChipLabel}>items</Text>
+            </View>
+            {hasChanges && (
+              <>
+                {(newItems.length + increasedItems.length) > 0 && (
+                  <View style={[st.summaryChip, { backgroundColor: '#f0fdf4' }]}>
+                    <Text style={[st.summaryChipNum, { color: '#16a34a' }]}>+{newItems.length + increasedItems.length}</Text>
+                    <Text style={[st.summaryChipLabel, { color: '#16a34a' }]}>added</Text>
+                  </View>
+                )}
+                {(removedItems.length + reducedItems.length) > 0 && (
+                  <View style={[st.summaryChip, { backgroundColor: '#fef2f2' }]}>
+                    <Text style={[st.summaryChipNum, { color: '#dc2626' }]}>-{removedItems.length + reducedItems.length}</Text>
+                    <Text style={[st.summaryChipLabel, { color: '#dc2626' }]}>removed</Text>
+                  </View>
+                )}
+              </>
+            )}
+            {restaurantName ? (
+              <>
+                <View style={{ flex: 1 }} />
+                <Text style={st.restaurantName} numberOfLines={1}>{restaurantName}</Text>
+              </>
+            ) : null}
+          </View>
+
+          {/* ─── Footer ─── */}
+          <View style={st.footer}>
+            {!isWaiter && (
               <TouchableOpacity
-                style={[styles.whatsappButton, sharingWhatsApp && styles.printButtonDisabled]}
+                style={[st.whatsappBtn, sharingWhatsApp && { opacity: 0.6 }]}
                 onPress={handleWhatsAppShare}
                 disabled={sharingWhatsApp}
               >
                 {sharingWhatsApp ? (
-                  <>
-                    <ActivityIndicator size="small" color="#fff" />
-                    <Text style={styles.whatsappButtonText}>Sharing...</Text>
-                  </>
+                  <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <>
-                    <Ionicons name="logo-whatsapp" size={20} color="#fff" />
-                    <Text style={styles.whatsappButtonText}>Share</Text>
-                  </>
+                  <Ionicons name="logo-whatsapp" size={18} color="#fff" />
                 )}
               </TouchableOpacity>
-            </View>
-
+            )}
             <TouchableOpacity
-              style={styles.closeButtonFooter}
-              onPress={onClose}
+              style={[st.printBtn, printing && { opacity: 0.6 }]}
+              onPress={handlePrint}
+              disabled={printing}
             >
-              <Text style={styles.closeButtonText}>Close</Text>
+              {printing ? (
+                <ActivityIndicator size="small" color={PRIMARY} />
+              ) : (
+                <Ionicons name="print-outline" size={18} color={PRIMARY} />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={st.doneBtn} onPress={onClose} activeOpacity={0.8}>
+              <Ionicons name="checkmark-circle" size={18} color="#fff" />
+              <Text style={st.doneBtnText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -438,262 +399,293 @@ export default function KOTModal({
   );
 }
 
-const styles = StyleSheet.create({
+const st = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: Spacing.lg,
+    padding: 20,
   },
-  modalContent: {
-    backgroundColor: Colors.backgroundWhite,
-    borderRadius: BorderRadius.xl,
+  modal: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
     width: '100%',
-    maxHeight: '90%',
+    maxHeight: '88%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowRadius: 28,
+    elevation: 16,
+    overflow: 'hidden',
   },
+
+  // ─── Header ───
   header: {
-    backgroundColor: Colors.primary,
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
+    backgroundColor: PRIMARY,
+    paddingTop: 22,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
-  restaurantBadge: {
+  headerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.6)',
+    letterSpacing: 1.8,
+    marginBottom: 4,
+  },
+  orderNumRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.medium,
+    gap: 10,
   },
-  restaurantName: {
-    fontSize: 12,
-    fontWeight: '700',
+  orderNum: {
+    fontSize: 32,
+    fontWeight: '800',
     color: '#fff',
-    textTransform: 'uppercase',
   },
-  closeButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    padding: Spacing.lg,
-    maxHeight: 500,
-  },
-  orderInfoSection: {
-    marginBottom: Spacing.xs,
-  },
-  orderInfoGrid: {
-    flexDirection: 'row',
-    gap: Spacing.lg,
-  },
-  orderInfoColumn: {
-    flex: 1,
-    gap: Spacing.sm,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  updateBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 10,
     paddingVertical: 4,
+    borderRadius: 8,
   },
-  infoLabel: {
-    fontSize: 13,
-    color: Colors.textMedium,
-    fontWeight: '500',
-  },
-  infoValue: {
-    fontSize: 13,
-    color: Colors.textDark,
-    fontWeight: '600',
-  },
-  infoValueBold: {
-    fontSize: 15,
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.borderLight,
-    marginVertical: Spacing.md,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-  },
-  itemsSection: {
-    gap: Spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: Spacing.xs,
+  updateBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
     letterSpacing: 0.5,
   },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+
+  // ─── Pills ───
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 14,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+  },
+
+  // ─── Content ───
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    maxHeight: 360,
+  },
+
+  // ─── Change sections ───
+  changeSection: {
+    marginBottom: 16,
+  },
+  changeLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    paddingLeft: 10,
+    paddingVertical: 2,
+  },
+  changeLabelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  changeCount: {
+    width: 20, height: 20, borderRadius: 10,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  changeCountText: {
+    fontSize: 11, fontWeight: '800',
+  },
+  unchangedSection: {
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  unchangedLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9ca3af',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+
+  // ─── Item rows ───
   itemRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingVertical: Spacing.sm,
+    gap: 10,
+    paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: '#f5f5f7',
   },
-  itemLeft: {
+  itemQtyBadge: {
+    backgroundColor: '#f5f5f7',
+    minWidth: 36,
+    height: 28,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  itemQtyText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  itemInfo: {
     flex: 1,
-    marginRight: Spacing.md,
+    paddingTop: 2,
   },
   itemName: {
     fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textDark,
-    marginBottom: 2,
+    fontWeight: '600',
+    color: '#1a1a2e',
+    lineHeight: 20,
+  },
+  itemSub: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  itemNoteRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: 3,
   },
   itemNotes: {
     fontSize: 11,
-    color: Colors.textMedium,
+    color: '#d97706',
     fontStyle: 'italic',
+  },
+  itemTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     marginTop: 2,
   },
-  itemRight: {
-    alignItems: 'flex-end',
-  },
-  quantityBadge: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.medium,
-    minWidth: 50,
-    alignItems: 'center',
-  },
-  quantityText: {
-    fontSize: 16,
+  itemTagText: {
+    fontSize: 9,
     fontWeight: '800',
-    color: '#fff',
+    letterSpacing: 0.5,
   },
-  summarySection: {
-    marginTop: Spacing.xs,
-  },
-  summaryLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  summaryValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.primary,
-  },
-  instructionsSection: {
-    marginTop: Spacing.md,
-    padding: Spacing.md,
-    backgroundColor: Colors.backgroundLight,
-    borderRadius: BorderRadius.medium,
+
+  // ─── Notes ───
+  notesBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fffbeb',
+    padding: 14,
+    borderRadius: 12,
+    marginTop: 14,
+    marginBottom: 4,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: '#fef3c7',
   },
-  instructionsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
-  },
-  instructionsTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  instructionsContent: {
-    gap: Spacing.xs,
-  },
-  instructionText: {
-    fontSize: 11,
-    color: Colors.textMedium,
-    lineHeight: 16,
-  },
-  instructionBold: {
-    fontWeight: '700',
-    color: Colors.textDark,
-  },
-  readMoreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    marginTop: Spacing.xs,
-    paddingVertical: Spacing.xs,
-  },
-  readMoreText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  footer: {
-    padding: Spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
-    backgroundColor: Colors.backgroundLight,
-    gap: Spacing.sm,
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  printButton: {
+  notesText: {
     flex: 1,
-    backgroundColor: Colors.primary,
+    fontSize: 13,
+    color: '#92400e',
+    lineHeight: 18,
+  },
+
+  // ─── Summary ───
+  summaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#fafafa',
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f2',
+  },
+  summaryChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#f3f4f6', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+  },
+  summaryChipNum: {
+    fontSize: 14, fontWeight: '800', color: '#374151',
+  },
+  summaryChipLabel: {
+    fontSize: 11, fontWeight: '600', color: '#6b7280',
+  },
+  restaurantName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9ca3af',
+    maxWidth: 130,
+  },
+
+  // ─── Footer ───
+  footer: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f2',
+  },
+  whatsappBtn: {
+    width: 48, height: 48, borderRadius: 14,
+    backgroundColor: '#25D366',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  printBtn: {
+    width: 48, height: 48, borderRadius: 14,
+    backgroundColor: PRIMARY_BG,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  doneBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.medium,
-    gap: Spacing.sm,
+    gap: 8,
+    backgroundColor: PRIMARY,
+    paddingVertical: 14,
+    borderRadius: 14,
+    shadowColor: PRIMARY,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  printButtonDisabled: {
-    opacity: 0.6,
-  },
-  printButtonText: {
-    color: '#fff',
+  doneBtnText: {
     fontSize: 16,
     fontWeight: '700',
-  },
-  whatsappButton: {
-    flex: 0.4,
-    backgroundColor: '#25D366',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.medium,
-    gap: Spacing.xs,
-  },
-  whatsappButtonText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  closeButtonFooter: {
-    padding: Spacing.sm,
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    color: Colors.textMedium,
-    fontSize: 14,
-    fontWeight: '600',
   },
 });

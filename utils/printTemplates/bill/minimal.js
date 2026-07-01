@@ -7,6 +7,7 @@ import {
   getPrintFontSizes, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
 } from '../helpers';
+import { getCurrencySymbol } from '../../formatCurrency';
 
 export const id = 'minimal';
 export const name = 'Minimal';
@@ -31,7 +32,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const lang = printSettings.printLanguage || 'en';
   const showAr = lang === 'dual' || lang === 'ar';
   const bl = printSettings?.billLayout || {};
-  const cs = invoice.currencySymbol || '₹';
+  const cs = invoice.currencySymbol || getCurrencySymbol();
   const items = invoice.items || [];
   const { combined: dateStr } = formatDateTime();
 
@@ -61,10 +62,13 @@ export function render(invoice, printSettings = {}, labels = {}) {
     discountRows += `<div class="row" style="display:flex;justify-content:space-between;margin:3px 0;color:#b45309;"><span>${L.loyaltyRedeem}:</span><span>-${cs}${invoice.loyaltyDiscount.toFixed(2)}</span></div>`;
 
   // Tax
-  const taxRows = bl.showTaxBreakdown === false ? '' : (invoice.taxBreakdown || []).map(tax => {
-    const inclSuffix = tax.inclusive ? ' (incl.)' : '';
-    return `<div class="row" style="display:flex;justify-content:space-between;margin:3px 0;"><span>${tax.name} (${tax.rate}%)${inclSuffix}:</span><span>${cs}${(tax.amount || 0).toFixed(2)}</span></div>`;
-  }).join('');
+  const showIncl = invoice.showInclusiveTaxOnBill !== false;
+  const taxRows = bl.showTaxBreakdown === false ? '' : (invoice.taxBreakdown || [])
+    .filter(tax => !tax.inclusive || showIncl)
+    .map(tax => {
+      const inclSuffix = tax.inclusive ? ' (incl.)' : '';
+      return `<div class="row" style="display:flex;justify-content:space-between;margin:3px 0;"><span>${tax.name} (${tax.rate}%)${inclSuffix}:</span><span>${cs}${(tax.amount || 0).toFixed(2)}</span></div>`;
+    }).join('');
 
   const chargesHtml = buildChargesHtml(invoice, L, cs);
   const paymentHtml = buildPaymentHtml(invoice, L, cs);

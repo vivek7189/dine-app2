@@ -173,7 +173,7 @@ export default function OrderHistoryScreen() {
       >
         <View style={styles.orderCardTop}>
           <View style={styles.orderIdRow}>
-            <Text style={styles.orderId}>#{item.dailyOrderId || item.orderNumber || item.id?.slice(-6)}</Text>
+            <Text style={styles.orderId}>#{item.dailyOrderId || item.orderNumber || ''}</Text>
             {item.tableNumber && (
               <View style={styles.tableBadge}>
                 <Text style={styles.tableBadgeText}>T{item.tableNumber}</Text>
@@ -336,7 +336,7 @@ export default function OrderHistoryScreen() {
               <Ionicons name="arrow-back" size={22} color="#1f2937" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>
-              Order #{selectedOrder?.dailyOrderId || selectedOrder?.orderNumber || selectedOrder?.id?.slice(-6)}
+              Order #{selectedOrder?.dailyOrderId || selectedOrder?.orderNumber || ''}
             </Text>
             <View style={{ width: 36 }} />
           </View>
@@ -411,12 +411,19 @@ export default function OrderHistoryScreen() {
                     <Text style={styles.detailValue}>{formatCurrency(selectedOrder.serviceChargeAmount)}</Text>
                   </View>
                 )}
-                {selectedOrder.taxAmount > 0 && (
+                {selectedOrder.taxBreakdown && selectedOrder.taxBreakdown.length > 0 ? (
+                  selectedOrder.taxBreakdown.map((tax, idx) => (
+                    <View key={idx} style={styles.detailItem}>
+                      <Text style={styles.detailLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
+                      <Text style={styles.detailValue}>{formatCurrency(tax.amount || 0)}</Text>
+                    </View>
+                  ))
+                ) : selectedOrder.taxAmount > 0 ? (
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Tax</Text>
                     <Text style={styles.detailValue}>{formatCurrency(selectedOrder.taxAmount)}</Text>
                   </View>
-                )}
+                ) : null}
                 {selectedOrder.tipAmount > 0 && (
                   <View style={styles.detailItem}>
                     <Text style={[styles.detailLabel, { color: '#f59e0b' }]}>Tip</Text>

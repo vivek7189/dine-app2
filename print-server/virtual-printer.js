@@ -8,7 +8,10 @@
 const net = require('net');
 const os = require('os');
 
-const PORT = 9100;
+// Support --port=XXXX or --port XXXX CLI arg (default 9100)
+const portArg = process.argv.find(a => a.startsWith('--port='))?.split('=')[1]
+  || (process.argv.includes('--port') ? process.argv[process.argv.indexOf('--port') + 1] : null);
+const PORT = parseInt(portArg || '9100', 10);
 
 // --- Get local IP address ---
 function getLocalIP() {
@@ -157,11 +160,12 @@ server.listen(PORT, '0.0.0.0', () => {
     const { execSync } = require('child_process');
     // Use dns-sd to register (built into macOS)
     const { spawn } = require('child_process');
+    const serviceName = PORT === 9100 ? 'DineOpen Virtual Printer' : `DineOpen Virtual Printer (${PORT})`;
     const mdns = spawn('dns-sd', [
-      '-R', 'DineOpen Virtual Printer', '_pdl-datastream._tcp', 'local', String(PORT)
+      '-R', serviceName, '_pdl-datastream._tcp', 'local', String(PORT)
     ], { stdio: 'ignore', detached: true });
     mdns.unref();
-    console.log('Bonjour: Advertising as "DineOpen Virtual Printer" (_pdl-datastream._tcp)');
+    console.log(`Bonjour: Advertising as "${serviceName}" (_pdl-datastream._tcp)`);
     console.log('         dine-app should auto-discover this printer on WiFi scan.\n');
 
     // Clean up on exit

@@ -2,6 +2,8 @@
 // Ported from dine-frontend/src/utils/printFontSizes.js
 // Generates printable HTML for category-wise token slips (80mm thermal paper)
 
+import { getCurrencySymbol } from './formatCurrency';
+
 const escapePrintHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -35,7 +37,7 @@ body{font-family:'Courier New',Courier,monospace;font-size:15px;line-height:1.5;
 `;
 };
 
-const buildTokenSlipBody = (token) => {
+const buildTokenSlipBody = (token, cs) => {
   const thickDiv = '================================';
   const thinDiv = '--------------------------------';
 
@@ -43,7 +45,7 @@ const buildTokenSlipBody = (token) => {
     const qty = i.quantity || 1;
     const price = i.price || 0;
     const itemTotal = i.total || (qty * price);
-    let line = `<div class="item-line"><span>${escapePrintHtml(qty)} x ${escapePrintHtml(i.name || 'Item')}${price ? ` @ ₹${price}` : ''}</span>${itemTotal ? `<span class="item-price">₹${itemTotal.toFixed(2)}</span>` : ''}</div>`;
+    let line = `<div class="item-line"><span>${escapePrintHtml(qty)} x ${escapePrintHtml(i.name || 'Item')}${price ? ` @ ${cs}${price}` : ''}</span>${itemTotal ? `<span class="item-price">${cs}${itemTotal.toFixed(2)}</span>` : ''}</div>`;
     if (i.variant) line += `<div class="item-detail">${escapePrintHtml(i.variant)}</div>`;
     if (i.customizations && i.customizations.length > 0) {
       const custs = Array.isArray(i.customizations) ? i.customizations.map(c => c.name || c).join(', ') : '';
@@ -60,7 +62,7 @@ const buildTokenSlipBody = (token) => {
 <div class="divider-thick">${thickDiv}</div>
 <div class="order-num">Order #${escapePrintHtml(token.orderNumber)}</div>
 <div class="divider">${thinDiv}</div>
-<div class="items">${itemLines}${token.tokenTotal ? `<div class="token-total"><span>Total</span><span>₹${token.tokenTotal.toFixed(2)}</span></div>` : ''}</div>
+<div class="items">${itemLines}${token.tokenTotal ? `<div class="token-total"><span>Total</span><span>${cs}${token.tokenTotal.toFixed(2)}</span></div>` : ''}</div>
 <div class="divider">${thinDiv}</div>
 <div class="meta">Items: <b>${escapePrintHtml(token.itemCount || 0)}</b></div>
 ${counterName ? `<div class="counter">${escapePrintHtml(counterName)}</div>` : ''}
@@ -73,15 +75,17 @@ ${counterName ? `<div class="counter">${escapePrintHtml(counterName)}</div>` : '
 };
 
 export const buildTokenSlipHTML = (token) => {
+  const cs = token.currencySymbol || getCurrencySymbol();
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Token ${escapePrintHtml(token.tokenLabel)}</title>
-<style>${getTokenSlipCSS()}</style></head><body>${buildTokenSlipBody(token)}</body></html>`;
+<style>${getTokenSlipCSS()}</style></head><body>${buildTokenSlipBody(token, cs)}</body></html>`;
 };
 
 export const buildTokenSlipsDocumentHTML = (tokens = []) => {
   const firstToken = tokens[0] || {};
   const orderNumber = firstToken.orderNumber || '';
   const title = `Food Court Tokens${orderNumber ? ` - Order #${orderNumber}` : ''}`;
+  const cs = firstToken.currencySymbol || getCurrencySymbol();
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${escapePrintHtml(title)}</title>
-<style>${getTokenSlipCSS({ combined: true })}</style></head><body>${tokens.map(buildTokenSlipBody).join('')}</body></html>`;
+<style>${getTokenSlipCSS({ combined: true })}</style></head><body>${tokens.map(t => buildTokenSlipBody(t, cs)).join('')}</body></html>`;
 };

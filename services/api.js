@@ -88,6 +88,21 @@ class ApiClient {
     this._cache.clear();
   }
 
+  /**
+   * Switch API base URL based on restaurant config.
+   * If restaurant has pgBackendUrl, route to that URL (e.g. GCP Cloud Run).
+   * Otherwise, fall back to the default.
+   */
+  setRestaurantBaseURL(restaurant) {
+    const customUrl = restaurant?.pgBackendUrl;
+    const newBase = customUrl || API_BASE_URL;
+    if (this.baseURL !== newBase) {
+      console.log(`🔀 API routing: ${newBase}${customUrl ? ' (pgBackendUrl)' : ' (default)'}`);
+      this.baseURL = newBase;
+      this.clearAllCache();
+    }
+  }
+
   // Process queued requests after token refresh
   processQueue(newToken) {
     this.refreshQueue.forEach(({ resolve }) => resolve(newToken));
@@ -719,6 +734,8 @@ class ApiClient {
           restaurant: response.restaurant,
           owner: response.owner,
         });
+        // Route to correct backend based on restaurant config
+        if (response.restaurant) this.setRestaurantBaseURL(response.restaurant);
         // Seed offline data in background
         this._triggerBackgroundSeed(response.user.restaurantId || response.restaurant?.id);
       }
@@ -1221,6 +1238,11 @@ class ApiClient {
       this.invalidateCache('/api/tables/');
     }
     return result;
+  }
+
+  // Mark order as served (convenience wrapper)
+  async markServed(orderId, restaurantId) {
+    return this.updateOrderStatus(orderId, 'served', restaurantId);
   }
 
   // Delete order (soft delete - sets status to 'deleted')

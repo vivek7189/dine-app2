@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
 import { resetDatabase } from '../../services/db';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
+import { getCurrencySymbol, formatCurrency } from '../../utils/formatCurrency';
 import SettingsHub from '../../components/SettingsHub';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
@@ -32,6 +33,7 @@ export default function ProfileScreen() {
   const [pinEnabled, setPinEnabled] = useState(false);
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
+  const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -48,6 +50,9 @@ export default function ProfileScreen() {
   useEffect(() => {
     loadUserData();
     hasPin().then(setPinEnabled);
+    AsyncStorage.getItem('@vibration_enabled').then(val => {
+      if (val !== null) setVibrationEnabled(val === 'true');
+    });
   }, []);
 
   const loadUserData = async () => {
@@ -439,12 +444,12 @@ export default function ProfileScreen() {
             <View style={styles.infoCard}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 12 }}>
                 <View style={{ alignItems: 'center' }}>
-                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#059669' }}>₹{tipData.totalTips || tipData.tipEarnings || 0}</Text>
+                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#059669' }}>{formatCurrency(tipData.totalTips || tipData.tipEarnings || 0)}</Text>
                   <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 2 }}>Total Tips</Text>
                 </View>
                 <View style={{ width: 1, backgroundColor: '#e5e7eb' }} />
                 <View style={{ alignItems: 'center' }}>
-                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#ec4899' }}>₹{tipData.thisMonthTips || 0}</Text>
+                  <Text style={{ fontSize: 24, fontWeight: '800', color: '#ec4899' }}>{formatCurrency(tipData.thisMonthTips || 0)}</Text>
                   <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 2 }}>This Month</Text>
                 </View>
               </View>
@@ -456,7 +461,7 @@ export default function ProfileScreen() {
                       <Text style={{ fontSize: 12, color: Colors.textMedium }}>
                         #{tip.orderNumber} - {new Date(tip.date).toLocaleDateString()}
                       </Text>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#059669' }}>₹{tip.amount}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#059669' }}>{formatCurrency(tip.amount)}</Text>
                     </View>
                   ))}
                 </View>
@@ -715,6 +720,34 @@ export default function ProfileScreen() {
         </View>
 
         <SyncDetailsSheet visible={showSyncSheet} onClose={() => setShowSyncSheet(false)} />
+
+        {/* Preferences */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <View style={styles.settingsCard}>
+            <TouchableOpacity
+              style={[styles.connectivityRow, { borderBottomWidth: 0 }]}
+              onPress={async () => {
+                const newVal = !vibrationEnabled;
+                setVibrationEnabled(newVal);
+                await AsyncStorage.setItem('@vibration_enabled', String(newVal));
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name={vibrationEnabled ? 'phone-portrait' : 'phone-portrait-outline'} size={20} color={vibrationEnabled ? '#8b5cf6' : Colors.textMedium} />
+                <View>
+                  <Text style={styles.connectivityLabel}>Vibration Feedback</Text>
+                  <Text style={styles.connectivityMeta}>
+                    {vibrationEnabled ? 'Vibrate when adding items' : 'Vibration disabled'}
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.toggleTrack, vibrationEnabled && styles.toggleTrackActive]}>
+                <View style={[styles.toggleThumb, vibrationEnabled && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {/* Settings Hub - iPhone-style settings navigation */}
         {getRestaurantId() && user && (

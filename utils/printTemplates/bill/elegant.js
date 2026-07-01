@@ -8,6 +8,7 @@ import {
   getPrintFontSizes, getBillHeaderHTML, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
 } from '../helpers';
+import { getCurrencySymbol } from '../../formatCurrency';
 
 export const id = 'elegant';
 export const name = 'Elegant';
@@ -32,11 +33,11 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const lang = printSettings.printLanguage || 'en';
   const showAr = lang === 'dual' || lang === 'ar';
   const bl = printSettings?.billLayout || {};
-  const cs = invoice.currencySymbol || '₹';
+  const cs = invoice.currencySymbol || getCurrencySymbol();
   const items = invoice.items || [];
 
   const itemsHtml = buildBillItemRows(items, cs, showAr);
-  const taxHtml = buildTaxHtml(invoice.taxBreakdown, cs, printSettings);
+  const taxHtml = buildTaxHtml(invoice.taxBreakdown, cs, printSettings, { showInclusiveTax: invoice.showInclusiveTaxOnBill !== false });
   const discountHtml = buildDiscountHtml(invoice, L, cs);
   const chargesHtml = buildChargesHtml(invoice, L, cs);
   const paymentHtml = buildPaymentHtml(invoice, L, cs);

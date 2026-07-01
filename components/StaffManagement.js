@@ -20,22 +20,24 @@ import { ADMIN_TAB_OPS, ADMIN_TAB_LABELS } from '../utils/permissions';
 
 const STORAGE_KEY = 'dine_staff_list';
 
-const ROLES = ['admin', 'manager', 'waiter', 'cashier', 'employee'];
+const ROLES = ['admin', 'manager', 'captain', 'waiter', 'cashier', 'employee'];
 const ROLE_FILTERS = ['all', ...ROLES];
 
 // SYNC: Keep in sync with dine-backend/index.js and dine-frontend/src/app/(dashboard)/admin/page.js
 const ROLE_DEFAULT_PAGE_ACCESS = {
   admin:    { dashboard:true, history:true, tables:true, menu:true, analytics:true, inventory:true, kot:true, admin:{ settings:true, tax:true, pricing:true, payments:true, billingSettings:true, currency:true, print:true, features:true, restaurants:true, staff:true, orderManagement:true, offers:true, loyalty:true, googleReviews:true, whatsapp:true }, completeBill:true, invoice:true, customers:true, offers:true, printer:true },
   manager:  { dashboard:true, history:true, tables:true, menu:true, analytics:true, inventory:true, kot:true, admin:false, completeBill:true, invoice:true, customers:true, offers:true, printer:true },
-  waiter:   { dashboard:true, history:true, tables:true, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false, printer:true, orders:{ read:true, update:true, cancel:true, refund:false, completeBill:false } },
+  captain:  { dashboard:true, history:true, tables:{ read:true, add:false, update:true, delete:false, reset:true }, menu:true, analytics:false, inventory:false, kot:true, admin:false, completeBill:true, invoice:false, customers:false, offers:false, printer:true, orders:{ read:true, update:true, cancel:true, refund:true, completeBill:true } },
+  waiter:   { dashboard:true, history:true, tables:{ read:true, add:false, update:true, delete:false, reset:false }, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false, printer:true, orders:{ read:true, update:true, cancel:true, refund:false, completeBill:false } },
   cashier:  { dashboard:true, history:true, tables:false, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:true, invoice:true, customers:false, offers:false, printer:true },
-  employee: { dashboard:true, history:true, tables:true, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false, printer:true },
+  employee: { dashboard:true, history:true, tables:{ read:true, add:false, update:false, delete:false, reset:false }, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:false, offers:false, printer:true },
   sales:    { dashboard:true, history:true, tables:false, menu:true, analytics:false, inventory:false, kot:false, admin:false, completeBill:false, invoice:false, customers:true, offers:true, printer:true },
 };
 
 const ROLE_DESCRIPTIONS = {
   admin:    'Full access like owner. Can manage multiple locations. Owner can restrict.',
   manager:  'Elevated staff. Most features except admin settings.',
+  captain:  'Floor supervisor. Manages waiters, tables, and orders in assigned section.',
   waiter:   'Service staff. Tables, orders, and menu access.',
   cashier:  'Billing staff. POS, orders, and invoices.',
   employee: 'Basic staff. Only granted access.',

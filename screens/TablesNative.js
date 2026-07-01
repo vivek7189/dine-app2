@@ -32,6 +32,7 @@ import { getCurrencySymbol } from '../utils/formatCurrency';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import OrderDetailsModal from '../components/OrderDetailsModal';
 import MoveOrderModal from '../components/MoveOrderModal';
+import WaiterOrderModal from '../components/WaiterOrderModal';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
@@ -89,6 +90,8 @@ export default function TablesScreen() {
   const [savingBooking, setSavingBooking] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [moveModalTable, setMoveModalTable] = useState(null);
+  const [showWaiterOrderModal, setShowWaiterOrderModal] = useState(false);
+  const [waiterOrderContext, setWaiterOrderContext] = useState(null);
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
@@ -133,6 +136,11 @@ export default function TablesScreen() {
       floorsData = response.floors;
     } else if (Array.isArray(response)) {
       floorsData = response;
+    }
+
+    // Captain floor scoping — only show assigned floors
+    if (user?.role === 'captain' && user?.assignedFloorIds?.length > 0) {
+      floorsData = floorsData.filter(f => user.assignedFloorIds.includes(f.id));
     }
 
     setFloors(floorsData);
@@ -601,10 +609,15 @@ export default function TablesScreen() {
     const currentFloorName = tableFloor?.name || tableFloor?.floorName || '';
 
     if (table.status === 'available') {
-      router.push({
-        pathname: '/(tabs)/menu',
-        params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '', navStamp: Date.now().toString() },
-      });
+      if (user?.role?.toLowerCase() === 'waiter') {
+        setWaiterOrderContext({ tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '' });
+        setShowWaiterOrderModal(true);
+      } else {
+        router.push({
+          pathname: '/(tabs)/menu',
+          params: { tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '', navStamp: Date.now().toString() },
+        });
+      }
     } else if (table.status === 'occupied' && table.currentOrderId) {
       // Keep user on tables page — open the order detail modal inline
       setSelectedOrderId(table.currentOrderId);
@@ -618,6 +631,9 @@ export default function TablesScreen() {
         setSelectedTableForOrder(table);
         setOrderModalMode('view');
         setShowOrderModal(true);
+      } else if (user?.role?.toLowerCase() === 'waiter') {
+        setWaiterOrderContext({ tableId: table.id, tableNumber: table.name, floorName: currentFloorName, floorId: tableFloor?.id || '' });
+        setShowWaiterOrderModal(true);
       } else {
         router.push({
           pathname: '/(tabs)/menu',
@@ -918,14 +934,29 @@ export default function TablesScreen() {
   };
 
   const handleAddItemsToOrder = async (order, cartItems) => {
-    // Store full add-items context in AsyncStorage for reliable cross-tab navigation
     const tableFloor = selectedTableForOrder ? getFloorForTable(selectedTableForOrder) : null;
-    const floorName = tableFloor?.name || tableFloor?.floorName || '';
+    const floorNameVal = tableFloor?.name || tableFloor?.floorName || '';
+
+    // Waiter: use self-contained modal instead of navigating to Menu tab
+    if (user?.role?.toLowerCase() === 'waiter') {
+      setShowOrderModal(false);
+      setWaiterOrderContext({
+        tableId: selectedTableForOrder?.id,
+        tableNumber: selectedTableForOrder?.name,
+        floorName: floorNameVal,
+        floorId: tableFloor?.id || '',
+        existingOrderId: order.id,
+      });
+      setShowWaiterOrderModal(true);
+      return;
+    }
+
+    // Other roles: existing AsyncStorage + tab navigation flow
     try {
       await AsyncStorage.setItem('pendingAddItems', JSON.stringify({
         tableId: selectedTableForOrder?.id,
         tableNumber: selectedTableForOrder?.name,
-        floorName,
+        floorName: floorNameVal,
         floorId: tableFloor?.id || '',
         orderId: order.id,
         dailyOrderId: order.dailyOrderId || order.orderNumber || null,
@@ -1958,6 +1989,22 @@ export default function TablesScreen() {
           updateTableStatusOptimistically(oldId, 'available', null);
           updateTableStatusOptimistically(newId, 'occupied', moveModalTable?.currentOrderId);
           setMoveModalTable(null);
+        }}
+      />
+
+      {/* Waiter Order Modal — self-contained menu + cart (replaces tab navigation for waiter) */}
+      <WaiterOrderModal
+        visible={showWaiterOrderModal}
+        onClose={() => { setShowWaiterOrderModal(false); setWaiterOrderContext(null); }}
+        tableId={waiterOrderContext?.tableId}
+        tableNumber={waiterOrderContext?.tableNumber}
+        floorName={waiterOrderContext?.floorName}
+        floorId={waiterOrderContext?.floorId}
+        existingOrderId={waiterOrderContext?.existingOrderId}
+        onOrderSent={() => {
+          setShowWaiterOrderModal(false);
+          setWaiterOrderContext(null);
+          if (selectedRestaurant?.id) refreshInBackground(selectedRestaurant.id);
         }}
       />
 

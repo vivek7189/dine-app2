@@ -115,7 +115,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
 
   const finalTotal = num(order?.finalAmount) || calculateTotal();
   const sStyle = statusStyle(order?.status);
-  const orderNumberShort = order?.dailyOrderId || order?.orderNumber || (orderId ? String(orderId).slice(-6) : '');
+  const orderNumberShort = order?.dailyOrderId || order?.orderNumber || '';
 
   // Safely render content — catch any unexpected data shape issues
   let renderError = null;

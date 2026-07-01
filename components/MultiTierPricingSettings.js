@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 import { Colors, Spacing } from '../constants/Theme';
 
 const STORAGE_KEY = 'dine_multi_pricing';
@@ -354,7 +355,7 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
                     style={[styles.markupTypeChip, takeawayRule.defaultMarkupType === 'flat' && styles.markupTypeActive]}
                     onPress={() => updateRule(takeawayRule.id, { defaultMarkupType: 'flat' })}
                   >
-                    <Text style={[styles.markupTypeText, takeawayRule.defaultMarkupType === 'flat' && styles.markupTypeTextActive]}>₹</Text>
+                    <Text style={[styles.markupTypeText, takeawayRule.defaultMarkupType === 'flat' && styles.markupTypeTextActive]}>{getCurrencySymbol()}</Text>
                   </TouchableOpacity>
                   <TextInput
                     style={styles.markupValueInput}
@@ -402,7 +403,7 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
                     style={[styles.markupTypeChip, deliveryRule.defaultMarkupType === 'flat' && styles.markupTypeActive]}
                     onPress={() => updateRule(deliveryRule.id, { defaultMarkupType: 'flat' })}
                   >
-                    <Text style={[styles.markupTypeText, deliveryRule.defaultMarkupType === 'flat' && styles.markupTypeTextActive]}>₹</Text>
+                    <Text style={[styles.markupTypeText, deliveryRule.defaultMarkupType === 'flat' && styles.markupTypeTextActive]}>{getCurrencySymbol()}</Text>
                   </TouchableOpacity>
                   <TextInput
                     style={styles.markupValueInput}

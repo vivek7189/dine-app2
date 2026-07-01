@@ -13,6 +13,7 @@ import { TabModeProvider } from '../../contexts/TabModeContext';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
 import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
+import OrderReadyNotificationOverlay from '../../components/OrderReadyNotificationOverlay';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -50,6 +51,8 @@ function TabsNavigator() {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
         if (userData.isDeliveryPartner) setIsDeliveryPartner(true);
+        // Route to correct backend based on restaurant config
+        if (userData.restaurant) apiClient.setRestaurantBaseURL(userData.restaurant);
         const storedType = userData.restaurant?.businessType;
         if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
@@ -145,7 +148,7 @@ function TabsNavigator() {
           // owner/admin/waiter/manager always see tables; other roles need pageAccess.tables
           href: (() => {
             if (!roleLower) return undefined;
-            if (['owner', 'admin', 'waiter', 'manager'].includes(roleLower)) return undefined;
+            if (['owner', 'admin', 'captain', 'waiter', 'manager'].includes(roleLower)) return undefined;
             // For cashier, sales, employee, and custom roles — check pageAccess
             if (pageAccess) {
               const val = pageAccess.tables;
@@ -182,7 +185,7 @@ function TabsNavigator() {
             if (businessType === 'bar') return null;
             // owner/admin/waiter/manager/cashier always see menu tab
             if (!roleLower) return undefined;
-            if (['owner', 'admin', 'waiter', 'manager', 'cashier'].includes(roleLower)) return undefined;
+            if (['owner', 'admin', 'captain', 'waiter', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {
               const val = pageAccess.menu;
@@ -339,6 +342,7 @@ export default function TabsLayout() {
         <TabsNavigator />
         <BillingPrewarmer />
         <PrinterNotificationOverlay />
+        <OrderReadyNotificationOverlay />
       </View>
     </TabBarProvider>
     </TabModeProvider>

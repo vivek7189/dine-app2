@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
 import { Colors, Spacing } from '../constants/Theme';
+import { getCurrencySymbol } from '../utils/formatCurrency';
 
 const DEFAULT_SETTINGS = {
   serviceChargeEnabled: false,
@@ -35,9 +36,9 @@ const DEFAULT_SETTINGS = {
 
 const DENOMINATION_OPTIONS = [10, 20, 50, 100, 200, 500, 1000, 2000];
 const ROUND_OFF_OPTIONS = [
-  { value: 1, label: '₹1' },
-  { value: 5, label: '₹5' },
-  { value: 10, label: '₹10' },
+  { value: 1 },
+  { value: 5 },
+  { value: 10 },
 ];
 
 export default function BillingSettings({ restaurantId }) {
@@ -203,7 +204,7 @@ export default function BillingSettings({ restaurantId }) {
                     styles.segmentText,
                     settings.roundOffTo === opt.value && styles.segmentTextActive,
                   ]}>
-                    {opt.label}
+                    {getCurrencySymbol()}{opt.value}
                   </Text>
                 </TouchableOpacity>
               ))}

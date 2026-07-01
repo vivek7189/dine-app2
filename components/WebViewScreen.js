@@ -156,8 +156,8 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               tableNumber: od.tableNumber || od.tableName || '',
               floorName: od.floorName || '',
               roomNumber: od.roomNumber || '',
-              orderNumber: od.orderNumber || od.dailyOrderId || od.orderId?.slice?.(-6) || '',
-              dailyOrderId: od.dailyOrderId || od.orderNumber || od.orderId?.slice?.(-6) || '',
+              orderNumber: od.orderNumber || od.dailyOrderId || '' || '',
+              dailyOrderId: od.dailyOrderId || od.orderNumber || '' || '',
               orderId: od.orderId || data.orderId,
               orderType: od.orderType || 'dine-in',
               waiterName: od.waiterName || '',
@@ -179,7 +179,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
             const subtotal = od.subtotal || items.reduce((s, i) => s + (i.total || 0), 0);
             text = printerService.generateBillText({
               orderId: od.orderId || od.id || data.orderId,
-              orderNumber: od.orderNumber || od.dailyOrderId || od.orderId?.slice?.(-6) || '',
+              orderNumber: od.orderNumber || od.dailyOrderId || '' || '',
               restaurantName: od.restaurantName || userData?.restaurant?.name || '',
               restaurantInfo: od.restaurantInfo || {},
               items,
@@ -219,7 +219,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               text = printerService.generateKOTText({
                 restaurantName: order.restaurantName || userData?.restaurant?.name || '',
                 tableNumber: order.tableNumber || order.tableName || '',
-                orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+                orderNumber: order.dailyOrderId || order.orderNumber || '',
                 orderId: order.id,
                 orderType: order.orderType || 'dine-in',
                 waiterName: order.waiterName || '',
@@ -232,7 +232,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
               text = printerService.generateBillText({
                 orderId: order.id,
-                orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
+                orderNumber: order.dailyOrderId || order.orderNumber || '',
                 restaurantName: order.restaurantName || userData?.restaurant?.name || '',
                 restaurantInfo: order.restaurantInfo || {},
                 items: (order.items || []).map(i => ({

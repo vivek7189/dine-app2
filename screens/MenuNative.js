@@ -23,6 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../services/api';
 import restaurantEvents from '../services/restaurantEvents';
 import * as printerService from '../services/printerService';
+import { getPrintStationConfig, printKOTsByStation, getLocalKotPrintingEnabled } from '../services/multiPrinterService';
 import lanClient from '../services/lanClient';
 
 const TAX_STORAGE_KEY = 'dine_tax_settings';
@@ -128,6 +129,7 @@ export default function MenuScreen() {
   const [taxCategories, setTaxCategories] = useState([]); // Real categories from API (with taxGroupId) for tax resolution
   const [printSettings, setPrintSettings] = useState(null);
   const [printStationCount, setPrintStationCount] = useState(0); // Enabled station count for multi-station skip
+  const [localKotPrintingOn, setLocalKotPrintingOn] = useState(false); // Whether this device prints KOTs locally for multi-station
 
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -720,6 +722,7 @@ export default function MenuScreen() {
             }
           } catch { /* ignore */ }
         })(),
+        getLocalKotPrintingEnabled().then(v => setLocalKotPrintingOn(v)).catch(() => {}),
         // Auto-reconnect saved printer for silent printing
         printerService.autoReconnect().catch(() => {}),
       ]);
@@ -1442,13 +1445,23 @@ export default function MenuScreen() {
       };
 
       // Auto-print KOT silently — show toast if print fails so waiter knows
-      // Skip when multi-station configured (2+ stations) - Electron handles station routing
-      if (printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
-        const kotText = printerService.generateKOTText(kotData);
-        const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-        printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
-          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-          .catch(() => {});
+      if (printSettings?.autoPrintOnKOT !== false) {
+        if (printStationCount >= 2 && localKotPrintingOn) {
+          // Multi-station: route KOTs to station printers from this device
+          getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
+            printKOTsByStation(kotData, stations, categories, mode, printSettings)
+              .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
+              .catch(() => {});
+          }).catch(() => {});
+        } else if (printStationCount < 2) {
+          // Single station: print to default printer
+          const kotText = printerService.generateKOTText(kotData);
+          const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+          printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+            .catch(() => {});
+        }
+        // else: multi-station + !localKotPrintingOn → desktop handles it
       }
 
       // Show KOT Modal
@@ -1619,8 +1632,7 @@ export default function MenuScreen() {
         const updateResponse = await apiClient.updateOrder(existingOrderId, updateData);
 
         // Auto-print KOT for newly added/changed items (fire and forget)
-        // Skip when multi-station configured (2+ stations) - Electron handles station routing
-        if (printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
+        if (printSettings?.autoPrintOnKOT !== false) {
           let kotItems = cart;
           let isIncremental = false;
           let removedKotItems = [];
@@ -1661,9 +1673,9 @@ export default function MenuScreen() {
           }
           if (kotItems.length > 0 || removedKotItems.length > 0) {
             const kotData = {
-              orderNumber: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || existingOrderId?.slice(-6),
+              orderNumber: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || '',
               orderId: existingOrderId,
-              dailyOrderId: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || existingOrderId?.slice(-6),
+              dailyOrderId: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || '',
               tableNumber: selectedTable?.name || '',
               floorName: selectedTable?.floor || '',
               isIncremental,
@@ -1686,11 +1698,24 @@ export default function MenuScreen() {
               customerName: customerName || '',
               specialInstructions: discountData.specialInstructions || '',
               printSettings: printSettings || {},
+              restaurantId,
             };
-            const kotText = printerService.generateKOTText(kotData);
-            printerService.printWithFeedback({ text: kotText, silentOnly: true, label: 'KOT' })
-              .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-              .catch(() => {});
+
+            if (printStationCount >= 2 && localKotPrintingOn) {
+              // Multi-station: route KOTs to station printers from this device
+              getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
+                printKOTsByStation(kotData, stations, categories, mode, printSettings)
+                  .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
+                  .catch(() => {});
+              }).catch(() => {});
+            } else if (printStationCount < 2) {
+              // Single station: print to default printer
+              const kotText = printerService.generateKOTText(kotData);
+              printerService.printWithFeedback({ text: kotText, silentOnly: true, label: 'KOT' })
+                .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+                .catch(() => {});
+            }
+            // else: multi-station + !localKotPrintingOn → desktop handles it
           }
         }
 
@@ -1763,10 +1788,9 @@ export default function MenuScreen() {
         }
 
         // Auto-print KOT silently for confirmed orders (fire and forget)
-        // Skip when multi-station configured (2+ stations) - Electron handles station routing
-        if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false && printStationCount < 2) {
+        if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false) {
           const kotData = {
-            orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+            orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || '',
             orderId: response.order?.id,
             tableNumber: orderData.tableNumber || '',
             floorName: selectedTable?.floor || '',
@@ -1780,12 +1804,25 @@ export default function MenuScreen() {
             customerName: customerName || '',
             specialInstructions: discountData.specialInstructions || '',
             printSettings: printSettings || {},
+            restaurantId,
           };
-          const kotText = printerService.generateKOTText(kotData);
-          const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-          printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
-            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-            .catch(() => {});
+
+          if (printStationCount >= 2 && localKotPrintingOn) {
+            // Multi-station: route KOTs to station printers from this device
+            getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
+              printKOTsByStation(kotData, stations, categories, mode, printSettings)
+                .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
+                .catch(() => {});
+            }).catch(() => {});
+          } else if (printStationCount < 2) {
+            // Single station: print to default printer
+            const kotText = printerService.generateKOTText(kotData);
+            const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+            printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+              .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+              .catch(() => {});
+          }
+          // else: multi-station + !localKotPrintingOn → desktop handles it
         }
 
         if (isBarTabMode) {
@@ -3149,6 +3186,7 @@ export default function MenuScreen() {
         }}
         orderData={kotOrderData}
         printSettings={printSettings || {}}
+        userRole={user?.role}
       />
 
       {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
