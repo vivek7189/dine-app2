@@ -97,13 +97,16 @@ export function getSublineHtml(item) {
 }
 
 // Render a single KOT item row with qty, name, variant, customizations, notes.
-// opts: { isRemoved, showDelta }
+// opts: { isRemoved, showDelta, showPrice, currencySymbol }
 export function renderKOTItemRow(item, opts = {}, labels = {}) {
   const qty = item.quantity || 1;
   const noteLabel = labels.note || 'Note';
   const label = opts.isRemoved ? ' <span style="color:#666;">[CANCEL]</span>' : (opts.showDelta && item.quantityDelta > 0 ? ' <span>[+NEW]</span>' : '');
   const strikeStyle = opts.isRemoved ? 'text-decoration:line-through;color:#999;' : '';
-  return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${label}</span></div>` +
+  const price = item.price || (item.total ? item.total / (item.quantity || 1) : 0);
+  const itemTotal = price * qty;
+  const priceHtml = (opts.showPrice && itemTotal > 0 && !opts.isRemoved) ? `<span style="float:right;font-weight:bold;">${opts.currencySymbol || ''}${itemTotal.toFixed(2)}</span>` : '';
+  return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${label}</span>${priceHtml}</div>` +
     (item.selectedVariant?.name ? `<div class="item-detail">[${esc(item.selectedVariant.name)}]</div>` : '') +
     ((item.selectedCustomizations || []).map(c => `<div class="item-detail">+ ${esc(c.name || c)}</div>`).join('')) +
     (item.notes ? `<div class="item-note">${noteLabel}: ${esc(item.notes)}</div>` : '') +
@@ -396,7 +399,7 @@ export function getKOTLabels(labels = {}) {
 export function buildTableOrRoomHtml(kotData, L) {
   return kotData.roomNumber
     ? `<div><strong>${L.room}:</strong> ${kotData.roomNumber}</div>`
-    : (kotData.tableNumber ? `<div><strong>${L.table}:</strong> ${kotData.tableNumber}${kotData.floorName ? ` · ${kotData.floorName}` : ''}</div>` : '');
+    : (kotData.tableNumber ? `<div><strong>${L.table}:</strong> ${kotData.tableNumber}${kotData.floorName ? ` - ${kotData.floorName}` : ''}</div>` : '');
 }
 
 // Build special instructions HTML for KOT

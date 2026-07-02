@@ -1147,9 +1147,11 @@ export default function TablesScreen() {
     return cardContent;
   };
 
-  const isOwnerOrAdmin = ['owner', 'admin'].includes(user?.role?.toLowerCase());
+  const userRole = user?.role?.toLowerCase() || '';
+  const isOwnerOrAdmin = ['owner', 'admin'].includes(userRole);
   const canResetTables = canPerform(user, user?.pageAccess, 'tables', 'reset');
   const posSettings = selectedRestaurant?.posSettings || {};
+  const waiterAppConfig = posSettings.waiterAppConfig || {};
 
   const openAddFloor = () => {
     setEditingFloor(null);
@@ -1755,7 +1757,7 @@ export default function TablesScreen() {
           <Text style={styles.restaurantName} numberOfLines={1}>{selectedRestaurant?.name || 'Restaurant'}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          {canResetTables && (
+          {canResetTables && !(userRole === 'waiter' && waiterAppConfig.showResetTablesButton === false) && (
             <TouchableOpacity onPress={handleResetAllTables} style={[styles.headerActionBtn, { backgroundColor: '#fef2f2' }]}>
               <Ionicons name="refresh-circle-outline" size={16} color="#ef4444" />
             </TouchableOpacity>
@@ -1765,9 +1767,11 @@ export default function TablesScreen() {
               <Ionicons name="add" size={16} color="#3b82f6" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={[styles.headerActionBtn, { backgroundColor: '#eef2ff' }]}>
-            <Ionicons name="sync-outline" size={16} color="#6366f1" />
-          </TouchableOpacity>
+          {!(userRole === 'waiter' && waiterAppConfig.showRefreshButton === false) && (
+            <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={[styles.headerActionBtn, { backgroundColor: '#eef2ff' }]}>
+              <Ionicons name="sync-outline" size={16} color="#6366f1" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 

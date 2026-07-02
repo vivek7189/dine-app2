@@ -21,6 +21,8 @@ class ApiClient {
     this._offlineState = null;
     // LAN client (set when paired with hub)
     this._lanClient = null;
+    // Business day start hour (0 = midnight/default, 1-23 = custom)
+    this._businessDayStartHour = 0;
   }
 
   /**
@@ -101,6 +103,11 @@ class ApiClient {
       this.baseURL = newBase;
       this.clearAllCache();
     }
+  }
+
+  setBusinessDayStartHour(hour) {
+    const n = Number(hour);
+    this._businessDayStartHour = (isNaN(n) || n < 0 || n > 23) ? 0 : Math.floor(n);
   }
 
   // Process queued requests after token refresh
@@ -236,6 +243,16 @@ class ApiClient {
 
   // Make authenticated request
   async request(endpoint, options = {}, isRetry = false) {
+    // Auto-inject device timezone offset so backend computes correct date boundaries
+    if (!endpoint.includes('tz=')) {
+      const sep = endpoint.includes('?') ? '&' : '?';
+      endpoint = `${endpoint}${sep}tz=${new Date().getTimezoneOffset()}`;
+    }
+    // Auto-inject business day start hour if configured
+    if (this._businessDayStartHour > 0 && !endpoint.includes('dayStart=')) {
+      const sep = endpoint.includes('?') ? '&' : '?';
+      endpoint = `${endpoint}${sep}dayStart=${this._businessDayStartHour}`;
+    }
     // If paired with LAN hub, route through hub (skip auth endpoints)
     if (this._lanClient?.isPaired() && !endpoint.startsWith('/api/auth/')) {
       try {

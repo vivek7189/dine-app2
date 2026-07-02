@@ -269,12 +269,14 @@ export default function WaiterHomeNative() {
         </View>
 
         {/* Primary CTA */}
-        <View style={{ paddingHorizontal: Spacing.md, marginTop: 12 }}>
-          <TouchableOpacity style={s.primaryCta} onPress={() => router.push('/(tabs)/tables')} activeOpacity={0.8}>
-            <Ionicons name="add-circle" size={22} color="white" />
-            <Text style={s.primaryCtaText}>Start Taking Orders</Text>
-          </TouchableOpacity>
-        </View>
+        {(restaurant?.posSettings?.waiterAppConfig?.showStartOrder !== false) && (
+          <View style={{ paddingHorizontal: Spacing.md, marginTop: 12 }}>
+            <TouchableOpacity style={s.primaryCta} onPress={() => router.push('/(tabs)/tables')} activeOpacity={0.8}>
+              <Ionicons name="add-circle" size={22} color="white" />
+              <Text style={s.primaryCtaText}>Start Taking Orders</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Quick Stats */}
         <View style={s.statsRow}>
@@ -297,21 +299,28 @@ export default function WaiterHomeNative() {
         </View>
 
         {/* Quick Actions */}
-        <View style={s.quickActionsRow}>
-          {QUICK_ACTIONS.map(action => (
-            <TouchableOpacity
-              key={action.key}
-              style={[s.quickAction, { backgroundColor: action.bg }]}
-              onPress={() => router.push(`/(tabs)/${action.tab}`)}
-              activeOpacity={0.7}
-            >
-              <View style={[s.quickActionIcon, { backgroundColor: action.color }]}>
-                <Ionicons name={action.icon} size={20} color="white" />
-              </View>
-              <Text style={[s.quickActionLabel, { color: action.color }]}>{action.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {(() => {
+          const wac = restaurant?.posSettings?.waiterAppConfig || {};
+          const configMap = { order: 'showStartOrder', tables: 'showTables', kitchen: 'showKitchen', orders: 'showOrders' };
+          const visible = QUICK_ACTIONS.filter(a => wac[configMap[a.key]] !== false);
+          return visible.length > 0 ? (
+            <View style={s.quickActionsRow}>
+              {visible.map(action => (
+                <TouchableOpacity
+                  key={action.key}
+                  style={[s.quickAction, { backgroundColor: action.bg }]}
+                  onPress={() => router.push(`/(tabs)/${action.tab}`)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[s.quickActionIcon, { backgroundColor: action.color }]}>
+                    <Ionicons name={action.icon} size={20} color="white" />
+                  </View>
+                  <Text style={[s.quickActionLabel, { color: action.color }]}>{action.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null;
+        })()}
 
         {/* Ready for Pickup */}
         {readyOrders.length > 0 && (

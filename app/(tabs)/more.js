@@ -219,7 +219,22 @@ export default function MoreScreen() {
     return !!pa;
   })();
 
+  const waiterAppConfig = restaurant?.posSettings?.waiterAppConfig || {};
+
   const shouldShowItem = (item) => {
+    // Waiter app config overrides for waiter role
+    if (role === 'waiter') {
+      const waiterConfigMap = {
+        'Kitchen Display': 'showKitchenDisplay',
+        'Attendance': 'showAttendance',
+        'Billing': 'showBilling',
+        'Printer': 'showPrinterSettings',
+        'Order History': 'showOrderHistory',
+      };
+      const configKey = waiterConfigMap[item.title];
+      if (configKey && waiterAppConfig[configKey] === false) return false;
+    }
+
     // For items with no role restriction, show by default — but allow owner to disable via pageAccess
     if (!item.roles) {
       if (item.feature && user?.pageAccess && user.pageAccess[item.feature] === false) return false;
@@ -434,22 +449,24 @@ export default function MoreScreen() {
         </View>
 
         {/* ── Printer Settings Quick Access ──────────── */}
-        <TouchableOpacity
-          style={styles.printerCard}
-          onPress={() => handleNavigate('/(tabs)/printer-settings')}
-          activeOpacity={0.7}
-        >
-          <View style={styles.printerIconContainer}>
-            <Ionicons name="print" size={20} color="#fff" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.printerCardTitle}>Printer Settings</Text>
-            <Text style={styles.printerCardSubtitle}>Configure printers, paper size & receipts</Text>
-          </View>
-          <View style={styles.printerArrow}>
-            <Ionicons name="chevron-forward" size={16} color="#8b7355" />
-          </View>
-        </TouchableOpacity>
+        {(role !== 'waiter' || waiterAppConfig.showPrinterSettings !== false) && (
+          <TouchableOpacity
+            style={styles.printerCard}
+            onPress={() => handleNavigate('/(tabs)/printer-settings')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.printerIconContainer}>
+              <Ionicons name="print" size={20} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.printerCardTitle}>Printer Settings</Text>
+              <Text style={styles.printerCardSubtitle}>Configure printers, paper size & receipts</Text>
+            </View>
+            <View style={styles.printerArrow}>
+              <Ionicons name="chevron-forward" size={16} color="#8b7355" />
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* ── Business Info — collapsible (owner, admin, cashier, manager) ── */}
         {['owner', 'admin', 'cashier', 'manager'].includes(role) && getRestaurantId() && (

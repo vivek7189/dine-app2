@@ -18,6 +18,8 @@ export function render(kotData, printSettings = {}, labels = {}) {
   const showAr = lang === 'dual' || lang === 'ar';
   const kl = printSettings?.kotLayout || {};
   const k = kotData;
+  const showPrice = !!printSettings.showPriceOnKot;
+  const cs = k.currencySymbol || printSettings.currencySymbol || '';
   const specialInstructionsHtml = buildSpecialInstructionsHtml(k, L);
   const { dateStr, timeStr } = formatDateTime();
   const removedItems = k.removedItems || [];
@@ -30,7 +32,10 @@ export function render(kotData, printSettings = {}, labels = {}) {
     const noteLabel = L.note || 'Note';
     const label = opts.isRemoved ? ' <span style="color:#666;">[CANCEL]</span>' : (opts.showDelta && item.quantityDelta > 0 ? ' <span>[+NEW]</span>' : '');
     const strikeStyle = opts.isRemoved ? 'text-decoration:line-through;color:#999;' : '';
-    return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty" style="width:auto;margin-right:4px;">${itemNumber}.</span><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${label}</span></div>` +
+    const price = item.price || (item.total ? item.total / (item.quantity || 1) : 0);
+    const itemTotal = price * qty;
+    const priceHtml = (showPrice && itemTotal > 0 && !opts.isRemoved) ? `<span style="float:right;font-weight:bold;">${cs}${itemTotal.toFixed(2)}</span>` : '';
+    return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty" style="width:auto;margin-right:4px;">${itemNumber}.</span><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${label}</span>${priceHtml}</div>` +
       (item.selectedVariant?.name ? `<div class="item-detail" style="margin-left:50px;">[${esc(item.selectedVariant.name)}]</div>` : '') +
       ((item.selectedCustomizations || []).map(c => `<div class="item-detail" style="margin-left:50px;">+ ${esc(c.name || c)}</div>`).join('')) +
       (item.notes ? `<div class="item-note" style="margin-left:50px;">${noteLabel}: ${esc(item.notes)}</div>` : '') +
@@ -73,7 +78,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
 
   const tableStr = k.roomNumber
     ? `<span><strong>${dualLabel(L.room, AR.room, showAr)}:</strong> ${k.roomNumber}</span>`
-    : (k.tableNumber ? `<span><strong>${dualLabel(L.table, AR.table, showAr)}:</strong> ${k.tableNumber}${k.floorName ? ` · ${k.floorName}` : ''}</span>` : '');
+    : (k.tableNumber ? `<span><strong>${dualLabel(L.table, AR.table, showAr)}:</strong> ${k.tableNumber}${k.floorName ? ` - ${k.floorName}` : ''}</span>` : '');
 
   const bodyHtml =
     (kl.showRestaurantName !== false ? `<div class="kot-header"><div class="restaurant-name">${esc(k.restaurantName || 'Restaurant')}</div>${kl.showKotTitle !== false ? `<div class="kot-title">--- ${title} ---</div>` : ''}</div>` : (kl.showKotTitle !== false ? `<div class="kot-header"><div class="kot-title">--- ${title} ---</div></div>` : '')) +
@@ -85,7 +90,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
       (kl.showCustomer !== false && k.customerName ? `<div><strong>${dualLabel(L.customer, AR.customer, showAr)}:</strong> ${esc(k.customerName)}</div>` : '') +
     `</div>` +
     `<div class="divider">--------------------------------</div>` +
-    `<div style="font-weight:bold;margin-bottom:2px;display:flex;"><span style="width:auto;margin-right:4px;">#</span><span style="width:30px;">${dualLabel(L.qty, AR.qty, showAr)}</span><span>${dualLabel(L.item, AR.item, showAr)}</span></div>` +
+    `<div style="font-weight:bold;margin-bottom:2px;display:flex;"><span style="width:auto;margin-right:4px;">#</span><span style="width:30px;">${dualLabel(L.qty, AR.qty, showAr)}</span><span style="flex:1;">${dualLabel(L.item, AR.item, showAr)}</span>${showPrice ? '<span>Price</span>' : ''}</div>` +
     itemsHtml +
     `<div class="divider">--------------------------------</div>` +
     `<div class="kot-footer">${footerText}</div>` +

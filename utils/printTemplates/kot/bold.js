@@ -35,6 +35,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
   const { dateStr, timeStr } = formatDateTime();
   const removedItems = k.removedItems || [];
   const hasChanges = k.isIncremental && ((k.items || []).length > 0 || removedItems.length > 0);
+  const showPrice = !!printSettings.showPriceOnKot;
   const cs = k.currencySymbol || printSettings.currencySymbol || '';
 
   const renderBoldItem = (item, opts = {}) => {
@@ -50,7 +51,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
     return `<div class="item" style="${strikeStyle}">` +
       `<div style="display:flex;justify-content:space-between;align-items:flex-start;">` +
         `<div><span class="item-qty">${qty} x</span> <span class="item-name">${showAr ? dualItemName(item, showAr) : esc(item.name)}${cancelLabel}${newLabel}</span></div>` +
-        (itemTotal > 0 && cs ? `<div class="item-price">${cs}${itemTotal.toFixed(2)}</div>` : '') +
+        (showPrice && itemTotal > 0 && cs ? `<div class="item-price">${cs}${itemTotal.toFixed(2)}</div>` : '') +
       `</div>` +
       (variant ? `<div class="item-variant">${esc(variant)}</div>` : '') +
       (custs.length > 0 ? custs.map(c => `<div class="item-detail">+ ${esc(c.name || c)}</div>`).join('') : '') +

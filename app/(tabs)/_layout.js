@@ -35,6 +35,7 @@ function TabsNavigator() {
   const [businessType, setBusinessType] = useState(null);
   const [parkingEnabled, setParkingEnabled] = useState(false);
   const [isDeliveryPartner, setIsDeliveryPartner] = useState(false);
+  const [waiterAppConfig, setWaiterAppConfig] = useState({});
 
   useEffect(() => {
     // Check authentication on mount
@@ -51,8 +52,12 @@ function TabsNavigator() {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
         if (userData.isDeliveryPartner) setIsDeliveryPartner(true);
+        if (userData.restaurant?.posSettings?.waiterAppConfig) {
+          setWaiterAppConfig(userData.restaurant.posSettings.waiterAppConfig);
+        }
         // Route to correct backend based on restaurant config
         if (userData.restaurant) apiClient.setRestaurantBaseURL(userData.restaurant);
+        apiClient.setBusinessDayStartHour(userData.restaurant?.posSettings?.businessDayStartHour || 0);
         const storedType = userData.restaurant?.businessType;
         if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
@@ -148,7 +153,8 @@ function TabsNavigator() {
           // owner/admin/waiter/manager always see tables; other roles need pageAccess.tables
           href: (() => {
             if (!roleLower) return undefined;
-            if (['owner', 'admin', 'captain', 'waiter', 'manager'].includes(roleLower)) return undefined;
+            if (roleLower === 'waiter') return waiterAppConfig.showTablesTab !== false ? undefined : null;
+            if (['owner', 'admin', 'captain', 'manager'].includes(roleLower)) return undefined;
             // For cashier, sales, employee, and custom roles — check pageAccess
             if (pageAccess) {
               const val = pageAccess.tables;
@@ -185,7 +191,8 @@ function TabsNavigator() {
             if (businessType === 'bar') return null;
             // owner/admin/waiter/manager/cashier always see menu tab
             if (!roleLower) return undefined;
-            if (['owner', 'admin', 'captain', 'waiter', 'manager', 'cashier'].includes(roleLower)) return undefined;
+            if (roleLower === 'waiter') return waiterAppConfig.showMenuTab !== false ? undefined : null;
+            if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {
               const val = pageAccess.menu;
@@ -213,7 +220,7 @@ function TabsNavigator() {
         }}
       />
 
-      {/* Orders — visible to all roles */}
+      {/* Orders — visible to all roles (waiter can be hidden via config) */}
       <Tabs.Screen
         name="orders"
         options={{
@@ -226,6 +233,7 @@ function TabsNavigator() {
             />
           ),
           headerShown: false,
+          href: roleLower === 'waiter' && waiterAppConfig.showOrdersTab === false ? null : undefined,
         }}
       />
 
