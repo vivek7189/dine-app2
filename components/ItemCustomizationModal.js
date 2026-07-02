@@ -27,18 +27,23 @@ const ItemCustomizationModal = ({
   isOpen,
   onClose,
   onAddToCart,
+  initialCustomizations,
 }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [selectedCustomizations, setSelectedCustomizations] = useState([]);
+  const [selectedGroupItems, setSelectedGroupItems] = useState({});
   const [quantity, setQuantity] = useState(1);
 
   const hasVariants = item?.variants && Array.isArray(item.variants) && item.variants.length > 0;
   const hasCustomizations = item?.customizations && Array.isArray(item.customizations) && item.customizations.length > 0;
+  const hasModifierGroups = item?.modifierGroups?.length > 0;
+  const useGroupedUI = hasModifierGroups;
 
   useEffect(() => {
     if (!isOpen || !item) {
       setSelectedVariant(null);
       setSelectedCustomizations([]);
+      setSelectedGroupItems({});
       setQuantity(1);
       return;
     }
@@ -47,6 +52,17 @@ const ItemCustomizationModal = ({
       setSelectedVariant(item.variants[0]);
     } else {
       setSelectedVariant(null);
+    }
+    // Pre-populate modifier group selections when editing
+    if (item?.modifierGroups?.length > 0 && initialCustomizations?.length > 0) {
+      const map = {};
+      for (const group of item.modifierGroups) {
+        const matched = initialCustomizations.filter(c =>
+          (group.items || []).some(gi => gi.id === c.id || gi.name === c.name)
+        );
+        if (matched.length > 0) map[group.id] = matched.map(c => ({ id: c.id, name: c.name, price: c.price || 0 }));
+      }
+      setSelectedGroupItems(map);
     }
   }, [isOpen, item]);
 
@@ -79,8 +95,40 @@ const ItemCustomizationModal = ({
     });
   };
 
+  const handleGroupItemToggle = (group, groupItem) => {
+    setSelectedGroupItems(prev => {
+      const current = prev[group.id] || [];
+      const isRadio = (group.max || 1) === 1;
+      let updated;
+      if (isRadio) {
+        updated = current.some(c => c.id === groupItem.id) ? [] : [{ id: groupItem.id, name: groupItem.name, price: groupItem.price || 0 }];
+      } else {
+        const exists = current.findIndex(c => c.id === groupItem.id);
+        if (exists >= 0) {
+          updated = current.filter((_, i) => i !== exists);
+        } else {
+          if (current.length >= (group.max || 1)) return prev;
+          updated = [...current, { id: groupItem.id, name: groupItem.name, price: groupItem.price || 0 }];
+        }
+      }
+      const next = { ...prev, [group.id]: updated };
+      // Sync flat selectedCustomizations
+      const flat = Object.values(next).flat();
+      setSelectedCustomizations(flat);
+      return next;
+    });
+  };
+
+  const isGroupValid = (group) => {
+    const sel = selectedGroupItems[group.id] || [];
+    if (group.required) return sel.length >= (group.min || 1);
+    return true;
+  };
+  const allGroupsValid = !hasModifierGroups || item.modifierGroups.every(g => isGroupValid(g));
+
   const handleAddToCart = () => {
     if (hasVariants && !selectedVariant) return;
+    if (hasModifierGroups && !allGroupsValid) return;
 
     const cartItem = {
       ...item,
@@ -103,11 +151,12 @@ const ItemCustomizationModal = ({
     onAddToCart(cartItem);
     setSelectedVariant(null);
     setSelectedCustomizations([]);
+    setSelectedGroupItems({});
     setQuantity(1);
     onClose();
   };
 
-  const canAdd = !hasVariants || !!selectedVariant;
+  const canAdd = (!hasVariants || !!selectedVariant) && (!hasModifierGroups || allGroupsValid);
 
   return (
     <Modal
@@ -175,8 +224,69 @@ const ItemCustomizationModal = ({
               </View>
             )}
 
-            {/* Customizations */}
-            {hasCustomizations && (
+            {/* Modifier Groups UI */}
+            {useGroupedUI && item.modifierGroups.map((group) => {
+              const selItems = selectedGroupItems[group.id] || [];
+              const isRadio = (group.max || 1) === 1;
+              const valid = isGroupValid(group);
+              return (
+                <View key={group.id} style={styles.section}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={styles.sectionTitle}>{group.name}</Text>
+                    {group.required && (
+                      <View style={{ backgroundColor: '#fef2f2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RED }}>Required</Text>
+                      </View>
+                    )}
+                    <Text style={{ fontSize: 12, color: GRAY_500, marginLeft: 'auto' }}>
+                      {selItems.length}/{group.max || 1}
+                    </Text>
+                  </View>
+                  {(group.items || []).map((groupItem) => {
+                    const isSelected = selItems.some(c => c.id === groupItem.id);
+                    return (
+                      <TouchableOpacity
+                        key={groupItem.id}
+                        onPress={() => handleGroupItemToggle(group, groupItem)}
+                        style={[
+                          styles.optionBtn,
+                          isSelected && styles.optionBtnSelected,
+                        ]}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.optionLeft}>
+                          {isRadio ? (
+                            <View style={[styles.radio, isSelected && styles.radioSelected]}>
+                              {isSelected && <View style={styles.radioInner} />}
+                            </View>
+                          ) : (
+                            <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                              {isSelected && (
+                                <Ionicons name="checkmark" size={14} color="#fff" />
+                              )}
+                            </View>
+                          )}
+                          <Text style={styles.optionName}>{groupItem.name}</Text>
+                        </View>
+                        {groupItem.price > 0 && (
+                          <Text style={[styles.optionPrice, isSelected && { color: RED }]}>
+                            +{getCurrencySymbol()}{groupItem.price}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {group.required && !valid && (
+                    <Text style={{ fontSize: 12, color: RED, marginTop: 4 }}>
+                      Please select at least {group.min || 1} option{(group.min || 1) > 1 ? 's' : ''}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
+
+            {/* Customizations (flat, non-grouped) */}
+            {!useGroupedUI && hasCustomizations && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Add Toppings/Extras</Text>
                 {item.customizations.map((customization, index) => {
@@ -276,6 +386,9 @@ const ItemCustomizationModal = ({
             </TouchableOpacity>
             {hasVariants && !selectedVariant && (
               <Text style={styles.validationText}>Please select a size/portion</Text>
+            )}
+            {hasModifierGroups && !allGroupsValid && (
+              <Text style={styles.validationText}>Please complete all required modifier selections</Text>
             )}
           </View>
         </View>

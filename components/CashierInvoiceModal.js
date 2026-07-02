@@ -97,6 +97,7 @@ export default function CashierInvoiceModal({
     const vatNumber = showTaxId ? invoiceData.restaurantInfo?.vatNumber : null;
     const taxId = showTaxId ? invoiceData.restaurantInfo?.taxId : null;
     const bizRegNum = showTaxId ? invoiceData.restaurantInfo?.businessRegistrationNumber : null;
+    const idTaxLabel = invoiceData.restaurantInfo?.currencySettings?.taxLabel || 'Tax ID';
 
     const invoiceText = `
 ================================
@@ -104,8 +105,8 @@ export default function CashierInvoiceModal({
 ${legalName ? `        ${legalName}` : ''}
 ${gstin ? `GSTIN: ${gstin}` : ''}${fssai ? `
 FSSAI: ${fssai}` : ''}${vatNumber ? `
-Tax ID: ${vatNumber}` : ''}${taxId ? `
-Tax ID: ${taxId}` : ''}${bizRegNum ? `
+${idTaxLabel}: ${vatNumber}` : ''}${taxId ? `
+${idTaxLabel}: ${taxId}` : ''}${bizRegNum ? `
 Reg#: ${bizRegNum}` : ''}${businessAddress ? `
 ${businessAddress}` : ''}
 ================================
@@ -181,6 +182,7 @@ Thank you for your order!
       customerName: invoiceData.customerName,
       waiterName: invoiceData.staffName,
       // Identity fields from restaurantInfo
+      restaurantLegalName: ri.legalBusinessName,
       showGstOnInvoice: ri.showGstOnInvoice,
       legalBusinessName: ri.legalBusinessName,
       gstin: ri.gstin,
@@ -190,6 +192,8 @@ Thank you for your order!
       vatNumber: ri.vatNumber,
       taxId: ri.taxId,
       businessRegistrationNumber: ri.businessRegistrationNumber,
+      countryCode: ri.countryCode,
+      identityTaxLabel: ri.currencySettings?.taxLabel || '',
       address: ri.address,
     };
     return renderBill(invoice, printSettings, {});
@@ -421,10 +425,10 @@ Thank you for your order!
                   <Text style={styles.gstinText}>FSSAI: {invoiceData.restaurantInfo.fssai}</Text>
                 )}
                 {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.vatNumber && (
-                  <Text style={styles.gstinText}>Tax ID: {invoiceData.restaurantInfo.vatNumber}</Text>
+                  <Text style={styles.gstinText}>{invoiceData.restaurantInfo?.currencySettings?.taxLabel || 'Tax ID'}: {invoiceData.restaurantInfo.vatNumber}</Text>
                 )}
                 {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.taxId && (
-                  <Text style={styles.gstinText}>Tax ID: {invoiceData.restaurantInfo.taxId}</Text>
+                  <Text style={styles.gstinText}>{invoiceData.restaurantInfo?.currencySettings?.taxLabel || 'Tax ID'}: {invoiceData.restaurantInfo.taxId}</Text>
                 )}
                 {invoiceData.restaurantInfo?.showTaxIdOnInvoice === true && invoiceData.restaurantInfo?.businessRegistrationNumber && (
                   <Text style={styles.gstinText}>Reg#: {invoiceData.restaurantInfo.businessRegistrationNumber}</Text>

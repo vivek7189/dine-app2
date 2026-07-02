@@ -49,6 +49,7 @@ export default function CartModal({
   restaurantId,
   sending,
   countryCode = 'IN',
+  defaultTaxName = 'Tax',
   onOrderTypeChange,
   hasTable = false,
   multiPricingEnabled = false,
@@ -474,6 +475,7 @@ export default function CartModal({
     tipAmount,
     cart,
     categories,
+    defaultTaxName,
   });
 
   // Loyalty max redeemable

@@ -168,6 +168,77 @@ export default function MenuItemForm({
     setFormData({ ...formData, customizations });
   };
 
+  // --- Modifier Group helpers ---
+  const addModifierGroup = () => {
+    const groups = [...(formData.modifierGroups || []), {
+      id: `mg_${Date.now()}`,
+      name: '',
+      required: false,
+      min: 0,
+      max: 1,
+      items: [],
+    }];
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const updateModifierGroup = (index, field, value) => {
+    const groups = [...(formData.modifierGroups || [])];
+    groups[index] = { ...groups[index], [field]: value };
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const removeModifierGroup = (index) => {
+    const groups = (formData.modifierGroups || []).filter((_, i) => i !== index);
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const addItemToGroup = (groupIndex) => {
+    const groups = [...(formData.modifierGroups || [])];
+    groups[groupIndex] = {
+      ...groups[groupIndex],
+      items: [...(groups[groupIndex].items || []), { id: `gi_${Date.now()}`, name: '', price: '' }],
+    };
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const updateGroupItem = (groupIndex, itemIndex, field, value) => {
+    const groups = [...(formData.modifierGroups || [])];
+    const items = [...(groups[groupIndex].items || [])];
+    items[itemIndex] = { ...items[itemIndex], [field]: value };
+    groups[groupIndex] = { ...groups[groupIndex], items };
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const removeGroupItem = (groupIndex, itemIndex) => {
+    const groups = [...(formData.modifierGroups || [])];
+    groups[groupIndex] = {
+      ...groups[groupIndex],
+      items: (groups[groupIndex].items || []).filter((_, i) => i !== itemIndex),
+    };
+    setFormData({ ...formData, modifierGroups: groups });
+  };
+
+  const migrateCustomizationsToGroup = () => {
+    if (!formData.customizations?.length) return;
+    const newGroup = {
+      id: `mg_${Date.now()}`,
+      name: 'Add-ons',
+      required: false,
+      min: 0,
+      max: formData.customizations.length,
+      items: formData.customizations.map((c, i) => ({
+        id: c.id || `gi_migrated_${i}_${Date.now()}`,
+        name: c.name,
+        price: c.price || '',
+      })),
+    };
+    setFormData({
+      ...formData,
+      modifierGroups: [...(formData.modifierGroups || []), newGroup],
+      customizations: [],
+    });
+  };
+
   // --- Generic dropdown picker ---
   const renderDropdownPicker = (options, currentValue, onSelect, showState, setShowState, placeholder) => (
     <>
@@ -628,6 +699,121 @@ export default function MenuItemForm({
               value={custom.description || ''}
               onChangeText={(text) => updateCustomization(index, 'description', text)}
             />
+          </View>
+        ))}
+      </View>
+
+      {/* ========== MODIFIER GROUPS SECTION ========== */}
+      <View style={styles.inputGroup}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.label}>Modifier Groups</Text>
+          <TouchableOpacity style={styles.addRowButton} onPress={addModifierGroup}>
+            <Ionicons name="add-circle" size={22} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.hintText}>
+          Group add-ons together (e.g., "Choose Sauce", "Select Toppings")
+        </Text>
+
+        {/* Migrate existing customizations */}
+        {(formData.customizations || []).length > 0 && (formData.modifierGroups || []).length === 0 && (
+          <TouchableOpacity
+            style={[styles.templateButton, { marginBottom: Spacing.sm }]}
+            onPress={migrateCustomizationsToGroup}
+          >
+            <Text style={styles.templateButtonText}>Migrate existing add-ons to a group</Text>
+          </TouchableOpacity>
+        )}
+
+        {(formData.modifierGroups || []).map((group, gIndex) => (
+          <View key={group.id || gIndex} style={[styles.variantCard, { padding: 12 }]}>
+            {/* Group header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder="Group name (e.g., Choose Sauce)"
+                placeholderTextColor={Colors.textLight}
+                value={group.name}
+                onChangeText={(text) => updateModifierGroup(gIndex, 'name', text)}
+              />
+              <TouchableOpacity
+                style={styles.removeRowButton}
+                onPress={() => removeModifierGroup(gIndex)}
+              >
+                <Ionicons name="close-circle" size={22} color={Colors.error} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Group settings row */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                onPress={() => updateModifierGroup(gIndex, 'required', !group.required)}
+              >
+                <Ionicons
+                  name={group.required ? 'checkbox' : 'square-outline'}
+                  size={18}
+                  color={group.required ? Colors.primary : Colors.textLight}
+                />
+                <Text style={{ fontSize: 12, color: Colors.textDark }}>Required</Text>
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+                <Text style={{ fontSize: 12, color: Colors.textMedium }}>Min:</Text>
+                <TextInput
+                  style={[styles.input, { width: 40, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 12 }]}
+                  keyboardType="number-pad"
+                  value={String(group.min || 0)}
+                  onChangeText={(text) => updateModifierGroup(gIndex, 'min', parseInt(text) || 0)}
+                />
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 12, color: Colors.textMedium }}>Max:</Text>
+                <TextInput
+                  style={[styles.input, { width: 40, paddingVertical: 4, paddingHorizontal: 6, textAlign: 'center', fontSize: 12 }]}
+                  keyboardType="number-pad"
+                  value={String(group.max || 1)}
+                  onChangeText={(text) => updateModifierGroup(gIndex, 'max', parseInt(text) || 1)}
+                />
+              </View>
+            </View>
+
+            {/* Group items */}
+            {(group.items || []).map((gItem, iIndex) => (
+              <View key={gItem.id || iIndex} style={styles.variantRow}>
+                <TextInput
+                  style={[styles.input, { flex: 2 }]}
+                  placeholder="Item name"
+                  placeholderTextColor={Colors.textLight}
+                  value={gItem.name}
+                  onChangeText={(text) => updateGroupItem(gIndex, iIndex, 'name', text)}
+                />
+                <TextInput
+                  style={[styles.input, { flex: 1, marginLeft: Spacing.xs }]}
+                  placeholder="Price"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="decimal-pad"
+                  value={gItem.price?.toString() || ''}
+                  onChangeText={(text) => updateGroupItem(gIndex, iIndex, 'price', text)}
+                />
+                <TouchableOpacity
+                  style={styles.removeRowButton}
+                  onPress={() => removeGroupItem(gIndex, iIndex)}
+                >
+                  <Ionicons name="close-circle" size={22} color={Colors.error} />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            {/* Add item button */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}
+              onPress={() => addItemToGroup(gIndex)}
+            >
+              <Ionicons name="add-circle-outline" size={18} color={Colors.primary} />
+              <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: '600' }}>Add Item</Text>
+            </TouchableOpacity>
           </View>
         ))}
       </View>

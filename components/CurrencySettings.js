@@ -50,7 +50,7 @@ export default function CurrencySettings({ restaurantId, onSettingsChange }) {
   const [currencyCode, setCurrencyCode] = useState('INR');
   const [currencySymbol, setCurrencySymbol] = useState('₹');
   const [symbolPosition, setSymbolPosition] = useState('before');
-  const [taxLabel, setTaxLabel] = useState('GST');
+  const [taxLabel, setTaxLabel] = useState('Tax');
 
   useEffect(() => {
     loadSettings();
@@ -88,7 +88,7 @@ export default function CurrencySettings({ restaurantId, onSettingsChange }) {
     setCurrencyCode(data.currencyCode || 'INR');
     setCurrencySymbol(data.currencySymbol || '₹');
     setSymbolPosition(data.symbolPosition || 'before');
-    setTaxLabel(data.taxLabel || 'GST');
+    setTaxLabel(data.taxLabel || 'Tax');
   };
 
   const selectCountry = async (country) => {

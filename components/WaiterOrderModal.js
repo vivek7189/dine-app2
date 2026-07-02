@@ -265,7 +265,7 @@ export default function WaiterOrderModal({
 
   // ─── Cart Actions ───
   const addToCart = useCallback((item) => {
-    const hasOptions = (item.variants?.length > 0) || (item.customizations?.length > 0);
+    const hasOptions = (item.variants?.length > 0) || (item.customizations?.length > 0) || (item.modifierGroups?.length > 0);
     if (hasOptions) {
       setCustomizationItem(item);
       return;

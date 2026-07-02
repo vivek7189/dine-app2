@@ -69,14 +69,15 @@ export function buildIdentityHtml(info, printSettings) {
   if (info.showGstOnInvoice && info.gstin) lines.push('GSTIN: ' + info.gstin);
   if (info.showFssaiOnInvoice && info.fssai) lines.push('FSSAI: ' + info.fssai);
   if (info.showTaxIdOnInvoice && info.vatNumber) {
-    const prefix = info.countryCode === 'GB' ? 'VAT: '
-      : info.countryCode === 'CA' ? 'GST/HST: '
-      : info.countryCode === 'AE' ? 'TRN: '
+    const tl = info.identityTaxLabel || info.taxLabel;
+    const prefix = info.countryCode === 'AE' || info.countryCode === 'SA' ? 'TRN: '
+      : tl ? tl + ': '
       : 'Tax ID: ';
     lines.push(prefix + info.vatNumber);
   }
   if (info.showTaxIdOnInvoice && info.taxId) {
-    lines.push((info.countryCode === 'AU' ? 'ABN: ' : 'Tax ID: ') + info.taxId);
+    const tl = info.identityTaxLabel || info.taxLabel;
+    lines.push((info.countryCode === 'AU' ? 'ABN: ' : tl ? tl + ': ' : 'Tax ID: ') + info.taxId);
   }
   if (info.showTaxIdOnInvoice && info.businessRegistrationNumber)
     lines.push('Reg#: ' + info.businessRegistrationNumber);

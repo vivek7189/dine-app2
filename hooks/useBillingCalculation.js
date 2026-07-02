@@ -78,6 +78,7 @@ export default function useBillingCalculation({
   tipAmount = 0,
   cart = [],        // Cart items (needed for per-item tax)
   categories = [],  // Restaurant categories with taxGroupId (needed for per-item tax)
+  defaultTaxName = 'Tax',  // Fallback tax name when no named taxes defined (from currencySettings.taxLabel)
 }) {
   return useMemo(() => {
     // Step 1: Total discount
@@ -162,7 +163,7 @@ export default function useBillingCalculation({
           const amount = isGlobalInclusive
             ? Math.round(taxableAmount * taxSettings.defaultTaxRate / (100 + taxSettings.defaultTaxRate) * 100) / 100
             : Math.round(taxableAmount * taxSettings.defaultTaxRate / 100 * 100) / 100;
-          taxBreakdown = [{ name: 'GST', rate: taxSettings.defaultTaxRate, amount, inclusive: isGlobalInclusive }];
+          taxBreakdown = [{ name: defaultTaxName, rate: taxSettings.defaultTaxRate, amount, inclusive: isGlobalInclusive }];
           totalTax = amount;
           exclusiveTaxTotal = isGlobalInclusive ? 0 : amount;
         }

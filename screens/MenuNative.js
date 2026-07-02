@@ -1074,7 +1074,7 @@ export default function MenuScreen() {
   const handleItemPress = useCallback((item) => {
     const hasVariants = item?.variants && Array.isArray(item.variants) && item.variants.length > 0;
     const hasCustomizations = item?.customizations && Array.isArray(item.customizations) && item.customizations.length > 0;
-    if (hasVariants || hasCustomizations) {
+    if (hasVariants || hasCustomizations || item.modifierGroups?.length > 0) {
       setSelectedItemForCustomization(item);
       setCustomizationModalOpen(true);
     } else {
@@ -1180,7 +1180,8 @@ export default function MenuScreen() {
     // Fallback to single rate
     const rate = taxSettings.rate || 0;
     const taxAmount = subtotal * (rate / 100);
-    return { taxAmount, taxRate: rate, taxLabel: rate > 0 ? `GST (${rate}%)` : '' };
+    const taxName = user?.restaurant?.currencySettings?.taxLabel || 'Tax';
+    return { taxAmount, taxRate: rate, taxLabel: rate > 0 ? `${taxName} (${rate}%)` : '' };
   };
 
   const getGrandTotal = () => {
@@ -3137,7 +3138,8 @@ export default function MenuScreen() {
         restaurantId={restaurantId}
         restaurantName={restaurantName}
         sending={sendingOrder}
-        countryCode="IN"
+        countryCode={user?.restaurant?.currencySettings?.countryCode || 'IN'}
+        defaultTaxName={user?.restaurant?.currencySettings?.taxLabel || 'Tax'}
         onOrderTypeChange={handleOrderTypeChange}
         hasTable={!!selectedTable?.name}
         multiPricingEnabled={multiPricingEnabled}
