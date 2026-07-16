@@ -3,7 +3,7 @@
 // quantity breakdowns (x2 @ $15.00), dashed dividers, monospace feel.
 
 import {
-  esc, getBillLabels, buildIdentityHtml,
+  esc, getBillLabels, buildIdentityHtml, getSeatTagHtml,
   buildChargesHtml, buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
   getPrintFontSizes, getPrintFontFamily, getBillHeaderHTML, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
@@ -45,7 +45,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
     const variant = item.selectedVariant?.name || item.variant || '';
     const custs = item.selectedCustomizations || item.customizations || [];
 
-    let html = `<div class="item-row"><span>${showAr ? dualItemName(item, showAr) : esc(item.name)}</span><span>${cs}${lineTotal.toFixed(2)}</span></div>`;
+    let html = `<div class="item-row"><span>${showAr ? dualItemName(item, showAr) : esc(item.name)}${getSeatTagHtml(item)}</span><span>${cs}${lineTotal.toFixed(2)}</span></div>`;
     // Show quantity breakdown if qty > 1
     if (qty > 1) {
       html += `<div class="item-sub">x${qty} @ ${cs}${unitPrice.toFixed(2)}</div>`;
@@ -117,7 +117,9 @@ export function render(invoice, printSettings = {}, labels = {}) {
       `<span>${justDate} - ${timeStr}</span>` +
     `</div>` +
     (bl.showTable !== false && invoice.tableNumber ? `<div class="info-line"><span>${dualLabel(L.table, AR.table, showAr)}: ${invoice.tableNumber}${invoice.floorName ? ` - ${invoice.floorName}` : ''}</span>${bl.showPayment !== false ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : '') +
+    (bl.showCovers !== false && invoice.covers && invoice.covers > 1 ? `<div class="info-line"><span>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}: ${invoice.covers}</span></div>` : '') +
     (bl.showCustomer !== false && invoice.customerName ? `<div class="info-line"><span>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(invoice.customerName)}</span></div>` : '') +
+    (bl.showCustomerPhone && invoice.customerPhone ? `<div class="info-line"><span>${dualLabel('Phone', 'هاتف', showAr)}: ${esc(invoice.customerPhone)}</span></div>` : '') +
     (bl.showOrderType !== false && invoice.orderType ? `<div class="info-line"><span>Order Type: ${esc(invoice.orderType)}</span></div>` : '') +
     (bl.showWaiter !== false && waiterInfo ? `<div class="info-line"><span>#${invoice.dailyOrderId || invoice.id || 'N/A'}</span></div>` : '') +
     deliveryHtml +

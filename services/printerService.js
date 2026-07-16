@@ -35,6 +35,7 @@ try {
 }
 import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
+import { seatLetter } from '../utils/seatOrdering';
 import { renderKOT } from '../utils/printTemplates/index';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
@@ -773,7 +774,8 @@ export const generateBillText = (invoiceData) => {
     const qty = item.quantity || 1;
     const price = item.price || item.total / qty;
     const total = item.total || 0;
-    const name = item.name || 'Item';
+    const seatTag = seatLetter(item.seat) ? ` [${seatLetter(item.seat)}]` : '';
+    const name = (item.name || 'Item') + seatTag;
     // Item name line
     lines.push(name.length > W ? name.substring(0, W - 1) + '.' : name);
     // Variant (e.g., Half, Full)
@@ -938,9 +940,10 @@ export const generateKOTText = (data) => {
     const qty = item.quantity || 1;
     const tag = opts.isRemoved ? ' [CANCEL]' : (opts.showDelta && item.quantityDelta > 0 ? ' [+NEW]' : '');
     const name = item.name || 'Item';
+    const seatTag = seatLetter(item.seat) ? ` [${seatLetter(item.seat)}]` : '';
     // Qty column (4 chars) + Item name
     const qtyCol = `${qty}x`.padEnd(4);
-    const itemLine = `${qtyCol}${name}${tag}`;
+    const itemLine = `${qtyCol}${name}${seatTag}${tag}`;
     const lines = [itemLine];
     if (item.selectedVariant?.name) lines.push(`    [${item.selectedVariant.name}]`);
     if (item.selectedCustomizations?.length > 0) {
@@ -1072,6 +1075,7 @@ export const generateKOTHTML = (orderData, printSettings = {}) => {
     removedItems: orderData.removedItems || [],
     isIncremental: orderData.isIncremental || false,
     currencySymbol: orderData.currencySymbol || '',
+    covers: orderData.covers || 1,
   };
   return renderKOT(kotData, printSettings, {});
 };
@@ -1281,6 +1285,21 @@ export const printContent = async ({ html, text, silentOnly = false }) => {
 
     throw new Error('No printable content provided');
   });
+};
+
+/**
+ * Open cash drawer via ESC/POS pulse command
+ */
+export const openCashDrawer = async () => {
+  const mod = getThermalModule();
+  if (!mod) return;
+  // ESC p 0 25 120 — standard cash drawer kick pulse
+  const kickCmd = '\x1B\x70\x00\x19\x78';
+  try {
+    await mod.printBill(kickCmd, { beep: false, cut: false, tailingLine: false });
+  } catch (err) {
+    console.warn('Cash drawer open failed:', err.message);
+  }
 };
 
 /**

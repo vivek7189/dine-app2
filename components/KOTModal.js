@@ -19,6 +19,7 @@ import * as printerService from '../services/printerService';
 import { getPrintStationConfig, printKOTsByStation } from '../services/multiPrinterService';
 import { renderKOT } from '../utils/printTemplates/index';
 import { getItemSubline } from '../utils/itemSubline';
+import { seatLetter } from '../utils/seatOrdering';
 
 // ─── Theme ───
 const PRIMARY = '#c0392b';
@@ -190,12 +191,19 @@ export default function KOTModal({
           <Text style={[st.itemQtyText, tagColor && { color: tagColor }]}>{qty}x</Text>
         </View>
         <View style={st.itemInfo}>
-          <Text
-            style={[st.itemName, strikethrough && { textDecorationLine: 'line-through', color: '#94a3b8' }]}
-            numberOfLines={2}
-          >
-            {item.name}
-          </Text>
+          <View style={st.itemNameRow}>
+            <Text
+              style={[st.itemName, strikethrough && { textDecorationLine: 'line-through', color: '#94a3b8' }]}
+              numberOfLines={2}
+            >
+              {item.name}
+            </Text>
+            {item.seat != null && (
+              <View style={st.seatBadge}>
+                <Text style={st.seatBadgeText}>{seatLetter(item.seat)}</Text>
+              </View>
+            )}
+          </View>
           {subline ? <Text style={st.itemSub} numberOfLines={1}>{subline}</Text> : null}
           {item.notes ? (
             <View style={st.itemNoteRow}>
@@ -568,11 +576,26 @@ const st = StyleSheet.create({
     flex: 1,
     paddingTop: 2,
   },
+  itemNameRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
   itemName: {
     fontSize: 15,
     fontWeight: '600',
     color: '#1a1a2e',
     lineHeight: 20,
+    flexShrink: 1,
+  },
+  seatBadge: {
+    backgroundColor: PRIMARY_BG,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  seatBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: PRIMARY_DARK,
   },
   itemSub: {
     fontSize: 11,

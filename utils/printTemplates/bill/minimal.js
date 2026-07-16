@@ -2,7 +2,7 @@
 // No borders/dividers, clean whitespace-based layout, inline quantities, modern aesthetic.
 
 import {
-  esc, getBillLabels, buildIdentityHtml,
+  esc, getBillLabels, buildIdentityHtml, getSeatTagHtml,
   buildChargesHtml, buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
   getPrintFontSizes, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
@@ -44,7 +44,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
     const variant = item.selectedVariant?.name || item.variant || '';
     const custs = item.selectedCustomizations || item.customizations || [];
 
-    let html = `<div class="item-row"><span class="item-name">${qty > 1 ? qty + 'x ' : ''}${dualItemName(item, showAr)}</span><span class="item-amount">${cs}${lineTotal.toFixed(2)}</span></div>`;
+    let html = `<div class="item-row"><span class="item-name">${qty > 1 ? qty + 'x ' : ''}${dualItemName(item, showAr)}${getSeatTagHtml(item)}</span><span class="item-amount">${cs}${lineTotal.toFixed(2)}</span></div>`;
     if (variant) html += `<div class="item-sub">${esc(variant)}</div>`;
     if (custs.length > 0) html += `<div class="item-sub">${custs.map(c => esc(c.name || c)).join(', ')}</div>`;
     if (item.notes) html += `<div class="item-sub" style="font-style:italic;">${esc(item.notes)}</div>`;
@@ -91,8 +91,10 @@ export function render(invoice, printSettings = {}, labels = {}) {
     `<div class="meta">` +
       `<div class="meta-row"><span>${dualLabel(L.billLabel, AR.billLabel, showAr)}# ${invoice.dailyOrderId || invoice.id || 'N/A'}</span><span>${dateStr}</span></div>` +
       (bl.showTable !== false && invoice.tableNumber ? `<div class="meta-row"><span>${dualLabel(L.table, AR.table, showAr)} ${invoice.tableNumber}${invoice.floorName ? ` - ${invoice.floorName}` : ''}</span>${bl.showPayment !== false ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (bl.showPayment !== false ? `<div class="meta-row"><span>${dualLabel(L.payment, AR.payment, showAr)}: ${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
+      (bl.showCovers !== false && invoice.covers && invoice.covers > 1 ? `<div class="meta-row"><span>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}: ${invoice.covers}</span></div>` : '') +
       (bl.showWaiter !== false && invoice.waiterName ? `<div class="meta-row"><span>Waiter: ${esc(invoice.waiterName)}</span></div>` : '') +
       (bl.showCustomer !== false && invoice.customerName ? `<div class="meta-row"><span>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(invoice.customerName)}</span></div>` : '') +
+      (bl.showCustomerPhone && invoice.customerPhone ? `<div class="meta-row"><span>${dualLabel('Phone', 'هاتف', showAr)}: ${esc(invoice.customerPhone)}</span></div>` : '') +
       (bl.showOrderType !== false && invoice.orderType ? `<div class="meta-row"><span>Order Type: ${esc(invoice.orderType)}</span></div>` : '') +
     `</div>` +
     deliveryHtml +

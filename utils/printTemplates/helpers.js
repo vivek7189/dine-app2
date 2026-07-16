@@ -2,6 +2,8 @@
 // Self-contained - includes printFontSizes functions inline since the mobile app
 // doesn't have a separate printFontSizes module.
 
+import { seatLetter } from '../seatOrdering';
+
 // ── Print Font System ──────────────────────────────────────────────────────────
 
 const PRINT_FONTS = [
@@ -58,6 +60,12 @@ export const getBillHeaderHTML = (restaurantName, identityHtml, receiptLogo, bil
 // HTML-escape a string
 export const esc = (str) => String(str ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Bold seat tag (e.g. " [A]") appended after item names on KOTs/bills. Empty when no seat.
+export function getSeatTagHtml(item) {
+  const letter = seatLetter(item?.seat);
+  return letter ? ` <strong>[${letter}]</strong>` : '';
+}
+
 // Build identity lines (GSTIN, FSSAI, VAT, address, phone) for bill header.
 export function buildIdentityHtml(info, printSettings) {
   const bl = printSettings?.billLayout || {};
@@ -107,7 +115,7 @@ export function renderKOTItemRow(item, opts = {}, labels = {}) {
   const price = item.price || (item.total ? item.total / (item.quantity || 1) : 0);
   const itemTotal = price * qty;
   const priceHtml = (opts.showPrice && itemTotal > 0 && !opts.isRemoved) ? `<span style="float:right;font-weight:bold;">${opts.currencySymbol || ''}${itemTotal.toFixed(2)}</span>` : '';
-  return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${label}</span>${priceHtml}</div>` +
+  return `<div class="item" style="${strikeStyle}"><div class="item-main"><span class="item-qty">${qty}x</span><span class="item-name">${esc(item.name)}${getSeatTagHtml(item)}${label}</span>${priceHtml}</div>` +
     (item.selectedVariant?.name ? `<div class="item-detail">[${esc(item.selectedVariant.name)}]</div>` : '') +
     ((item.selectedCustomizations || []).map(c => `<div class="item-detail">+ ${esc(c.name || c)}</div>`).join('')) +
     (item.notes ? `<div class="item-note">${noteLabel}: ${esc(item.notes)}</div>` : '') +
@@ -161,7 +169,7 @@ export function buildKOTItemsSections(kotData, renderRowFn, labels = {}) {
 // Build bill items table rows HTML
 export function buildBillItemRows(items, cs, showAr) {
   return items.map(item =>
-    `<tr><td style="text-align:left;">${showAr ? dualItemName(item, showAr) : esc(item.name)}${getSublineHtml(item)}</td>` +
+    `<tr><td style="text-align:left;">${showAr ? dualItemName(item, showAr) : esc(item.name)}${getSeatTagHtml(item)}${getSublineHtml(item)}</td>` +
     `<td style="text-align:center;">${item.quantity || 1}</td>` +
     `<td style="text-align:right;">${cs}${((item.price || item.total / (item.quantity || 1) || 0) * (item.quantity || 1)).toFixed(2)}</td></tr>`
   ).join('');

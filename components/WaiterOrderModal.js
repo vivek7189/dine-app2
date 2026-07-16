@@ -4,7 +4,7 @@ import {
   TextInput, ActivityIndicator, Alert, Vibration, Animated,
   KeyboardAvoidingView, Platform, Keyboard, ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
@@ -12,6 +12,7 @@ import * as printerService from '../services/printerService';
 import { getPrintStationConfig, printKOTsByStation, getLocalKotPrintingEnabled } from '../services/multiPrinterService';
 import { formatCurrency } from '../utils/formatCurrency';
 import { getItemSubline } from '../utils/itemSubline';
+import { sanitizeSeat, seatLetter, isSeatOrderingEnabled } from '../utils/seatOrdering';
 import { useResponsive } from '../hooks/useResponsive';
 import { useToast } from './Toast';
 import ItemCustomizationModal from './ItemCustomizationModal';
@@ -55,9 +56,14 @@ export default function WaiterOrderModal({
   floorId,
   existingOrderId,
   onOrderSent,
+  posSettings,
 }) {
   const { fs, r, isTablet } = useResponsive();
   const { toast, ToastView } = useToast();
+  const insets = useSafeAreaInsets();
+  // Space to keep the sticky bottom bars clear of the device navigation bar
+  // (Android 3-button/gesture nav, iOS home indicator) on every device.
+  const bottomInset = Math.max(insets.bottom, 8);
 
   // Data state
   const [loading, setLoading] = useState(true);
@@ -72,6 +78,12 @@ export default function WaiterOrderModal({
   const [existingOrderItems, setExistingOrderItems] = useState(null);
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [sendingOrder, setSendingOrder] = useState(false);
+  const [covers, setCovers] = useState(1);
+
+  // Seat-level ordering (posSettings.seatOrdering: 'off' | 'optional' | 'required')
+  const seatEnabled = isSeatOrderingEnabled(posSettings || user?.restaurant?.posSettings);
+  const [activeSeat, setActiveSeat] = useState(null);       // null = shared "Table"
+  const [manualSeatCount, setManualSeatCount] = useState(0); // chips added via '+'
 
   // Customer state
   const [customerPhone, setCustomerPhone] = useState('');
@@ -119,6 +131,9 @@ export default function WaiterOrderModal({
       setCustomerName('');
       setCustomerData(null);
       setCustomerLookupStatus('idle');
+      setCovers(1);
+      setActiveSeat(null);
+      setManualSeatCount(0);
       setLoading(true);
       return;
     }
@@ -183,7 +198,7 @@ export default function WaiterOrderModal({
             if (order?.items && !cancelled) {
               const cartItems = order.items.map((item, idx) => ({
                 ...item,
-                cartId: `existing-${item.menuItemId || item.id || idx}-${Date.now()}`,
+                cartId: `existing-${item.menuItemId || item.id || 'item'}-${idx}-${Date.now()}`,
                 menuItemId: item.menuItemId || item.id,
               }));
               setCart(cartItems);
@@ -191,6 +206,8 @@ export default function WaiterOrderModal({
                 menuItemId: i.menuItemId || i.id,
                 name: i.name,
                 quantity: i.quantity,
+                selectedVariant: i.selectedVariant || null,
+                seat: sanitizeSeat(i.seat),
               })));
               if (order.specialInstructions) setSpecialInstructions(order.specialInstructions);
               // Pre-fill customer info from existing order
@@ -270,8 +287,9 @@ export default function WaiterOrderModal({
       setCustomizationItem(item);
       return;
     }
+    const seatToAssign = seatEnabled ? sanitizeSeat(activeSeat) : null;
     setCart(prev => {
-      const existing = prev.find(c => c.menuItemId === item.id && !c.selectedVariant && (!c.selectedCustomizations || c.selectedCustomizations.length === 0));
+      const existing = prev.find(c => c.menuItemId === item.id && !c.selectedVariant && (!c.selectedCustomizations || c.selectedCustomizations.length === 0) && (c.seat ?? null) === (seatToAssign ?? null));
       if (existing) {
         return prev.map(c => c === existing ? { ...c, quantity: c.quantity + 1 } : c);
       }
@@ -283,19 +301,22 @@ export default function WaiterOrderModal({
         notes: '',
         selectedVariant: null,
         selectedCustomizations: [],
+        ...(seatToAssign != null ? { seat: seatToAssign } : {}),
       }];
     });
     if (vibrationEnabled) Vibration.vibrate(30);
-  }, [vibrationEnabled]);
+  }, [vibrationEnabled, seatEnabled, activeSeat]);
 
   const handleCustomizationAdd = useCallback((cartItem) => {
+    const seatToAssign = seatEnabled ? sanitizeSeat(activeSeat) : null;
     setCart(prev => [...prev, {
       ...cartItem,
       menuItemId: cartItem.menuItemId || cartItem.id,
+      ...(seatToAssign != null ? { seat: seatToAssign } : {}),
     }]);
     setCustomizationItem(null);
     if (vibrationEnabled) Vibration.vibrate(30);
-  }, [vibrationEnabled]);
+  }, [vibrationEnabled, seatEnabled, activeSeat]);
 
   const updateQuantity = useCallback((cartId, delta) => {
     setCart(prev => prev.map(item => {
@@ -316,6 +337,12 @@ export default function WaiterOrderModal({
     ));
   }, []);
 
+  const updateItemSeat = useCallback((cartId, seat) => {
+    setCart(prev => prev.map(item =>
+      item.cartId === cartId ? { ...item, seat: sanitizeSeat(seat) } : item
+    ));
+  }, []);
+
   const cartTotal = useMemo(() => {
     return cart.reduce((total, item) => {
       const base = item.selectedVariant?.price ?? item.price ?? 0;
@@ -326,6 +353,13 @@ export default function WaiterOrderModal({
 
   const cartItemCount = useMemo(() => cart.reduce((sum, i) => sum + (i.quantity || 1), 0), [cart]);
 
+  // Number of seat chips to show: seeded from covers (min 4), grown by '+' or existing cart seats (cap 26)
+  const seatCount = useMemo(() => {
+    if (!seatEnabled) return 0;
+    const maxCartSeat = cart.reduce((m, i) => Math.max(m, sanitizeSeat(i.seat) || 0), 0);
+    return Math.min(26, Math.max(covers || 1, 4, maxCartSeat, manualSeatCount));
+  }, [seatEnabled, cart, covers, manualSeatCount]);
+
   const cartSummaryText = useMemo(() => {
     if (cart.length === 0) return '';
     const names = cart.slice(0, 3).map(i => `${i.quantity}x ${i.name}`);
@@ -334,34 +368,73 @@ export default function WaiterOrderModal({
   }, [cart]);
 
   // ─── Change Detection (for edit order) ───
+  // Keys are menuItemId + variant (NO seat) and quantities are aggregated per key,
+  // so a pure seat reassignment never registers as a kitchen-facing change.
   const orderChanges = useMemo(() => {
     if (!existingOrderId || !existingOrderItems) return null;
-    const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
-    const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
+    const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+    const sumByKey = (items) => {
+      const m = new Map();
+      items.forEach(i => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (i.quantity || 0)));
+      return m;
+    };
+    const existingMap = sumByKey(existingOrderItems);
+    const cartMap = sumByKey(cart);
 
-    const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id));
-    const qtyIncreased = cart.filter(item => {
-      const ex = existingMap.get(item.menuItemId || item.id);
-      return ex && item.quantity > ex.quantity;
+    // One representative cart line per key, carrying the aggregated quantity
+    const seenCartKeys = new Set();
+    const cartReps = [];
+    cart.forEach(item => {
+      const k = keyOf(item);
+      if (seenCartKeys.has(k)) return;
+      seenCartKeys.add(k);
+      cartReps.push({ ...item, quantity: cartMap.get(k) });
+    });
+
+    const newItems = cartReps.filter(item => !existingMap.has(keyOf(item)));
+    const qtyIncreased = cartReps.filter(item => {
+      const exQty = existingMap.get(keyOf(item));
+      return exQty !== undefined && item.quantity > exQty;
     }).map(item => {
-      const ex = existingMap.get(item.menuItemId || item.id);
-      return { ...item, prevQty: ex.quantity, delta: item.quantity - ex.quantity };
+      const exQty = existingMap.get(keyOf(item));
+      return { ...item, prevQty: exQty, delta: item.quantity - exQty };
     });
-    const qtyDecreased = cart.filter(item => {
-      const ex = existingMap.get(item.menuItemId || item.id);
-      return ex && item.quantity < ex.quantity;
+    const qtyDecreased = cartReps.filter(item => {
+      const exQty = existingMap.get(keyOf(item));
+      return exQty !== undefined && item.quantity < exQty;
     }).map(item => {
-      const ex = existingMap.get(item.menuItemId || item.id);
-      return { ...item, prevQty: ex.quantity, delta: ex.quantity - item.quantity };
+      const exQty = existingMap.get(keyOf(item));
+      return { ...item, prevQty: exQty, delta: exQty - item.quantity };
     });
-    const removedFromOrder = existingOrderItems.filter(ex => !cartMap.has(ex.menuItemId || ex.id));
-    const unchanged = cart.filter(item => {
-      const ex = existingMap.get(item.menuItemId || item.id);
-      return ex && item.quantity === ex.quantity;
+    const seenRemovedKeys = new Set();
+    const removedFromOrder = [];
+    existingOrderItems.forEach(ex => {
+      const k = keyOf(ex);
+      if (cartMap.has(k) || seenRemovedKeys.has(k)) return;
+      seenRemovedKeys.add(k);
+      removedFromOrder.push({ ...ex, quantity: existingMap.get(k) });
     });
+    const unchanged = cartReps.filter(item => existingMap.get(keyOf(item)) === item.quantity);
+
+    // Seat-aware comparison: detects pure seat redistribution (which hasAnyChange
+    // deliberately ignores) so a seat-only edit can still be saved — without a KOT.
+    const seatKeyOf = (i) => `${keyOf(i)}|${sanitizeSeat(i.seat) ?? ''}`;
+    const sumBySeatKey = (items) => {
+      const m = new Map();
+      items.forEach(i => m.set(seatKeyOf(i), (m.get(seatKeyOf(i)) || 0) + (i.quantity || 0)));
+      return m;
+    };
+    const existingSeatMap = sumBySeatKey(existingOrderItems);
+    const cartSeatMap = sumBySeatKey(cart);
+    let seatChanged = existingSeatMap.size !== cartSeatMap.size;
+    if (!seatChanged) {
+      for (const [k, qty] of cartSeatMap) {
+        if (existingSeatMap.get(k) !== qty) { seatChanged = true; break; }
+      }
+    }
 
     const hasAnyChange = newItems.length > 0 || qtyIncreased.length > 0 || qtyDecreased.length > 0 || removedFromOrder.length > 0;
-    return { newItems, qtyIncreased, qtyDecreased, removedFromOrder, unchanged, hasAnyChange };
+    return { newItems, qtyIncreased, qtyDecreased, removedFromOrder, unchanged, hasAnyChange, seatChanged };
   }, [cart, existingOrderId, existingOrderItems]);
 
   // ─── Build Item Payload (same as MenuNative) ───
@@ -382,6 +455,7 @@ export default function WaiterOrderModal({
       selectedVariant: item.selectedVariant || null,
       selectedCustomizations: Array.isArray(item.selectedCustomizations) ? item.selectedCustomizations : [],
       basePrice: typeof item.originalPrice === 'number' ? item.originalPrice : item.price,
+      seat: sanitizeSeat(item.seat),
       ...(item.isStockManaged ? { isStockManaged: true, stockQuantity: item.stockQuantity } : {}),
     };
   };
@@ -406,10 +480,15 @@ export default function WaiterOrderModal({
       if (customerName) customerInfo.name = customerName;
       const hasCustomer = customerPhone || customerName;
 
+      // Seat-only update: seats were reassigned but nothing kitchen-facing changed —
+      // save the order without generating or printing any KOT.
+      const seatOnlyUpdate = !!(existingOrderId && orderChanges && !orderChanges.hasAnyChange && orderChanges.seatChanged);
+
       if (existingOrderId) {
         const orderData = {
           items: cart.map(buildItemPayload),
           status: 'confirmed',
+          ...(seatOnlyUpdate ? { skipKOT: true } : {}),
           ...(specialInstructions && { specialInstructions }),
           ...(hasCustomer && { customerInfo }),
           ...(customerPhone && { customerPhone }),
@@ -426,6 +505,7 @@ export default function WaiterOrderModal({
           floorName: floorName || null,
           items: cart.map(buildItemPayload),
           orderType: 'dine-in',
+          covers: tableNumber ? covers : undefined,
           paymentMethod: 'cash',
           status: 'confirmed',
           staffInfo: {
@@ -441,26 +521,55 @@ export default function WaiterOrderModal({
         orderId = response.order?.id;
       }
 
+      // Seat-only update: order saved; no KOT to build, print, or show.
+      if (seatOnlyUpdate) {
+        setShowReview(false);
+        toast.success('Seat assignments updated');
+        if (vibrationEnabled) Vibration.vibrate(200);
+        onOrderSent?.();
+        return;
+      }
+
       // ─── Incremental KOT detection ───
       let kotItems = cart;
       let isIncremental = false;
       let removedItems = [];
 
       if (existingOrderId && existingOrderItems) {
-        const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
-        const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
+        // Keys are menuItemId + variant (NO seat); quantities aggregated per key so a
+        // pure seat reassignment produces no incremental KOT.
+        const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+        const sumByKey = (items) => {
+          const m = new Map();
+          items.forEach(i => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (i.quantity || 0)));
+          return m;
+        };
+        const existingMap = sumByKey(existingOrderItems);
+        const cartMap = sumByKey(cart);
 
-        const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id)).map(item => ({ ...item, isNew: true }));
-        const updatedItems = cart.filter(item => {
-          const existing = existingMap.get(item.menuItemId || item.id);
-          return existing && existing.quantity !== item.quantity;
-        }).map(item => {
-          const existing = existingMap.get(item.menuItemId || item.id);
-          return { ...item, isUpdated: true, previousQuantity: existing.quantity, quantityDelta: item.quantity - existing.quantity };
+        const newItems = cart.filter(item => !existingMap.has(keyOf(item))).map(item => ({ ...item, isNew: true }));
+        const updatedKeys = new Set();
+        const updatedItems = [];
+        cart.forEach(item => {
+          const k = keyOf(item);
+          if (!existingMap.has(k) || updatedKeys.has(k)) return;
+          const prevQty = existingMap.get(k);
+          const newQty = cartMap.get(k);
+          if (newQty === prevQty) return;
+          updatedKeys.add(k);
+          // Represent the change with the last cart line of this key (most recently added)
+          const lines = cart.filter(i => keyOf(i) === k);
+          const rep = lines[lines.length - 1];
+          updatedItems.push({ ...rep, quantity: newQty, isUpdated: true, previousQuantity: prevQty, quantityDelta: newQty - prevQty });
         });
-        removedItems = existingOrderItems
-          .filter(existing => !cartMap.has(existing.menuItemId || existing.id))
-          .map(item => ({ ...item, isRemoved: true, previousQuantity: item.quantity }));
+        const removedKeys = new Set();
+        removedItems = [];
+        existingOrderItems.forEach(existing => {
+          const k = keyOf(existing);
+          if (cartMap.has(k) || removedKeys.has(k)) return;
+          removedKeys.add(k);
+          removedItems.push({ ...existing, quantity: existingMap.get(k), isRemoved: true, previousQuantity: existingMap.get(k) });
+        });
 
         const incrementalItems = [...newItems, ...updatedItems];
         if (incrementalItems.length > 0 || removedItems.length > 0) {
@@ -484,6 +593,7 @@ export default function WaiterOrderModal({
           name: item.name,
           quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
           notes: item.notes || '',
+          seat: item.seat ?? null,
           selectedVariant: item.selectedVariant || null,
           selectedCustomizations: item.selectedCustomizations || [],
           isNew: item.isNew || false,
@@ -495,6 +605,7 @@ export default function WaiterOrderModal({
           name: item.name,
           quantity: item.previousQuantity || item.quantity,
           notes: item.notes || '',
+          seat: item.seat ?? null,
           selectedVariant: item.selectedVariant || null,
           selectedCustomizations: item.selectedCustomizations || [],
           isRemoved: true,
@@ -507,6 +618,7 @@ export default function WaiterOrderModal({
         specialInstructions: specialInstructions || '',
         dailyOrderId: orderNumber,
         printSettings: ps,
+        covers: covers || 1,
       };
 
       // ─── Auto-print KOT ───
@@ -604,7 +716,8 @@ export default function WaiterOrderModal({
               <TouchableOpacity
                 style={st.qtyBtn}
                 onPress={() => {
-                  const cartItem = cart.find(c => (c.menuItemId || c.id) === item.id);
+                  const cartItem = (seatEnabled && cart.find(c => (c.menuItemId || c.id) === item.id && (c.seat ?? null) === sanitizeSeat(activeSeat)))
+                    || cart.find(c => (c.menuItemId || c.id) === item.id);
                   if (cartItem) updateQuantity(cartItem.cartId, -1);
                 }}
               >
@@ -623,7 +736,7 @@ export default function WaiterOrderModal({
         </View>
       </View>
     );
-  }, [cart, addToCart, updateQuantity]);
+  }, [cart, addToCart, updateQuantity, seatEnabled, activeSeat]);
 
   if (!visible) return null;
 
@@ -646,6 +759,23 @@ export default function WaiterOrderModal({
             <View style={st.reviewItemInfo}>
               <View style={st.reviewItemNameRow}>
                 <Text style={st.reviewItemName} numberOfLines={1}>{item.name}</Text>
+                {(seatEnabled || item.seat != null) && (
+                  <TouchableOpacity
+                    style={[st.seatBadge, item.seat != null && st.seatBadgeActive]}
+                    disabled={!seatEnabled}
+                    onPress={() => {
+                      // Cycle seat: Table → A → B → ... → last seat → Table
+                      const cur = sanitizeSeat(item.seat);
+                      const next = cur == null ? 1 : (cur >= seatCount ? null : cur + 1);
+                      updateItemSeat(item.cartId, next);
+                    }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Text style={[st.seatBadgeText, item.seat != null && st.seatBadgeTextActive]}>
+                      {item.seat != null ? seatLetter(item.seat) : 'Table'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 {changeTag && (
                   <View style={[st.changeTag, { backgroundColor: changeTag.bg }]}>
                     <Ionicons name={changeTag.icon} size={10} color={changeTag.color} />
@@ -718,17 +848,18 @@ export default function WaiterOrderModal({
   // ─── Get change tag for an item ───
   const getChangeTag = (item) => {
     if (!orderChanges) return null;
-    const id = item.menuItemId || item.id;
-    if (orderChanges.newItems.find(i => (i.menuItemId || i.id) === id)) {
+    const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+    const key = keyOf(item);
+    if (orderChanges.newItems.find(i => keyOf(i) === key)) {
       return { label: 'NEW', icon: 'add-circle', color: '#16a34a', bg: '#f0fdf4', borderColor: '#16a34a' };
     }
-    const inc = orderChanges.qtyIncreased.find(i => (i.menuItemId || i.id) === id);
+    const inc = orderChanges.qtyIncreased.find(i => keyOf(i) === key);
     if (inc) {
-      return { label: `QTY ${inc.prevQty} → ${item.quantity}`, icon: 'arrow-up-circle', color: '#2563eb', bg: '#eff6ff', borderColor: '#2563eb' };
+      return { label: `QTY ${inc.prevQty} → ${inc.quantity}`, icon: 'arrow-up-circle', color: '#2563eb', bg: '#eff6ff', borderColor: '#2563eb' };
     }
-    const dec = orderChanges.qtyDecreased.find(i => (i.menuItemId || i.id) === id);
+    const dec = orderChanges.qtyDecreased.find(i => keyOf(i) === key);
     if (dec) {
-      return { label: `QTY ${dec.prevQty} → ${item.quantity}`, icon: 'arrow-down-circle', color: '#d97706', bg: '#fffbeb', borderColor: '#d97706' };
+      return { label: `QTY ${dec.prevQty} → ${dec.quantity}`, icon: 'arrow-down-circle', color: '#d97706', bg: '#fffbeb', borderColor: '#d97706' };
     }
     return null;
   };
@@ -739,7 +870,8 @@ export default function WaiterOrderModal({
   const renderReviewView = () => {
     const isEditing = !!existingOrderId;
     const hasChanges = orderChanges?.hasAnyChange;
-    const noChanges = isEditing && !hasChanges;
+    const seatOnlyChange = isEditing && !hasChanges && !!orderChanges?.seatChanged;
+    const noChanges = isEditing && !hasChanges && !seatOnlyChange;
     const btnDisabled = sendingOrder || noChanges;
 
     return (
@@ -787,6 +919,20 @@ export default function WaiterOrderModal({
           </View>
         )}
 
+        {/* Covers stepper for dine-in */}
+        {tableNumber && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f8fafc', borderRadius: 8, marginTop: 6, alignSelf: 'flex-start' }}>
+            <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '500' }}>Covers:</Text>
+            <TouchableOpacity onPress={() => setCovers(c => Math.max(1, c - 1))} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: '#374151' }}>{'\u2212'}</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#1f2937', minWidth: 20, textAlign: 'center' }}>{covers}</Text>
+            <TouchableOpacity onPress={() => setCovers(c => c + 1)} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: '#374151' }}>+</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Change summary banner for edit mode */}
         {isEditing && hasChanges && (
           <View style={st.changeSummaryBanner}>
@@ -802,6 +948,14 @@ export default function WaiterOrderModal({
           </View>
         )}
 
+        {/* Seat-only change banner — saved without printing a KOT */}
+        {seatOnlyChange && (
+          <View style={st.changeSummaryBanner}>
+            <Ionicons name="information-circle" size={14} color="#2563eb" />
+            <Text style={st.changeSummaryText}>Seat assignments changed — order will be saved without a new KOT</Text>
+          </View>
+        )}
+
         {/* No changes warning */}
         {noChanges && (
           <View style={st.noChangeBanner}>
@@ -814,7 +968,7 @@ export default function WaiterOrderModal({
           {/* Cart Items List */}
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={st.reviewList}
+            contentContainerStyle={[st.reviewList, { paddingBottom: 24 + bottomInset }]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
@@ -890,11 +1044,41 @@ export default function WaiterOrderModal({
                   />
                 </View>
               </View>
+              {/* Wallet Card Scan */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingHorizontal: 2 }}>
+                <Ionicons name="card-outline" size={14} color={TEXT_LIGHT} />
+                <TextInput
+                  style={[st.customerInput, { flex: 1 }]}
+                  placeholder="Scan wallet card"
+                  placeholderTextColor={TEXT_LIGHT}
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                  onSubmitEditing={async (e) => {
+                    const cardNum = e.nativeEvent.text?.trim();
+                    if (!cardNum || !restaurantId) return;
+                    try {
+                      const result = await apiClient.lookupCustomerByCard(restaurantId, cardNum);
+                      if (result?.customer || result?.customerId) {
+                        const cust = result.customer || result;
+                        setCustomerData(cust);
+                        if (cust.name) setCustomerName(cust.name);
+                        if (cust.phone) setCustomerPhone(cust.phone);
+                        setCustomerLookupStatus('found');
+                      } else {
+                        Alert.alert('Not Found', 'No customer linked to this card');
+                      }
+                    } catch (err) {
+                      Alert.alert('Error', err.message || 'Card lookup failed');
+                    }
+                  }}
+                />
+              </View>
               {customerLookupStatus === 'found' && customerData && (
                 <View style={st.customerFoundRow}>
                   <Ionicons name="person-circle" size={13} color={GREEN} />
                   <Text style={st.customerFoundText}>
                     {customerData.name}{customerData.loyaltyPoints ? ` · ${customerData.loyaltyPoints} pts` : ''}
+                    {customerData.walletBalance != null ? ` · ₹${customerData.walletBalance} wallet` : ''}
                   </Text>
                 </View>
               )}
@@ -904,7 +1088,7 @@ export default function WaiterOrderModal({
           </ScrollView>
 
           {/* Bottom Send Bar */}
-          <View style={st.reviewFooter}>
+          <View style={[st.reviewFooter, { paddingBottom: bottomInset + 10 }]}>
             <View style={st.reviewFooterTop}>
               <View>
                 <Text style={st.reviewFooterLabel}>{cartItemCount} items</Text>
@@ -994,6 +1178,44 @@ export default function WaiterOrderModal({
               ) : null}
             </View>
 
+            {/* Seat Chips — [Table] [A] [B] ... [+] (seat-level ordering) */}
+            {seatEnabled && (
+              <View style={st.seatBarContainer}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={st.seatBarRow}
+                >
+                  <TouchableOpacity
+                    style={[st.seatChip, activeSeat == null && st.seatChipActive]}
+                    onPress={() => setActiveSeat(null)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[st.seatChipText, activeSeat == null && st.seatChipTextActive]}>Table</Text>
+                  </TouchableOpacity>
+                  {Array.from({ length: seatCount }, (_, i) => i + 1).map(n => (
+                    <TouchableOpacity
+                      key={`seat-${n}`}
+                      style={[st.seatChip, activeSeat === n && st.seatChipActive]}
+                      onPress={() => setActiveSeat(n)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[st.seatChipText, activeSeat === n && st.seatChipTextActive]}>{seatLetter(n)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {seatCount < 26 && (
+                    <TouchableOpacity
+                      style={st.seatChip}
+                      onPress={() => { setManualSeatCount(seatCount + 1); setActiveSeat(seatCount + 1); }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="add" size={14} color={PRIMARY_DARK} />
+                    </TouchableOpacity>
+                  )}
+                </ScrollView>
+              </View>
+            )}
+
             {/* Category Tabs */}
             <View style={st.catContainer}>
               <ScrollView
@@ -1024,7 +1246,7 @@ export default function WaiterOrderModal({
               keyExtractor={item => item.id || item._id}
               numColumns={2}
               columnWrapperStyle={st.menuRow}
-              contentContainerStyle={[st.menuGrid, { paddingBottom: cart.length > 0 ? 110 : 24 }]}
+              contentContainerStyle={[st.menuGrid, { paddingBottom: (cart.length > 0 ? 110 : 24) + bottomInset }]}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               ListEmptyComponent={
@@ -1038,7 +1260,7 @@ export default function WaiterOrderModal({
 
             {/* Sticky Cart Bar */}
             {cart.length > 0 && (
-              <Animated.View style={[st.cartBar, { transform: [{ translateY: cartSlide.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }] }]}>
+              <Animated.View style={[st.cartBar, { paddingBottom: bottomInset + 10, transform: [{ translateY: cartSlide.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }] }]}>
                 <TouchableOpacity style={st.cartBarInner} onPress={() => setShowReview(true)} activeOpacity={0.95}>
                   <View style={st.cartBarLeft}>
                     <View style={st.cartBadge}>
@@ -1151,6 +1373,33 @@ const st = StyleSheet.create({
     shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
   },
   searchInput: { flex: 1, fontSize: 15, color: TEXT, padding: 0, fontWeight: '400' },
+
+  // ─── Seat Chips (seat-level ordering) ───
+  seatBarContainer: {
+    backgroundColor: CARD,
+    marginTop: 8,
+    borderBottomWidth: 1, borderBottomColor: BORDER,
+  },
+  seatBarRow: { paddingHorizontal: 14, paddingVertical: 8, gap: 6, alignItems: 'center' },
+  seatChip: {
+    minWidth: 34, height: 30, paddingHorizontal: 10, borderRadius: 15,
+    backgroundColor: BG, borderWidth: 1.5, borderColor: BORDER,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  seatChipActive: {
+    backgroundColor: PRIMARY, borderColor: PRIMARY,
+  },
+  seatChipText: { fontSize: 12, fontWeight: '700', color: TEXT },
+  seatChipTextActive: { color: '#fff' },
+  seatBadge: {
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5,
+    backgroundColor: BG, borderWidth: 1, borderColor: BORDER,
+  },
+  seatBadgeActive: {
+    backgroundColor: PRIMARY_LIGHT, borderColor: PRIMARY,
+  },
+  seatBadgeText: { fontSize: 9, fontWeight: '700', color: TEXT_SEC, letterSpacing: 0.3 },
+  seatBadgeTextActive: { color: PRIMARY_DARK },
 
   // ─── Category Tabs ───
   catContainer: {

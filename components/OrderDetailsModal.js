@@ -15,6 +15,7 @@ import { Colors, Spacing, BorderRadius, Shadows } from '../constants/Theme';
 import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { getCurrencySymbol } from '../utils/formatCurrency';
+import { seatLetter } from '../utils/seatOrdering';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole }) {
   const { modalWidth } = useResponsive();
@@ -236,7 +237,14 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                             <Text style={styles.qtyBadgeText}>×{itemQuantity}</Text>
                           </View>
                           <View style={styles.itemInfo}>
-                            <Text style={styles.itemName} numberOfLines={1}>{itemName}</Text>
+                            <View style={styles.itemNameRow}>
+                              <Text style={styles.itemName} numberOfLines={1}>{itemName}</Text>
+                              {item.seat != null && (
+                                <View style={styles.seatBadge}>
+                                  <Text style={styles.seatBadgeText}>{seatLetter(item.seat)}</Text>
+                                </View>
+                              )}
+                            </View>
                             {subline ? (
                               <Text style={styles.itemSubline} numberOfLines={1}>{subline}</Text>
                             ) : (item.description || item.menuItem?.description) ? (
@@ -563,10 +571,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   itemInfo: { flex: 1 },
+  itemNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itemName: {
     fontSize: 14,
     fontWeight: '700',
     color: '#111827',
+    flexShrink: 1,
+  },
+  seatBadge: {
+    backgroundColor: '#eef2ff',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  seatBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4f46e5',
   },
   itemSubline: {
     fontSize: 11,

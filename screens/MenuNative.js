@@ -46,6 +46,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 import { useTabBar } from '../contexts/TabBarContext';
 import { getCurrencySymbol } from '../utils/formatCurrency';
+import { sanitizeSeat } from '../utils/seatOrdering';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -1021,9 +1022,9 @@ export default function MenuScreen() {
           return prev;
         }
         const adjustedPrice = getItemDisplayPrice(item);
-        const existing = prev.find(c => c.id === item.id && !c.cartId);
+        const existing = prev.find(c => c.id === item.id && !c.cartId && (c.seat ?? null) === (item.seat ?? null));
         if (existing) {
-          return prev.map(c => (c.id === item.id && !c.cartId) ? { ...c, quantity: c.quantity + 1 } : c);
+          return prev.map(c => c === existing ? { ...c, quantity: c.quantity + 1 } : c);
         }
         return [...prev, {
           id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
@@ -1047,9 +1048,9 @@ export default function MenuScreen() {
 
     const adjustedPrice = getItemDisplayPrice(item);
     setCart(prev => {
-      const existing = prev.find(c => c.id === item.id && !c.cartId);
+      const existing = prev.find(c => c.id === item.id && !c.cartId && (c.seat ?? null) === (item.seat ?? null));
       if (existing) {
-        return prev.map(c => (c.id === item.id && !c.cartId) ? { ...c, quantity: c.quantity + 1 } : c);
+        return prev.map(c => c === existing ? { ...c, quantity: c.quantity + 1 } : c);
       }
       return [...prev, {
         id: item.id, name: item.name, price: adjustedPrice, originalPrice: item.price,
@@ -1152,6 +1153,7 @@ export default function MenuScreen() {
       selectedVariant: item.selectedVariant || null,
       selectedCustomizations: Array.isArray(item.selectedCustomizations) ? item.selectedCustomizations : [],
       basePrice: typeof item.originalPrice === 'number' ? item.originalPrice : item.price,
+      seat: sanitizeSeat(item.seat),
       ...(item.appliedPricingRuleId ? { appliedPricingRuleId: item.appliedPricingRuleId } : {}),
       ...(item.priceEdited === true ? { priceEdited: true } : {}),
       ...(item.isCustomItem ? { isCustomItem: true } : {}),
@@ -1443,6 +1445,7 @@ export default function MenuScreen() {
         specialInstructions: specialInstructions || '',
         dailyOrderId: orderNumber,
         printSettings: printSettings || {},
+        covers: discountData.covers || 1,
       };
 
       // Auto-print KOT silently — show toast if print fails so waiter knows
@@ -1700,6 +1703,7 @@ export default function MenuScreen() {
               specialInstructions: discountData.specialInstructions || '',
               printSettings: printSettings || {},
               restaurantId,
+              covers: discountData.covers || 1,
             };
 
             if (printStationCount >= 2 && localKotPrintingOn) {
@@ -1806,6 +1810,7 @@ export default function MenuScreen() {
             specialInstructions: discountData.specialInstructions || '',
             printSettings: printSettings || {},
             restaurantId,
+            covers: discountData.covers || 1,
           };
 
           if (printStationCount >= 2 && localKotPrintingOn) {
@@ -2268,6 +2273,11 @@ export default function MenuScreen() {
         printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
           .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
           .catch(() => {});
+      }
+
+      // Auto-open cash drawer for cash payments
+      if ((billingFields.paymentMethod || paymentMethod) === 'cash' && user?.restaurant?.posSettings?.enableCashDrawer) {
+        printerService.openCashDrawer().catch(() => {});
       }
 
       setLastOrderData(invoiceData);

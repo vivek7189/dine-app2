@@ -2005,6 +2005,7 @@ export default function TablesScreen() {
         floorName={waiterOrderContext?.floorName}
         floorId={waiterOrderContext?.floorId}
         existingOrderId={waiterOrderContext?.existingOrderId}
+        posSettings={posSettings}
         onOrderSent={() => {
           setShowWaiterOrderModal(false);
           setWaiterOrderContext(null);

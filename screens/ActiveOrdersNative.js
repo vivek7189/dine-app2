@@ -344,6 +344,7 @@ export default function ActiveOrdersNative() {
         specialInstructions: order.specialInstructions || '',
         waiterName: order.staffInfo?.waiterName || user?.name || '',
         printSettings: printSettingsRef.current || {},
+        covers: order.covers || 1,
       };
       const text = printerService.generateKOTText(kotData);
       const result = await printerService.printWithFeedback({ text, silentOnly: true, label: 'KOT' });
@@ -678,6 +679,7 @@ export default function ActiveOrdersNative() {
         tableNumber={editOrderContext?.tableNumber}
         tableId={editOrderContext?.tableId}
         floorName={editOrderContext?.floorName}
+        posSettings={restaurant?.posSettings}
         onOrderSent={() => {
           setShowWaiterOrderModal(false);
           setEditOrderContext(null);
