@@ -28,11 +28,12 @@ import apiClient from '../services/api';
 import lanClient from '../services/lanClient';
 import restaurantEvents from '../services/restaurantEvents';
 import { getCached, setCache } from '../services/cacheManager';
-import { getCurrencySymbol } from '../utils/formatCurrency';
+import { getCurrencySymbol, formatCurrency } from '../utils/formatCurrency';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import OrderDetailsModal from '../components/OrderDetailsModal';
 import MoveOrderModal from '../components/MoveOrderModal';
 import WaiterOrderModal from '../components/WaiterOrderModal';
+import TableFloorPlanNative from '../components/TableFloorPlanNative';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
@@ -59,6 +60,7 @@ export default function TablesScreen() {
   const [user, setUser] = useState(null);
   const [selectedFloor, setSelectedFloor] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState(null);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'floor' — floor is view-only live map
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedTableForOrder, setSelectedTableForOrder] = useState(null);
@@ -596,6 +598,26 @@ export default function TablesScreen() {
     // When "All" is selected, find which floor this table belongs to
     return floors.find(f => f.tables?.some(t => t.id === table.id)) || null;
   }, [selectedFloor, floors]);
+
+  // Status → color palette for the view-only Floor Map. Mirrors the grid cards'
+  // dot/background/status-bar colors so both views read identically.
+  const getTableStatusColors = useCallback((status) => {
+    switch (status) {
+      case 'occupied':
+        return { bg: '#fffbeb', border: '#ea580c', text: '#92400e', dot: '#ea580c' };
+      case 'reserved':
+        return { bg: '#faf5ff', border: '#9333ea', text: '#6b21a8', dot: '#9333ea' };
+      case 'cleaning':
+        return { bg: '#f0f9ff', border: '#3b82f6', text: '#1e40af', dot: '#3b82f6' };
+      case 'merged':
+        return { bg: '#f0fdfa', border: '#0d9488', text: '#0f766e', dot: '#0d9488' };
+      case 'out-of-service':
+        return { bg: '#f9fafb', border: '#9ca3af', text: '#6b7280', dot: '#9ca3af' };
+      case 'available':
+      default:
+        return { bg: '#f0fdf4', border: '#16a34a', text: '#166534', dot: '#16a34a' };
+    }
+  }, []);
 
   const handleTablePress = (table) => {
     // Don't allow any actions if table is out of service
@@ -1734,6 +1756,11 @@ export default function TablesScreen() {
     currentFloorTables = [...sortTablesAlphabetically(filtered), ...sortTablesAlphabetically(rest)];
   }
 
+  // Floors to render in the view-only Floor Map: the selected floor, or all floors
+  // when "All" is active — matching how the grid scopes tables.
+  const mapFloors = selectedFloor ? [selectedFloor] : floors;
+  const showFloorLabels = !selectedFloor && floors.length > 1;
+
   // Animated header compaction
   const compactStatsOpacity = scrollY.interpolate({
     inputRange: [0, 60],
@@ -1825,7 +1852,20 @@ export default function TablesScreen() {
         </View>
       )}
 
+      {/* Grid / Floor Map view toggle */}
+      <View style={styles.viewToggleRow}>
+        <View style={styles.viewToggle}>
+          {[{ k: 'grid', icon: 'grid-outline', label: 'Grid' }, { k: 'floor', icon: 'map-outline', label: 'Floor Map' }].map(v => (
+            <TouchableOpacity key={v.k} onPress={() => setViewMode(v.k)} style={[styles.viewToggleBtn, viewMode === v.k && styles.viewToggleBtnActive]}>
+              <Ionicons name={v.icon} size={13} color={viewMode === v.k ? '#111827' : '#9ca3af'} />
+              <Text style={[styles.viewToggleText, viewMode === v.k && styles.viewToggleTextActive]}>{v.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       {/* Tables Grid */}
+      {viewMode === 'grid' ? (
       <Animated.FlatList
         data={currentFloorTables}
         renderItem={renderTable}
@@ -1860,6 +1900,34 @@ export default function TablesScreen() {
           </View>
         }
       />
+      ) : (
+        <Animated.ScrollView
+          onScroll={(e) => { const y = e.nativeEvent.contentOffset.y; scrollY.setValue(y); tabBar?.handleScroll(y); }}
+          scrollEventThrottle={16}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+        >
+          {mapFloors.map((f) => (
+            <View key={f.id}>
+              {showFloorLabels && <Text style={styles.floorMapLabel}>{f.name}</Text>}
+              <TableFloorPlanNative
+                floor={f}
+                tables={f.tables || []}
+                statusColor={getTableStatusColors}
+                formatCurrency={formatCurrency}
+                onTablePress={handleTablePress}
+              />
+            </View>
+          ))}
+          {mapFloors.length === 0 && (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
+              <Text style={styles.emptyText}>No tables found</Text>
+            </View>
+          )}
+        </Animated.ScrollView>
+      )}
 
       {/* Order Details Modal */}
       <OrderDetailsModal
@@ -2699,6 +2767,41 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+  },
+  viewToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 2,
+  },
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    padding: 3,
+    gap: 2,
+  },
+  viewToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  viewToggleBtnActive: {
+    backgroundColor: '#fff',
+  },
+  viewToggleText: { fontSize: 11, fontWeight: '600', color: '#9ca3af' },
+  viewToggleTextActive: { color: '#111827' },
+  floorMapLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 2,
   },
   floorChipsContainer: {
     paddingHorizontal: 14,
