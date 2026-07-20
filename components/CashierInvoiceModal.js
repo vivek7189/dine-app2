@@ -180,6 +180,7 @@ Thank you for your order!
       tableNumber: invoiceData.tableNumber,
       floorName: invoiceData.floorName,
       customerName: invoiceData.customerName,
+      customerPhone: invoiceData.customerPhone || invoiceData.customerMobile || '',
       waiterName: invoiceData.staffName,
       // Identity fields from restaurantInfo
       restaurantLegalName: ri.legalBusinessName,

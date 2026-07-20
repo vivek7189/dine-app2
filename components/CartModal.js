@@ -103,6 +103,7 @@ export default function CartModal({
   const [showKitchenNotes, setShowKitchenNotes] = useState(false);
   const [tableNumber, setTableNumber] = useState(selectedTable?.name || tableNumberProp || '');
   const [showTableInput, setShowTableInput] = useState(false);
+  const [covers, setCovers] = useState(1);
 
   // Keyboard-aware bottom offset — lifts stickyBottom above keyboard
   const keyboardOffset = useRef(new Animated.Value(0)).current;
@@ -258,7 +259,7 @@ export default function CartModal({
       setPartialPayAmount(''); setSelectedCompItems([]); setSelectedVoidItems([]);
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
       setSpecialInstructions(''); setShowKitchenNotes(false);
-      setActiveAction(null);
+      setActiveAction(null); setCovers(1);
       // Customer & offer state
       setCustomerData(null);
       setCustomerName('');
@@ -399,6 +400,7 @@ export default function CartModal({
     couponDiscount: couponDiscountAmount > 0 ? couponDiscountAmount : null,
     couponCode: appliedCoupon?.code || null,
     couponId: appliedCoupon?.id || null,
+    covers: (orderType === 'dine-in' || orderType === 'dine_in') ? covers : undefined,
   });
 
   // Build customer context for extended offer engine (audience targeting).
@@ -636,6 +638,7 @@ export default function CartModal({
       roundOffAmount: billing.roundOffAmount || null,
       grandTotal: billing.grandTotal,
       specialInstructions: specialInstructions.trim() || null,
+      covers: (orderType === 'dine-in' || orderType === 'dine_in') ? covers : undefined,
     };
     onSendToKitchen(customerMobile, specialInstructions.trim() || null, discountData, tableNumber.trim());
   };
@@ -706,7 +709,11 @@ export default function CartModal({
       ) : null}
       <View style={styles.cartItemFooter}>
         <View style={styles.cartItemPriceInfo}>
-          <Text style={styles.cartItemSubtotalText}>{getCurrencySymbol()}{item.price} × {item.quantity}</Text>
+          <Text style={styles.cartItemSubtotalText}>
+            {item.soldByWeight && item.itemWeight
+              ? `${getCurrencySymbol()}${item.price}/${item.weightUnit || 'kg'} × ${item.itemWeight}${item.weightUnit || 'kg'}`
+              : `${getCurrencySymbol()}${item.price} × ${item.quantity}`}
+          </Text>
           <Text style={styles.cartItemTotalPrice}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
           {!isNewItem && quantityDelta > 0 && existingItem && (
             <Text style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>
@@ -715,6 +722,11 @@ export default function CartModal({
           )}
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          {item.soldByWeight && item.itemWeight ? (
+            <View style={{ backgroundColor: '#f0fdf4', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: '#bbf7d0' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>{item.itemWeight} {item.weightUnit || 'kg'}</Text>
+            </View>
+          ) : (
           <View style={styles.quantityControls}>
             <TouchableOpacity
               style={styles.qtyBtnMinus}
@@ -732,6 +744,7 @@ export default function CartModal({
               <Ionicons name="add" size={12} color="#dc2626" />
             </TouchableOpacity>
           </View>
+          )}
           <TouchableOpacity
             onPress={() => onRemoveItem(item.cartId || item.id)}
             disabled={sending}
@@ -868,6 +881,18 @@ export default function CartModal({
                   </View>
                 );
               })() : null
+            )}
+            {(orderType === 'dine_in' || orderType === 'dine-in') && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f8fafc', borderRadius: 8, marginTop: 6 }}>
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '500' }}>Covers:</Text>
+                <TouchableOpacity onPress={() => setCovers(c => Math.max(1, c - 1))} style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#374151' }}>{'\u2212'}</Text>
+                </TouchableOpacity>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#1f2937', minWidth: 20, textAlign: 'center' }}>{covers}</Text>
+                <TouchableOpacity onPress={() => setCovers(c => c + 1)} style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#374151' }}>+</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
 
@@ -1128,6 +1153,35 @@ export default function CartModal({
                 </View>
               </View>
 
+              {/* Wallet Card Scan */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <Ionicons name="card-outline" size={14} color="#9ca3af" />
+                <TextInput
+                  style={{ flex: 1, fontSize: 12, color: '#1f2937', backgroundColor: '#f9fafb', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5, borderWidth: 1, borderColor: '#e5e7eb' }}
+                  placeholder="Scan wallet card"
+                  placeholderTextColor="#9ca3af"
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                  onSubmitEditing={async (e) => {
+                    const cardNum = e.nativeEvent.text?.trim();
+                    if (!cardNum || !restaurantId) return;
+                    try {
+                      const result = await apiClient.lookupCustomerByCard(restaurantId, cardNum);
+                      if (result?.customer || result?.customerId) {
+                        const cust = result.customer || result;
+                        setCustomerData(cust);
+                        if (cust.name) setCustomerName(cust.name);
+                        if (cust.phone) setCustomerMobile(cust.phone);
+                      } else {
+                        Alert.alert('Not Found', 'No customer linked to this card');
+                      }
+                    } catch (err) {
+                      Alert.alert('Error', err.message || 'Card lookup failed');
+                    }
+                  }}
+                />
+              </View>
+
               {/* Customer Info Bar */}
               {customerData && (
                 <TouchableOpacity activeOpacity={0.7} onPress={() => setShowOffersModal(true)} style={styles.customerInfoBar}>
@@ -1139,6 +1193,12 @@ export default function CartModal({
                   <Text style={styles.customerInfoPoints}>{customerData.loyaltyPoints || 0} pts</Text>
                   <Text style={styles.customerInfoDivider}>·</Text>
                   <Text style={styles.customerInfoOrders}>{customerData.totalOrders || 0} orders</Text>
+                  {customerData.walletBalance != null && (
+                    <>
+                      <Text style={styles.customerInfoDivider}>·</Text>
+                      <Text style={{ fontSize: 10, fontWeight: '600', color: '#7c3aed' }}>{getCurrencySymbol()}{customerData.walletBalance} wallet</Text>
+                    </>
+                  )}
                   <Ionicons name="chevron-forward" size={12} color="#16a34a" style={{ marginLeft: 4 }} />
                 </TouchableOpacity>
               )}

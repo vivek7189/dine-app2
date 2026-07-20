@@ -112,6 +112,8 @@ export default function MenuManagementScreen() {
     pluCode: '',
     // Hide image
     hideImage: false,
+    // Sub-category
+    subCategory: '',
   });
 
   useEffect(() => {
@@ -416,6 +418,7 @@ export default function MenuManagementScreen() {
       priceUnit: 'per_kg',
       pluCode: '',
       hideImage: false,
+      subCategory: '',
     });
     setEditingItem(null);
   };
@@ -462,6 +465,7 @@ export default function MenuManagementScreen() {
       priceUnit: item.priceUnit || 'per_kg',
       pluCode: item.pluCode || '',
       hideImage: item.hideImage || false,
+      subCategory: item.subCategory || '',
     });
     setEditingItem(item);
     setShowAddModal(true);
@@ -601,6 +605,7 @@ export default function MenuManagementScreen() {
         price: parseFloat(formData.price),
         category: formData.category,
         shortCode: formData.shortCode || undefined,
+        subCategory: formData.subCategory || undefined,
         isVeg: formData.isVeg,
         spiceLevel: formData.spiceLevel,
         status: formData.status,

@@ -1363,6 +1363,13 @@ class ApiClient {
     });
   }
 
+  async restoreOrder(orderId, reason = '') {
+    return this.request(`/api/orders/${orderId}/restore`, {
+      method: 'PATCH',
+      data: { reason },
+    });
+  }
+
   // Saved Carts (parked orders & templates)
   async getSavedCarts(restaurantId, type = null) {
     const query = type ? `?type=${type}` : '';
@@ -1973,6 +1980,14 @@ class ApiClient {
     return this.request('/api/public/customer/lookup', {
       method: 'POST',
       data: { restaurantId, phone, countryCode },
+    });
+  }
+
+  // Lookup customer by wallet card number
+  async lookupCustomerByCard(restaurantId, cardNumber) {
+    return this.request(`/api/customers/lookup-card/${encodeURIComponent(cardNumber)}`, {
+      method: 'GET',
+      params: { restaurantId },
     });
   }
 

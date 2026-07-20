@@ -72,6 +72,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
       (kl.showWaiter !== false && k.waiterName ? `<div>${dualLabel(L.waiter, AR.waiter, showAr)}: ${esc(k.waiterName)}</div>` : '') +
       (kl.showOrderType !== false && k.orderType ? `<div>${dualLabel(L.type, AR.type, showAr)}: ${k.orderType}</div>` : '') +
       (kl.showCustomer !== false && k.customerName ? `<div>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(k.customerName)}</div>` : '') +
+      (kl.showCovers !== false && k.covers && k.covers > 1 ? `<div><strong>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}:</strong> ${k.covers}</div>` : '') +
     `</div>` +
     `<div class="divider">- - - - - - - - - - - - - - - -</div>` +
     itemsHtml +

@@ -110,6 +110,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
       (kl.showDate !== false ? `<div>${dualLabel(L.date || 'Date', AR.date, showAr)}: ${dateStr}</div>` : '') +
       `<div>${dualLabel(L.time || 'Time', AR.time, showAr)}: ${timeStr}</div>` +
       (kl.showCustomer !== false && k.customerName ? `<div>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(k.customerName)}</div>` : '') +
+      (kl.showCovers !== false && k.covers && k.covers > 1 ? `<div><strong>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}:</strong> ${k.covers}</div>` : '') +
     `</div>` +
     `<div class="divider">................................</div>` +
     itemsHtml +

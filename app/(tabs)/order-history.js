@@ -10,6 +10,7 @@ import {
   TextInput,
   Modal,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +36,8 @@ export default function OrderHistoryScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [userRole, setUserRole] = useState('');
+  const [restoringOrder, setRestoringOrder] = useState(false);
 
   // Date filter
   const [dateMode, setDateMode] = useState('today');
@@ -73,6 +76,7 @@ export default function OrderHistoryScreen() {
       const userData = await apiClient.getUser();
       const rid = userData?.restaurantId || userData?.restaurant?.id;
       if (rid) setRestaurantId(rid);
+      if (userData?.role) setUserRole(userData.role);
     } catch (e) {
       console.error('Failed to load user:', e);
     }
@@ -160,6 +164,34 @@ export default function OrderHistoryScreen() {
     if (!d) return '';
     const date = new Date(d);
     return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  };
+
+  const canRestore = userRole === 'owner' || userRole === 'manager';
+
+  const handleRestoreOrder = (order) => {
+    Alert.alert(
+      'Restore Order',
+      `Restore order #${order.dailyOrderId || order.orderNumber || ''}?\nThis will re-apply inventory, loyalty, and stats.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          onPress: async () => {
+            try {
+              setRestoringOrder(true);
+              await apiClient.restoreOrder(order.id || order._id, 'Restored from mobile');
+              Alert.alert('Success', 'Order has been restored');
+              setSelectedOrder(null);
+              loadOrders();
+            } catch (e) {
+              Alert.alert('Error', e.message || 'Failed to restore order');
+            } finally {
+              setRestoringOrder(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const renderOrderCard = ({ item }) => {
@@ -444,6 +476,22 @@ export default function OrderHistoryScreen() {
                 )}
               </View>
             </ScrollView>
+          )}
+          {selectedOrder?.status === 'cancelled' && canRestore && (
+            <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#fff' }}>
+              <TouchableOpacity
+                onPress={() => handleRestoreOrder(selectedOrder)}
+                disabled={restoringOrder}
+                style={{ backgroundColor: '#f59e0b', paddingVertical: 12, borderRadius: 8, alignItems: 'center', opacity: restoringOrder ? 0.6 : 1 }}
+                activeOpacity={0.7}
+              >
+                {restoringOrder ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>Restore Order</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           )}
         </SafeAreaView>
       </Modal>

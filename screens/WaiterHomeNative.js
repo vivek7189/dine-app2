@@ -192,7 +192,23 @@ export default function WaiterHomeNative() {
       Vibration.vibrate(100);
       setTimeout(() => loadDataRef.current?.(false), 1500);
     } catch (e) {
-      Alert.alert('Error', 'Failed to mark as served');
+      Alert.alert('Error', e?.message || 'Failed to mark as served');
+    }
+  };
+
+  // Advance kitchen status from the floor (waiter/runner): Start → Ready.
+  // Optimistic UI update, then a background refresh reconciles with the server.
+  const advanceStatus = async (orderId, next) => {
+    try {
+      if (next === 'preparing') await apiClient.startCooking(orderId);
+      else if (next === 'ready') await apiClient.markReady(orderId);
+      else return;
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: next } : o));
+      Vibration.vibrate(100);
+      setTimeout(() => loadDataRef.current?.(false), 1500);
+    } catch (e) {
+      // 403 = the store restricts who can advance status (Admin → Order Status Control)
+      Alert.alert('Cannot update', e?.message || 'Failed to update order status');
     }
   };
 
@@ -203,6 +219,14 @@ export default function WaiterHomeNative() {
   const pendingCount = orders.filter(o => o.status === 'pending' || o.status === 'confirmed').length;
   const activeTables = new Set(activeOrders.filter(o => o.tableNumber).map(o => o.tableNumber)).size;
   const recentOrders = orders.slice(0, 10);
+
+  // Whether this user may advance order status (Admin → Order Status Control).
+  // owner/admin always; empty/unset orderStatusRoles = any staff (matches backend).
+  const _role = (user?.role || '').toLowerCase();
+  const _orderStatusRoles = restaurant?.billingSettings?.orderStatusRoles;
+  const canAdvanceStatus = _role === 'owner' || _role === 'admin'
+    || !Array.isArray(_orderStatusRoles) || _orderStatusRoles.length === 0
+    || _orderStatusRoles.includes(_role);
 
   const dateStr = new Date().toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' });
   const waiterName = user?.name || user?.staffName || 'Captain';
@@ -357,10 +381,12 @@ export default function WaiterHomeNative() {
                   </View>
                   <View style={s.readyCardBottom}>
                     <Text style={s.itemCount}>{order.items?.length || 0} item{(order.items?.length || 0) !== 1 ? 's' : ''}</Text>
-                    <TouchableOpacity style={s.markServedBtn} onPress={() => markServed(order.id)} activeOpacity={0.7}>
-                      <Ionicons name="checkmark-circle" size={16} color="white" />
-                      <Text style={s.markServedText}>Mark Served</Text>
-                    </TouchableOpacity>
+                    {canAdvanceStatus && (
+                      <TouchableOpacity style={s.markServedBtn} onPress={() => markServed(order.id)} activeOpacity={0.7}>
+                        <Ionicons name="checkmark-circle" size={16} color="white" />
+                        <Text style={s.markServedText}>Mark Served</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </Animated.View>
               );
@@ -412,7 +438,28 @@ export default function WaiterHomeNative() {
                       <View style={[s.statusDot, { backgroundColor: statusColor }]} />
                       <Text style={[s.statusLabel, { color: statusColor }]}>{order.status}</Text>
                     </View>
-                    <Text style={s.recentTime}>{timeStr} · {ago}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {/* Advance status from the floor: Start → Ready → Served */}
+                      {canAdvanceStatus && (order.status === 'pending' || order.status === 'confirmed') && (
+                        <TouchableOpacity style={[s.statusActionBtn, { backgroundColor: '#f59e0b' }]} onPress={() => advanceStatus(order.id, 'preparing')} activeOpacity={0.7}>
+                          <Ionicons name="flame" size={13} color="white" />
+                          <Text style={s.statusActionText}>Start</Text>
+                        </TouchableOpacity>
+                      )}
+                      {canAdvanceStatus && order.status === 'preparing' && (
+                        <TouchableOpacity style={[s.statusActionBtn, { backgroundColor: '#16a34a' }]} onPress={() => advanceStatus(order.id, 'ready')} activeOpacity={0.7}>
+                          <Ionicons name="checkmark-done" size={13} color="white" />
+                          <Text style={s.statusActionText}>Ready</Text>
+                        </TouchableOpacity>
+                      )}
+                      {canAdvanceStatus && order.status === 'ready' && (
+                        <TouchableOpacity style={[s.statusActionBtn, { backgroundColor: '#2563eb' }]} onPress={() => markServed(order.id)} activeOpacity={0.7}>
+                          <Ionicons name="checkmark-circle" size={13} color="white" />
+                          <Text style={s.statusActionText}>Served</Text>
+                        </TouchableOpacity>
+                      )}
+                      <Text style={s.recentTime}>{timeStr} · {ago}</Text>
+                    </View>
                   </View>
                 </TouchableOpacity>
               );
@@ -512,6 +559,11 @@ const s = StyleSheet.create({
     backgroundColor: '#22c55e', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
   },
   markServedText: { fontSize: 12, fontWeight: '700', color: 'white' },
+  statusActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+  },
+  statusActionText: { fontSize: 11, fontWeight: '700', color: 'white' },
 
   // Table badge
   tableBadge: {

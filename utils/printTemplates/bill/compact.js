@@ -68,8 +68,10 @@ export function render(invoice, printSettings = {}, labels = {}) {
     `<div class="bill-info">` +
       `<div><span>#${invoice.dailyOrderId || invoice.id || 'N/A'}</span><span>${dateStr}</span></div>` +
       (bl.showTable !== false && invoice.tableNumber ? `<div><span>${dualLabel(L.table, AR.table, showAr)}: ${invoice.tableNumber}</span>${bl.showPayment !== false ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (bl.showPayment !== false ? `<div><span>${dualLabel(L.payment, AR.payment, showAr)}:</span><span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
+      (bl.showCovers !== false && invoice.covers && invoice.covers > 1 ? `<div><span>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}:</span><span>${invoice.covers}</span></div>` : '') +
       (bl.showWaiter !== false && invoice.waiterName ? `<div><span>Waiter:</span><span>${esc(invoice.waiterName)}</span></div>` : '') +
       (bl.showCustomer !== false && invoice.customerName ? `<div><span>${dualLabel(L.customer, AR.customer, showAr)}:</span><span>${esc(invoice.customerName)}</span></div>` : '') +
+      (bl.showCustomerPhone && invoice.customerPhone ? `<div><span>${dualLabel('Phone', 'هاتف', showAr)}:</span><span>${esc(invoice.customerPhone)}</span></div>` : '') +
       (bl.showOrderType !== false && invoice.orderType ? `<div><span>Order Type:</span><span>${esc(invoice.orderType)}</span></div>` : '') +
     `</div>` +
     deliveryHtml +

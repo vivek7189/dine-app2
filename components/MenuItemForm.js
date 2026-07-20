@@ -377,6 +377,37 @@ export default function MenuItemForm({
         </View>
       )}
 
+      {/* Sub-Category Picker — shown if selected category has children */}
+      {(() => {
+        const selectedCat = existingCategories.find(c => c.name === formData.category || c.id === formData.category);
+        const subCats = selectedCat ? existingCategories.filter(c => c.parentId === selectedCat.id) : [];
+        if (subCats.length === 0) return null;
+        return (
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Sub-Category</Text>
+            <View style={styles.categoryDropdown}>
+              <ScrollView style={[styles.categoryList, { maxHeight: 120 }]} nestedScrollEnabled>
+                <TouchableOpacity
+                  style={[styles.categoryOption, !formData.subCategory && { backgroundColor: '#f0fdf4' }]}
+                  onPress={() => setFormData({ ...formData, subCategory: '' })}
+                >
+                  <Text style={styles.categoryOptionText}>None</Text>
+                </TouchableOpacity>
+                {subCats.map((sc) => (
+                  <TouchableOpacity
+                    key={sc.id}
+                    style={[styles.categoryOption, formData.subCategory === sc.id && { backgroundColor: '#f0fdf4' }]}
+                    onPress={() => setFormData({ ...formData, subCategory: sc.id })}
+                  >
+                    <Text style={styles.categoryOptionText}>{sc.emoji || '🍽️'} {sc.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        );
+      })()}
+
       {/* Tax Pricing */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Tax Pricing</Text>
