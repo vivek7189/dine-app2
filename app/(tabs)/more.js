@@ -507,6 +507,7 @@ export default function MoreScreen() {
               { key: 'tables', label: 'Tables', icon: 'restaurant-outline' },
               { key: 'menu', label: 'Menu', icon: 'fast-food-outline' },
               { key: 'billing', label: 'Billing', icon: 'card-outline' },
+              { key: 'orders', label: 'Orders', icon: 'receipt-outline' },
             ].map((tab, idx, arr) => (
               <TouchableOpacity
                 key={tab.key}

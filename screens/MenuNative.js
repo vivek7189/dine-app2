@@ -898,14 +898,21 @@ export default function MenuScreen() {
   const handleOrderTypeChange = useCallback((newType) => {
     if (!multiPricingEnabled) return;
     const t = (newType || '').toLowerCase();
+    // Channel order types (takeaway/delivery) are ALWAYS auto-locked to their
+    // matching pricing rule. If no rule exists for that channel, fall back to the
+    // base price (activePricingRuleId = null) — mirrors web. This is what fixes
+    // "switch to Delivery but price stays on the previous Takeaway zone".
     if (TAKEAWAY_NAMES.includes(t)) {
       const rule = pricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
-      if (rule) { setActivePricingRuleId(rule.id); setAutoSelectedRule(true); }
+      setActivePricingRuleId(rule ? rule.id : null);
+      setAutoSelectedRule(true);
     } else if (DELIVERY_NAMES.includes(t)) {
       const rule = pricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
-      if (rule) { setActivePricingRuleId(rule.id); setAutoSelectedRule(true); }
+      setActivePricingRuleId(rule ? rule.id : null);
+      setAutoSelectedRule(true);
     } else {
-      // Dine-in/counter: restore floor-based auto-selection or clear
+      // Dine-in/counter: floor-based auto-selection (locked) → else clear to base
+      // and let the user pick a zone from the selector.
       setAutoSelectedRule(false);
       const floorName = params.floorName || selectedTable?.floor || '';
       if (floorName) {
@@ -972,7 +979,10 @@ export default function MenuScreen() {
       }
       return { ...item, price: newPrice, originalPrice: basePrice, appliedPricingRuleId: activePricingRuleId || null };
     }));
-  }, [activePricingRuleId, multiPricingEnabled]);
+    // menuItems + pricingRules are in the deps so the cart re-prices as soon as the
+    // menu/pricing data (which loads asynchronously on focus) arrives — otherwise a
+    // zone selected before the data loaded would keep showing the stale/base price.
+  }, [activePricingRuleId, multiPricingEnabled, menuItems, pricingRules]);
 
   // Cart lookup map for O(1) access instead of .find() per item
   // Aggregates quantity across variant entries sharing the same menu item id

@@ -32,17 +32,18 @@ export default function PricingRuleSelector({
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pills}>
         {pricingRules.map((rule) => {
-          const isActive = activePricingRuleId === rule.id || rule._id;
+          const ruleId = rule.id || rule._id;
+          const isActive = activePricingRuleId === ruleId;
           return (
             <TouchableOpacity
-              key={rule.id || rule._id}
+              key={ruleId}
               style={[
                 styles.pill,
                 isActive && (autoSelectedRule ? styles.pillAutoActive : styles.pillActive),
               ]}
               onPress={() => {
                 if (autoSelectedRule) return; // Locked
-                setActivePricingRuleId(isActive ? null : rule.id || rule._id);
+                setActivePricingRuleId(isActive ? null : ruleId);
               }}
               disabled={autoSelectedRule}
             >

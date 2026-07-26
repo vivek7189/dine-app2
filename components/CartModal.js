@@ -11,6 +11,7 @@ import {
   StatusBar,
   Platform,
   Keyboard,
+  KeyboardAvoidingView,
   Animated,
   Alert,
 } from 'react-native';
@@ -32,6 +33,11 @@ import { getCurrencySymbol } from '../utils/formatCurrency';
 import DiscountApprovalModal from './DiscountApprovalModal';
 import UpiQrModal from './UpiQrModal';
 import apiClient from '../services/api';
+
+// Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
+// so they must NOT appear as selectable zone pills in the dine-in zone picker —
+// only true zones (AC Dining, Non-AC Dining, custom halls, etc.) are user-selectable.
+const CHANNEL_RULE_NAMES = ['dine-in', 'dine in', 'dinein', 'takeaway', 'take away', 'take-away', 'delivery'];
 
 export default function CartModal({
   mode = 'owner',         // 'waiter' | 'cashier' | 'owner'
@@ -1007,15 +1013,32 @@ export default function CartModal({
               </View>
             )}
 
-            {/* Pricing Rule Selector */}
-            {showPricingRules && (
-              <PricingRuleSelector
-                pricingRules={pricingRules}
-                activePricingRuleId={activePricingRuleId}
-                setActivePricingRuleId={setActivePricingRuleId}
-                autoSelectedRule={autoSelectedRule}
-                multiPricingEnabled={multiPricingEnabled}
-              />
+            {/* Pricing Rule Selector — web parity:
+                 · dine-in/counter → pick a zone (AC/Non-AC/hall); channel rules hidden
+                 · takeaway/delivery → auto-locked, show a read-only badge instead of pills */}
+            {showPricingRules && multiPricingEnabled && pricingRules.length > 0 && (
+              (orderType === 'takeaway' || orderType === 'delivery') ? (
+                <View style={styles.autoPricingBar}>
+                  <Ionicons name="lock-closed" size={12} color="#059669" />
+                  <Text style={styles.autoPricingText}>
+                    {(() => {
+                      const r = pricingRules.find(pr => pr.id === activePricingRuleId);
+                      return r ? `${r.name} pricing applied` : 'Standard pricing applied';
+                    })()}
+                  </Text>
+                  <View style={styles.autoPricingBadge}>
+                    <Text style={styles.autoPricingBadgeText}>AUTO</Text>
+                  </View>
+                </View>
+              ) : (
+                <PricingRuleSelector
+                  pricingRules={pricingRules.filter(r => !CHANNEL_RULE_NAMES.includes((r.name || '').toLowerCase().trim()))}
+                  activePricingRuleId={activePricingRuleId}
+                  setActivePricingRuleId={setActivePricingRuleId}
+                  autoSelectedRule={autoSelectedRule}
+                  multiPricingEnabled={multiPricingEnabled}
+                />
+              )
             )}
 
             {/* Stock Warnings */}
@@ -1095,38 +1118,8 @@ export default function CartModal({
                     selectedCompItems={selectedCompItems}
                     selectedVoidItems={selectedVoidItems}
                   />
-                  <BillingPanels
-                    activeBillingPanel={activeBillingPanel}
-                    billingSettings={billingSettings}
-                    grandTotal={billing.grandTotal}
-                    discountedSubtotal={billing.discountedSubtotal}
-                    cart={cart}
-                    cashReceived={cashReceived}
-                    setCashReceived={setCashReceived}
-                    changeAmount={changeAmount}
-                    setChangeAmount={setChangeAmount}
-                    splitPayments={splitPayments}
-                    setSplitPayments={setSplitPayments}
-                    tipAmount={tipAmount}
-                    setTipAmount={setTipAmount}
-                    tipPercentage={tipPercentage}
-                    setTipPercentage={setTipPercentage}
-                    partialPayAmount={partialPayAmount}
-                    setPartialPayAmount={setPartialPayAmount}
-                    customerData={customerData}
-                    selectedCompItems={selectedCompItems}
-                    setSelectedCompItems={setSelectedCompItems}
-                    selectedVoidItems={selectedVoidItems}
-                    setSelectedVoidItems={setSelectedVoidItems}
-                    compReason={compReason}
-                    setCompReason={setCompReason}
-                    voidReason={voidReason}
-                    setVoidReason={setVoidReason}
-                    billingManagerPin={billingManagerPin}
-                    setBillingManagerPin={setBillingManagerPin}
-                    serviceChargeAmount={billing.serviceChargeAmount}
-                    roundOffAmount={billing.roundOffAmount}
-                  />
+                  {/* Panels render in a bottom-sheet modal (see BillingActionSheet below)
+                      so the cramped inline space no longer clips the controls. */}
                 </View>}
 
                 {/* Spacer for sticky bottom */}
@@ -2006,6 +1999,72 @@ export default function CartModal({
         </Modal>
       )}
 
+      {/* Billing action sheet — each toolbar action (Cash/Split/Tip/Khata/Comp/Void/SC/Round)
+          opens its controls in this clean bottom sheet instead of the cramped inline row. */}
+      <Modal
+        visible={showBillingPanels && !!activeBillingPanel}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setActiveBillingPanel(null)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <TouchableOpacity style={styles.billingSheetOverlay} activeOpacity={1} onPress={() => setActiveBillingPanel(null)}>
+            <View style={styles.billingSheetCard} onStartShouldSetResponder={() => true}>
+              <View style={styles.billingSheetHandleRow}>
+                <View style={styles.billingSheetHandle} />
+                <TouchableOpacity
+                  onPress={() => setActiveBillingPanel(null)}
+                  style={styles.billingSheetClose}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={22} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={{ maxHeight: 440 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <BillingPanels
+                  activeBillingPanel={activeBillingPanel}
+                  billingSettings={billingSettings}
+                  grandTotal={billing.grandTotal}
+                  discountedSubtotal={billing.discountedSubtotal}
+                  cart={cart}
+                  cashReceived={cashReceived}
+                  setCashReceived={setCashReceived}
+                  changeAmount={changeAmount}
+                  setChangeAmount={setChangeAmount}
+                  splitPayments={splitPayments}
+                  setSplitPayments={setSplitPayments}
+                  tipAmount={tipAmount}
+                  setTipAmount={setTipAmount}
+                  tipPercentage={tipPercentage}
+                  setTipPercentage={setTipPercentage}
+                  partialPayAmount={partialPayAmount}
+                  setPartialPayAmount={setPartialPayAmount}
+                  customerData={customerData}
+                  selectedCompItems={selectedCompItems}
+                  setSelectedCompItems={setSelectedCompItems}
+                  selectedVoidItems={selectedVoidItems}
+                  setSelectedVoidItems={setSelectedVoidItems}
+                  compReason={compReason}
+                  setCompReason={setCompReason}
+                  voidReason={voidReason}
+                  setVoidReason={setVoidReason}
+                  billingManagerPin={billingManagerPin}
+                  setBillingManagerPin={setBillingManagerPin}
+                  serviceChargeAmount={billing.serviceChargeAmount}
+                  roundOffAmount={billing.roundOffAmount}
+                />
+              </ScrollView>
+              <TouchableOpacity style={styles.billingSheetDone} onPress={() => setActiveBillingPanel(null)} activeOpacity={0.85}>
+                <Text style={styles.billingSheetDoneText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* Edit Price modal (role-gated via billingSettings.priceEditRoles) */}
       <Modal visible={!!priceEditItem} animationType="fade" transparent onRequestClose={() => setPriceEditItem(null)}>
         <TouchableOpacity style={styles.breakdownOverlay} activeOpacity={1} onPress={() => setPriceEditItem(null)}>
@@ -2457,6 +2516,82 @@ const styles = StyleSheet.create({
   billingSection: {
     paddingHorizontal: 12,
     marginTop: 4,
+  },
+  autoPricingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  autoPricingText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#047857',
+  },
+  autoPricingBadge: {
+    backgroundColor: '#059669',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  autoPricingBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  // Billing action bottom sheet
+  billingSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  billingSheetCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 20,
+  },
+  billingSheetHandleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  billingSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#d1d5db',
+  },
+  billingSheetClose: {
+    position: 'absolute',
+    right: 0,
+    top: -2,
+    padding: 4,
+  },
+  billingSheetDone: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+  },
+  billingSheetDoneText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
   },
   // Total Card — red gradient
   totalCard: {

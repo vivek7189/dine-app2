@@ -52,15 +52,31 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
     try {
       const token = await apiClient.getToken();
       const ud = await apiClient.getUser();
-      setUserData(ud);
+      // Resolve the restaurant id. Owner/admin accounts don't carry a single
+      // restaurantId until they pick one, which leaves the WebView with no
+      // restaurant context — the web app then loads empty (0 orders, ₹0, blank
+      // dashboard) even though the browser works. Fall back to the owner's
+      // restaurant list so the web app queries the right restaurant.
+      // (Mirrors more.js / printer-settings.js. Waiter/staff already have rid,
+      // so this fallback never runs for them.)
+      let rid = ud?.restaurantId || ud?.restaurant?.id;
+      if (!rid && ud) {
+        try {
+          const restResponse = await apiClient.getRestaurants();
+          const restList = restResponse?.restaurants || [];
+          if (restList.length === 1) rid = restList[0].id;
+          else if (restList.length > 1) rid = ud?.defaultRestaurantId || restList[0].id;
+        } catch (_) { /* ignore — web app will self-resolve */ }
+      }
+      // Carry the resolved rid on the injected user object too, so the web app's
+      // localStorage `user` has a restaurantId (not just selectedRestaurantId).
+      const enrichedUser = rid && ud ? { ...ud, restaurantId: rid } : ud;
+      setUserData(enrichedUser);
       const url = `${WEB_BASE_URL}${route}`;
       if (token) {
         const u = new URL(url);
         u.searchParams.set('token', token);
-        if (ud) {
-          const rid = ud.restaurantId || ud.restaurant?.id;
-          if (rid) u.searchParams.set('restaurantId', rid);
-        }
+        if (rid) u.searchParams.set('restaurantId', rid);
         setAuthUrl(u.toString());
       } else {
         setAuthUrl(url);

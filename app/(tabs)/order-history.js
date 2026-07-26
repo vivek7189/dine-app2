@@ -26,6 +26,14 @@ const STATUS_COLORS = {
   served: '#3b82f6',
   cancelled: '#ef4444',
   refunded: '#f59e0b',
+  // Active statuses (web shows these too — e.g. the blue KITCHEN badge)
+  pending: '#f59e0b',
+  preparing: '#3b82f6',
+  ready: '#8b5cf6',
+  active: '#3b82f6',
+  kitchen: '#3b82f6',
+  'in-progress': '#3b82f6',
+  new: '#3b82f6',
 };
 
 export default function OrderHistoryScreen() {
@@ -70,7 +78,6 @@ export default function OrderHistoryScreen() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   const PAGE_SIZE = 25;
-  const HISTORY_STATUSES = ['completed', 'served', 'cancelled', 'refunded'];
 
   // Stats: prefer server analytics (period-accurate); fall back to loaded orders.
   const stats = useMemo(() => {
@@ -173,9 +180,10 @@ export default function OrderHistoryScreen() {
       if (selectedPayMethod !== 'all') params.paymentMethod = selectedPayMethod;
 
       const response = await apiClient.getOrders(restaurantId, params);
-      let list = response?.orders || [];
-      // With no explicit status filter, restrict to history statuses (exclude active).
-      if (selectedStatus === 'all') list = list.filter(o => HISTORY_STATUSES.includes(o.status));
+      // Web parity: show ALL orders for the period (active + completed + cancelled).
+      // The server already applies the status filter when one is selected, so
+      // never re-filter on the client (that hid active/KITCHEN orders → "No orders").
+      const list = response?.orders || [];
 
       setOrders(prev => append ? [...prev, ...list] : list);
 
@@ -509,7 +517,7 @@ export default function OrderHistoryScreen() {
           <Ionicons name="receipt-outline" size={48} color="#d1d5db" />
           <Text style={styles.emptyText}>No orders found</Text>
           <Text style={styles.emptySubtext}>
-            {searchTerm ? 'Try a different search' : 'No completed orders for this period'}
+            {searchTerm ? 'Try a different search' : 'No orders for this period'}
           </Text>
         </View>
       ) : (
@@ -549,7 +557,7 @@ export default function OrderHistoryScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
-              {renderFilterSection('Status', [['all', 'All'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded']], selectedStatus, setSelectedStatus)}
+              {renderFilterSection('Status', [['all', 'All'], ['pending', 'Pending'], ['preparing', 'Preparing'], ['ready', 'Ready'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded']], selectedStatus, setSelectedStatus)}
               {renderFilterSection('Order Type', [['all', 'All'], ['dine-in', 'Dine-in'], ['takeaway', 'Takeaway'], ['delivery', 'Delivery']], selectedOrderType, setSelectedOrderType)}
               {renderFilterSection('Payment Method', [['all', 'All'], ['cash', 'Cash'], ['upi', 'UPI'], ['card', 'Card']], selectedPayMethod, setSelectedPayMethod)}
               {renderFilterSection('Payment Status', [['all', 'All'], ['paid', 'Paid'], ['partial', 'Partial'], ['due', 'Due']], selectedPayStatus, setSelectedPayStatus)}
@@ -584,7 +592,7 @@ export default function OrderHistoryScreen() {
                   </Text>
                 </View>
                 <Text style={styles.detailTime}>
-                  {new Date(selectedOrder.completedAt || selectedOrder.createdAt).toLocaleString('en-IN')}
+                  {(() => { const d = toDate(selectedOrder.completedAt || selectedOrder.createdAt); return d ? d.toLocaleString('en-IN') : '—'; })()}
                 </Text>
                 {selectedOrder.tableNumber && (
                   <Text style={styles.detailMeta}>Table: {selectedOrder.tableNumber}</Text>

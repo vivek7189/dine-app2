@@ -63,7 +63,23 @@ export default function PrinterSettingsScreen() {
     const load = async () => {
       try {
         const userData = await apiClient.getUser();
-        const rid = userData?.restaurantId || userData?.restaurant?.id;
+        let rid = userData?.restaurantId || userData?.restaurant?.id;
+        // Owner accounts don't carry a single restaurantId until they pick one
+        // (in the "More" tab). Fall back to the owner's restaurant list so this
+        // screen still works without first visiting More. (Mirrors more.js.)
+        if (!rid) {
+          try {
+            const restResponse = await apiClient.getRestaurants();
+            const restList = restResponse?.restaurants || [];
+            if (restList.length === 1) {
+              rid = restList[0].id;
+            } else if (restList.length > 1) {
+              rid = userData?.defaultRestaurantId || restList[0].id;
+            }
+          } catch (e) {
+            console.warn('Could not fetch owner restaurants for printer settings:', e.message);
+          }
+        }
         if (rid) setRestaurantId(rid);
         setUserRole(userData?.role || null);
         const notifPref = await getPrintNotificationsEnabled();

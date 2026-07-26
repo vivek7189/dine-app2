@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, LayoutAnimation } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -62,45 +62,47 @@ export default function BillingToolbar({
   };
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toolbar}>
+    <View style={styles.toolbar}>
       {buttons.map((btn) => {
         const active = isActive(btn.key);
         return (
           <TouchableOpacity
             key={btn.key}
-            style={[styles.btn, active && { backgroundColor: btn.color }]}
+            style={[styles.btn, { borderColor: active ? btn.color : '#e5e7eb' }, active && { backgroundColor: btn.color }]}
             onPress={() => {
               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
               setActiveBillingPanel(activeBillingPanel === btn.key ? null : btn.key);
             }}
+            activeOpacity={0.8}
           >
             <Ionicons name={btn.icon} size={fs(16)} color={active ? '#fff' : btn.color} />
-            <Text style={[styles.label, { fontSize: fs(11) }, active && { color: '#fff' }]}>{btn.label}</Text>
+            <Text style={[styles.label, { fontSize: fs(11), color: active ? '#fff' : btn.color }]}>{btn.label}</Text>
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   toolbar: {
     flexDirection: 'row',
-    gap: 6,
-    paddingVertical: 4,
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 6,
   },
   btn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    backgroundColor: '#fff',
   },
   label: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#6b7280',
+    fontWeight: '700',
   },
 });

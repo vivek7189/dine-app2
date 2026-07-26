@@ -4,12 +4,15 @@ import apiClient from '../services/api';
 
 const STORAGE_KEY = 'dine_tab_modes';
 
+// Default all user-toggleable tabs (Tables / Menu / Billing / Orders) to Native
+// (classic) for every role. The Web View (modern) mode is opt-in — the user
+// enables it per tab from More → Display. home stays webview (no native screen).
 const DEFAULT_MODES = {
   home: 'webview',
   tables: 'native',
   menu: 'native',
-  orders: 'webview',
-  billing: 'webview',
+  orders: 'native',
+  billing: 'native',
 };
 
 const TabModeContext = createContext({
