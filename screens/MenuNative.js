@@ -1402,6 +1402,7 @@ export default function MenuScreen() {
           }),
           ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
           ...(discountData.totalTax > 0 && { taxAmount: discountData.totalTax }),
+          ...(discountData.deliveryStaffId && { deliveryStaffId: discountData.deliveryStaffId, deliveryStaffName: discountData.deliveryStaffName, deliveryPartnerId: discountData.deliveryStaffId, deliveryPartnerName: discountData.deliveryStaffName }),
           ...(discountData.tipAmount && { tipAmount: discountData.tipAmount }),
           ...(discountData.tipPercentage && { tipPercentage: discountData.tipPercentage }),
           ...(discountData.roundOffAmount != null && discountData.roundOffAmount !== 0 && { roundOffAmount: discountData.roundOffAmount }),
@@ -2106,12 +2107,20 @@ export default function MenuScreen() {
         printSettings: printSettings || {},
       };
 
-      // Auto-print bill silently — show toast if print fails
+      // Auto-print bill silently — per-guest receipts if the bill was split.
       if (printSettings?.autoPrintOnBilling !== false) {
-        const billText = printerService.generateBillText(invoiceData);
-        printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
-          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-          .catch(() => {});
+        const guests = discountData.splitBill?.guests;
+        if (Array.isArray(guests) && guests.length > 1) {
+          guests.forEach((g, i) => {
+            const guestInvoice = { ...invoiceData, grandTotal: g.amount, splitLabel: `Split ${i + 1} of ${guests.length}${g.name ? ` — ${g.name}` : ''}`, customerName: g.name || invoiceData.customerName };
+            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` }).catch(() => {});
+          });
+        } else {
+          const billText = printerService.generateBillText(invoiceData);
+          printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+            .catch(() => {});
+        }
       }
 
       setLastOrderData(invoiceData);
@@ -2318,12 +2327,28 @@ export default function MenuScreen() {
         printSettings: printSettings || {},
       };
 
-      // Auto-print bill silently — show toast if print fails
+      // Auto-print bill silently. If the bill was split among guests, print one
+      // receipt per guest (same generateBillText, grandTotal = that guest's share).
       if (printSettings?.autoPrintOnBilling !== false) {
-        const billText = printerService.generateBillText(invoiceData);
-        printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
-          .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-          .catch(() => {});
+        const guests = discountData.splitBill?.guests;
+        if (Array.isArray(guests) && guests.length > 1) {
+          guests.forEach((g, i) => {
+            const guestInvoice = {
+              ...invoiceData,
+              grandTotal: g.amount,
+              splitLabel: `Split ${i + 1} of ${guests.length}${g.name ? ` — ${g.name}` : ''}`,
+              customerName: g.name || invoiceData.customerName,
+            };
+            const gt = printerService.generateBillText(guestInvoice);
+            printerService.printWithFeedback({ text: gt, silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` })
+              .catch(() => {});
+          });
+        } else {
+          const billText = printerService.generateBillText(invoiceData);
+          printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+            .catch(() => {});
+        }
       }
 
       // Auto-open cash drawer for cash payments
