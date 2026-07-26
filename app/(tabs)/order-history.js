@@ -53,6 +53,10 @@ export default function OrderHistoryScreen() {
   const [totalOrders, setTotalOrders] = useState(0);
   const [selectedStatus, setSelectedStatus] = useState('all');       // all | completed | cancelled | refunded
   const [selectedPayStatus, setSelectedPayStatus] = useState('all'); // all | paid | partial | due
+  const [selectedOrderType, setSelectedOrderType] = useState('all'); // all | dine-in | takeaway | delivery
+  const [selectedPayMethod, setSelectedPayMethod] = useState('all'); // all | cash | upi | card
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const activeFilterCount = [selectedStatus, selectedPayStatus, selectedOrderType, selectedPayMethod].filter(v => v !== 'all').length;
   const [analyticsStats, setAnalyticsStats] = useState(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -90,7 +94,7 @@ export default function OrderHistoryScreen() {
   // Reload page 1 whenever the query (date / filters / search) changes
   useEffect(() => {
     if (restaurantId) loadOrders(1, false);
-  }, [restaurantId, dateMode, customStartDate, customEndDate, selectedStatus, selectedPayStatus, debouncedSearch]);
+  }, [restaurantId, dateMode, customStartDate, customEndDate, selectedStatus, selectedPayStatus, selectedOrderType, selectedPayMethod, debouncedSearch]);
 
   useFocusEffect(
     useCallback(() => {
@@ -156,6 +160,8 @@ export default function OrderHistoryScreen() {
       if (debouncedSearch) params.search = debouncedSearch;
       if (selectedStatus !== 'all') params.status = selectedStatus;
       if (selectedPayStatus !== 'all') params.paymentStatus = selectedPayStatus;
+      if (selectedOrderType !== 'all') params.orderType = selectedOrderType;
+      if (selectedPayMethod !== 'all') params.paymentMethod = selectedPayMethod;
 
       const response = await apiClient.getOrders(restaurantId, params);
       let list = response?.orders || [];
@@ -196,15 +202,27 @@ export default function OrderHistoryScreen() {
     );
   }, [orders, searchTerm]);
 
+  // Robust date parse — handles Date, ISO string, epoch (s/ms), Firestore
+  // { _seconds } / { seconds } / { toDate() } shapes. Fixes "Invalid Date".
+  const toDate = (v) => {
+    if (!v) return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v);
+    if (typeof v === 'object') {
+      if (typeof v.toDate === 'function') { try { const d = v.toDate(); return isNaN(d?.getTime?.()) ? null : d; } catch { return null; } }
+      const s = v._seconds ?? v.seconds;
+      if (s != null) return new Date(Number(s) * 1000);
+    }
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  };
   const formatDate = (d) => {
-    if (!d) return '';
-    const date = new Date(d);
-    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const date = toDate(d);
+    return date ? date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
   };
   const formatTime = (d) => {
-    if (!d) return '';
-    const date = new Date(d);
-    return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const date = toDate(d);
+    return date ? date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
   };
 
   const canRestore = userRole === 'owner' || userRole === 'manager';
@@ -234,6 +252,20 @@ export default function OrderHistoryScreen() {
       ],
     );
   };
+
+  const renderFilterSection = (title, options, value, setValue) => (
+    <View style={{ marginBottom: 18 }}>
+      <Text style={styles.sheetSectionTitle}>{title}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {options.map(([key, label]) => (
+          <TouchableOpacity key={key} onPress={() => setValue(key)} activeOpacity={0.8}
+            style={[styles.sheetPill, value === key && styles.sheetPillActive]}>
+            <Text style={[styles.sheetPillText, value === key && styles.sheetPillTextActive]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
 
   const renderOrderCard = ({ item }) => {
     const amt = item.finalAmount || item.totalAmount || 0;
@@ -279,9 +311,12 @@ export default function OrderHistoryScreen() {
               <View style={styles.revisedBadge}><Text style={styles.revisedBadgeText}>Revised #{item.editCount}</Text></View>
             )}
           </View>
-          <Text style={styles.orderTime}>
-            {formatDate(item.completedAt || item.createdAt)} · {formatTime(item.completedAt || item.createdAt)}
-          </Text>
+          {(() => {
+            const dt = item.completedAt || item.createdAt;
+            const d = formatDate(dt), t = formatTime(dt);
+            const label = d && t ? `${d} · ${t}` : (d || t || '');
+            return label ? <Text style={styles.orderTime}>{label}</Text> : null;
+          })()}
         </View>
 
         {/* Discount info */}
@@ -366,30 +401,27 @@ export default function OrderHistoryScreen() {
         </View>
       )}
 
-      {/* Status + Payment-status filter pills (server-side, web parity) */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContainer}>
-        {[
-          { key: 'all', label: 'All' },
-          { key: 'completed', label: 'Completed' },
-          { key: 'cancelled', label: 'Cancelled' },
-          { key: 'refunded', label: 'Refunded' },
-        ].map((f) => (
-          <TouchableOpacity key={`st-${f.key}`} style={[styles.filterPill, selectedStatus === f.key && styles.filterPillActive]} onPress={() => setSelectedStatus(f.key)}>
-            <Text style={[styles.filterPillText, selectedStatus === f.key && styles.filterPillTextActive]}>{f.label}</Text>
-          </TouchableOpacity>
-        ))}
-        <View style={{ width: 1, backgroundColor: '#e5e7eb', marginHorizontal: 4, marginVertical: 6 }} />
-        {[
-          { key: 'all', label: 'Any pay' },
-          { key: 'paid', label: 'Paid' },
-          { key: 'partial', label: 'Partial' },
-          { key: 'due', label: 'Due' },
-        ].map((f) => (
-          <TouchableOpacity key={`ps-${f.key}`} style={[styles.filterPill, selectedPayStatus === f.key && styles.filterPillActive]} onPress={() => setSelectedPayStatus(f.key)}>
-            <Text style={[styles.filterPillText, selectedPayStatus === f.key && styles.filterPillTextActive]}>{f.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Filter bar — Filters button + active-filter chips (clean) */}
+      <View style={styles.filterBar}>
+        <TouchableOpacity style={[styles.filtersBtn, activeFilterCount > 0 && styles.filtersBtnActive]} onPress={() => setShowFilterSheet(true)} activeOpacity={0.85}>
+          <Ionicons name="options-outline" size={15} color={activeFilterCount > 0 ? '#fff' : '#374151'} />
+          <Text style={[styles.filtersBtnText, activeFilterCount > 0 && { color: '#fff' }]}>Filters</Text>
+          {activeFilterCount > 0 && <View style={styles.filtersBadge}><Text style={styles.filtersBadgeText}>{activeFilterCount}</Text></View>}
+        </TouchableOpacity>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center', paddingRight: 12 }}>
+          {[
+            selectedStatus !== 'all' && { label: selectedStatus, clear: () => setSelectedStatus('all') },
+            selectedOrderType !== 'all' && { label: selectedOrderType, clear: () => setSelectedOrderType('all') },
+            selectedPayMethod !== 'all' && { label: selectedPayMethod, clear: () => setSelectedPayMethod('all') },
+            selectedPayStatus !== 'all' && { label: `${selectedPayStatus} pay`, clear: () => setSelectedPayStatus('all') },
+          ].filter(Boolean).map((c, i) => (
+            <TouchableOpacity key={i} style={styles.activeChip} onPress={c.clear} activeOpacity={0.7}>
+              <Text style={styles.activeChipText}>{c.label}</Text>
+              <Ionicons name="close" size={12} color="#1d4ed8" />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
       {/* Search */}
       <View style={styles.searchRow}>
@@ -445,6 +477,31 @@ export default function OrderHistoryScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* Filters bottom sheet (web parity — all filter options, clean) */}
+      <Modal visible={showFilterSheet} animationType="slide" transparent onRequestClose={() => setShowFilterSheet(false)}>
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowFilterSheet(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Filters</Text>
+              <TouchableOpacity onPress={() => { setSelectedStatus('all'); setSelectedOrderType('all'); setSelectedPayMethod('all'); setSelectedPayStatus('all'); }}>
+                <Text style={styles.sheetReset}>Reset</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {renderFilterSection('Status', [['all', 'All'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded']], selectedStatus, setSelectedStatus)}
+              {renderFilterSection('Order Type', [['all', 'All'], ['dine-in', 'Dine-in'], ['takeaway', 'Takeaway'], ['delivery', 'Delivery']], selectedOrderType, setSelectedOrderType)}
+              {renderFilterSection('Payment Method', [['all', 'All'], ['cash', 'Cash'], ['upi', 'UPI'], ['card', 'Card']], selectedPayMethod, setSelectedPayMethod)}
+              {renderFilterSection('Payment Status', [['all', 'All'], ['paid', 'Paid'], ['partial', 'Partial'], ['due', 'Due']], selectedPayStatus, setSelectedPayStatus)}
+            </ScrollView>
+            <TouchableOpacity style={styles.sheetApply} onPress={() => setShowFilterSheet(false)} activeOpacity={0.85}>
+              <Text style={styles.sheetApplyText}>Show results</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Order Detail Modal */}
       <Modal visible={!!selectedOrder} animationType="slide" onRequestClose={() => setSelectedOrder(null)}>
@@ -632,6 +689,29 @@ const styles = StyleSheet.create({
   filterPillActive: { backgroundColor: '#ef4444' },
   filterPillText: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
   filterPillTextActive: { color: '#fff' },
+  // Clean filter bar + active chips
+  filterBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  filtersBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff' },
+  filtersBtnActive: { backgroundColor: '#ef4444', borderColor: '#ef4444' },
+  filtersBtnText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  filtersBadge: { minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  filtersBadgeText: { fontSize: 10, fontWeight: '800', color: '#ef4444' },
+  activeChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' },
+  activeChipText: { fontSize: 11, fontWeight: '700', color: '#1d4ed8', textTransform: 'capitalize' },
+  // Filters bottom sheet
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 24 },
+  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#e5e7eb', marginBottom: 10 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  sheetTitle: { fontSize: 17, fontWeight: '800', color: '#111827' },
+  sheetReset: { fontSize: 13, fontWeight: '700', color: '#ef4444' },
+  sheetSectionTitle: { fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
+  sheetPill: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, borderWidth: 1.5, borderColor: '#e5e7eb', backgroundColor: '#fff' },
+  sheetPillActive: { borderColor: '#ef4444', backgroundColor: '#fef2f2' },
+  sheetPillText: { fontSize: 13, fontWeight: '600', color: '#475569', textTransform: 'capitalize' },
+  sheetPillTextActive: { color: '#dc2626', fontWeight: '700' },
+  sheetApply: { marginTop: 8, backgroundColor: '#ef4444', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  sheetApplyText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 
   // Custom date
   customDateRow: {
