@@ -935,6 +935,9 @@ export default function MenuScreen() {
   useEffect(() => {
     if (!multiPricingEnabled || cart.length === 0) return;
     setCart(prev => prev.map(item => {
+      // Never re-price a manually price-edited line or a custom (ad-hoc) item —
+      // those prices are set by the cashier and must stick across rule changes.
+      if (item.priceEdited === true || item.isCustomItem === true) return item;
       const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
       const basePrice = item.originalPrice ?? menuItem?.price ?? item.price;
       let newPrice = basePrice;
@@ -1097,6 +1100,30 @@ export default function MenuScreen() {
     }
   }, []);
 
+  // Edit a cart line's unit price (role-gated in CartModal via billingSettings.priceEditRoles).
+  // Marks priceEdited so the tier re-price effect won't overwrite it. Flows through
+  // getEffectiveItemPrice → subtotal/tax/payload/print like any other price.
+  const editCartItemPrice = useCallback((itemId, newPrice) => {
+    const p = Math.max(0, Number(newPrice) || 0);
+    setCart(prev => prev.map(item =>
+      (item.cartId || item.id) === itemId
+        ? { ...item, price: p, priceEdited: true, originalPrice: item.originalPrice ?? item.price }
+        : item
+    ));
+  }, []);
+
+  // Add a custom (ad-hoc) line item (role-gated in CartModal via billingSettings.customItemRoles).
+  const addCustomItem = useCallback(({ name, price }) => {
+    const p = Math.max(0, Number(price) || 0);
+    const nm = (name || '').trim() || 'Custom Item';
+    const cid = `custom-${Date.now()}`;
+    setCart(prev => [...prev, {
+      cartId: cid, id: cid, menuItemId: null,
+      name: nm, price: p, originalPrice: p, quantity: 1,
+      isCustomItem: true, category: '', categoryId: null, pricingRules: null,
+    }]);
+  }, []);
+
   // After a successful order, locally decrement stock so UI updates instantly
   const decrementLocalStock = useCallback((orderedItems) => {
     if (!orderedItems || orderedItems.length === 0) return;
@@ -1114,22 +1141,26 @@ export default function MenuScreen() {
     }));
   }, []);
 
-  // Returns the effective per-unit price for a cart item (variant + customizations included)
+  // Returns the effective per-unit price for a cart item (variant + customizations included).
+  //
+  // SINGLE SOURCE OF TRUTH: use item.price. For multi-tier pricing, addToCart sets
+  // item.price via getItemDisplayPrice (the FULL resolver: per-item override → zone
+  // inherits Dine-In → rule default markup → base) and the re-price effect keeps it
+  // current when the active rule changes. Re-resolving here from item.pricingRules with
+  // a partial chain is what caused the cart line (₹60 tier) and the total/tax (₹50 base)
+  // to diverge — so we deliberately DON'T re-resolve; the line, subtotal, tax and the
+  // per-item order/print payload all read the same item.price.
   const getEffectiveItemPrice = (item) => {
     let base;
     if (item?.selectedVariant?.price != null) {
       base = item.selectedVariant.price;
+    } else if (typeof item?.price === 'number') {
+      base = item.price;
     } else if (multiPricingEnabled && activePricingRuleId) {
-      const perItemPrice = item?.pricingRules?.[activePricingRuleId];
-      const parsed = perItemPrice != null ? Number(perItemPrice) : NaN;
-      if (!isNaN(parsed) && parsed >= 0) {
-        base = parsed;
-      } else {
-        base = typeof item?.originalPrice === 'number' ? item.originalPrice
-          : typeof item?.price === 'number' ? item.price : 0;
-      }
+      // Defensive fallback only when item.price is missing (never for the normal path).
+      base = getItemDisplayPrice(item);
     } else {
-      base = typeof item?.price === 'number' ? item.price : 0;
+      base = 0;
     }
     const extras = Array.isArray(item?.selectedCustomizations)
       ? item.selectedCustomizations.reduce((s, c) => s + (c?.price || 0), 0)
@@ -3140,6 +3171,8 @@ export default function MenuScreen() {
         cart={cart}
         onUpdateQuantity={updateCartQuantity}
         onRemoveItem={removeFromCart}
+        onEditItemPrice={editCartItemPrice}
+        onAddCustomItem={addCustomItem}
         onPlaceOrder={isCashier ? handleCashierPlaceOrder : handlePlaceOrder}
         onCompleteBill={handleCompleteBill}
         onSendToKitchen={handleSendToKitchen}

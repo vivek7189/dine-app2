@@ -70,6 +70,8 @@ export default function CartModal({
   restaurantName = '',
   tableFromNavigation = false,
   onClearTable,
+  onEditItemPrice,
+  onAddCustomItem,
 }) {
   const { fs, sp, r, isTablet } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -92,10 +94,20 @@ export default function CartModal({
     const role = (userRole || mode || 'waiter').toLowerCase();
     return rolesArray.includes(role);
   };
+  // Price-edit & custom-item capabilities (web parity): never in waiter mode,
+  // else gated by billingSettings.priceEditRoles / customItemRoles.
+  const canEditPrice = !isWaiterMode && !!onEditItemPrice && isRoleAllowed(billingSettings.priceEditRoles);
+  const canAddCustomItem = !isWaiterMode && !!onAddCustomItem && isRoleAllowed(billingSettings.customItemRoles);
   // When table came from tables page navigation, lock order type to dine-in and hide tabs
   const lockOrderTypeToDineIn = tableFromNavigation && (selectedTable?.name || hasTable);
 
   const [orderType, setOrderType] = useState(isCashierMode ? 'counter' : 'dine-in');
+  // Price-edit + custom-item (web parity)
+  const [priceEditItem, setPriceEditItem] = useState(null);
+  const [priceEditValue, setPriceEditValue] = useState('');
+  const [showCustomItemModal, setShowCustomItemModal] = useState(false);
+  const [customItemName, setCustomItemName] = useState('');
+  const [customItemPrice, setCustomItemPrice] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -709,11 +721,24 @@ export default function CartModal({
       ) : null}
       <View style={styles.cartItemFooter}>
         <View style={styles.cartItemPriceInfo}>
-          <Text style={styles.cartItemSubtotalText}>
-            {item.soldByWeight && item.itemWeight
-              ? `${getCurrencySymbol()}${item.price}/${item.weightUnit || 'kg'} × ${item.itemWeight}${item.weightUnit || 'kg'}`
-              : `${getCurrencySymbol()}${item.price} × ${item.quantity}`}
-          </Text>
+          {canEditPrice && !item.soldByWeight ? (
+            <TouchableOpacity
+              onPress={() => { setPriceEditItem(item); setPriceEditValue(String(item.price ?? '')); }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.cartItemSubtotalText}>{getCurrencySymbol()}{item.price} × {item.quantity}</Text>
+              <Ionicons name="pencil" size={11} color="#2563eb" />
+              {item.priceEdited && <Text style={{ fontSize: 9, fontWeight: '700', color: '#2563eb' }}>edited</Text>}
+              {item.isCustomItem && <Text style={{ fontSize: 9, fontWeight: '700', color: '#7c3aed' }}>custom</Text>}
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.cartItemSubtotalText}>
+              {item.soldByWeight && item.itemWeight
+                ? `${getCurrencySymbol()}${item.price}/${item.weightUnit || 'kg'} × ${item.itemWeight}${item.weightUnit || 'kg'}`
+                : `${getCurrencySymbol()}${item.price} × ${item.quantity}`}
+            </Text>
+          )}
           <Text style={styles.cartItemTotalPrice}>{getCurrencySymbol()}{(item.price * item.quantity).toFixed(0)}</Text>
           {!isNewItem && quantityDelta > 0 && existingItem && (
             <Text style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>
@@ -961,6 +986,16 @@ export default function CartModal({
                     {renderCartItem({ item })}
                   </View>
                 ))}
+                {canAddCustomItem && (
+                  <TouchableOpacity
+                    onPress={() => { setCustomItemName(''); setCustomItemPrice(''); setShowCustomItemModal(true); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginTop: 4, borderWidth: 1, borderColor: '#c4b5fd', borderStyle: 'dashed', borderRadius: 10, backgroundColor: '#faf5ff' }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle-outline" size={16} color="#7c3aed" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#7c3aed' }}>Add Custom Item</Text>
+                  </TouchableOpacity>
+                )}
                 {freeItemsForDisplay.length > 0 && freeItemsForDisplay.map((fi) => (
                   <View key={`free-${fi.id}`} style={[styles.cartItemCard, { borderColor: '#fde68a', backgroundColor: '#fffbeb', flexDirection: 'row', alignItems: 'center' }]}>
                     <View style={{ flex: 1 }}>
@@ -1103,8 +1138,8 @@ export default function CartModal({
                       {billing.totalDiscount > 0 && (
                         <Text style={{ fontSize: 10, fontWeight: '600', color: '#fca5a5', marginTop: 1 }}>You save {getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>
                       )}
-                      {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && billing.loyaltyPointsToEarn > 0 && (
-                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{billing.loyaltyPointsToEarn} pts</Text>
+                      {billing.totalDiscount === 0 && effectiveLoyaltySettings?.enabled && loyaltyPointsToEarn > 0 && (
+                        <Text style={{ fontSize: 9, fontWeight: '600', color: '#fde68a', marginTop: 1 }}>+{loyaltyPointsToEarn} pts</Text>
                       )}
                     </View>
                   </View>
@@ -1842,6 +1877,82 @@ export default function CartModal({
           </TouchableOpacity>
         </Modal>
       )}
+
+      {/* Edit Price modal (role-gated via billingSettings.priceEditRoles) */}
+      <Modal visible={!!priceEditItem} animationType="fade" transparent onRequestClose={() => setPriceEditItem(null)}>
+        <TouchableOpacity style={styles.breakdownOverlay} activeOpacity={1} onPress={() => setPriceEditItem(null)}>
+          <View style={styles.breakdownCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.breakdownHeader}>
+              <Text style={styles.breakdownTitle}>Edit Price</Text>
+              <TouchableOpacity onPress={() => setPriceEditItem(null)}><Ionicons name="close" size={20} color="#64748b" /></TouchableOpacity>
+            </View>
+            <View style={{ padding: 16 }}>
+              <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }} numberOfLines={1}>{priceEditItem?.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12 }}>
+                <Text style={{ fontSize: 16, color: '#111827', fontWeight: '700' }}>{getCurrencySymbol()}</Text>
+                <TextInput
+                  style={{ flex: 1, fontSize: 16, paddingVertical: 12, marginLeft: 6, color: '#111827' }}
+                  value={priceEditValue} onChangeText={setPriceEditValue}
+                  keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af" autoFocus
+                />
+              </View>
+              {priceEditItem?.originalPrice != null && Number(priceEditItem.originalPrice) !== Number(priceEditValue) && (
+                <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>Original: {getCurrencySymbol()}{priceEditItem.originalPrice}</Text>
+              )}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }} onPress={() => setPriceEditItem(null)}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#475569' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#2563eb', alignItems: 'center' }}
+                  onPress={() => { onEditItemPrice(priceEditItem.cartId || priceEditItem.id, priceEditValue); setPriceEditItem(null); }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: 'white' }}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Custom Item modal (role-gated via billingSettings.customItemRoles) */}
+      <Modal visible={showCustomItemModal} animationType="fade" transparent onRequestClose={() => setShowCustomItemModal(false)}>
+        <TouchableOpacity style={styles.breakdownOverlay} activeOpacity={1} onPress={() => setShowCustomItemModal(false)}>
+          <View style={styles.breakdownCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.breakdownHeader}>
+              <Text style={styles.breakdownTitle}>Custom Item</Text>
+              <TouchableOpacity onPress={() => setShowCustomItemModal(false)}><Ionicons name="close" size={20} color="#64748b" /></TouchableOpacity>
+            </View>
+            <View style={{ padding: 16 }}>
+              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Item name</Text>
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, fontSize: 15, color: '#111827', marginBottom: 12 }}
+                value={customItemName} onChangeText={setCustomItemName} placeholder="e.g. Special item" placeholderTextColor="#9ca3af" autoFocus
+              />
+              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Price</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12 }}>
+                <Text style={{ fontSize: 16, color: '#111827', fontWeight: '700' }}>{getCurrencySymbol()}</Text>
+                <TextInput
+                  style={{ flex: 1, fontSize: 16, paddingVertical: 12, marginLeft: 6, color: '#111827' }}
+                  value={customItemPrice} onChangeText={setCustomItemPrice} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af"
+                />
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }} onPress={() => setShowCustomItemModal(false)}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#475569' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#7c3aed', alignItems: 'center', opacity: Number(customItemPrice) > 0 ? 1 : 0.5 }}
+                  disabled={!(Number(customItemPrice) > 0)}
+                  onPress={() => { onAddCustomItem({ name: customItemName, price: customItemPrice }); setShowCustomItemModal(false); }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: 'white' }}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <CustomerDetailModal
         visible={showCustomerDetail}
