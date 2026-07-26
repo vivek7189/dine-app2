@@ -38,6 +38,15 @@ export default function OrderHistoryScreen() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [userRole, setUserRole] = useState('');
   const [restoringOrder, setRestoringOrder] = useState(false);
+  // Per-order actions (reprint / refund / cancel / settle)
+  const [actionBusy, setActionBusy] = useState(false);
+  const [refundModal, setRefundModal] = useState(false);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundFull, setRefundFull] = useState(true);
+  const [settleModal, setSettleModal] = useState(false);
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleMethod, setSettleMethod] = useState('cash');
 
   // Date filter
   const [dateMode, setDateMode] = useState('today');
@@ -251,6 +260,55 @@ export default function OrderHistoryScreen() {
         },
       ],
     );
+  };
+
+  // ── Per-order actions (mirror web order-history logic) ──
+  const orderTotal = (o) => o?.finalAmount || o?.totalAmount || 0;
+  const outstandingOf = (o) => o?.outstandingAmount ?? (orderTotal(o) - (o?.paidAmount || 0));
+  const canManage = ['owner', 'manager', 'cashier'].includes((userRole || '').toLowerCase());
+  const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
+
+  const handleReprint = async (order, type) => {
+    try {
+      setActionBusy(true);
+      await apiClient.triggerPrint(order.id || order._id, type);
+      Alert.alert('Sent to printer', `${type === 'bill' ? 'Bill' : 'KOT'} reprint queued.`);
+    } catch (e) { Alert.alert('Error', e.message || 'Reprint failed'); }
+    finally { setActionBusy(false); }
+  };
+
+  const handleCancelOrder = (order) => {
+    Alert.alert('Cancel Order', `Cancel order #${order.dailyOrderId || order.orderNumber || ''}?\nThis reverses stats and inventory.`, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Cancel Order', style: 'destructive', onPress: async () => {
+        try { setActionBusy(true); await apiClient.updateOrderStatus(order.id || order._id, 'cancelled', restaurantId); reloadAfterAction(); }
+        catch (e) { Alert.alert('Error', e.message || 'Cancel failed'); } finally { setActionBusy(false); }
+      } },
+    ]);
+  };
+
+  const openRefund = (order) => { setRefundFull(true); setRefundAmount(String(orderTotal(order))); setRefundReason(''); setRefundModal(true); };
+  const submitRefund = async () => {
+    const amt = refundFull ? orderTotal(selectedOrder) : (parseFloat(refundAmount) || 0);
+    if (amt <= 0) { Alert.alert('Invalid amount', 'Enter a refund amount greater than 0.'); return; }
+    try {
+      setActionBusy(true);
+      await apiClient.processRefund(selectedOrder.id || selectedOrder._id, {
+        amount: amt, reason: refundReason.trim() || 'Refund', refundType: refundFull ? 'full' : 'partial',
+      });
+      setRefundModal(false); reloadAfterAction();
+    } catch (e) { Alert.alert('Error', e.message || 'Refund failed'); } finally { setActionBusy(false); }
+  };
+
+  const openSettle = (order) => { setSettleAmount(String(outstandingOf(order))); setSettleMethod('cash'); setSettleModal(true); };
+  const submitSettle = async () => {
+    const amt = parseFloat(settleAmount) || 0;
+    if (amt <= 0) { Alert.alert('Invalid amount', 'Enter an amount greater than 0.'); return; }
+    try {
+      setActionBusy(true);
+      await apiClient.recordPartialPayment(selectedOrder.id || selectedOrder._id, { amount: amt, paymentMethod: settleMethod });
+      setSettleModal(false); reloadAfterAction();
+    } catch (e) { Alert.alert('Error', e.message || 'Payment failed'); } finally { setActionBusy(false); }
   };
 
   const renderFilterSection = (title, options, value, setValue) => (
@@ -641,23 +699,95 @@ export default function OrderHistoryScreen() {
               </View>
             </ScrollView>
           )}
-          {selectedOrder?.status === 'cancelled' && canRestore && (
-            <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#fff' }}>
-              <TouchableOpacity
-                onPress={() => handleRestoreOrder(selectedOrder)}
-                disabled={restoringOrder}
-                style={{ backgroundColor: '#f59e0b', paddingVertical: 12, borderRadius: 8, alignItems: 'center', opacity: restoringOrder ? 0.6 : 1 }}
-                activeOpacity={0.7}
-              >
-                {restoringOrder ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>Restore Order</Text>
+          {selectedOrder && (
+            <View style={styles.actionBar}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: 'center' }}>
+                <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleReprint(selectedOrder, 'bill')} activeOpacity={0.8}>
+                  <Ionicons name="receipt-outline" size={16} color="#2563eb" /><Text style={styles.actBtnText}>Bill</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleReprint(selectedOrder, 'kot')} activeOpacity={0.8}>
+                  <Ionicons name="restaurant-outline" size={16} color="#f59e0b" /><Text style={styles.actBtnText}>KOT</Text>
+                </TouchableOpacity>
+                {canManage && selectedOrder.status !== 'cancelled' && (selectedOrder.paymentStatus === 'due' || selectedOrder.paymentStatus === 'partial' || outstandingOf(selectedOrder) > 0.01) && (
+                  <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openSettle(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
+                  </TouchableOpacity>
                 )}
-              </TouchableOpacity>
+                {canManage && selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'refunded' && (
+                  <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => openRefund(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="arrow-undo-outline" size={16} color="#7c3aed" /><Text style={[styles.actBtnText, { color: '#7c3aed' }]}>Refund</Text>
+                  </TouchableOpacity>
+                )}
+                {canManage && selectedOrder.status !== 'cancelled' && (
+                  <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleCancelOrder(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="close-circle-outline" size={16} color="#ef4444" /><Text style={[styles.actBtnText, { color: '#ef4444' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                )}
+                {selectedOrder.status === 'cancelled' && canRestore && (
+                  <TouchableOpacity style={[styles.actBtn, { backgroundColor: '#f59e0b', borderColor: '#f59e0b' }]} disabled={actionBusy || restoringOrder} onPress={() => handleRestoreOrder(selectedOrder)} activeOpacity={0.8}>
+                    {restoringOrder ? <ActivityIndicator color="#fff" size="small" /> : <><Ionicons name="refresh-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Restore</Text></>}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+              {actionBusy && <ActivityIndicator style={{ marginLeft: 8 }} size="small" color="#6b7280" />}
             </View>
           )}
         </SafeAreaView>
+      </Modal>
+
+      {/* Refund modal */}
+      <Modal visible={refundModal} animationType="slide" transparent onRequestClose={() => setRefundModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setRefundModal(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Refund order</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 12 }}>
+              <TouchableOpacity style={[styles.sheetPill, { flex: 1, alignItems: 'center' }, refundFull && styles.sheetPillActive]} onPress={() => setRefundFull(true)}>
+                <Text style={[styles.sheetPillText, refundFull && styles.sheetPillTextActive]}>Full refund</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetPill, { flex: 1, alignItems: 'center' }, !refundFull && styles.sheetPillActive]} onPress={() => setRefundFull(false)}>
+                <Text style={[styles.sheetPillText, !refundFull && styles.sheetPillTextActive]}>Partial</Text>
+              </TouchableOpacity>
+            </View>
+            {!refundFull && (
+              <>
+                <Text style={styles.sheetSectionTitle}>Amount</Text>
+                <TextInput style={styles.modalInput} value={refundAmount} onChangeText={setRefundAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af" />
+              </>
+            )}
+            <Text style={styles.sheetSectionTitle}>Reason (optional)</Text>
+            <TextInput style={styles.modalInput} value={refundReason} onChangeText={setRefundReason} placeholder="e.g. wrong item" placeholderTextColor="#9ca3af" />
+            <TouchableOpacity style={[styles.sheetApply, { backgroundColor: '#7c3aed' }]} disabled={actionBusy} onPress={submitRefund} activeOpacity={0.85}>
+              {actionBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.sheetApplyText}>Process refund{refundFull && selectedOrder ? ` (${formatCurrency(orderTotal(selectedOrder))})` : ''}</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Settle / record-payment modal */}
+      <Modal visible={settleModal} animationType="slide" transparent onRequestClose={() => setSettleModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setSettleModal(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Record payment</Text>
+            {selectedOrder && <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Outstanding {formatCurrency(outstandingOf(selectedOrder))}</Text>}
+            <Text style={[styles.sheetSectionTitle, { marginTop: 14 }]}>Amount</Text>
+            <TextInput style={styles.modalInput} value={settleAmount} onChangeText={setSettleAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af" />
+            <Text style={styles.sheetSectionTitle}>Method</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 4 }}>
+              {['cash', 'upi', 'card'].map(m => (
+                <TouchableOpacity key={m} style={[styles.sheetPill, settleMethod === m && styles.sheetPillActive]} onPress={() => setSettleMethod(m)}>
+                  <Text style={[styles.sheetPillText, settleMethod === m && styles.sheetPillTextActive]}>{m.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity style={[styles.sheetApply, { backgroundColor: '#16a34a' }]} disabled={actionBusy} onPress={submitSettle} activeOpacity={0.85}>
+              {actionBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.sheetApplyText}>Record payment</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -712,6 +842,12 @@ const styles = StyleSheet.create({
   sheetPillTextActive: { color: '#dc2626', fontWeight: '700' },
   sheetApply: { marginTop: 8, backgroundColor: '#ef4444', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   sheetApplyText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  modalInput: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, fontSize: 15, color: '#111827', marginBottom: 12 },
+  // Detail-modal action bar
+  actionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#fff' },
+  actBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff' },
+  actBtnPrimary: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  actBtnText: { fontSize: 12, fontWeight: '700', color: '#374151' },
 
   // Custom date
   customDateRow: {
