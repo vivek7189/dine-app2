@@ -39,6 +39,18 @@ import apiClient from '../services/api';
 // only true zones (AC Dining, Non-AC Dining, custom halls, etc.) are user-selectable.
 const CHANNEL_RULE_NAMES = ['dine-in', 'dine in', 'dinein', 'takeaway', 'take away', 'take-away', 'delivery'];
 
+// Icons for order types. Custom channels (e.g. "snoonu") fall back to a generic tag icon.
+const ORDER_TYPE_ICONS = {
+  'dine-in': 'restaurant-outline',
+  'dine_in': 'restaurant-outline',
+  counter: 'storefront-outline',
+  takeaway: 'bag-handle-outline',
+  delivery: 'bicycle-outline',
+};
+const orderTypeIcon = (id) => ORDER_TYPE_ICONS[id] || 'pricetag-outline';
+// Order types that keep base pricing + no zone picker (channels & custom aggregators).
+const isDineInLike = (id) => id === 'dine-in' || id === 'dine_in' || id === 'counter';
+
 export default function CartModal({
   mode = 'owner',         // 'waiter' | 'cashier' | 'owner'
   userRole = '',          // actual user role string (e.g. 'owner', 'manager', 'waiter', 'cashier')
@@ -49,6 +61,7 @@ export default function CartModal({
   onRemoveItem,
   onPlaceOrder,
   onCompleteBill,
+  onKotAndBill,           // one-click KOT+Bill (flag-gated; undefined when off)
   onSendToKitchen,        // waiter mode callback
   total,
   tableNumber: tableNumberProp,
@@ -136,6 +149,30 @@ export default function CartModal({
     if (!isRoleAllowed(billingSettings.paymentMethodRoles)) list = list.filter(m => String(m).toLowerCase() === 'cash');
     return list;
   })();
+  // Dynamic order types — mirror web (posSettings.orderTypes: [{id,label,enabled,builtIn}]),
+  // falling back to the three built-ins. Custom channels (e.g. "snoonu") appear automatically.
+  const orderTypeOptions = useMemo(() => {
+    const builtInDefaults = [
+      { id: 'dine-in', label: 'Dine In', builtIn: true },
+      { id: 'takeaway', label: 'Takeaway', builtIn: true },
+      { id: 'delivery', label: 'Delivery', builtIn: true },
+    ];
+    let list = (Array.isArray(posSettings.orderTypes) && posSettings.orderTypes.length > 0)
+      ? posSettings.orderTypes
+      : builtInDefaults;
+    list = list
+      .filter(ot => ot && ot.enabled !== false)
+      .map(ot => ({ id: ot.id, label: ot.label || ot.id, builtIn: ot.builtIn }));
+    // Cashier mode uses an in-store "Counter" in place of Dine In (mobile-specific).
+    if (isCashierMode) {
+      list = list.map(ot => (ot.id === 'dine-in' ? { ...ot, id: 'counter', label: 'Counter' } : ot));
+      if (!list.some(ot => ot.id === 'counter')) {
+        list = [{ id: 'counter', label: 'Counter', builtIn: true }, ...list];
+      }
+    }
+    return list;
+  }, [posSettings.orderTypes, isCashierMode]);
+
   // When table came from tables page navigation, lock order type to dine-in and hide tabs
   const lockOrderTypeToDineIn = tableFromNavigation && (selectedTable?.name || hasTable);
 
@@ -165,6 +202,21 @@ export default function CartModal({
   const [tableNumber, setTableNumber] = useState(selectedTable?.name || tableNumberProp || '');
   const [showTableInput, setShowTableInput] = useState(false);
   const [covers, setCovers] = useState(1);
+
+  // Keep the selected order type valid: if the current type isn't in the enabled list
+  // (e.g. admin disabled Dine In), fall back to posSettings.defaultOrderType or the first
+  // enabled type. Skipped when the type is locked to dine-in via table navigation.
+  useEffect(() => {
+    if (lockOrderTypeToDineIn || orderTypeOptions.length === 0) return;
+    const ids = orderTypeOptions.map(o => o.id);
+    if (!ids.includes(orderType)) {
+      const def = posSettings.defaultOrderType;
+      const next = (def && ids.includes(def)) ? def : orderTypeOptions[0].id;
+      setOrderType(next);
+      onOrderTypeChange?.(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderTypeOptions, lockOrderTypeToDineIn]);
 
   // Keyboard-aware bottom offset — lifts stickyBottom above keyboard
   const keyboardOffset = useRef(new Animated.Value(0)).current;
@@ -667,6 +719,27 @@ export default function CartModal({
     proceedCompleteBill();
   };
 
+  // One-click KOT + Bill (unpaid). No UPI intercept — payment is settled later.
+  const proceedKotAndBill = () => {
+    if (!onKotAndBill) return;
+    setActiveAction('kotbill');
+    onKotAndBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
+  };
+
+  const handleKotAndBill = () => {
+    if (stockWarnings.overStock.length > 0) {
+      Alert.alert('Stock Exceeded',
+        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+      return;
+    }
+    if (needsDiscountApproval()) {
+      setPendingOrderAction('kotbill');
+      setShowDiscountApproval(true);
+      return;
+    }
+    proceedKotAndBill();
+  };
+
   const handleUpiConfirm = () => {
     setShowUpiQr(false);
     if (activeAction === 'complete' && onCompleteBill) {
@@ -732,6 +805,7 @@ export default function CartModal({
     // Resume the pending action
     if (pendingOrderAction === 'place') proceedPlaceOrder();
     else if (pendingOrderAction === 'complete') proceedCompleteBill();
+    else if (pendingOrderAction === 'kotbill') proceedKotAndBill();
     else if (pendingOrderAction === 'kitchen') proceedSendToKitchen();
     setPendingOrderAction(null);
   };
@@ -932,26 +1006,18 @@ export default function CartModal({
             </View>
             {showOrderTypes && !lockOrderTypeToDineIn && (
               <View style={styles.orderTypeTabs}>
-                {(isCashierMode
-                  ? [
-                      { key: 'counter', label: 'COUNTER', icon: 'storefront-outline' },
-                      { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
-                      { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
-                    ]
-                  : [
-                      { key: 'dine-in', label: 'DINE IN', icon: 'restaurant-outline' },
-                      { key: 'takeaway', label: 'TAKEAWAY', icon: 'bag-handle-outline' },
-                      { key: 'delivery', label: 'DELIVERY', icon: 'bicycle-outline' },
-                    ]
-                ).map((t) => (
+                {orderTypeOptions.map((t) => (
                   <TouchableOpacity
-                    key={t.key}
-                    style={[styles.orderTypeTab, orderType === t.key && styles.orderTypeTabActive]}
-                    onPress={() => { setOrderType(t.key); onOrderTypeChange?.(t.key); }}
+                    key={t.id}
+                    style={[styles.orderTypeTab, orderType === t.id && styles.orderTypeTabActive]}
+                    onPress={() => { setOrderType(t.id); onOrderTypeChange?.(t.id); }}
                   >
-                    <Ionicons name={t.icon} size={14} color={orderType === t.key ? Colors.primary : '#fff'} />
-                    <Text style={[styles.orderTypeTabText, orderType === t.key && styles.orderTypeTabTextActive]}>
-                      {t.label}
+                    <Ionicons name={orderTypeIcon(t.id)} size={14} color={orderType === t.id ? Colors.primary : '#fff'} />
+                    <Text
+                      style={[styles.orderTypeTabText, orderType === t.id && styles.orderTypeTabTextActive]}
+                      numberOfLines={1}
+                    >
+                      {(t.label || t.id).toUpperCase()}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -1017,7 +1083,7 @@ export default function CartModal({
                  · dine-in/counter → pick a zone (AC/Non-AC/hall); channel rules hidden
                  · takeaway/delivery → auto-locked, show a read-only badge instead of pills */}
             {showPricingRules && multiPricingEnabled && pricingRules.length > 0 && (
-              (orderType === 'takeaway' || orderType === 'delivery') ? (
+              (!isDineInLike(orderType)) ? (
                 <View style={styles.autoPricingBar}>
                   <Ionicons name="lock-closed" size={12} color="#059669" />
                   <Text style={styles.autoPricingText}>
@@ -1386,6 +1452,26 @@ export default function CartModal({
                     <Text style={{ fontSize: 10, color: '#f59e0b', marginTop: 4 }}>UPI/Card unavailable offline</Text>
                   )}
                 </View>
+              )}
+
+              {/* One-click KOT + Bill (flag-gated via onKotAndBill; default off).
+                  Places order + prints KOT + prints bill, unpaid — settle after. */}
+              {onKotAndBill && !isWaiterMode && (
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#4f46e5', paddingVertical: 13, borderRadius: 12, marginBottom: 8, opacity: sending ? 0.6 : 1 }}
+                  onPress={handleKotAndBill}
+                  disabled={sending}
+                  activeOpacity={0.85}
+                >
+                  {sending && activeAction === 'kotbill' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="print" size={16} color="#fff" />
+                      <Text style={styles.actionBtnText}>KOT + Bill</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               )}
 
               {/* Action Buttons — mode-specific */}
@@ -2011,19 +2097,18 @@ export default function CartModal({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
         >
-          <TouchableOpacity style={styles.billingSheetOverlay} activeOpacity={1} onPress={() => setActiveBillingPanel(null)}>
+          <TouchableOpacity style={styles.billingSheetOverlay} activeOpacity={1} onPress={() => { Keyboard.dismiss(); setActiveBillingPanel(null); }}>
             <View style={styles.billingSheetCard} onStartShouldSetResponder={() => true}>
-              <View style={styles.billingSheetHandleRow}>
-                <View style={styles.billingSheetHandle} />
-                <TouchableOpacity
-                  onPress={() => setActiveBillingPanel(null)}
-                  style={styles.billingSheetClose}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons name="close" size={22} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-              <ScrollView style={{ maxHeight: 440 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <View style={styles.billingSheetHandle} />
+              <TouchableOpacity
+                onPress={() => { Keyboard.dismiss(); setActiveBillingPanel(null); }}
+                style={styles.billingSheetCloseBtn}
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={20} color="#334155" />
+              </TouchableOpacity>
+              <ScrollView style={styles.billingSheetScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 <BillingPanels
                   activeBillingPanel={activeBillingPanel}
                   billingSettings={billingSettings}
@@ -2345,15 +2430,20 @@ const styles = StyleSheet.create({
   },
   orderTypeTabs: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
   },
   orderTypeTab: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 90,
+    minWidth: 90,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
     paddingVertical: 7,
+    paddingHorizontal: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.3)',
@@ -2557,34 +2647,41 @@ const styles = StyleSheet.create({
   },
   billingSheetCard: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 20,
-  },
-  billingSheetHandleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 24,
+    minHeight: 300,
   },
   billingSheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#d1d5db',
+    width: 44,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#cbd5e1',
+    alignSelf: 'center',
+    marginBottom: 10,
   },
-  billingSheetClose: {
+  billingSheetCloseBtn: {
     position: 'absolute',
-    right: 0,
-    top: -2,
-    padding: 4,
+    right: 14,
+    top: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
+  billingSheetScroll: {
+    maxHeight: 460,
+    marginTop: 6,
   },
   billingSheetDone: {
-    marginTop: 12,
-    paddingVertical: 14,
-    borderRadius: 12,
+    marginTop: 16,
+    paddingVertical: 15,
+    borderRadius: 14,
     backgroundColor: Colors.primary,
     alignItems: 'center',
   },

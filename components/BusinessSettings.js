@@ -39,6 +39,7 @@ const COUNTRY_FIELDS = {
   MY: [{ key: 'vatNumber', label: 'SST Registration No.', placeholder: 'e.g., W10-1234-56789012', maxLength: 20, autoCapitalize: 'characters' }],
 };
 const DEFAULT_FIELDS = [
+  { key: 'gstin', label: 'GST Number', placeholder: 'Enter GST number', maxLength: 20, autoCapitalize: 'characters' },
   { key: 'vatNumber', label: 'VAT / Tax Number', placeholder: 'Enter tax registration number', maxLength: 20, autoCapitalize: 'characters' },
   { key: 'taxId', label: 'Tax ID', placeholder: 'Enter tax ID', maxLength: 20 },
   { key: 'businessRegistrationNumber', label: 'Business Registration No.', placeholder: 'Enter registration number', maxLength: 20 },
@@ -140,11 +141,17 @@ export default function BusinessSettings({ restaurantId, countryCode: propCountr
     }
   };
 
-  // Validate GSTIN format (Indian GST Number)
+  // Validate GSTIN format (Indian GST Number). Only enforced for India — other
+  // countries may store a generic GST/tax number that doesn't match the Indian format.
   const validateGstin = (value) => {
     if (!value || value.trim() === '') {
       setGstinError('');
       return true; // Empty is valid (optional field)
+    }
+
+    if (countryCode !== 'IN') {
+      setGstinError(''); // Non-India: accept any free-form GST/tax number
+      return true;
     }
 
     // GSTIN format: 2 state code + 5 PAN letters + 4 PAN digits + 1 PAN letter + 1 entity code + Z + 1 checksum
@@ -366,12 +373,13 @@ export default function BusinessSettings({ restaurantId, countryCode: propCountr
           );
         })}
 
-        {/* Show GST on Invoice Toggle (India) */}
-        {countryCode === 'IN' && (
+        {/* Show GST on Invoice Toggle — shown whenever GST is an available field (India)
+            or a GST number has been entered (other countries via DEFAULT_FIELDS). */}
+        {((COUNTRY_FIELDS[countryCode] || DEFAULT_FIELDS).some(f => f.key === 'gstin') || !!gstin) && (
           <View style={styles.toggleGroup}>
             <View style={styles.toggleInfo}>
               <Text style={styles.inputLabel}>Show GST Info on Invoice</Text>
-              <Text style={styles.hintText}>Display GSTIN on invoices</Text>
+              <Text style={styles.hintText}>Display GST number on invoices</Text>
             </View>
             <Switch
               value={showGstOnInvoice}

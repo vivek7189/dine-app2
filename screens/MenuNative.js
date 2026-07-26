@@ -2387,6 +2387,91 @@ export default function MenuScreen() {
     }
   };
 
+  // One-click "KOT + Bill" (printSettings.kotThenBill, default off): place the order (status
+  // 'confirmed', UNPAID) + print the KOT, then print the bill. Payment is settled later via
+  // Complete Bill. Reuses handlePlaceOrder for order-create + KOT + navigation (so behaviour
+  // stays identical to Place Order), then prints the bill from a snapshot taken before the
+  // cart clears. Additive — does not change any existing handler.
+  const handleKotAndBill = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
+      return;
+    }
+
+    // Totals — computed identically to Complete Bill so the printed bill matches.
+    const subtotal = getCartTotal();
+    const totalDiscount = discountData.totalDiscount || 0;
+    const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
+    const serviceCharge = discountData.serviceChargeAmount || 0;
+    const taxableAmount = discountedSubtotal + serviceCharge;
+    const flatTaxResult = calculateTax(taxableAmount);
+    const taxRate = flatTaxResult.taxRate;
+    const taxLabel = flatTaxResult.taxLabel;
+    const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount;
+    let grandTotal;
+    if (discountData.grandTotal != null) {
+      grandTotal = discountData.grandTotal;
+    } else {
+      const afterTax = taxableAmount + taxAmount;
+      const withTip = afterTax + (discountData.tipAmount || 0);
+      let localRoundOff = 0;
+      if (billingSettings.roundOffEnabled) {
+        const roundTo = billingSettings.roundOffTo || 1;
+        localRoundOff = Math.round(withTip / roundTo) * roundTo - withTip;
+        localRoundOff = Math.round(localRoundOff * 100) / 100;
+      }
+      grandTotal = Math.round((withTip + localRoundOff) * 100) / 100;
+    }
+
+    // Snapshot the bill BEFORE handlePlaceOrder clears the cart.
+    let latestRestaurantInfo = user?.restaurant || {};
+    try { const lu = await apiClient.getUser(); latestRestaurantInfo = lu?.restaurant || latestRestaurantInfo; } catch { /* use cached */ }
+    const billInvoice = {
+      orderNumber: '',
+      restaurantName,
+      restaurantInfo: latestRestaurantInfo,
+      items: cart.map(item => ({
+        name: item.name, quantity: item.quantity, price: item.price,
+        total: item.price * item.quantity,
+        selectedVariant: item.selectedVariant || null,
+        selectedCustomizations: item.selectedCustomizations || [],
+        notes: item.notes || '',
+      })),
+      subtotal, tax: taxAmount, taxRate, taxLabel, taxEnabled: taxSettings.enabled,
+      taxBreakdown: discountData.taxBreakdown || null,
+      grandTotal,
+      customerName: customerName || 'Walk-in Customer',
+      customerMobile: customerMobile || '',
+      orderType,
+      paymentMethod: discountData.splitPayments ? 'split' : paymentMethod,
+      timestamp: new Date(),
+      staffName: user?.name || 'Manager',
+      offerDiscount: discountData.offerDiscount || 0,
+      offerName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
+      appliedOffers: discountData.appliedOffers || [],
+      manualDiscount: discountData.manualDiscountAmount || 0,
+      loyaltyDiscount: discountData.loyaltyDiscount || 0,
+      couponDiscount: discountData.couponDiscount || 0,
+      couponCode: discountData.couponCode || null,
+      serviceChargeAmount: serviceCharge || 0,
+      serviceChargeRate: discountData.serviceChargeRate || null,
+      roundOffAmount: discountData.roundOffAmount || 0,
+      tipAmount: discountData.tipAmount || 0,
+      printSettings: printSettings || {},
+    };
+
+    // Place order (UNPAID) + print KOT + clear cart + navigate (reuses existing flow).
+    await handlePlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData, tableNumberFromModal);
+
+    // Then print the bill (enqueued after the KOT so KOT prints first). Order stays unpaid.
+    try {
+      const billText = printerService.generateBillText(billInvoice);
+      printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+        .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
+        .catch(() => {});
+    } catch { /* bill print best-effort */ }
+  };
+
   // Bar Tab: Save as open tab (status: 'saved')
   const handleSaveTab = async () => {
     if (cart.length === 0) {
@@ -3230,6 +3315,7 @@ export default function MenuScreen() {
         onAddCustomItem={addCustomItem}
         onPlaceOrder={isCashier ? handleCashierPlaceOrder : handlePlaceOrder}
         onCompleteBill={handleCompleteBill}
+        onKotAndBill={printSettings?.kotThenBill ? handleKotAndBill : undefined}
         onSendToKitchen={handleSendToKitchen}
         total={getCartTotal()}
         tableNumber={selectedTable?.name || ''}
