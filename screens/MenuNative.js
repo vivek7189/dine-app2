@@ -99,6 +99,7 @@ export default function MenuScreen() {
   const [restaurantId, setRestaurantId] = useState(null);
   const [user, setUser] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
+  const [deliveryStaff, setDeliveryStaff] = useState([]); // for delivery-order assignment
   const [sendingOrder, setSendingOrder] = useState(false);
   const [isWaiter, setIsWaiter] = useState(false);
   const [isCashier, setIsCashier] = useState(false);
@@ -1113,16 +1114,35 @@ export default function MenuScreen() {
   }, []);
 
   // Add a custom (ad-hoc) line item (role-gated in CartModal via billingSettings.customItemRoles).
-  const addCustomItem = useCallback(({ name, price }) => {
+  // qty defaults to 1 but the modal can pass a quantity.
+  const addCustomItem = useCallback(({ name, price, quantity }) => {
     const p = Math.max(0, Number(price) || 0);
+    const q = Math.max(1, parseInt(quantity, 10) || 1);
     const nm = (name || '').trim() || 'Custom Item';
     const cid = `custom-${Date.now()}`;
     setCart(prev => [...prev, {
       cartId: cid, id: cid, menuItemId: null,
-      name: nm, price: p, originalPrice: p, quantity: 1,
+      name: nm, price: p, originalPrice: p, quantity: q,
       isCustomItem: true, category: '', categoryId: null, pricingRules: null,
     }]);
   }, []);
+
+  // Best-effort load of delivery staff for delivery-order assignment (Gap 7).
+  useEffect(() => {
+    if (!restaurantId) return;
+    (async () => {
+      try {
+        const res = await apiClient.getStaff(restaurantId);
+        const list = res?.staff || res?.staffList || res?.data || (Array.isArray(res) ? res : []);
+        const del = (list || []).filter(s => {
+          const r = (s.role || '').toLowerCase();
+          const rs = Array.isArray(s.roles) ? s.roles.map(x => (x || '').toLowerCase()) : [];
+          return r === 'delivery' || rs.includes('delivery');
+        }).map(s => ({ id: s.id || s._id || s.staffId, name: s.name || s.fullName || 'Staff' }));
+        setDeliveryStaff(del);
+      } catch { /* optional feature */ }
+    })();
+  }, [restaurantId]);
 
   // After a successful order, locally decrement stock so UI updates instantly
   const decrementLocalStock = useCallback((orderedItems) => {
@@ -3188,6 +3208,8 @@ export default function MenuScreen() {
         multiPricingEnabled={multiPricingEnabled}
         activePricingRuleName={pricingRules.find(r => r.id === activePricingRuleId)?.name}
         billingSettings={billingSettings}
+        posSettings={user?.restaurant?.posSettings || {}}
+        deliveryStaff={deliveryStaff}
         taxSettings={taxSettings}
         categories={taxCategories.length > 0 ? taxCategories : categories}
         pricingRules={pricingRules}

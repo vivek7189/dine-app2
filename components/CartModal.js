@@ -72,6 +72,8 @@ export default function CartModal({
   onClearTable,
   onEditItemPrice,
   onAddCustomItem,
+  posSettings = {},
+  deliveryStaff = [],
 }) {
   const { fs, sp, r, isTablet } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -95,9 +97,25 @@ export default function CartModal({
     return rolesArray.includes(role);
   };
   // Price-edit & custom-item capabilities (web parity): never in waiter mode,
-  // else gated by billingSettings.priceEditRoles / customItemRoles.
-  const canEditPrice = !isWaiterMode && !!onEditItemPrice && isRoleAllowed(billingSettings.priceEditRoles);
-  const canAddCustomItem = !isWaiterMode && !!onAddCustomItem && isRoleAllowed(billingSettings.customItemRoles);
+  // require the POS master toggle (on unless explicitly disabled) AND the role.
+  const canEditPrice = !isWaiterMode && !!onEditItemPrice
+    && posSettings.allowPriceEdit !== false && isRoleAllowed(billingSettings.priceEditRoles);
+  const canAddCustomItem = !isWaiterMode && !!onAddCustomItem
+    && posSettings.allowCustomItems !== false && isRoleAllowed(billingSettings.customItemRoles);
+  // Payment methods (web parity): from posSettings.paymentMethods, else default, gated by paymentMethodRoles.
+  const paymentMethodOptions = (() => {
+    let list;
+    if (Array.isArray(posSettings.paymentMethods) && posSettings.paymentMethods.length > 0) {
+      list = posSettings.paymentMethods
+        .filter(m => m && (typeof m === 'string' || m.enabled !== false))
+        .map(m => (typeof m === 'string' ? m : (m.id || m.value || m.name || m.method)))
+        .filter(Boolean);
+    } else {
+      list = ['cash', 'upi', 'card'];
+    }
+    if (!isRoleAllowed(billingSettings.paymentMethodRoles)) list = list.filter(m => String(m).toLowerCase() === 'cash');
+    return list;
+  })();
   // When table came from tables page navigation, lock order type to dine-in and hide tabs
   const lockOrderTypeToDineIn = tableFromNavigation && (selectedTable?.name || hasTable);
 
@@ -108,6 +126,7 @@ export default function CartModal({
   const [showCustomItemModal, setShowCustomItemModal] = useState(false);
   const [customItemName, setCustomItemName] = useState('');
   const [customItemPrice, setCustomItemPrice] = useState('');
+  const [customItemQty, setCustomItemQty] = useState('1');
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -292,13 +311,21 @@ export default function CartModal({
   const subtotal = total;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Calculate manual discount amount
+  // Calculate manual discount amount, clamped to admin caps (web parity):
+  // billingSettings.maxDiscountPercent (on percentage) + maxDiscountAmount (absolute).
   const manualDiscountAmount = (() => {
-    const val = parseFloat(manualDiscount) || 0;
+    let val = parseFloat(manualDiscount) || 0;
+    const maxPct = Number(billingSettings.maxDiscountPercent) || 0;
+    const maxAmt = Number(billingSettings.maxDiscountAmount) || 0;
+    let amt;
     if (manualDiscountType === 'percentage') {
-      return Math.round((subtotal * val / 100) * 100) / 100;
+      const pct = maxPct > 0 ? Math.min(val, maxPct) : val;
+      amt = Math.round((subtotal * pct / 100) * 100) / 100;
+    } else {
+      amt = Math.min(val, subtotal);
     }
-    return Math.min(val, subtotal);
+    if (maxAmt > 0) amt = Math.min(amt, maxAmt);
+    return Math.max(0, amt);
   })();
 
   // Comp items reduce subtotal
@@ -988,7 +1015,7 @@ export default function CartModal({
                 ))}
                 {canAddCustomItem && (
                   <TouchableOpacity
-                    onPress={() => { setCustomItemName(''); setCustomItemPrice(''); setShowCustomItemModal(true); }}
+                    onPress={() => { setCustomItemName(''); setCustomItemPrice(''); setCustomItemQty('1'); setShowCustomItemModal(true); }}
                     style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginTop: 4, borderWidth: 1, borderColor: '#c4b5fd', borderStyle: 'dashed', borderRadius: 10, backgroundColor: '#faf5ff' }}
                     activeOpacity={0.8}
                   >
@@ -1247,15 +1274,15 @@ export default function CartModal({
                   </View>
                   {splitPayments.length === 0 && (
                     <View style={styles.paymentBtnGroup}>
-                      {(['cash', 'upi', 'card'].filter(m => !effectivelyOffline || m === 'cash')).map((method) => (
+                      {(paymentMethodOptions.filter(m => !effectivelyOffline || String(m).toLowerCase() === 'cash')).map((method) => (
                         <TouchableOpacity
                           key={method}
                           style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]}
                           onPress={() => setPaymentMethod(method)}
                         >
-                          <Ionicons name={paymentIcons[method]} size={13} color={paymentMethod === method ? '#fff' : '#6b7280'} />
+                          <Ionicons name={paymentIcons[String(method).toLowerCase()] || 'wallet-outline'} size={13} color={paymentMethod === method ? '#fff' : '#6b7280'} />
                           <Text style={[styles.paymentBtnText, paymentMethod === method && styles.paymentBtnTextActive]}>
-                            {method.charAt(0).toUpperCase() + method.slice(1)}
+                            {String(method).charAt(0).toUpperCase() + String(method).slice(1)}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -1685,7 +1712,7 @@ export default function CartModal({
               )}
 
               {/* MANUAL DISCOUNT Section */}
-              {billingSettings.manualDiscountEnabled !== false && (
+              {billingSettings.manualDiscountEnabled !== false && isRoleAllowed(billingSettings.manualDiscountRoles) && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
                     <Ionicons name="pricetag-outline" size={10} color="#94a3b8" />
@@ -1929,13 +1956,29 @@ export default function CartModal({
                 style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, fontSize: 15, color: '#111827', marginBottom: 12 }}
                 value={customItemName} onChangeText={setCustomItemName} placeholder="e.g. Special item" placeholderTextColor="#9ca3af" autoFocus
               />
-              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Price</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12 }}>
-                <Text style={{ fontSize: 16, color: '#111827', fontWeight: '700' }}>{getCurrencySymbol()}</Text>
-                <TextInput
-                  style={{ flex: 1, fontSize: 16, paddingVertical: 12, marginLeft: 6, color: '#111827' }}
-                  value={customItemPrice} onChangeText={setCustomItemPrice} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af"
-                />
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Price</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12 }}>
+                    <Text style={{ fontSize: 16, color: '#111827', fontWeight: '700' }}>{getCurrencySymbol()}</Text>
+                    <TextInput
+                      style={{ flex: 1, fontSize: 16, paddingVertical: 12, marginLeft: 6, color: '#111827' }}
+                      value={customItemPrice} onChangeText={setCustomItemPrice} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af"
+                    />
+                  </View>
+                </View>
+                <View style={{ width: 96 }}>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Qty</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10 }}>
+                    <TouchableOpacity onPress={() => setCustomItemQty(String(Math.max(1, (parseInt(customItemQty, 10) || 1) - 1)))} style={{ paddingHorizontal: 10, paddingVertical: 10 }}>
+                      <Ionicons name="remove" size={16} color="#475569" />
+                    </TouchableOpacity>
+                    <Text style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: '700', color: '#111827' }}>{parseInt(customItemQty, 10) || 1}</Text>
+                    <TouchableOpacity onPress={() => setCustomItemQty(String((parseInt(customItemQty, 10) || 1) + 1))} style={{ paddingHorizontal: 10, paddingVertical: 10 }}>
+                      <Ionicons name="add" size={16} color="#475569" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
                 <TouchableOpacity style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }} onPress={() => setShowCustomItemModal(false)}>
@@ -1944,7 +1987,7 @@ export default function CartModal({
                 <TouchableOpacity
                   style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#7c3aed', alignItems: 'center', opacity: Number(customItemPrice) > 0 ? 1 : 0.5 }}
                   disabled={!(Number(customItemPrice) > 0)}
-                  onPress={() => { onAddCustomItem({ name: customItemName, price: customItemPrice }); setShowCustomItemModal(false); }}
+                  onPress={() => { onAddCustomItem({ name: customItemName, price: customItemPrice, quantity: customItemQty }); setShowCustomItemModal(false); }}
                 >
                   <Text style={{ fontSize: 14, fontWeight: '700', color: 'white' }}>Add</Text>
                 </TouchableOpacity>
