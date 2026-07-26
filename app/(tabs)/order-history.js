@@ -46,28 +46,55 @@ export default function OrderHistoryScreen() {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
-  // Stats — use paidAmount for due/partial orders so unpaid dues don't inflate revenue
+  // Server pagination + filters + analytics (web parity)
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [selectedStatus, setSelectedStatus] = useState('all');       // all | completed | cancelled | refunded
+  const [selectedPayStatus, setSelectedPayStatus] = useState('all'); // all | paid | partial | due
+  const [analyticsStats, setAnalyticsStats] = useState(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  const PAGE_SIZE = 25;
+  const HISTORY_STATUSES = ['completed', 'served', 'cancelled', 'refunded'];
+
+  // Stats: prefer server analytics (period-accurate); fall back to loaded orders.
   const stats = useMemo(() => {
+    const rev = analyticsStats && (analyticsStats.totalRevenue ?? analyticsStats.revenue);
+    if (analyticsStats && rev != null) {
+      return {
+        count: analyticsStats.completedOrders ?? analyticsStats.orderCount ?? analyticsStats.totalOrders ?? analyticsStats.count ?? 0,
+        revenue: rev,
+      };
+    }
     const completed = orders.filter(o => o.status === 'completed' || o.status === 'served');
     const revenue = completed.reduce((sum, o) => {
       if (o.paymentStatus === 'due') return sum;
       if ((o.paymentStatus === 'partial' || o.outstandingAmount > 0) && o.paidAmount != null) return sum + (Number(o.paidAmount) || 0);
       return sum + (o.finalAmount || o.totalAmount || 0);
     }, 0);
-    return { count: completed.length, total: orders.length, revenue };
-  }, [orders]);
+    return { count: completed.length, revenue };
+  }, [orders, analyticsStats]);
 
   useEffect(() => {
     loadUser();
   }, []);
 
+  // Debounce the search box → server-side search
   useEffect(() => {
-    if (restaurantId) loadOrders();
-  }, [restaurantId, dateMode, customStartDate, customEndDate]);
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // Reload page 1 whenever the query (date / filters / search) changes
+  useEffect(() => {
+    if (restaurantId) loadOrders(1, false);
+  }, [restaurantId, dateMode, customStartDate, customEndDate, selectedStatus, selectedPayStatus, debouncedSearch]);
 
   useFocusEffect(
     useCallback(() => {
-      if (restaurantId && !loading) loadOrders();
+      if (restaurantId && !loading) loadOrders(1, false);
     }, [restaurantId])
   );
 
@@ -111,36 +138,50 @@ export default function OrderHistoryScreen() {
     }
   }, [dateMode, customStartDate, customEndDate]);
 
-  const loadOrders = async () => {
+  const loadAnalytics = async (dateRange) => {
+    try {
+      // period='custom' + explicit start/end so the stats match the exact date range.
+      const res = await apiClient.getAnalytics(restaurantId, 'custom', { startDate: dateRange.startDate, endDate: dateRange.endDate });
+      setAnalyticsStats(res?.analytics || res?.stats || res || null);
+    } catch { setAnalyticsStats(null); }
+  };
+
+  const loadOrders = async (pageArg = 1, append = false) => {
     if (!restaurantId) return;
     try {
-      if (!refreshing) setLoading(true);
+      if (append) setLoadingMore(true);
+      else if (!refreshing) setLoading(true);
       const dateRange = getDateRange();
-      const response = await apiClient.getOrders(restaurantId, {
-        ...dateRange,
-        limit: 200,
-        sort: 'newest',
-      }, {
-        onRefreshed: (freshData) => {
-          const allFresh = freshData?.orders || [];
-          const freshHistory = allFresh.filter(o =>
-            ['completed', 'served', 'cancelled', 'refunded'].includes(o.status)
-          );
-          setOrders(freshHistory);
-        },
-      });
-      const allOrders = response?.orders || [];
-      // Show completed, served, cancelled, refunded
-      const historyOrders = allOrders.filter(o =>
-        ['completed', 'served', 'cancelled', 'refunded'].includes(o.status)
-      );
-      setOrders(historyOrders);
+      const params = { ...dateRange, page: pageArg, limit: PAGE_SIZE, sort: 'newest' };
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (selectedStatus !== 'all') params.status = selectedStatus;
+      if (selectedPayStatus !== 'all') params.paymentStatus = selectedPayStatus;
+
+      const response = await apiClient.getOrders(restaurantId, params);
+      let list = response?.orders || [];
+      // With no explicit status filter, restrict to history statuses (exclude active).
+      if (selectedStatus === 'all') list = list.filter(o => HISTORY_STATUSES.includes(o.status));
+
+      setOrders(prev => append ? [...prev, ...list] : list);
+
+      const pg = response?.pagination || {};
+      const totalPages = pg.totalPages ?? (pg.total != null ? Math.ceil(pg.total / PAGE_SIZE) : null);
+      setTotalOrders(pg.total ?? pg.totalOrders ?? null);
+      setHasMore(totalPages != null ? pageArg < totalPages : (response?.orders || []).length >= PAGE_SIZE);
+      setPage(pageArg);
+      if (!append) loadAnalytics(dateRange);
     } catch (e) {
       console.error('Failed to load orders:', e);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
       setRefreshing(false);
     }
+  };
+
+  const loadMore = () => {
+    if (loadingMore || loading || !hasMore) return;
+    loadOrders(page + 1, true);
   };
 
   const filteredOrders = useMemo(() => {
@@ -223,11 +264,20 @@ export default function OrderHistoryScreen() {
           )}
         </View>
         <View style={styles.orderCardBottom}>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor + '18' }]}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            <Text style={[styles.statusText, { color: statusColor }]}>
-              {item.status}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+            <View style={[styles.statusBadge, { backgroundColor: statusColor + '18' }]}>
+              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+              <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
+            </View>
+            {(() => {
+              const ps = (item.paymentStatus || '').toLowerCase();
+              if (ps === 'due') return <View style={styles.payBadgeDue}><Text style={styles.payBadgeDueText}>DUE</Text></View>;
+              if (ps === 'partial' || (item.outstandingAmount > 0 && item.paidAmount > 0)) return <View style={styles.payBadgePartial}><Text style={styles.payBadgePartialText}>PARTIAL</Text></View>;
+              return null;
+            })()}
+            {item.editCount > 0 && (
+              <View style={styles.revisedBadge}><Text style={styles.revisedBadgeText}>Revised #{item.editCount}</Text></View>
+            )}
           </View>
           <Text style={styles.orderTime}>
             {formatDate(item.completedAt || item.createdAt)} · {formatTime(item.completedAt || item.createdAt)}
@@ -302,7 +352,7 @@ export default function OrderHistoryScreen() {
             <Ionicons name="calendar-outline" size={14} color="#6b7280" />
             <Text style={styles.dateBtnText}>{customEndDate.toLocaleDateString()}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.dateGoBtn} onPress={loadOrders}>
+          <TouchableOpacity style={styles.dateGoBtn} onPress={() => loadOrders(1, false)}>
             <Ionicons name="arrow-forward" size={16} color="#fff" />
           </TouchableOpacity>
           {showStartPicker && (
@@ -315,6 +365,31 @@ export default function OrderHistoryScreen() {
           )}
         </View>
       )}
+
+      {/* Status + Payment-status filter pills (server-side, web parity) */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContainer}>
+        {[
+          { key: 'all', label: 'All' },
+          { key: 'completed', label: 'Completed' },
+          { key: 'cancelled', label: 'Cancelled' },
+          { key: 'refunded', label: 'Refunded' },
+        ].map((f) => (
+          <TouchableOpacity key={`st-${f.key}`} style={[styles.filterPill, selectedStatus === f.key && styles.filterPillActive]} onPress={() => setSelectedStatus(f.key)}>
+            <Text style={[styles.filterPillText, selectedStatus === f.key && styles.filterPillTextActive]}>{f.label}</Text>
+          </TouchableOpacity>
+        ))}
+        <View style={{ width: 1, backgroundColor: '#e5e7eb', marginHorizontal: 4, marginVertical: 6 }} />
+        {[
+          { key: 'all', label: 'Any pay' },
+          { key: 'paid', label: 'Paid' },
+          { key: 'partial', label: 'Partial' },
+          { key: 'due', label: 'Due' },
+        ].map((f) => (
+          <TouchableOpacity key={`ps-${f.key}`} style={[styles.filterPill, selectedPayStatus === f.key && styles.filterPillActive]} onPress={() => setSelectedPayStatus(f.key)}>
+            <Text style={[styles.filterPillText, selectedPayStatus === f.key && styles.filterPillTextActive]}>{f.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Search */}
       <View style={styles.searchRow}>
@@ -351,10 +426,21 @@ export default function OrderHistoryScreen() {
         <FlatList
           data={filteredOrders}
           renderItem={renderOrderCard}
-          keyExtractor={(item) => item.id || item._id}
+          keyExtractor={(item, index) => String(item.id || item._id || item.orderId || item.orderNumber || index)}
           contentContainerStyle={[styles.listContent, isTablet && { maxWidth: 700, alignSelf: 'center', width: '100%' }]}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadOrders(); }} colors={[Colors.primary]} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadOrders(1, false); }} colors={[Colors.primary]} />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={{ paddingVertical: 16 }}><ActivityIndicator size="small" color={Colors.primary} /></View>
+            ) : (!hasMore && filteredOrders.length > 0 ? (
+              <Text style={{ textAlign: 'center', color: '#9ca3af', fontSize: 11, paddingVertical: 14 }}>
+                {totalOrders != null ? `All ${totalOrders} orders` : 'End of list'}
+              </Text>
+            ) : null)
           }
           showsVerticalScrollIndicator={false}
         />
@@ -405,7 +491,7 @@ export default function OrderHistoryScreen() {
                 {(selectedOrder.items || []).map((item, i) => (
                   <View key={i} style={styles.detailItem}>
                     <Text style={styles.detailItemName}>{item.quantity}× {item.name}</Text>
-                    <Text style={styles.detailItemPrice}>{formatCurrency(item.price * item.quantity)}</Text>
+                    <Text style={styles.detailItemPrice}>{formatCurrency(item.total ?? ((Number(item.price) || 0) * (item.quantity || 1)))}</Text>
                   </View>
                 ))}
               </View>
@@ -466,6 +552,27 @@ export default function OrderHistoryScreen() {
                   <Text style={styles.grandTotalLabel}>Grand Total</Text>
                   <Text style={styles.grandTotalValue}>{formatCurrency(selectedOrder.finalAmount || selectedOrder.totalAmount || 0)}</Text>
                 </View>
+
+                {/* Payment status: paid / outstanding (khata / partial) */}
+                {(selectedOrder.paymentStatus === 'partial' || selectedOrder.paymentStatus === 'due' || selectedOrder.outstandingAmount > 0) && (
+                  <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f3f4f6' }}>
+                    <View style={styles.detailItem}>
+                      <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: '600' }}>Paid</Text>
+                      <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: '700' }}>{formatCurrency(selectedOrder.paidAmount || 0)}</Text>
+                    </View>
+                    <View style={styles.detailItem}>
+                      <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '600' }}>Outstanding</Text>
+                      <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '700' }}>{formatCurrency(selectedOrder.outstandingAmount ?? ((selectedOrder.finalAmount || selectedOrder.totalAmount || 0) - (selectedOrder.paidAmount || 0)))}</Text>
+                    </View>
+                  </View>
+                )}
+
+                {selectedOrder.editCount > 0 && (
+                  <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="create-outline" size={13} color="#6d28d9" />
+                    <Text style={{ fontSize: 12, color: '#6d28d9', fontWeight: '700' }}>Revised bill (edited {selectedOrder.editCount}×)</Text>
+                  </View>
+                )}
 
                 {/* Loyalty points earned */}
                 {selectedOrder.loyaltyPointsEarned > 0 && (
@@ -582,6 +689,12 @@ const styles = StyleSheet.create({
   },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusText: { fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+  payBadgeDue: { backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  payBadgeDueText: { fontSize: 9, fontWeight: '800', color: '#b91c1c' },
+  payBadgePartial: { backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  payBadgePartialText: { fontSize: 9, fontWeight: '800', color: '#92400e' },
+  revisedBadge: { backgroundColor: '#ede9fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  revisedBadgeText: { fontSize: 9, fontWeight: '800', color: '#6d28d9' },
   orderTime: { fontSize: 10, color: '#9ca3af' },
   discountRow: { flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' },
   discountTag: { fontSize: 10, fontWeight: '600', color: '#10b981' },
