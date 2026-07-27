@@ -17,6 +17,16 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useToast } from './Toast';
 import ItemCustomizationModal from './ItemCustomizationModal';
 import KOTModal from './KOTModal';
+import { resolveCustomizationExtras } from '../utils/customizationPrice';
+import { resolveVariantTierPrice } from '../utils/variantPricing';
+
+// ─── Multi-tier pricing helpers (mirror screens/MenuNative.js) ───
+const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
+const DELIVERY_NAMES = ['delivery'];
+const DINEIN_NAMES = ['dine-in', 'dine in', 'dinein'];
+const CHANNEL_NAMES = [...DINEIN_NAMES, ...TAKEAWAY_NAMES, ...DELIVERY_NAMES];
+const isZoneRule = (rule) => !CHANNEL_NAMES.includes((rule?.name || '').toLowerCase().trim());
+const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
 
 // ─── Theme ───
 const PRIMARY = '#c0392b';       // Deep rich red (header)
@@ -72,6 +82,11 @@ export default function WaiterOrderModal({
   const [user, setUser] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
+  // Multi-tier pricing (zones). Waiter orders are dine-in from a table, so the active rule is
+  // resolved from the table's floor mapping (no manual zone picker in this flow).
+  const [multiPricingEnabled, setMultiPricingEnabled] = useState(false);
+  const [pricingRules, setPricingRules] = useState([]);
+  const [activePricingRuleId, setActivePricingRuleId] = useState(null);
 
   // Cart state
   const [cart, setCart] = useState([]);
@@ -182,6 +197,24 @@ export default function WaiterOrderModal({
 
         const items = menuRes?.menuItems || [];
         setMenuItems(items);
+
+        // Multi-tier pricing: load rules and resolve the zone for this table's floor.
+        try {
+          const pricingRes = await apiClient.getPricingSettings(rid);
+          const mp = pricingRes?.settings?.multiPricing;
+          if (!cancelled && mp?.enabled && Array.isArray(mp.rules)) {
+            const activeRules = mp.rules.filter(r => r.isActive);
+            setMultiPricingEnabled(true);
+            setPricingRules(activeRules);
+            let ruleId = null;
+            const fn = (floorName || '').toLowerCase().trim();
+            if (fn) {
+              const matched = activeRules.find(r => (r.tableMappings || []).some(m => (m || '').toLowerCase().trim() === fn));
+              if (matched) ruleId = matched.id;
+            }
+            setActivePricingRuleId(ruleId);
+          }
+        } catch { /* pricing optional — falls back to base price */ }
 
         const catSet = new Map();
         items.forEach(item => {
@@ -343,10 +376,57 @@ export default function WaiterOrderModal({
     ));
   }, []);
 
+  // Resolve the zone/tier unit price for a menu item (per-item override → zone inherits
+  // Dine-In → rule markup → base). Mirrors MenuNative.getItemDisplayPrice.
+  const resolveTierPrice = useCallback((menuItem) => {
+    const base = menuItem?.price ?? 0;
+    if (!multiPricingEnabled || !activePricingRuleId || !menuItem) return base;
+    const per = menuItem.pricingRules?.[activePricingRuleId];
+    const perNum = per != null ? Number(per) : NaN;
+    if (!isNaN(perNum) && perNum >= 0) return perNum;
+    const rule = pricingRules.find(r => r.id === activePricingRuleId);
+    if (rule && isZoneRule(rule)) {
+      const di = findDineInRule(pricingRules);
+      const diPer = di ? menuItem.pricingRules?.[di.id] : undefined;
+      const diNum = diPer != null ? Number(diPer) : NaN;
+      if (!isNaN(diNum) && diNum >= 0) return diNum;
+    }
+    if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue) return Math.round(base * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
+    if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue) return Math.round((base + rule.defaultMarkupValue) * 100) / 100;
+    return base;
+  }, [multiPricingEnabled, activePricingRuleId, pricingRules]);
+
+  // Effective unit base for a cart line: variant price wins; existing/edited/custom lines keep
+  // their stored price; otherwise apply the zone tier price from the fresh menu item.
+  const effectiveBase = useCallback((item) => {
+    const isExisting = typeof item?.cartId === 'string' && item.cartId.startsWith('existing-');
+    if (item?.selectedVariant?.price != null) {
+      // Existing/edited/custom variant lines keep their stored (historical) variant price.
+      if (isExisting || item?.priceEdited || item?.isCustomItem) return item.selectedVariant.price;
+      // Otherwise re-resolve the VARIANT's own tier price for the active zone.
+      if (multiPricingEnabled && activePricingRuleId) {
+        const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+        const freshVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name) || item.selectedVariant;
+        return resolveVariantTierPrice(freshVariant, activePricingRuleId, pricingRules);
+      }
+      return item.selectedVariant.price;
+    }
+    if (isExisting || item?.priceEdited || item?.isCustomItem) return item?.price ?? 0;
+    const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+    if (multiPricingEnabled && activePricingRuleId && menuItem) return resolveTierPrice(menuItem);
+    return item?.price ?? 0;
+  }, [menuItems, multiPricingEnabled, activePricingRuleId, resolveTierPrice, pricingRules]);
+
+  // Add-on/customization extras, re-validated against the fresh menu (all roles).
+  const cartExtras = useCallback((item) => {
+    const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+    return resolveCustomizationExtras(item?.selectedCustomizations, menuItem);
+  }, [menuItems]);
+
   const cartTotal = useMemo(() => {
     return cart.reduce((total, item) => {
-      const base = item.selectedVariant?.price ?? item.price ?? 0;
-      const extras = (item.selectedCustomizations || []).reduce((s, c) => s + (c?.price || 0), 0);
+      const base = effectiveBase(item);
+      const extras = cartExtras(item);
       return total + (base + extras) * (item.quantity || 1);
     }, 0);
   }, [cart]);
@@ -439,8 +519,8 @@ export default function WaiterOrderModal({
 
   // ─── Build Item Payload (same as MenuNative) ───
   const buildItemPayload = (item) => {
-    const base = item.selectedVariant?.price ?? item.price ?? 0;
-    const extras = (item.selectedCustomizations || []).reduce((s, c) => s + (c?.price || 0), 0);
+    const base = effectiveBase(item);
+    const extras = cartExtras(item);
     const effectivePrice = base + extras;
     return {
       menuItemId: item.menuItemId || item.id,
@@ -488,6 +568,7 @@ export default function WaiterOrderModal({
         const orderData = {
           items: cart.map(buildItemPayload),
           status: 'confirmed',
+          pricingRuleId: activePricingRuleId || null,
           ...(seatOnlyUpdate ? { skipKOT: true } : {}),
           ...(specialInstructions && { specialInstructions }),
           ...(hasCustomer && { customerInfo }),
@@ -505,6 +586,7 @@ export default function WaiterOrderModal({
           floorName: floorName || null,
           items: cart.map(buildItemPayload),
           orderType: 'dine-in',
+          pricingRuleId: activePricingRuleId || null,
           covers: tableNumber ? covers : undefined,
           paymentMethod: 'cash',
           status: 'confirmed',
@@ -742,8 +824,8 @@ export default function WaiterOrderModal({
 
   // ─── Review Item Card ───
   const renderReviewItemCard = (item, idx, changeTag) => {
-    const base = item.selectedVariant?.price ?? item.price ?? 0;
-    const extras = (item.selectedCustomizations || []).reduce((s, c) => s + (c?.price || 0), 0);
+    const base = effectiveBase(item);
+    const extras = cartExtras(item);
     const itemTotal = (base + extras) * (item.quantity || 1);
     const subline = getItemSubline(item);
     const isEditingNote = editingNoteId === item.cartId;
@@ -1295,6 +1377,9 @@ export default function WaiterOrderModal({
         isOpen={!!customizationItem}
         onClose={() => setCustomizationItem(null)}
         onAddToCart={handleCustomizationAdd}
+        multiPricingEnabled={multiPricingEnabled}
+        activePricingRuleId={activePricingRuleId}
+        pricingRules={pricingRules}
       />
 
       <KOTModal

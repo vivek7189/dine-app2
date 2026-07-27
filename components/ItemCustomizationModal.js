@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrencySymbol } from '../utils/formatCurrency';
+import { resolveVariantTierPrice } from '../utils/variantPricing';
 
 const RED = '#ef4444';
 const GRAY_50 = '#f9fafb';
@@ -28,6 +29,10 @@ const ItemCustomizationModal = ({
   onClose,
   onAddToCart,
   initialCustomizations,
+  // Multi-tier pricing context — so variant prices shown/added reflect the active zone.
+  multiPricingEnabled = false,
+  activePricingRuleId = null,
+  pricingRules = [],
 }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [selectedCustomizations, setSelectedCustomizations] = useState([]);
@@ -70,9 +75,18 @@ const ItemCustomizationModal = ({
 
   const isVeg = item.isVeg !== false;
 
+  // Resolve a variant's price for the active zone (per-variant tier → base). Used for both the
+  // per-variant row prices and the selected base price, so the modal matches what will be billed.
+  const variantDisplayPrice = (variant) => {
+    if (multiPricingEnabled && activePricingRuleId) {
+      return resolveVariantTierPrice(variant, activePricingRuleId, pricingRules);
+    }
+    return variant?.price || 0;
+  };
+
   const getBasePrice = () => {
     if (hasVariants && selectedVariant) {
-      return selectedVariant.price;
+      return variantDisplayPrice(selectedVariant);
     }
     return item.price || 0;
   };
@@ -135,7 +149,10 @@ const ItemCustomizationModal = ({
       cartId: `${item.id}-${Date.now()}`,
       selectedVariant: selectedVariant ? {
         name: selectedVariant.name,
-        price: selectedVariant.price,
+        // Price reflects the active zone tier; carry pricingRules so re-pricing on a later
+        // order-type/zone change can re-resolve the correct variant tier.
+        price: variantDisplayPrice(selectedVariant),
+        ...(selectedVariant.pricingRules ? { pricingRules: selectedVariant.pricingRules } : {}),
       } : null,
       selectedCustomizations: selectedCustomizations.map(c => ({
         id: c.id || null,
@@ -216,7 +233,7 @@ const ItemCustomizationModal = ({
                         </View>
                       </View>
                       <Text style={[styles.optionPrice, isSelected && { color: RED }]}>
-                        {getCurrencySymbol()}{variant.price}
+                        {getCurrencySymbol()}{variantDisplayPrice(variant)}
                       </Text>
                     </TouchableOpacity>
                   );

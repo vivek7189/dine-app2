@@ -615,11 +615,23 @@ export default function MenuManagementScreen() {
       if (formData.variants?.length > 0) {
         itemData.variants = formData.variants
           .filter(v => v.name?.trim())
-          .map(v => ({
-            name: v.name.trim(),
-            price: v.price ? parseFloat(v.price) : 0,
-            ...(v.description?.trim() ? { description: v.description.trim() } : {}),
-          }));
+          .map(v => {
+            // Preserve per-variant multi-tier prices (set in the web menu editor) so editing
+            // an item on mobile doesn't wipe them. Sanitize to { ruleId: number >= 0 }.
+            let cleanedPR;
+            if (v.pricingRules && typeof v.pricingRules === 'object') {
+              const entries = Object.entries(v.pricingRules)
+                .map(([rid, val]) => [rid, typeof val === 'number' ? val : parseFloat(val)])
+                .filter(([, n]) => !isNaN(n) && n >= 0);
+              if (entries.length) cleanedPR = Object.fromEntries(entries);
+            }
+            return {
+              name: v.name.trim(),
+              price: v.price ? parseFloat(v.price) : 0,
+              ...(v.description?.trim() ? { description: v.description.trim() } : {}),
+              ...(cleanedPR ? { pricingRules: cleanedPR } : {}),
+            };
+          });
       }
       if (formData.customizations?.length > 0) {
         itemData.customizations = formData.customizations

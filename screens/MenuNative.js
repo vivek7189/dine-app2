@@ -47,6 +47,8 @@ import { useOffline } from '../hooks/useOffline';
 import { useTabBar } from '../contexts/TabBarContext';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 import { sanitizeSeat } from '../utils/seatOrdering';
+import { resolveCustomizationExtras } from '../utils/customizationPrice';
+import { resolveVariantTierPrice } from '../utils/variantPricing';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -947,6 +949,30 @@ export default function MenuScreen() {
       // those prices are set by the cashier and must stick across rule changes.
       if (item.priceEdited === true || item.isCustomItem === true) return item;
       const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+      // Variant lines: re-resolve the VARIANT's own tier price for the active zone
+      // (per-variant pricingRules → Dine-In inherit → variant base). Keeps the cart line,
+      // total and payload consistent when switching DINE IN/TAKEAWAY/DELIVERY. Falls back to
+      // the stored variant price when the variant has no per-tier prices.
+      if (item.selectedVariant && item.selectedVariant.price != null) {
+        const freshVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name) || item.selectedVariant;
+        const vBase = typeof freshVariant?.price === 'number' ? freshVariant.price : item.selectedVariant.price;
+        const vPrice = resolveVariantTierPrice(freshVariant, activePricingRuleId, pricingRules);
+        // Cart line price (item.price) is a per-unit total incl. customization extras — mirror how
+        // addToCart stores finalPrice — so CartModal's displayed price matches getEffectiveItemPrice
+        // (which reads selectedVariant.price + extras).
+        const extras = resolveCustomizationExtras(item.selectedCustomizations, menuItem);
+        return {
+          ...item,
+          price: vPrice + (extras || 0),
+          originalPrice: vBase + (extras || 0),
+          selectedVariant: {
+            ...item.selectedVariant,
+            price: vPrice,
+            ...(freshVariant?.pricingRules ? { pricingRules: freshVariant.pricingRules } : {}),
+          },
+          appliedPricingRuleId: activePricingRuleId || null,
+        };
+      }
       const basePrice = item.originalPrice ?? menuItem?.price ?? item.price;
       let newPrice = basePrice;
       if (activePricingRuleId) {
@@ -1192,9 +1218,10 @@ export default function MenuScreen() {
     } else {
       base = 0;
     }
-    const extras = Array.isArray(item?.selectedCustomizations)
-      ? item.selectedCustomizations.reduce((s, c) => s + (c?.price || 0), 0)
-      : 0;
+    // Re-validate add-on/customization prices against the fresh menu item (all roles),
+    // so a changed modifier price is corrected rather than trusting the stale cart value.
+    const freshMenuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+    const extras = resolveCustomizationExtras(item?.selectedCustomizations, freshMenuItem);
     return (base || 0) + (extras || 0);
   };
 
@@ -3428,6 +3455,9 @@ export default function MenuScreen() {
         isOpen={customizationModalOpen}
         onClose={() => { setCustomizationModalOpen(false); setSelectedItemForCustomization(null); }}
         onAddToCart={(cartItem) => addToCart(cartItem)}
+        multiPricingEnabled={multiPricingEnabled}
+        activePricingRuleId={activePricingRuleId}
+        pricingRules={pricingRules}
       />
 
       {/* Floating Category FAB - bottom right, above checkout bar */}
