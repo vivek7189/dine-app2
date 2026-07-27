@@ -49,6 +49,7 @@ import { getCurrencySymbol } from '../utils/formatCurrency';
 import { sanitizeSeat } from '../utils/seatOrdering';
 import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
+import { computeTaxBreakdown } from '../hooks/useBillingCalculation';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -1253,25 +1254,28 @@ export default function MenuScreen() {
     return cart.reduce((total, item) => total + (getEffectiveItemPrice(item) * (item.quantity || 1)), 0);
   };
 
-  // Calculate tax based on restaurant settings
-  const calculateTax = (subtotal) => {
-    if (!taxSettings.enabled) {
-      return { taxAmount: 0, taxRate: 0, taxLabel: '' };
-    }
-
-    // If taxes array exists and has items, use total of all taxes
-    if (taxSettings.taxes && taxSettings.taxes.length > 0) {
-      const totalRate = taxSettings.taxes.reduce((sum, tax) => sum + (tax.rate || 0), 0);
-      const taxAmount = subtotal * (totalRate / 100);
-      const taxLabel = taxSettings.taxes.map(t => t.name || 'Tax').join(' + ');
-      return { taxAmount, taxRate: totalRate, taxLabel };
-    }
-
-    // Fallback to single rate
-    const rate = taxSettings.rate || 0;
-    const taxAmount = subtotal * (rate / 100);
-    const taxName = user?.restaurant?.currencySettings?.taxLabel || 'Tax';
-    return { taxAmount, taxRate: rate, taxLabel: rate > 0 ? `${taxName} (${rate}%)` : '' };
+  // Calculate tax — uses the SHARED computeTaxBreakdown (same as CartModal/useBillingCalculation)
+  // so this fallback path (flows that bypass the CartModal billing panel) agrees with the panel:
+  // honours tax GROUPS, per-item inclusive/exclusive, and only ENABLED taxes. `taxableAmount`
+  // is the already-discounted (+SC) base; we pass it as discountedSubtotal for the flat path.
+  const calculateTax = (taxableAmount) => {
+    if (!taxSettings.enabled) return { taxAmount: 0, taxRate: 0, taxLabel: '' };
+    // Normalize the cart so each line carries its full effective unit price (base + extras),
+    // matching getCartTotal, so per-item group tax lines up with the subtotal.
+    const cartForTax = cart.map(it => ({ ...it, price: getEffectiveItemPrice(it), quantity: it.quantity || 1 }));
+    const { taxBreakdown, exclusiveTaxTotal } = computeTaxBreakdown({
+      cart: cartForTax,
+      taxSettings,
+      categories: taxCategories,
+      totalDiscount: 0,
+      discountedSubtotal: taxableAmount,
+      serviceChargeAmount: 0,
+      defaultTaxName: user?.restaurant?.currencySettings?.taxLabel || 'Tax',
+    });
+    const taxRate = taxBreakdown.reduce((s, t) => s + (t.rate || 0), 0);
+    const taxLabel = taxBreakdown.map(t => t.name || 'Tax').join(' + ');
+    // Only exclusive tax is added to the total (inclusive is already inside the price).
+    return { taxAmount: exclusiveTaxTotal, taxRate, taxLabel };
   };
 
   const getGrandTotal = () => {

@@ -114,6 +114,40 @@ export default function CartModal({
     return guests;
   };
 
+  const splitItemKey = (it, idx) => it.cartId ?? `${it.id || it.menuItemId}-${idx}`;
+  const splitLineTotal = (it) => (Number(it.price) || 0) * (it.quantity || 1);
+
+  // By-item split: each cart line is assigned to a guest; each guest's share of the GRAND total
+  // is scaled by their item subtotal so tax/SC/discount are distributed proportionally.
+  const computeItemSplitGuests = (grand, n) => {
+    const guests = Array.from({ length: n }).map((_, i) => ({ name: `Guest ${i + 1}`, amount: 0, _sub: 0, items: [] }));
+    cart.forEach((it, idx) => {
+      const gi = Math.min(n - 1, splitItemGuest[splitItemKey(it, idx)] ?? 0);
+      guests[gi]._sub += splitLineTotal(it);
+      guests[gi].items.push(it.name);
+    });
+    const itemsTotal = guests.reduce((s, g) => s + g._sub, 0) || 1;
+    let acc = 0;
+    guests.forEach((g, i) => {
+      g.amount = i === n - 1 ? Math.round((grand - acc) * 100) / 100 : Math.round((g._sub / itemsTotal) * grand * 100) / 100;
+      acc = Math.round((acc + g.amount) * 100) / 100;
+      delete g._sub;
+    });
+    return guests;
+  };
+
+  // Split by Seat: auto-group items by their seat into one guest per seat.
+  const applySplitBySeat = () => {
+    const seats = [...new Set(cart.map((it) => it.seat).filter((s) => s != null))];
+    if (seats.length < 2) return false;
+    const assign = {};
+    cart.forEach((it, idx) => { assign[splitItemKey(it, idx)] = Math.max(0, seats.indexOf(it.seat)); });
+    setSplitItemGuest(assign);
+    setSplitWays(seats.length);
+    setSplitMode('item');
+    return true;
+  };
+
   // Mode-based feature flags
   const isWaiterMode = mode === 'waiter';
   const isCashierMode = mode === 'cashier';
@@ -144,7 +178,10 @@ export default function CartModal({
         .map(m => (typeof m === 'string' ? m : (m.id || m.value || m.name || m.method)))
         .filter(Boolean);
     } else {
-      list = ['cash', 'upi', 'card'];
+      // Default set mirrors web: cash always; upi/card hidden via posSettings.hideUPI/hideCard.
+      list = ['cash'];
+      if (!posSettings.hideUPI) list.push('upi');
+      if (!posSettings.hideCard) list.push('card');
     }
     if (!isRoleAllowed(billingSettings.paymentMethodRoles)) list = list.filter(m => String(m).toLowerCase() === 'cash');
     return list;
@@ -191,7 +228,8 @@ export default function CartModal({
   // Split bill (Gap 1): divide the grand total among guests; per-guest receipts.
   const [showSplitModal, setShowSplitModal] = useState(false);
   const [splitWays, setSplitWays] = useState(2);
-  const [splitMode, setSplitMode] = useState('equal'); // 'equal' | 'amount'
+  const [splitMode, setSplitMode] = useState('equal'); // 'equal' | 'amount' | 'item'
+  const [splitItemGuest, setSplitItemGuest] = useState({}); // cartId → 0-based guest index (by-item mode)
   const [splitAmounts, setSplitAmounts] = useState([]); // strings, for 'amount' mode
   const [splitConfig, setSplitConfig] = useState(null); // { mode, guests:[{name, amount}] }
   const [customerName, setCustomerName] = useState('');
@@ -393,12 +431,29 @@ export default function CartModal({
   const subtotal = total;
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Manual-discount config — web is the source of truth: it reads
+  // taxSettings.discountSettings.* (enabled/allowManualDiscount/manualDiscountRoles/
+  // maxDiscountPercent/maxDiscountAmount). Fall back to legacy billingSettings.* so
+  // stores that only ever set the old keys keep working. Absent role list ⇒ all roles
+  // allowed (preserves the app's permissive default; we don't force web's ['owner']).
+  const discountConfig = (() => {
+    const ds = taxSettings?.discountSettings || {};
+    const hasDs = ds && Object.keys(ds).length > 0;
+    const enabled = hasDs
+      ? (ds.enabled !== false && ds.allowManualDiscount !== false)
+      : (billingSettings.manualDiscountEnabled !== false);
+    const roles = ds.manualDiscountRoles ?? billingSettings.manualDiscountRoles;
+    const maxPct = Number(ds.maxDiscountPercent ?? billingSettings.maxDiscountPercent) || 0;
+    const maxAmt = Number(ds.maxDiscountAmount ?? billingSettings.maxDiscountAmount) || 0;
+    return { enabled, roles, maxPct, maxAmt };
+  })();
+
   // Calculate manual discount amount, clamped to admin caps (web parity):
-  // billingSettings.maxDiscountPercent (on percentage) + maxDiscountAmount (absolute).
+  // maxDiscountPercent (on percentage) + maxDiscountAmount (absolute).
   const manualDiscountAmount = (() => {
     let val = parseFloat(manualDiscount) || 0;
-    const maxPct = Number(billingSettings.maxDiscountPercent) || 0;
-    const maxAmt = Number(billingSettings.maxDiscountAmount) || 0;
+    const maxPct = discountConfig.maxPct;
+    const maxAmt = discountConfig.maxAmt;
     let amt;
     if (manualDiscountType === 'percentage') {
       const pct = maxPct > 0 ? Math.min(val, maxPct) : val;
@@ -410,8 +465,11 @@ export default function CartModal({
     return Math.max(0, amt);
   })();
 
-  // Comp items reduce subtotal
+  // Comp/void amounts — reported to the backend as audit metadata (compItems/voidItems).
+  // Web parity: neither reduces the payable total here (web + backend charge full price and
+  // track comp/void for reporting only). Kept for the payload + panel display.
   const compAmount = selectedCompItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const voidAmount = selectedVoidItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
   // Coupon discount
   const couponDiscountAmount = appliedCoupon?.discountAmount || 0;
@@ -607,6 +665,7 @@ export default function CartModal({
     loyaltyDiscount,
     couponDiscount: couponDiscountAmount,
     compAmount,
+    voidAmount,
     taxSettings,
     billingSettings: effectiveBillingSettings,
     tipAmount,
@@ -1044,7 +1103,7 @@ export default function CartModal({
                 );
               })() : null
             )}
-            {(orderType === 'dine_in' || orderType === 'dine-in') && (
+            {(orderType === 'dine_in' || orderType === 'dine-in') && posSettings.showCovers !== false && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f8fafc', borderRadius: 8, marginTop: 6 }}>
                 <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '500' }}>Covers:</Text>
                 <TouchableOpacity onPress={() => setCovers(c => Math.max(1, c - 1))} style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
@@ -1297,19 +1356,21 @@ export default function CartModal({
                     hideExtras
                   />
                 </View>
-                <View style={styles.cartNameInputWrap}>
-                  <Ionicons name="person-outline" size={14} color={customerName ? '#dc2626' : '#9ca3af'} />
-                  <TextInput
-                    style={styles.cartNameInput}
-                    placeholder="Name"
-                    placeholderTextColor="#9ca3af"
-                    value={customerName}
-                    onChangeText={setCustomerName}
-                    autoCapitalize="words"
-                    returnKeyType="done"
-                    onSubmitEditing={Keyboard.dismiss}
-                  />
-                </View>
+                {posSettings.hideCustomerName !== true && (
+                  <View style={styles.cartNameInputWrap}>
+                    <Ionicons name="person-outline" size={14} color={customerName ? '#dc2626' : '#9ca3af'} />
+                    <TextInput
+                      style={styles.cartNameInput}
+                      placeholder={posSettings.customerNameLabel || 'Name'}
+                      placeholderTextColor="#9ca3af"
+                      value={customerName}
+                      onChangeText={setCustomerName}
+                      autoCapitalize="words"
+                      returnKeyType="done"
+                      onSubmitEditing={Keyboard.dismiss}
+                    />
+                  </View>
+                )}
               </View>
 
               {/* Wallet Card Scan */}
@@ -1363,9 +1424,9 @@ export default function CartModal({
               )}
 
               {/* Split Bill (Gap 1) */}
-              {showBillingPanels && billing.grandTotal > 0 && billingSettings.splitBillEnabled !== false && (
+              {showBillingPanels && billing.grandTotal > 0 && billingSettings.splitBillEnabled !== false && isRoleAllowed(billingSettings.splitBillRoles) && (
                 <TouchableOpacity
-                  onPress={() => { setSplitWays(splitConfig?.guests?.length || 2); setSplitMode(splitConfig?.mode || 'equal'); setSplitAmounts((splitConfig?.guests || []).map(g => String(g.amount))); setShowSplitModal(true); }}
+                  onPress={() => { setSplitWays(splitConfig?.guests?.length || 2); setSplitMode(splitConfig?.mode || billingSettings.splitBillDefaultMethod || 'equal'); setSplitAmounts((splitConfig?.guests || []).map(g => String(g.amount))); setShowSplitModal(true); }}
                   style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, marginBottom: 12, borderRadius: 10, borderWidth: 1, borderColor: splitConfig ? '#16a34a' : '#e2e8f0', backgroundColor: splitConfig ? '#f0fdf4' : 'white' }}
                   activeOpacity={0.85}
                 >
@@ -1381,8 +1442,9 @@ export default function CartModal({
                 </TouchableOpacity>
               )}
 
-              {/* Service-charge per-device override (Gap 5) */}
-              {showBillingPanels && scCanOverride && (
+              {/* Service-charge per-device override (Gap 5). Hidden when admin turned off
+                  "show on dashboard" (web parity: serviceChargeShowOnDashboard). */}
+              {showBillingPanels && scCanOverride && billingSettings.serviceChargeShowOnDashboard !== false && (
                 <View style={{ marginBottom: 12, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -1394,7 +1456,8 @@ export default function CartModal({
                       <Text style={{ fontSize: 12, fontWeight: '700', color: scWaived ? '#dc2626' : '#16a34a' }}>{scWaived ? 'Waived' : 'Applied'}</Text>
                     </TouchableOpacity>
                   </View>
-                  {!scWaived && (
+                  {/* Inline rate edit only when admin allows it (web parity: serviceChargeAllowRateEdit) */}
+                  {!scWaived && billingSettings.serviceChargeAllowRateEdit && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
                       <Text style={{ fontSize: 11, color: '#64748b' }}>Rate override %</Text>
                       <TextInput
@@ -1504,7 +1567,7 @@ export default function CartModal({
                     ) : (
                       <>
                         <Ionicons name="checkmark-circle" size={16} color="#fff" />
-                        <Text style={styles.actionBtnText}>Complete Billing</Text>
+                        <Text style={styles.actionBtnText}>{posSettings.completeBillingLabel || 'Complete Billing'}</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -1521,7 +1584,7 @@ export default function CartModal({
                       ) : (
                         <>
                           <Ionicons name={isUpdateOrder ? "refresh" : "paper-plane"} size={14} color="#fff" />
-                          <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update' : 'Place Order'}</Text>
+                          <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update' : (posSettings.placeOrderLabel || 'Place Order')}</Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -1537,7 +1600,7 @@ export default function CartModal({
                         ) : (
                           <>
                             <Ionicons name="checkmark-circle" size={14} color="#fff" />
-                            <Text style={styles.actionBtnText}>Complete Bill</Text>
+                            <Text style={styles.actionBtnText}>{posSettings.completeBillingLabel || 'Complete Bill'}</Text>
                           </>
                         )}
                       </TouchableOpacity>
@@ -1892,7 +1955,7 @@ export default function CartModal({
               )}
 
               {/* MANUAL DISCOUNT Section */}
-              {billingSettings.manualDiscountEnabled !== false && isRoleAllowed(billingSettings.manualDiscountRoles) && (
+              {discountConfig.enabled && isRoleAllowed(discountConfig.roles) && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
                     <Ionicons name="pricetag-outline" size={10} color="#94a3b8" />
@@ -2252,20 +2315,28 @@ export default function CartModal({
             </View>
             <View style={{ padding: 16 }}>
               <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>Grand total {getCurrencySymbol()}{fmtAmt(billing.grandTotal)}</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                {['equal', 'amount'].map(m => (
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                {['equal', 'amount', 'item'].map(m => (
                   <TouchableOpacity key={m} onPress={() => setSplitMode(m)}
                     style={{ flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1.5, borderColor: splitMode === m ? '#2563eb' : '#e2e8f0', backgroundColor: splitMode === m ? '#eff6ff' : 'white', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: splitMode === m ? '#1d4ed8' : '#475569' }}>{m === 'equal' ? 'Equal' : 'By Amount'}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: splitMode === m ? '#1d4ed8' : '#475569' }}>{m === 'equal' ? 'Equal' : m === 'amount' ? 'By Amount' : 'By Item'}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
+              {/* Split by Seat quick action — only when items carry seats */}
+              {cart.some(it => it.seat != null) && (
+                <TouchableOpacity onPress={() => { if (!applySplitBySeat()) {} }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, marginBottom: 10, borderRadius: 8, borderWidth: 1, borderColor: '#c7d2fe', backgroundColor: '#eef2ff' }}>
+                  <Ionicons name="people-outline" size={14} color="#4f46e5" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#4f46e5' }}>Split by Seat</Text>
+                </TouchableOpacity>
+              )}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <Text style={{ fontSize: 13, color: '#374151', fontWeight: '600' }}>Number of guests</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8 }}>
                   <TouchableOpacity onPress={() => { const n = Math.max(2, splitWays - 1); setSplitWays(n); setSplitAmounts(a => a.slice(0, n)); }} style={{ paddingHorizontal: 12, paddingVertical: 8 }}><Ionicons name="remove" size={16} color="#475569" /></TouchableOpacity>
                   <Text style={{ minWidth: 28, textAlign: 'center', fontWeight: '800', fontSize: 15, color: '#111827' }}>{splitWays}</Text>
-                  <TouchableOpacity onPress={() => setSplitWays(n => Math.min(10, n + 1))} style={{ paddingHorizontal: 12, paddingVertical: 8 }}><Ionicons name="add" size={16} color="#475569" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setSplitWays(n => Math.min(Number(billingSettings.splitBillMaxGuests) || 10, n + 1))} style={{ paddingHorizontal: 12, paddingVertical: 8 }}><Ionicons name="add" size={16} color="#475569" /></TouchableOpacity>
                 </View>
               </View>
               {splitMode === 'equal' ? (
@@ -2273,6 +2344,34 @@ export default function CartModal({
                   {computeSplitGuests(billing.grandTotal, splitWays).map((g, i) => (
                     <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
                       <Text style={{ fontSize: 13, color: '#374151' }}>{g.name}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827' }}>{getCurrencySymbol()}{fmtAmt(g.amount)}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : splitMode === 'item' ? (
+                <View style={{ marginBottom: 8 }}>
+                  {/* Tap the guest number on each line to cycle which guest pays for it */}
+                  {cart.map((it, idx) => {
+                    const key = splitItemKey(it, idx);
+                    const gi = Math.min(splitWays - 1, splitItemGuest[key] ?? 0);
+                    return (
+                      <View key={key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 5 }}>
+                        <Text style={{ flex: 1, fontSize: 13, color: '#374151' }} numberOfLines={1}>
+                          {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.name}{it.selectedVariant?.name ? ` (${it.selectedVariant.name})` : ''}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#64748b', width: 64, textAlign: 'right' }}>{getCurrencySymbol()}{fmtAmt(splitLineTotal(it))}</Text>
+                        <TouchableOpacity
+                          onPress={() => setSplitItemGuest(m => ({ ...m, [key]: ((gi + 1) % splitWays) }))}
+                          style={{ marginLeft: 10, width: 34, height: 30, borderRadius: 8, borderWidth: 1.5, borderColor: '#c7d2fe', backgroundColor: '#eef2ff', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#4f46e5' }}>G{gi + 1}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                  <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 6 }} />
+                  {computeItemSplitGuests(billing.grandTotal, splitWays).map((g, i) => (
+                    <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                      <Text style={{ fontSize: 12, color: '#374151' }}>{g.name} <Text style={{ color: '#9ca3af' }}>({g.items.length} item{g.items.length === 1 ? '' : 's'})</Text></Text>
                       <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827' }}>{getCurrencySymbol()}{fmtAmt(g.amount)}</Text>
                     </View>
                   ))}
@@ -2306,7 +2405,9 @@ export default function CartModal({
                   onPress={() => {
                     const guests = splitMode === 'equal'
                       ? computeSplitGuests(billing.grandTotal, splitWays)
-                      : Array.from({ length: splitWays }).map((_, i) => ({ name: `Guest ${i + 1}`, amount: Math.round((parseFloat(splitAmounts[i]) || 0) * 100) / 100 }));
+                      : splitMode === 'item'
+                        ? computeItemSplitGuests(billing.grandTotal, splitWays).map(g => ({ name: g.name, amount: g.amount, items: g.items }))
+                        : Array.from({ length: splitWays }).map((_, i) => ({ name: `Guest ${i + 1}`, amount: Math.round((parseFloat(splitAmounts[i]) || 0) * 100) / 100 }));
                     setSplitConfig({ mode: splitMode, guests });
                     setShowSplitModal(false);
                   }}

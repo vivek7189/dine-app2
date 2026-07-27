@@ -53,8 +53,17 @@ export default function BillingPanels({
   if (!activeBillingPanel) return null;
 
   // Cash Tendering Panel
+  // Settlement methods for the split-payment panel — web reads billingSettings.settlementMethods
+  // (default cash/card/upi). Accepts strings or {id,label,enabled} objects.
+  const settlementMethods = (Array.isArray(billingSettings.settlementMethods) && billingSettings.settlementMethods.length
+    ? billingSettings.settlementMethods
+        .filter((m) => (typeof m === 'string' ? true : m.enabled !== false))
+        .map((m) => (typeof m === 'string' ? m : (m.id || m.value || m.method || m.name)).toLowerCase())
+        .filter(Boolean)
+    : ['cash', 'card', 'upi']);
+
   if (activeBillingPanel === 'cash') {
-    const denominations = billingSettings.denominations || [100, 200, 500, 2000];
+    const denominations = billingSettings.denominations || [100, 200, 500, 1000, 2000];
     return (
       <View style={styles.panel}>
         <Text style={styles.title}>Cash Tendering</Text>
@@ -115,7 +124,7 @@ export default function BillingPanels({
         {splitPayments.map((sp, idx) => (
           <View key={idx} style={styles.splitRow}>
             <View style={styles.splitMethods}>
-              {['cash', 'upi', 'card'].map((m) => (
+              {settlementMethods.map((m) => (
                 <TouchableOpacity
                   key={m}
                   style={[styles.splitMethodBtn, sp.method === m && styles.splitMethodActive]}
@@ -150,7 +159,7 @@ export default function BillingPanels({
         ))}
         <TouchableOpacity
           style={styles.addBtn}
-          onPress={() => setSplitPayments([...splitPayments, { method: 'cash', amount: 0 }])}
+          onPress={() => setSplitPayments([...splitPayments, { method: settlementMethods[0] || 'cash', amount: 0 }])}
         >
           <Ionicons name="add" size={16} color="#2563eb" />
           <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: fs(13) }}>Add Payment</Text>

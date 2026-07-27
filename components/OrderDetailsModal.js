@@ -16,14 +16,65 @@ import { getItemSubline } from '../utils/itemSubline';
 import { useResponsive } from '../hooks/useResponsive';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 import { seatLetter } from '../utils/seatOrdering';
+import BillingToolbar from './billing/BillingToolbar';
+import BillingPanels from './billing/BillingPanels';
 
-export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole }) {
+export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, billingSettings = {}, posSettings = {} }) {
   const { modalWidth } = useResponsive();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const canCompleteBill = ['owner', 'admin', 'manager'].includes(userRole?.toLowerCase());
+  // Role gate mirrors web: waiters never settle; everyone else is gated by the configured
+  // billingSettings.completeBillingRoles (empty/unset ⇒ all non-waiter roles, incl. cashier).
+  const roleLc = (userRole || '').toLowerCase();
+  const completeRoles = billingSettings.completeBillingRoles;
+  const roleAllowed = !completeRoles || completeRoles.length === 0
+    ? true
+    : completeRoles.map((r) => String(r).toLowerCase()).includes(roleLc);
+  const canCompleteBill = roleLc !== 'waiter' && roleAllowed;
+
+  // Per-feature role gate (empty/unset ⇒ all roles allowed), same semantics as CartModal.
+  const isRoleAllowed = (rolesArr) => {
+    if (!rolesArr || rolesArr.length === 0) return true;
+    return rolesArr.map((r) => String(r).toLowerCase()).includes(roleLc);
+  };
+
+  // ── Settle-time billing controls (web parity: payment method + tender/split/tip/khata) ──
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [activeBillingPanel, setActiveBillingPanel] = useState(null);
+  const [cashReceived, setCashReceived] = useState('');
+  const [changeAmount, setChangeAmount] = useState(0);
+  const [splitPayments, setSplitPayments] = useState([]);
+  const [tipAmount, setTipAmount] = useState(0);
+  const [tipPercentage, setTipPercentage] = useState(null);
+  const [partialPayAmount, setPartialPayAmount] = useState('');
+  const [settling, setSettling] = useState(false);
+
+  // Reset settle controls whenever the modal opens a different order.
+  useEffect(() => {
+    setPaymentMethod('cash'); setActiveBillingPanel(null);
+    setCashReceived(''); setChangeAmount(0); setSplitPayments([]);
+    setTipAmount(0); setTipPercentage(null); setPartialPayAmount('');
+  }, [orderId, visible]);
+
+  // Payment methods — mirror CartModal/web: posSettings.paymentMethods else defaults
+  // (upi/card hidden via hideUPI/hideCard); role-restricted to cash when disallowed.
+  const paymentMethodOptions = (() => {
+    let list;
+    if (Array.isArray(posSettings.paymentMethods) && posSettings.paymentMethods.length > 0) {
+      list = posSettings.paymentMethods
+        .filter((m) => m && (typeof m === 'string' || m.enabled !== false))
+        .map((m) => (typeof m === 'string' ? m : (m.id || m.value || m.name || m.method)))
+        .filter(Boolean);
+    } else {
+      list = ['cash'];
+      if (!posSettings.hideUPI) list.push('upi');
+      if (!posSettings.hideCard) list.push('card');
+    }
+    if (!isRoleAllowed(billingSettings.paymentMethodRoles)) list = list.filter((m) => String(m).toLowerCase() === 'cash');
+    return list;
+  })();
 
   // Safe number helper — Firestore can return strings or undefined for numeric fields
   const num = (val) => {
@@ -115,8 +166,48 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   };
 
   const finalTotal = num(order?.finalAmount) || calculateTotal();
+  // Tip is collected at settle time and adds on top of the order's stored total.
+  const settleTotal = Math.round((finalTotal + (tipAmount || 0)) * 100) / 100;
   const sStyle = statusStyle(order?.status);
   const orderNumberShort = order?.dailyOrderId || order?.orderNumber || '';
+
+  // Build the settlement payload passed to onCompleteBill(order, settlementData).
+  const buildSettlementData = () => {
+    const usingSplit = splitPayments.length > 0;
+    const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+    let paymentStatus = 'paid', paidAmount = settleTotal, outstandingAmount = 0;
+    if (pp != null && pp === 0) { paymentStatus = 'due'; paidAmount = 0; outstandingAmount = settleTotal; }
+    else if (pp != null && pp > 0 && pp < settleTotal) { paymentStatus = 'partial'; paidAmount = Math.round(pp * 100) / 100; outstandingAmount = Math.round((settleTotal - pp) * 100) / 100; }
+    return {
+      paymentMethod: usingSplit ? 'split' : paymentMethod,
+      splitPayments: usingSplit ? splitPayments : null,
+      cashReceived: cashReceived ? parseFloat(cashReceived) : null,
+      changeReturned: changeAmount > 0 ? changeAmount : null,
+      tipAmount: tipAmount || null,
+      tipPercentage: tipPercentage || null,
+      partialPayAmount: pp,
+      paymentStatus, paidAmount, outstandingAmount,
+      finalAmount: settleTotal,
+    };
+  };
+
+  const handleSettle = () => {
+    if (settling) return;
+    // Validate split totals if used
+    if (splitPayments.length > 0) {
+      const sum = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      if (Math.abs(sum - settleTotal) > 0.5) {
+        setError(`Split payments (${getCurrencySymbol()}${sum.toFixed(2)}) must equal total ${getCurrencySymbol()}${settleTotal.toFixed(2)}`);
+        return;
+      }
+    }
+    setSettling(true);
+    try {
+      onCompleteBill(order, buildSettlementData());
+    } finally {
+      setSettling(false);
+    }
+  };
 
   // Safely render content — catch any unexpected data shape issues
   let renderError = null;
@@ -366,16 +457,88 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                 )}
               </View>
 
-              {/* Bottom row: Complete Bill full width */}
+              {/* Settle-time billing controls (web parity) */}
               {canCompleteBill && typeof onCompleteBill === 'function' && (
-                <TouchableOpacity
-                  style={styles.completeBillButton}
-                  activeOpacity={0.85}
-                  onPress={() => onCompleteBill(order)}
-                >
-                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
-                  <Text style={styles.completeBillButtonText}>Complete Bill</Text>
-                </TouchableOpacity>
+                <>
+                  {/* Payment method pills */}
+                  {paymentMethodOptions.length > 1 && (
+                    <View style={styles.payMethodRow}>
+                      {paymentMethodOptions.map((m) => {
+                        const active = String(paymentMethod).toLowerCase() === String(m).toLowerCase();
+                        return (
+                          <TouchableOpacity
+                            key={m}
+                            style={[styles.payMethodBtn, active && styles.payMethodBtnActive]}
+                            onPress={() => setPaymentMethod(m)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.payMethodText, active && { color: '#fff' }]}>
+                              {String(m).charAt(0).toUpperCase() + String(m).slice(1)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Feature toolbar + active panel (Cash / Split / Tip / Khata) */}
+                  <BillingToolbar
+                    billingSettings={billingSettings}
+                    isRoleAllowed={isRoleAllowed}
+                    activeBillingPanel={activeBillingPanel}
+                    setActiveBillingPanel={setActiveBillingPanel}
+                    tipAmount={tipAmount}
+                    splitPayments={splitPayments}
+                    cashReceived={cashReceived}
+                    partialPayAmount={partialPayAmount}
+                  />
+                  <BillingPanels
+                    activeBillingPanel={activeBillingPanel}
+                    billingSettings={billingSettings}
+                    grandTotal={settleTotal}
+                    discountedSubtotal={finalTotal}
+                    cart={order.items || []}
+                    cashReceived={cashReceived}
+                    setCashReceived={setCashReceived}
+                    changeAmount={changeAmount}
+                    setChangeAmount={setChangeAmount}
+                    splitPayments={splitPayments}
+                    setSplitPayments={setSplitPayments}
+                    tipAmount={tipAmount}
+                    setTipAmount={setTipAmount}
+                    tipPercentage={tipPercentage}
+                    setTipPercentage={setTipPercentage}
+                    partialPayAmount={partialPayAmount}
+                    setPartialPayAmount={setPartialPayAmount}
+                    customerData={order.customerInfo || null}
+                  />
+
+                  {/* Show updated total when a tip is added */}
+                  {tipAmount > 0 && (
+                    <View style={styles.settleTotalRow}>
+                      <Text style={styles.settleTotalLabel}>Total with tip</Text>
+                      <Text style={styles.settleTotalValue}>{getCurrencySymbol()}{settleTotal.toFixed(2)}</Text>
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={[styles.completeBillButton, settling && { opacity: 0.6 }]}
+                    activeOpacity={0.85}
+                    onPress={handleSettle}
+                    disabled={settling}
+                  >
+                    {settling ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                        <Text style={styles.completeBillButtonText}>
+                          {posSettings.completeBillingLabel || 'Complete Bill'} · {getCurrencySymbol()}{settleTotal.toFixed(2)}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </>
               )}
             </View>
           )}
@@ -707,6 +870,44 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#7c3aed',
+  },
+  payMethodRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  payMethodBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  payMethodBtnActive: {
+    borderColor: '#059669',
+    backgroundColor: '#059669',
+  },
+  payMethodText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  settleTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  settleTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  settleTotalValue: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#059669',
   },
   completeBillButton: {
     flexDirection: 'row',

@@ -1942,12 +1942,18 @@ export default function TablesScreen() {
         tableNumber={selectedTableForOrder?.name}
         restaurantId={selectedRestaurant?.id}
         userRole={user?.role}
+        billingSettings={selectedRestaurant?.billingSettings || {}}
         onAddItems={handleAddItemsToOrder}
         onPrintPreBill={handlePrintPreBill}
-        onCompleteBill={async (order) => {
+        onCompleteBill={async (order, settlementData = {}) => {
           // Complete the bill inline — no navigation, no duplicate confirmations.
+          // settlementData carries the cashier's settle-time choices (payment method, tender,
+          // split, tip, khata) from OrderDetailsModal — web parity for table settlement.
           const tableForOrder = selectedTableForOrder;
           const rid = selectedRestaurant?.id;
+          const sd = settlementData || {};
+          const settleMethod = sd.paymentMethod || order.paymentMethod || 'cash';
+          const settleFinal = (sd.finalAmount != null) ? sd.finalAmount : (order.finalAmount || order.totalAmount || 0);
           // Close the modal immediately for a snappy feel
           setShowOrderModal(false);
 
@@ -1961,13 +1967,21 @@ export default function TablesScreen() {
             // so the backend can update customer stats (totalOrders, totalSpent, loyaltyPoints)
             const updateData = {
               status: 'completed',
-              paymentStatus: order.paymentStatus === 'partial' ? 'partial' : 'paid',
-              paymentMethod: order.paymentMethod || 'cash',
+              paymentStatus: sd.paymentStatus || (order.paymentStatus === 'partial' ? 'partial' : 'paid'),
+              paymentMethod: settleMethod,
               completedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              // Preserve existing amounts
+              // Settle-time payment details (web parity)
+              ...(sd.splitPayments ? { splitPayments: sd.splitPayments } : {}),
+              ...(sd.cashReceived != null ? { cashReceived: sd.cashReceived } : {}),
+              ...(sd.changeReturned != null ? { changeReturned: sd.changeReturned } : {}),
+              ...(sd.tipAmount != null ? { tipAmount: sd.tipAmount, ...(sd.tipPercentage != null ? { tipPercentage: sd.tipPercentage } : {}) } : {}),
+              ...(sd.partialPayAmount != null ? { partialPayAmount: sd.partialPayAmount } : {}),
+              ...(sd.paidAmount != null ? { paidAmount: sd.paidAmount } : {}),
+              ...(sd.outstandingAmount != null ? { outstandingAmount: sd.outstandingAmount } : {}),
+              // Preserve existing amounts (tip may raise finalAmount)
               ...(order.totalAmount && { totalAmount: order.totalAmount }),
-              ...(order.finalAmount && { finalAmount: order.finalAmount }),
+              ...((sd.finalAmount != null || order.finalAmount) && { finalAmount: settleFinal }),
               ...(order.taxAmount && { taxAmount: order.taxAmount }),
               ...(order.taxBreakdown && { taxBreakdown: order.taxBreakdown }),
               // Customer data — critical for customer stats update
@@ -1986,9 +2000,9 @@ export default function TablesScreen() {
               ...(order.manualDiscount > 0 && { manualDiscount: order.manualDiscount }),
               ...(order.offerIds?.length > 0 && { offerIds: order.offerIds }),
               ...(order.selectedOfferName && { selectedOfferName: order.selectedOfferName }),
-              // Billing fields
+              // Billing fields (tip handled above from settlementData)
               ...(order.serviceChargeAmount > 0 && { serviceChargeAmount: order.serviceChargeAmount, serviceChargeRate: order.serviceChargeRate }),
-              ...(order.tipAmount > 0 && { tipAmount: order.tipAmount }),
+              ...(sd.tipAmount == null && order.tipAmount > 0 && { tipAmount: order.tipAmount }),
               ...(order.roundOffAmount && { roundOffAmount: order.roundOffAmount }),
               // Staff tracking
               lastUpdatedBy: {
@@ -2007,8 +2021,8 @@ export default function TablesScreen() {
             try {
               await apiClient.verifyPayment({
                 orderId: order.id,
-                paymentMethod: order.paymentMethod || 'cash',
-                amount: order.finalAmount || order.totalAmount || 0,
+                paymentMethod: settleMethod,
+                amount: settleFinal,
                 userId: user?.id,
                 restaurantId: rid,
                 paymentStatus: 'completed',

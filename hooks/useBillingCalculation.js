@@ -6,7 +6,7 @@ import { useMemo } from 'react';
  * When a tax group has alsoApplyGlobalTax: true, both group taxes AND global taxes apply.
  * By default (alsoApplyGlobalTax: false/undefined), group taxes override global taxes.
  */
-function resolveTaxesForItem(item, taxSettings, categories) {
+export function resolveTaxesForItem(item, taxSettings, categories) {
   if (!taxSettings?.enabled) return [];
   const groups = taxSettings.taxGroups || [];
   const globalTaxes = (taxSettings.taxes && taxSettings.taxes.length > 0)
@@ -49,10 +49,93 @@ function resolveTaxesForItem(item, taxSettings, categories) {
  * Determine if an item's price includes tax (inclusive pricing).
  * Priority: item-level override > global taxInclusivePricing > false
  */
-function isItemTaxInclusive(item, taxSettings) {
+export function isItemTaxInclusive(item, taxSettings) {
   if (item.taxInclusive === true) return true;
   if (item.taxInclusive === false) return false;
   return taxSettings?.taxInclusivePricing === true;
+}
+
+/**
+ * Compute tax breakdown for a cart — shared by the billing hook AND MenuNative's inline
+ * calc so both agree (per-item tax groups, inclusive/exclusive, discountApplicable, SC
+ * distribution). Returns { taxBreakdown, totalTax, exclusiveTaxTotal }.
+ *
+ * `totalDiscount` and `serviceChargeAmount` are already-computed amounts; `discountedSubtotal`
+ * is subtotal - totalDiscount (used for SC distribution).
+ */
+export function computeTaxBreakdown({
+  cart = [],
+  taxSettings = {},
+  categories = [],
+  totalDiscount = 0,
+  discountedSubtotal = 0,
+  serviceChargeAmount = 0,
+  defaultTaxName = 'Tax',
+}) {
+  let taxBreakdown = [];
+  let totalTax = 0;
+  let exclusiveTaxTotal = 0;
+  if (!taxSettings?.enabled) return { taxBreakdown, totalTax, exclusiveTaxTotal };
+
+  const hasTaxGroups = taxSettings?.taxGroups && taxSettings.taxGroups.length > 0;
+  if (hasTaxGroups && cart.length > 0) {
+    const discountableSubtotal = cart.reduce((sum, cartItem) => {
+      if (cartItem.discountApplicable === false) return sum;
+      return sum + (cartItem.price || 0) * (cartItem.quantity || 1);
+    }, 0);
+    const taxTotals = {};
+    for (const cartItem of cart) {
+      const itemTotal = (cartItem.price || 0) * (cartItem.quantity || 1);
+      const isDiscountable = cartItem.discountApplicable !== false;
+      const isInclusive = isItemTaxInclusive(cartItem, taxSettings);
+      const itemDiscShare = (isDiscountable && discountableSubtotal > 0)
+        ? (itemTotal / discountableSubtotal) * totalDiscount
+        : 0;
+      const itemTaxable = Math.max(0, itemTotal - itemDiscShare);
+      const itemSCShare = discountedSubtotal > 0 ? (Math.max(0, itemTotal - itemDiscShare) / discountedSubtotal) * serviceChargeAmount : 0;
+      const itemTaxableWithSC = itemTaxable + itemSCShare;
+      const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories);
+      const totalRate = itemTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
+      for (const tax of itemTaxes) {
+        const amt = isInclusive
+          ? Math.round((itemTaxableWithSC * (tax.rate || 0) / (100 + totalRate)) * 100) / 100
+          : Math.round((itemTaxableWithSC * (tax.rate || 0) / 100) * 100) / 100;
+        const key = `${tax.name || 'Tax'}|${tax.rate || 0}|${isInclusive}`;
+        if (!taxTotals[key]) taxTotals[key] = { name: tax.name || 'Tax', rate: tax.rate || 0, amount: 0, inclusive: isInclusive };
+        taxTotals[key].amount += amt;
+        totalTax += amt;
+        if (!isInclusive) exclusiveTaxTotal += amt;
+      }
+    }
+    taxBreakdown = Object.values(taxTotals).map(t => ({ ...t, amount: Math.round(t.amount * 100) / 100 }));
+    totalTax = Math.round(totalTax * 100) / 100;
+    exclusiveTaxTotal = Math.round(exclusiveTaxTotal * 100) / 100;
+  } else {
+    const taxableAmount = discountedSubtotal + serviceChargeAmount;
+    const isGlobalInclusive = taxSettings.taxInclusivePricing === true;
+    if (taxSettings.taxes && taxSettings.taxes.length > 0) {
+      const enabledTaxes = taxSettings.taxes.filter(t => t.enabled);
+      const totalRate = enabledTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
+      taxBreakdown = enabledTaxes.map(t => ({
+        name: t.name,
+        rate: t.rate,
+        amount: isGlobalInclusive
+          ? Math.round(taxableAmount * t.rate / (100 + totalRate) * 100) / 100
+          : Math.round(taxableAmount * t.rate / 100 * 100) / 100,
+        inclusive: isGlobalInclusive,
+      }));
+      totalTax = taxBreakdown.reduce((sum, t) => sum + t.amount, 0);
+      exclusiveTaxTotal = isGlobalInclusive ? 0 : totalTax;
+    } else if (taxSettings.defaultTaxRate) {
+      const amount = isGlobalInclusive
+        ? Math.round(taxableAmount * taxSettings.defaultTaxRate / (100 + taxSettings.defaultTaxRate) * 100) / 100
+        : Math.round(taxableAmount * taxSettings.defaultTaxRate / 100 * 100) / 100;
+      taxBreakdown = [{ name: defaultTaxName, rate: taxSettings.defaultTaxRate, amount, inclusive: isGlobalInclusive }];
+      totalTax = amount;
+      exclusiveTaxTotal = isGlobalInclusive ? 0 : amount;
+    }
+  }
+  return { taxBreakdown, totalTax, exclusiveTaxTotal };
 }
 
 /**
@@ -73,6 +156,7 @@ export default function useBillingCalculation({
   loyaltyDiscount = 0,
   couponDiscount = 0,
   compAmount = 0,
+  voidAmount = 0,
   taxSettings = {},
   billingSettings = {},
   tipAmount = 0,
@@ -81,8 +165,13 @@ export default function useBillingCalculation({
   defaultTaxName = 'Tax',  // Fallback tax name when no named taxes defined (from currencySettings.taxLabel)
 }) {
   return useMemo(() => {
-    // Step 1: Total discount
-    const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + couponDiscount + compAmount;
+    // Step 1: Total discount.
+    // NOTE (web parity): comp/void items are AUDIT METADATA ONLY on web — web never subtracts
+    // them from the subtotal/grand total, and the backend's finalAmount ignores them too. So we
+    // must NOT reduce the payable amount for comp/void here, otherwise the app would display a
+    // total lower than what the backend actually charges. compAmount/voidAmount are accepted for
+    // API compatibility but intentionally excluded from the payable total.
+    const totalDiscount = offerDiscount + manualDiscountAmount + loyaltyDiscount + couponDiscount;
 
     // Step 2: Discounted subtotal
     const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
@@ -93,82 +182,10 @@ export default function useBillingCalculation({
       ? Math.round(discountedSubtotal * serviceChargeRate / 100 * 100) / 100
       : 0;
 
-    // Step 4: Tax
-    let taxBreakdown = [];
-    let totalTax = 0;
-    let exclusiveTaxTotal = 0;
-    const hasTaxGroups = taxSettings?.taxGroups && taxSettings.taxGroups.length > 0;
-
-    if (taxSettings?.enabled) {
-      if (hasTaxGroups && cart.length > 0) {
-        // Per-item tax calculation with discountApplicable support
-        // Discountable subtotal: only items where discountApplicable !== false
-        const discountableSubtotal = cart.reduce((sum, cartItem) => {
-          if (cartItem.discountApplicable === false) return sum;
-          return sum + (cartItem.price || 0) * (cartItem.quantity || 1);
-        }, 0);
-
-        const taxTotals = {};
-        for (const cartItem of cart) {
-          const itemTotal = (cartItem.price || 0) * (cartItem.quantity || 1);
-          const isDiscountable = cartItem.discountApplicable !== false;
-          const isInclusive = isItemTaxInclusive(cartItem, taxSettings);
-          // Proportional discount share: only among discountable items
-          const itemDiscShare = (isDiscountable && discountableSubtotal > 0)
-            ? (itemTotal / discountableSubtotal) * totalDiscount
-            : 0;
-          const itemTaxable = Math.max(0, itemTotal - itemDiscShare);
-          // Service charge distributed across all items (proportional to post-discount subtotal)
-          const itemSCShare = discountedSubtotal > 0 ? (Math.max(0, itemTotal - itemDiscShare) / discountedSubtotal) * serviceChargeAmount : 0;
-          const itemTaxableWithSC = itemTaxable + itemSCShare;
-          // Resolve taxes for this item
-          const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories);
-          const totalRate = itemTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
-          for (const tax of itemTaxes) {
-            // Inclusive: back-calculate tax from price. Exclusive: add on top.
-            const amt = isInclusive
-              ? Math.round((itemTaxableWithSC * (tax.rate || 0) / (100 + totalRate)) * 100) / 100
-              : Math.round((itemTaxableWithSC * (tax.rate || 0) / 100) * 100) / 100;
-            const key = `${tax.name || 'Tax'}|${tax.rate || 0}|${isInclusive}`;
-            if (!taxTotals[key]) taxTotals[key] = { name: tax.name || 'Tax', rate: tax.rate || 0, amount: 0, inclusive: isInclusive };
-            taxTotals[key].amount += amt;
-            totalTax += amt;
-            if (!isInclusive) exclusiveTaxTotal += amt;
-          }
-        }
-        taxBreakdown = Object.values(taxTotals).map(t => ({
-          ...t,
-          amount: Math.round(t.amount * 100) / 100
-        }));
-        totalTax = Math.round(totalTax * 100) / 100;
-        exclusiveTaxTotal = Math.round(exclusiveTaxTotal * 100) / 100;
-      } else {
-        // Flat tax calculation (original behavior — no tax groups)
-        const taxableAmount = discountedSubtotal + serviceChargeAmount;
-        const isGlobalInclusive = taxSettings.taxInclusivePricing === true;
-        if (taxSettings.taxes && taxSettings.taxes.length > 0) {
-          const enabledTaxes = taxSettings.taxes.filter(t => t.enabled);
-          const totalRate = enabledTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
-          taxBreakdown = enabledTaxes.map(t => ({
-            name: t.name,
-            rate: t.rate,
-            amount: isGlobalInclusive
-              ? Math.round(taxableAmount * t.rate / (100 + totalRate) * 100) / 100
-              : Math.round(taxableAmount * t.rate / 100 * 100) / 100,
-            inclusive: isGlobalInclusive,
-          }));
-          totalTax = taxBreakdown.reduce((sum, t) => sum + t.amount, 0);
-          exclusiveTaxTotal = isGlobalInclusive ? 0 : totalTax;
-        } else if (taxSettings.defaultTaxRate) {
-          const amount = isGlobalInclusive
-            ? Math.round(taxableAmount * taxSettings.defaultTaxRate / (100 + taxSettings.defaultTaxRate) * 100) / 100
-            : Math.round(taxableAmount * taxSettings.defaultTaxRate / 100 * 100) / 100;
-          taxBreakdown = [{ name: defaultTaxName, rate: taxSettings.defaultTaxRate, amount, inclusive: isGlobalInclusive }];
-          totalTax = amount;
-          exclusiveTaxTotal = isGlobalInclusive ? 0 : amount;
-        }
-      }
-    }
+    // Step 4: Tax (shared with MenuNative via computeTaxBreakdown)
+    const { taxBreakdown, totalTax, exclusiveTaxTotal } = computeTaxBreakdown({
+      cart, taxSettings, categories, totalDiscount, discountedSubtotal, serviceChargeAmount, defaultTaxName,
+    });
 
     // Step 5: After tax + tips — only add exclusive tax (inclusive is already in subtotal)
     const taxableAmount = discountedSubtotal + serviceChargeAmount;
@@ -197,5 +214,5 @@ export default function useBillingCalculation({
       roundOffAmount,
       grandTotal,
     };
-  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, couponDiscount, compAmount, taxSettings, billingSettings, tipAmount, cart, categories]);
+  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, couponDiscount, compAmount, voidAmount, taxSettings, billingSettings, tipAmount, cart, categories]);
 }
