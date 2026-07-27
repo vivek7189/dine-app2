@@ -33,6 +33,8 @@ import { getCurrencySymbol } from '../utils/formatCurrency';
 import DiscountApprovalModal from './DiscountApprovalModal';
 import UpiQrModal from './UpiQrModal';
 import apiClient from '../services/api';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { doEcrPurchase, ECR_APPROVED } from '../services/ecrService';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -93,6 +95,8 @@ export default function CartModal({
   onAddCustomItem,
   posSettings = {},
   deliveryStaff = [],
+  ecrSettings = {},       // card-terminal (Sadad/NAPS) config; card-terminal method shown when enabled
+  onSaveOrder,            // save/hold (park) the current cart; undefined ⇒ button hidden
 }) {
   const { fs, sp, r, isTablet } = useResponsive();
   const { effectivelyOffline } = useOffline();
@@ -184,8 +188,13 @@ export default function CartModal({
       if (!posSettings.hideCard) list.push('card');
     }
     if (!isRoleAllowed(billingSettings.paymentMethodRoles)) list = list.filter(m => String(m).toLowerCase() === 'cash');
+    // Card terminal (ECR) — appended when configured (web parity), unless role-restricted to cash.
+    if (ecrSettings?.enabled && isRoleAllowed(billingSettings.paymentMethodRoles) && !list.includes('card-terminal')) {
+      list.push('card-terminal');
+    }
     return list;
   })();
+  const ecrEnabled = !!ecrSettings?.enabled;
   // Dynamic order types — mirror web (posSettings.orderTypes: [{id,label,enabled,builtIn}]),
   // falling back to the three built-ins. Custom channels (e.g. "snoonu") appear automatically.
   const orderTypeOptions = useMemo(() => {
@@ -230,6 +239,20 @@ export default function CartModal({
   const [splitWays, setSplitWays] = useState(2);
   const [splitMode, setSplitMode] = useState('equal'); // 'equal' | 'amount' | 'item'
   const [splitItemGuest, setSplitItemGuest] = useState({}); // cartId → 0-based guest index (by-item mode)
+  // Schedule order (G14): posSettings.enableScheduleOrder gates a future date/time on the order.
+  const [isScheduledOrder, setIsScheduledOrder] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState(null); // Date | null
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [schedulePickerMode, setSchedulePickerMode] = useState('date'); // 'date' | 'time'
+  // Wallet redemption (G12): apply the customer's wallet balance as a tender (reduces amount to pay).
+  const [walletRedeemAmount, setWalletRedeemAmount] = useState(0);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [useWallet, setUseWallet] = useState(false);
+  // Save/Hold (G13): parking the current cart.
+  const [savingCart, setSavingCart] = useState(false);
+  // ECR card-terminal (G16) status for the in-flight purchase.
+  const [ecrStatus, setEcrStatus] = useState(null); // null | 'connecting' | 'waiting_for_card' | 'polling' | 'declined' | 'error'
+  const [ecrError, setEcrError] = useState(null);
   const [splitAmounts, setSplitAmounts] = useState([]); // strings, for 'amount' mode
   const [splitConfig, setSplitConfig] = useState(null); // { mode, guests:[{name, amount}] }
   const [customerName, setCustomerName] = useState('');
@@ -411,6 +434,9 @@ export default function CartModal({
       setCompReason(''); setVoidReason(''); setBillingManagerPin('');
       setSpecialInstructions(''); setShowKitchenNotes(false);
       setActiveAction(null); setCovers(1);
+      setIsScheduledOrder(false); setScheduledFor(null); setShowSchedulePicker(false);
+      setWalletRedeemAmount(0); setWalletBalance(0); setUseWallet(false);
+      setEcrStatus(null); setEcrError(null);
       // Customer & offer state
       setCustomerData(null);
       setCustomerName('');
@@ -500,6 +526,17 @@ export default function CartModal({
     }
   };
 
+  // Wallet balance (G12): fetch when a customer is looked up; reset when cleared.
+  useEffect(() => {
+    const cid = customerData?.id || customerData?._id;
+    if (!cid) { setWalletBalance(0); setUseWallet(false); setWalletRedeemAmount(0); return; }
+    let cancelled = false;
+    apiClient.getCustomerWallet(cid)
+      .then(res => { if (!cancelled) setWalletBalance(Math.round((res?.walletBalance || 0) * 100) / 100); })
+      .catch(() => { if (!cancelled) setWalletBalance(0); });
+    return () => { cancelled = true; };
+  }, [customerData?.id, customerData?._id]);
+
   const handleRemoveCoupon = () => {
     setAppliedCoupon(null);
     setCouponError('');
@@ -548,6 +585,12 @@ export default function CartModal({
     totalTax: billing.totalTax || null,
     roundOffAmount: billing.roundOffAmount || null,
     grandTotal: billing.grandTotal,
+    // Schedule order (G14): future fulfilment time (ISO). Null for immediate orders.
+    ...(isScheduledOrder && scheduledFor ? { isScheduled: true, scheduledFor: scheduledFor.toISOString() } : {}),
+    // Wallet redemption (G12): tender that draws down the customer's wallet balance. Does NOT
+    // change grandTotal — backend debits the wallet on completion; cash-to-collect is reduced.
+    walletRedeemAmount: walletRedeemAmount > 0 ? Math.round(walletRedeemAmount * 100) / 100 : null,
+    walletCustomerId: walletRedeemAmount > 0 ? (customerData?.id || customerData?._id || null) : null,
     tipAmount: tipAmount || null,
     tipPercentage: tipPercentage || null,
     cashReceived: cashReceived ? parseFloat(cashReceived) : null,
@@ -739,15 +782,36 @@ export default function CartModal({
     onPlaceOrder(orderType, paymentMethod, customerName, customerMobile, buildDiscountData(), tableNumber.trim());
   };
 
-  const proceedCompleteBill = () => {
-    if (onCompleteBill) {
-      setActiveAction('complete');
-      if (paymentMethod === 'upi' && upiConfigured) {
-        setShowUpiQr(true);
-        return;
-      }
-      onCompleteBill(orderType, paymentMethod, customerName, customerMobile, buildDiscountData());
+  const proceedCompleteBill = async () => {
+    if (!onCompleteBill) return;
+    setActiveAction('complete');
+    if (paymentMethod === 'upi' && upiConfigured) {
+      setShowUpiQr(true);
+      return;
     }
+    const discountData = buildDiscountData();
+    // Card terminal (ECR): run the terminal purchase first; only settle on approval (web parity).
+    if (paymentMethod === 'card-terminal' && ecrEnabled) {
+      const cardAmount = Math.max(0, Math.round((billing.grandTotal - (useWallet ? walletRedeemAmount : 0)) * 100) / 100);
+      const txnId = `TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setEcrError(null);
+      setEcrStatus('connecting');
+      try {
+        const resp = await doEcrPurchase({ ...ecrSettings, restaurantId }, cardAmount, txnId, (s) => setEcrStatus(s));
+        if (resp?.ResponseCode === ECR_APPROVED) {
+          setEcrStatus(null);
+          onCompleteBill(orderType, paymentMethod, customerName, customerMobile, { ...discountData, ecrResponse: resp });
+        } else {
+          setEcrStatus('declined');
+          setEcrError(resp?.ResponseMessage || 'Card declined');
+        }
+      } catch (e) {
+        setEcrStatus('error');
+        setEcrError(e?.message || 'Terminal error');
+      }
+      return;
+    }
+    onCompleteBill(orderType, paymentMethod, customerName, customerMobile, discountData);
   };
 
   const handlePlaceOrder = () => {
@@ -1402,6 +1466,53 @@ export default function CartModal({
                 />
               </View>
 
+              {/* Wallet redemption (G12) — tender that draws down the customer's wallet balance.
+                  Only for a looked-up customer with balance; not a discount (grand total unchanged). */}
+              {showPayment && customerData && walletBalance > 0 && (
+                <View style={{ marginTop: 8, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#bfdbfe', backgroundColor: '#eff6ff' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="wallet-outline" size={15} color="#2563eb" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e3a8a' }}>Wallet {getCurrencySymbol()}{fmtAmt(walletBalance)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (useWallet) { setUseWallet(false); setWalletRedeemAmount(0); }
+                        else { setUseWallet(true); setWalletRedeemAmount(Math.round(Math.min(walletBalance, Math.max(0, billing.grandTotal)) * 100) / 100); }
+                      }}
+                      style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: useWallet ? '#dc2626' : '#2563eb' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>{useWallet ? 'Cancel' : 'Use'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {useWallet && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 8, backgroundColor: '#fff', paddingHorizontal: 8 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e3a8a' }}>{getCurrencySymbol()}</Text>
+                        <TextInput
+                          style={{ flex: 1, fontSize: 14, paddingVertical: 7, marginLeft: 4, color: '#111827' }}
+                          value={walletRedeemAmount ? String(walletRedeemAmount) : ''}
+                          onChangeText={(t) => {
+                            const n = Math.round((parseFloat(t) || 0) * 100) / 100;
+                            setWalletRedeemAmount(Math.max(0, Math.min(n, walletBalance)));
+                          }}
+                          keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af" />
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setWalletRedeemAmount(Math.round(Math.min(walletBalance, Math.max(0, billing.grandTotal)) * 100) / 100)}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#93c5fd' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563eb' }}>Max</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {useWallet && walletRedeemAmount > 0 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                      <Text style={{ fontSize: 12, color: '#1e3a8a' }}>Amount to Pay</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#1e3a8a' }}>{getCurrencySymbol()}{fmtAmt(Math.max(0, billing.grandTotal - walletRedeemAmount))}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
               {/* Customer Info Bar */}
               {customerData && (
                 <TouchableOpacity activeOpacity={0.7} onPress={() => setShowOffersModal(true)} style={styles.customerInfoBar}>
@@ -1535,6 +1646,44 @@ export default function CartModal({
                     </>
                   )}
                 </TouchableOpacity>
+              )}
+
+              {/* Schedule (G14) + Save/Hold (G13) — non-waiter, new orders only */}
+              {!isWaiterMode && !isUpdateOrder && (posSettings.enableScheduleOrder || (onSaveOrder && !posSettings.hideSaveOrder)) && (
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                  {posSettings.enableScheduleOrder && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (isScheduledOrder) { setIsScheduledOrder(false); setScheduledFor(null); }
+                        else { setIsScheduledOrder(true); setSchedulePickerMode('date'); setShowSchedulePicker(true); }
+                      }}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, borderColor: isScheduledOrder ? '#2563eb' : '#e2e8f0', backgroundColor: isScheduledOrder ? '#eff6ff' : '#fff' }}>
+                      <Ionicons name="calendar-outline" size={15} color={isScheduledOrder ? '#2563eb' : '#64748b'} />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: isScheduledOrder ? '#1d4ed8' : '#475569' }} numberOfLines={1}>
+                        {isScheduledOrder && scheduledFor ? scheduledFor.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Schedule'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {onSaveOrder && !posSettings.hideSaveOrder && (
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (savingCart || cart.length === 0) return;
+                        setSavingCart(true);
+                        try {
+                          await onSaveOrder({
+                            customerInfo: { name: customerName || customerData?.name || '', phone: customerMobile || customerData?.phone || '' },
+                            customerId: customerData?.id || customerData?._id || null,
+                            orderType, tableNumber: tableNumber.trim() || null, paymentMethod,
+                            notes: specialInstructions.trim() || '',
+                          });
+                        } finally { setSavingCart(false); }
+                      }}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, borderRadius: 10, borderWidth: 1.5, borderColor: '#fdba74', backgroundColor: '#fff7ed' }}>
+                      {savingCart ? <ActivityIndicator size="small" color="#ea580c" /> : <Ionicons name="bookmark-outline" size={15} color="#ea580c" />}
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#ea580c' }}>{posSettings.saveOrderLabel || 'Save'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               )}
 
               {/* Action Buttons — mode-specific */}
@@ -2450,6 +2599,71 @@ export default function CartModal({
         userRole={mode === 'owner' ? 'owner' : mode}
         userName=""
       />
+
+      {/* Schedule date/time picker (G14) — two-step date → time on Android */}
+      {showSchedulePicker && (
+        <DateTimePicker
+          value={scheduledFor || new Date(Date.now() + 60 * 60 * 1000)}
+          mode={schedulePickerMode}
+          minimumDate={schedulePickerMode === 'date' ? new Date() : undefined}
+          onChange={(event, selected) => {
+            if (event.type === 'dismissed' || !selected) {
+              setShowSchedulePicker(false);
+              if (!scheduledFor) setIsScheduledOrder(false);
+              return;
+            }
+            if (schedulePickerMode === 'date') {
+              const base = scheduledFor || new Date();
+              const next = new Date(selected);
+              next.setHours(base.getHours(), base.getMinutes(), 0, 0);
+              setScheduledFor(next);
+              setSchedulePickerMode('time');
+              // keep picker open for time step (Android reopens via state)
+              setShowSchedulePicker(false);
+              setTimeout(() => setShowSchedulePicker(true), 0);
+            } else {
+              const base = scheduledFor || new Date();
+              const next = new Date(base);
+              next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+              setScheduledFor(next);
+              setIsScheduledOrder(true);
+              setShowSchedulePicker(false);
+              setSchedulePickerMode('date');
+            }
+          }}
+        />
+      )}
+
+      {/* ECR card-terminal status (G16) */}
+      <Modal visible={!!ecrStatus} transparent animationType="fade" onRequestClose={() => { if (ecrStatus === 'declined' || ecrStatus === 'error') setEcrStatus(null); }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 360, alignItems: 'center' }}>
+            {ecrStatus === 'declined' || ecrStatus === 'error' ? (
+              <>
+                <Ionicons name="close-circle" size={44} color="#dc2626" />
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 10 }}>{ecrStatus === 'declined' ? 'Card Declined' : 'Terminal Error'}</Text>
+                {ecrError ? <Text style={{ fontSize: 13, color: '#64748b', marginTop: 6, textAlign: 'center' }}>{ecrError}</Text> : null}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                  <TouchableOpacity onPress={() => { setEcrStatus(null); setEcrError(null); }} style={{ flex: 1, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setEcrStatus(null); setEcrError(null); proceedCompleteBill(); }} style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: '#2563eb', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 14 }}>
+                  {ecrStatus === 'connecting' ? 'Connecting to terminal…' : ecrStatus === 'polling' ? 'Processing payment…' : 'Waiting for card…'}
+                </Text>
+                <Text style={{ fontSize: 13, color: '#64748b', marginTop: 6, textAlign: 'center' }}>Follow the prompts on the card machine.</Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 }

@@ -58,6 +58,17 @@ const CHANNEL_NAMES = [...DINEIN_NAMES, ...TAKEAWAY_NAMES, ...DELIVERY_NAMES];
 const isZoneRule = (rule) => !CHANNEL_NAMES.includes((rule?.name || '').toLowerCase().trim());
 const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
 
+// Forward wallet (G12) / schedule (G14) / ECR (G16) fields from the cart's discountData straight
+// to the order payload so all placement flows (place/complete/kot+bill) carry them.
+const extractPassthroughBilling = (dd = {}) => {
+  const out = {};
+  if (dd.walletRedeemAmount != null) out.walletRedeemAmount = dd.walletRedeemAmount;
+  if (dd.walletCustomerId) out.walletCustomerId = dd.walletCustomerId;
+  if (dd.scheduledFor) { out.scheduledFor = dd.scheduledFor; out.isScheduled = true; }
+  if (dd.ecrResponse) out.ecrResponse = dd.ecrResponse;
+  return out;
+};
+
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
 
@@ -96,6 +107,8 @@ export default function MenuScreen() {
   const [cart, setCart] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
   const [showCart, setShowCart] = useState(false);
+  const [parkedCarts, setParkedCarts] = useState([]);
+  const [showParkedModal, setShowParkedModal] = useState(false);
   // const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showKOTModal, setShowKOTModal] = useState(false);
   const [kotOrderData, setKotOrderData] = useState(null);
@@ -1620,6 +1633,7 @@ export default function MenuScreen() {
 
       // Build billing fields object
       const billingFields = {};
+      Object.assign(billingFields, extractPassthroughBilling(discountData));
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2014,6 +2028,7 @@ export default function MenuScreen() {
 
       // Build billing fields
       const billingFields = {};
+      Object.assign(billingFields, extractPassthroughBilling(discountData));
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2223,6 +2238,7 @@ export default function MenuScreen() {
 
       // Build billing fields
       const billingFields = {};
+      Object.assign(billingFields, extractPassthroughBilling(discountData));
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2591,6 +2607,76 @@ export default function MenuScreen() {
     setActivePricingRuleId(null);
     tableParamsStampRef.current = null;
     lastAppliedStampRef.current = null;
+  };
+
+  // Save/Hold (G13): park the current cart as a saved cart (type 'parked') to resume later.
+  const loadParkedCarts = useCallback(async () => {
+    if (!restaurantId) return;
+    try {
+      const res = await apiClient.getSavedCarts(restaurantId, 'parked');
+      setParkedCarts((res?.savedCarts || res?.carts || (Array.isArray(res) ? res : [])).slice(0, 20));
+    } catch (_) { /* offline / empty */ }
+  }, [restaurantId]);
+
+  useEffect(() => { loadParkedCarts(); }, [loadParkedCarts]);
+
+  const handleSaveOrder = async (extra = {}) => {
+    if (cart.length === 0) return;
+    try {
+      const items = cart.map(buildItemPayload);
+      const name = (selectedTable?.name ? `T${selectedTable.name}` : 'Cart')
+        + ` - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      await apiClient.createSavedCart({
+        restaurantId,
+        name,
+        type: 'parked',
+        items,
+        customerInfo: extra.customerInfo || null,
+        customerId: extra.customerId || null,
+        orderType: extra.orderType || 'dine-in',
+        tableNumber: extra.tableNumber || selectedTable?.name || null,
+        paymentMethod: extra.paymentMethod || 'cash',
+        notes: extra.notes || '',
+      });
+      setCart([]);
+      setShowCart(false);
+      loadParkedCarts();
+      toast?.success?.('Cart parked — resume it from Parked');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to save cart');
+    }
+  };
+
+  // Reload a parked cart into the current cart (refreshing prices from the live menu), then remove it.
+  const reloadParkedCart = async (sc) => {
+    const items = (sc.items || []).map((it, idx) => {
+      const menuItem = menuItems.find(m => m.id === (it.menuItemId || it.id));
+      const variantPrice = it.selectedVariant?.price;
+      const price = variantPrice != null ? variantPrice : (menuItem?.price ?? it.price ?? 0);
+      return {
+        id: it.menuItemId || it.id,
+        menuItemId: it.menuItemId || it.id,
+        cartId: `parked-${it.menuItemId || it.id}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        name: it.name,
+        price,
+        originalPrice: menuItem?.price ?? it.price ?? price,
+        quantity: it.quantity || 1,
+        category: it.category || it.categoryId || null,
+        categoryId: it.categoryId || it.category || null,
+        selectedVariant: it.selectedVariant || null,
+        selectedCustomizations: it.selectedCustomizations || [],
+        taxGroupId: it.taxGroupId || null,
+        seat: it.seat ?? null,
+      };
+    });
+    setCart(items);
+    if (sc.tableNumber && floors?.length) {
+      // best-effort: leave table selection to the user; just load items
+    }
+    try { await apiClient.deleteSavedCart(sc.id); } catch (_) {}
+    setParkedCarts(prev => prev.filter(p => p.id !== sc.id));
+    setShowParkedModal(false);
+    setShowCart(true);
   };
 
   const getItemImage = useCallback((item) => {
@@ -3376,6 +3462,8 @@ export default function MenuScreen() {
         upiSettings={upiSettings}
         tableFromNavigation={isFromTablesPage}
         onClearTable={handleClearTable}
+        ecrSettings={user?.restaurant?.ecrSettings ? { ...user.restaurant.ecrSettings, restaurantId } : {}}
+        onSaveOrder={!existingOrderId ? handleSaveOrder : undefined}
       />
 
       {/* KOT Modal - Shows after order is sent to kitchen */}
@@ -3475,6 +3563,51 @@ export default function MenuScreen() {
           <Text style={styles.categoryFABLabel}>Menu</Text>
         </TouchableOpacity>
       )}
+
+      {/* Parked carts (G13) — resume a held cart */}
+      {parkedCarts.length > 0 && (
+        <TouchableOpacity
+          style={{ position: 'absolute', left: 12, bottom: tabBarHeight + (cart.length > 0 ? 60 : 8), flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 24, backgroundColor: '#ea580c', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 4 }}
+          onPress={() => setShowParkedModal(true)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="bookmark" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Parked {parkedCarts.length}</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Parked carts modal */}
+      <Modal visible={showParkedModal} transparent animationType="slide" onRequestClose={() => setShowParkedModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setShowParkedModal(false)} />
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827' }}>Parked Carts</Text>
+              <TouchableOpacity onPress={() => setShowParkedModal(false)}><Ionicons name="close" size={22} color="#64748b" /></TouchableOpacity>
+            </View>
+            <ScrollView>
+              {parkedCarts.map((sc) => (
+                <View key={sc.id} style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}>
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => reloadParkedCart(sc)} activeOpacity={0.7}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>{sc.name || 'Cart'}</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                      {(sc.items?.length || 0)} item{(sc.items?.length || 0) === 1 ? '' : 's'}
+                      {sc.customerInfo?.name ? ` · ${sc.customerInfo.name}` : ''}
+                      {sc.tableNumber ? ` · T${sc.tableNumber}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => reloadParkedCart(sc)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#ea580c', marginRight: 8 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Resume</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={async () => { try { await apiClient.deleteSavedCart(sc.id); } catch (_) {} setParkedCarts(prev => prev.filter(p => p.id !== sc.id)); }}>
+                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Category Bottom Sheet */}
       {showCategorySheet && (

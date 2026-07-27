@@ -2783,6 +2783,38 @@ class ApiClient {
     });
   }
 
+  // ==================== CUSTOMER WALLET ====================
+  // Returns { walletBalance } for a customer (used to redeem wallet as a tender at billing).
+  async getCustomerWallet(customerId) {
+    return this.request(`/api/customers/${customerId}/wallet`);
+  }
+
+  // ==================== ECR / CARD TERMINAL (Sadad Cloud, Qatar) ====================
+  // Sadad Cloud is fully backend-routed, so it works on mobile with no local hardware.
+  async ecrSadadCreateOrder({ restaurantId, amount, merchantOrderNo, description }) {
+    return this.request('/api/sadad/create-order', {
+      method: 'POST',
+      data: { restaurantId, amount: parseFloat(amount).toFixed(2), merchantOrderNo, description },
+    });
+  }
+  async ecrSadadPoll(merchantOrderNo, restaurantId) {
+    return this.request(`/api/sadad/poll/${merchantOrderNo}?restaurantId=${encodeURIComponent(restaurantId)}`);
+  }
+  async ecrSadadCloseOrder({ restaurantId, merchantOrderNo }) {
+    return this.request('/api/sadad/close-order', {
+      method: 'POST',
+      data: { restaurantId, merchantOrderNo },
+    });
+  }
+  // NAPS Direct terminals are reached via the backend proxy (local-HTTPS from the device
+  // needs a native module; the proxy is the portable path).
+  async ecrProxy({ terminalIp, port, endpoint, payload, restaurantId }) {
+    return this.request('/api/ecr/proxy', {
+      method: 'POST',
+      data: { terminalIp, port, endpoint, payload, restaurantId },
+    });
+  }
+
   // ==================== ATTENDANCE ====================
 
   async clockIn(restaurantId, { staffId, staffName, location }) {
