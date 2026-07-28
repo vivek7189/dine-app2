@@ -1,8 +1,14 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { captureRef } from 'react-native-view-shot';
 import { registerImagePrintHost, unregisterImagePrintHost } from '../services/imagePrintService';
+
+// Guarded, lazy require — if react-native-view-shot isn't linked (e.g. iOS pods not installed),
+// this must NOT crash the app. Image printing simply stays unavailable and callers fall back to
+// the ESC/POS text print. (A static import would run TurboModuleRegistry.getEnforcing at load and
+// crash startup when the native module is absent.)
+let captureRef = null;
+try { captureRef = require('react-native-view-shot').captureRef; } catch (e) { captureRef = null; }
 
 // Hidden, off-screen WebView that renders receipt HTML and snapshots it to an image FILE, so a
 // thermal printer can print the exact same layout as the web/Electron bill/KOT. Mount ONCE at
@@ -46,6 +52,7 @@ export default function ImagePrintHost() {
   }, [finish]);
 
   useEffect(() => {
+    if (!captureRef) return; // view-shot not linked → image printing unavailable, host stays passive
     const capture = (html, opts = {}) => new Promise((resolve, reject) => {
       const width = Math.max(200, Math.min(1200, Number(opts.width) || 576));
       queueRef.current.push({ html, width, resolve, reject });
