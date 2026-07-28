@@ -8,6 +8,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineProvider, useOffline } from '../hooks/useOffline';
+import ImagePrintHost from '../components/ImagePrintHost';
 import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
 import { loadCurrencyConfig } from '../utils/formatCurrency';
 
@@ -134,6 +135,8 @@ export default function RootLayout() {
             </Stack>
           </PinGate>
         </OfflineProvider>
+        {/* Hidden host for opt-in image (HTML) receipt printing. Passive until used. */}
+        <ImagePrintHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -734,7 +734,12 @@ export default function MenuScreen() {
         (async () => {
           try {
             const pRes = await apiClient.getPrintSettings(rid);
-            if (pRes) setPrintSettings(pRes.printSettings || pRes || {});
+            if (pRes) {
+              const ps = pRes.printSettings || pRes || {};
+              setPrintSettings(ps);
+              // Configure opt-in image (HTML) receipt printing (default OFF).
+              try { printerService.setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth }); } catch (_) {}
+            }
           } catch { /* ignore */ }
         })(),
         (async () => {
@@ -1576,7 +1581,9 @@ export default function MenuScreen() {
           // Single station: print to default printer
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-          printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+          // imageHtml = rich designed KOT, used only by the opt-in image-print path (else ignored).
+          const kotImageHtml = printerService.generateKOTHTML(kotData, printSettings || {});
+          printerService.printWithFeedback({ html: kotHtml, text: kotText, imageHtml: kotImageHtml, silentOnly: true, label: 'KOT' })
             .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
             .catch(() => {});
         }
@@ -1941,7 +1948,8 @@ export default function MenuScreen() {
             // Single station: print to default printer
             const kotText = printerService.generateKOTText(kotData);
             const kotHtml = printerService.wrapKOTTextInHTML(kotText);
-            printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
+            const kotImageHtml = printerService.generateKOTHTML(kotData, printSettings || {});
+            printerService.printWithFeedback({ html: kotHtml, text: kotText, imageHtml: kotImageHtml, silentOnly: true, label: 'KOT' })
               .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
               .catch(() => {});
           }
@@ -2183,11 +2191,13 @@ export default function MenuScreen() {
         if (Array.isArray(guests) && guests.length > 1) {
           guests.forEach((g, i) => {
             const guestInvoice = { ...invoiceData, grandTotal: g.amount, splitLabel: `Split ${i + 1} of ${guests.length}${g.name ? ` — ${g.name}` : ''}`, customerName: g.name || invoiceData.customerName };
-            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` }).catch(() => {});
+            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), imageHtml: printerService.generateBillHTML(guestInvoice, printSettings || {}), silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` }).catch(() => {});
           });
         } else {
           const billText = printerService.generateBillText(invoiceData);
-          printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+          // imageHtml = rich designed bill, used only by the opt-in image-print path (else ignored).
+          const billImageHtml = printerService.generateBillHTML(invoiceData, printSettings || {});
+          printerService.printWithFeedback({ text: billText, imageHtml: billImageHtml, silentOnly: true, label: 'Bill' })
             .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
             .catch(() => {});
         }

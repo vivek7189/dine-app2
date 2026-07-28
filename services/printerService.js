@@ -36,7 +36,7 @@ try {
 import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter } from '../utils/seatOrdering';
-import { renderKOT } from '../utils/printTemplates/index';
+import { renderKOT, renderBill } from '../utils/printTemplates/index';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
@@ -49,6 +49,21 @@ const DISCONNECT_ALERT_KEY = 'dine_printer_disconnect_alert'; // 'true' | 'false
 let connectedPrinter = null;
 let connectionType = null; // 'bluetooth' | 'network' | 'usb' | 'airprint'
 let printerInitialized = { bluetooth: false, network: false, usb: false };
+
+// ── Image (HTML) receipt printing — OPT-IN, default OFF ──
+// When enabled (printSettings.imagePrintEnabled), the thermal path renders the web bill/KOT HTML
+// to an image and prints it (same layout as desktop). Falls back to ESC/POS text on any failure.
+let _imagePrintEnabled = false;
+let _imagePrintWidth = 576; // px; 58mm ≈ 384, 80mm ≈ 576
+export const setImagePrintConfig = ({ enabled, printerWidth } = {}) => {
+  _imagePrintEnabled = !!enabled;
+  const w = String(printerWidth ?? '');
+  if (w.includes('58') || w === '384') _imagePrintWidth = 384;
+  else if (w.includes('80') || w === '576') _imagePrintWidth = 576;
+  else if (Number(printerWidth) >= 200 && Number(printerWidth) <= 1200) _imagePrintWidth = Number(printerWidth);
+  // else keep default 576
+};
+export const isImagePrintOn = () => _imagePrintEnabled;
 let activeScanCancelled = false;
 let activeZeroconf = null;
 let _reconnectPromise = null; // shared Promise so concurrent callers wait for reconnect
@@ -1057,6 +1072,18 @@ export const wrapKOTTextInHTML = (text) => {
 </head><body>${logoHtml}<pre>${cleanText}</pre></body></html>`;
 };
 
+// Generate BILL HTML using the template system (for image-print / AirPrint / WebView).
+// Rich, designed receipt (same template family as the dashboard bill). Returns null on failure
+// so callers can fall back to text.
+export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
+  try {
+    return renderBill(invoiceData, printSettings || invoiceData.printSettings || {}, {});
+  } catch (e) {
+    console.warn('generateBillHTML failed:', e?.message);
+    return null;
+  }
+};
+
 // Generate KOT HTML using the template system (for AirPrint / WebView)
 export const generateKOTHTML = (orderData, printSettings = {}) => {
   const kotData = {
@@ -1212,6 +1239,38 @@ const printViaThermal = async (text) => {
   throw lastErr;
 };
 
+// Flag-gated IMAGE print: render the receipt HTML → image file → printImageData on the same
+// connected thermal printer. Throws on any failure so the caller falls back to the ESC/POS text
+// path. Requires <ImagePrintHost> mounted. Reuses the native printImageData bridge (BLE/Net/USB).
+const printViaThermalImage = async (html) => {
+  const { htmlToImageFile, hasImagePrintHost } = require('./imagePrintService');
+  if (!hasImagePrintHost()) throw new Error('image-print host not mounted');
+  const nativeMod =
+    connectionType === 'bluetooth' ? NativeModules.RNBLEPrinter :
+    connectionType === 'network' ? NativeModules.RNNetPrinter :
+    connectionType === 'usb' ? NativeModules.RNUSBPrinter : null;
+  if (!nativeMod || typeof nativeMod.printImageData !== 'function') {
+    throw new Error(`printImageData not available for ${connectionType}`);
+  }
+  const cleanHtml = String(html || '').replace(/^<LOGO:.+?>\n?/, '');
+  if (!cleanHtml.trim()) throw new Error('empty html');
+  const fileUri = await htmlToImageFile(cleanHtml, { width: _imagePrintWidth });
+  // printImageData is fire-and-forget: its callback fires ONLY on error (same pattern as
+  // printRawData/printBill in this lib). So reject if the error callback fires, else resolve
+  // shortly after dispatch. Wrapped in the shared print timeout as a backstop.
+  await withPrintTimeout(new Promise((resolve, reject) => {
+    let settled = false;
+    try {
+      nativeMod.printImageData(fileUri, (err) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(new Error(String(err))); else resolve();
+      });
+    } catch (e) { if (!settled) { settled = true; reject(e); } return; }
+    setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1500);
+  }), 'printImageData');
+};
+
 // Silent print via AirPrint (iOS - no dialog when printer URL is saved)
 const printViaAirPrint = async (html, printerUrl) => {
   await Print.printAsync({ html, printer: printerUrl });
@@ -1231,7 +1290,7 @@ const printViaAirPrint = async (html, printerUrl) => {
  * @param {string} options.text - Plain text (for thermal printers)
  * @returns {Promise<{method: string}>}
  */
-export const printContent = async ({ html, text, silentOnly = false }) => {
+export const printContent = async ({ html, text, imageHtml, silentOnly = false }) => {
   return enqueuePrint(async () => {
     const mode = await getPrinterMode();
 
@@ -1245,6 +1304,20 @@ export const printContent = async ({ html, text, silentOnly = false }) => {
           console.error('AirPrint silent failed:', err);
           if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
           // fall through to dialog
+        }
+      }
+
+      // OPT-IN image print (default OFF). When enabled AND html is available, print the receipt
+      // as an image (same layout as the desktop bill/KOT). On ANY failure we fall through to the
+      // existing ESC/POS text path below — so this can never break printing. Skipped entirely
+      // when the flag is off.
+      if (_imagePrintEnabled && (imageHtml || html) && connectionType !== 'airprint') {
+        try {
+          await printViaThermalImage(imageHtml || html);
+          return { method: `silent-${connectionType}-image` };
+        } catch (imgErr) {
+          console.warn('[imagePrint] failed, falling back to text:', imgErr?.message);
+          // fall through to the text path (unchanged)
         }
       }
 
@@ -1501,7 +1574,7 @@ export const printToStationPrinter = async (stationConfig, text) => {
   });
 };
 
-export const printWithFeedback = async ({ html, text, silentOnly = true, label = 'Print' }) => {
+export const printWithFeedback = async ({ html, text, imageHtml, silentOnly = true, label = 'Print' }) => {
   // If remote print is enabled, skip local printing — desktop app handles it via Firebase RTDB
   const remotePrint = await getRemotePrintEnabled();
   if (remotePrint) {
@@ -1510,7 +1583,7 @@ export const printWithFeedback = async ({ html, text, silentOnly = true, label =
 
   const notifEnabled = await getPrintNotificationsEnabled();
   try {
-    const result = await printContent({ html, text, silentOnly });
+    const result = await printContent({ html, text, imageHtml, silentOnly });
 
     if (result?.method?.startsWith('silent-') || result?.method === 'dialog') {
       return { success: true, method: result.method, notify: false };
