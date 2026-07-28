@@ -49,6 +49,14 @@ const PRINT_TOGGLES = [
     color: '#ec4899',
     bg: '#fdf2f8',
   },
+  {
+    key: 'imagePrintEnabled',
+    title: 'Image Receipts (beta)',
+    hint: 'Print bill/KOT as a designed image (same look as desktop) instead of plain text. Only for thermal printers that support image printing — falls back to text automatically. Leave OFF unless supported.',
+    icon: 'image-outline',
+    color: '#0891b2',
+    bg: '#ecfeff',
+  },
 ];
 
 const DEFAULT_SETTINGS = {
@@ -56,6 +64,7 @@ const DEFAULT_SETTINGS = {
   autoPrintOnKOT: true,
   autoPrintOnBilling: true,
   tokenBillingEnabled: false,
+  imagePrintEnabled: false,
 };
 
 export default function PrintSettings({ restaurantId, onSettingsChange }) {
@@ -123,6 +132,8 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       setOriginal(settings);
       setIsDirty(false);
       await AsyncStorage.setItem(`${STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
+      // Apply the image-print flag to the running session immediately (default OFF).
+      try { require('../services/printerService').setImagePrintConfig({ enabled: settings.imagePrintEnabled, printerWidth: settings.printerWidth }); } catch (_) {}
       if (onSettingsChange) onSettingsChange(settings);
       Alert.alert('Saved', 'Print settings updated successfully.');
     } catch (error) {
