@@ -1127,7 +1127,9 @@ export default function CartModal({
                 <Ionicons name="document-text-outline" size={18} color={showKitchenNotes ? Colors.primary : '#fff'} />
               </TouchableOpacity>
             </View>
-            {showOrderTypes && !lockOrderTypeToDineIn && (
+            {/* Order-type tabs always show (Dine-In is the default for table orders via the
+                effect above, but the user can switch to Takeaway/Delivery if needed). */}
+            {showOrderTypes && orderTypeOptions.length > 0 && (
               <View style={styles.orderTypeTabs}>
                 {orderTypeOptions.map((t) => (
                   <TouchableOpacity
