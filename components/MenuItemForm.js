@@ -426,8 +426,16 @@ export default function MenuItemForm({
         )}
       </View>
 
-      {/* Channel & Zone Prices — Tree Layout */}
+      {/* Channel & Zone Prices — Tree Layout.
+          Hidden when the item has variants: variant prices take priority and item-level channel
+          prices never apply (set channel prices per variant). Matches the web menu editor. */}
       {multiPricingEnabled && activePricingRules.length > 0 && (
+        (formData.variants && formData.variants.length > 0 && formData.variants.some(v => v.name && v.price)) ? (
+          <View style={styles.pricingRulesSection}>
+            <Text style={styles.pricingRulesTitle}>Channel Prices</Text>
+            <Text style={styles.pricingRulesHint}>Set Dine-In / Takeaway / Delivery prices per variant below — variant prices take priority for items with variants.</Text>
+          </View>
+        ) : (
         <View style={styles.pricingRulesSection}>
           <Text style={styles.pricingRulesTitle}>Channel Prices</Text>
           <Text style={styles.pricingRulesHint}>Empty zones inherit Dine-In price</Text>
@@ -525,6 +533,7 @@ export default function MenuItemForm({
             );
           })()}
         </View>
+        )
       )}
 
       {/* Food Type (Veg/Non-Veg) */}
