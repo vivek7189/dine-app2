@@ -109,6 +109,12 @@ export default function MenuScreen() {
   const [showCart, setShowCart] = useState(false);
   const [parkedCarts, setParkedCarts] = useState([]);
   const [showParkedModal, setShowParkedModal] = useState(false);
+  // KOT+Bill settle-after prompt (flag-gated flow only). placedOrderIdRef records the just-placed
+  // order id; kotBillModeRef tells handlePlaceOrder to SKIP navigation so we can prompt to settle.
+  const placedOrderIdRef = useRef(null);
+  const kotBillModeRef = useRef(false);
+  const [kotBillSettle, setKotBillSettle] = useState(null); // { orderId, amount, wasTable, tableParams } | null
+  const [kotBillSettling, setKotBillSettling] = useState(false);
   // const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showKOTModal, setShowKOTModal] = useState(false);
   const [kotOrderData, setKotOrderData] = useState(null);
@@ -1893,6 +1899,7 @@ export default function MenuScreen() {
 
         let response;
         response = await apiClient.createOrder(orderData);
+        placedOrderIdRef.current = response.order?.id || null; // for the KOT+Bill settle prompt
 
         // Redeem coupon after successful order (fire-and-forget)
         if (discountData.couponId && response.order?.id) {
@@ -1967,7 +1974,11 @@ export default function MenuScreen() {
           setCart([]);
           decrementLocalStock(orderedItems);
           setShowCart(false);
-          if (selectedTable || params.tableId) {
+          // KOT+Bill flow: DON'T navigate — handleKotAndBill will show a settle prompt on this
+          // screen and navigate after. Normal Place Order (ref false) keeps its exact behaviour.
+          if (kotBillModeRef.current) {
+            // stay put for the settle prompt
+          } else if (selectedTable || params.tableId) {
             router.replace({
               pathname: '/(tabs)/tables',
               params: {
@@ -2507,8 +2518,23 @@ export default function MenuScreen() {
       printSettings: printSettings || {},
     };
 
-    // Place order (UNPAID) + print KOT + clear cart + navigate (reuses existing flow).
-    await handlePlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData, tableNumberFromModal);
+    // Snapshot the table context BEFORE placing (handlePlaceOrder clears/replaces it).
+    const wasTable = !!(selectedTable || params.tableId);
+    const tableParams = wasTable ? {
+      tableId: selectedTable?.id || params.tableId,
+      tableStatus: 'occupied',
+      tableNumber: selectedTable?.name || params.tableNumber,
+    } : null;
+
+    // Place order (UNPAID) + print KOT + clear cart. kotBillModeRef suppresses navigation so the
+    // settle prompt can show on this screen.
+    placedOrderIdRef.current = null;
+    kotBillModeRef.current = true;
+    try {
+      await handlePlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData, tableNumberFromModal);
+    } finally {
+      kotBillModeRef.current = false;
+    }
 
     // Then print the bill (enqueued after the KOT so KOT prints first). Order stays unpaid.
     try {
@@ -2517,6 +2543,43 @@ export default function MenuScreen() {
         .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
         .catch(() => {});
     } catch { /* bill print best-effort */ }
+
+    // Prompt to settle (record how the payment was tendered). If the order id is missing
+    // (e.g. offline / failed), fall back to the normal navigation so nothing gets stuck.
+    const oid = placedOrderIdRef.current;
+    if (oid) {
+      setKotBillSettle({ orderId: oid, amount: grandTotal, wasTable, tableParams });
+    } else {
+      if (wasTable) router.replace({ pathname: '/(tabs)/tables', params: { ...tableParams, orderId: oid || '' } });
+      else router.push('/(tabs)/orders');
+    }
+  };
+
+  // Navigate away after the KOT+Bill settle prompt is dismissed (settled or "later").
+  const finishKotBillSettle = (settle) => {
+    setKotBillSettle(null);
+    if (settle?.wasTable) router.replace({ pathname: '/(tabs)/tables', params: { ...(settle.tableParams || {}), orderId: settle.orderId } });
+    else router.push('/(tabs)/orders');
+  };
+
+  // Settle a KOT+Bill order with the tendered method → mark completed/paid.
+  const handleKotBillSettleConfirm = async (method) => {
+    if (!kotBillSettle?.orderId || kotBillSettling) return;
+    setKotBillSettling(true);
+    const { orderId: oid, amount } = kotBillSettle;
+    try {
+      await apiClient.updateOrder(oid, {
+        status: 'completed', paymentStatus: 'paid', paymentMethod: method,
+        finalAmount: amount, completedAt: new Date().toISOString(),
+      });
+      try { await apiClient.verifyPayment({ orderId: oid, paymentMethod: method, amount, userId: user?.id, restaurantId, paymentStatus: 'completed' }); } catch (_) {}
+      toast.success('Payment settled');
+    } catch (e) {
+      toast.error(e?.message || 'Failed to settle payment');
+    } finally {
+      setKotBillSettling(false);
+      finishKotBillSettle(kotBillSettle);
+    }
   };
 
   // Bar Tab: Save as open tab (status: 'saved')
@@ -3606,6 +3669,55 @@ export default function MenuScreen() {
               ))}
             </ScrollView>
           </View>
+        </View>
+      </Modal>
+
+      {/* KOT+Bill settle prompt — record how the payment was tendered (flag-gated flow only) */}
+      <Modal visible={!!kotBillSettle} transparent animationType="fade" onRequestClose={() => { if (!kotBillSettling && kotBillSettle) finishKotBillSettle(kotBillSettle); }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          {kotBillSettle && (() => {
+            const ps = user?.restaurant?.posSettings || {};
+            const methods = (Array.isArray(ps.paymentMethods) && ps.paymentMethods.length > 0
+              ? ps.paymentMethods.filter(m => m && (typeof m === 'string' || m.enabled !== false))
+                  .map(m => (typeof m === 'string' ? { id: m, label: m } : { id: (m.id || m.value || m.method || m.name), label: (m.label || m.name || m.id) }))
+              : [
+                  { id: 'cash', label: 'Cash' },
+                  ...(ps.hideUPI ? [] : [{ id: 'upi', label: 'UPI' }]),
+                  ...(ps.hideCard ? [] : [{ id: 'card', label: 'Card' }]),
+                ]).filter(m => m.id);
+            const mColor = { cash: '#16a34a', upi: '#7c3aed', card: '#2563eb' };
+            return (
+              <View style={{ backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 380, overflow: 'hidden' }}>
+                <View style={{ padding: 18, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eef2f6' }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#ecfdf5', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                    <Ionicons name="print" size={20} color="#059669" />
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#111827' }}>KOT & Bill printed</Text>
+                  <Text style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>Settle payment — {getCurrencySymbol()}{Number(kotBillSettle.amount || 0).toFixed(2)}</Text>
+                </View>
+                <View style={{ padding: 16 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', marginBottom: 10 }}>How was it tendered?</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {methods.map(m => {
+                      const c = mColor[String(m.id).toLowerCase()] || '#0891b2';
+                      return (
+                        <TouchableOpacity key={m.id} disabled={kotBillSettling}
+                          onPress={() => handleKotBillSettleConfirm(m.id)}
+                          style={{ flexGrow: 1, flexBasis: '30%', paddingVertical: 14, borderRadius: 10, borderWidth: 1.5, borderColor: c, backgroundColor: `${c}12`, alignItems: 'center' }}>
+                          <Text style={{ fontSize: 14, fontWeight: '800', color: c }}>{m.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {kotBillSettling && <ActivityIndicator size="small" color="#059669" style={{ marginTop: 12 }} />}
+                  <TouchableOpacity onPress={() => { if (!kotBillSettling) finishKotBillSettle(kotBillSettle); }}
+                    style={{ marginTop: 12, paddingVertical: 10, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#94a3b8' }}>Settle later (leave unpaid)</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })()}
         </View>
       </Modal>
 

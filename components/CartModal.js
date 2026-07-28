@@ -1632,7 +1632,7 @@ export default function CartModal({
                   Places order + prints KOT + prints bill, unpaid — settle after. */}
               {onKotAndBill && !isWaiterMode && (
                 <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#4f46e5', paddingVertical: 13, borderRadius: 12, marginBottom: 8, opacity: sending ? 0.6 : 1 }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#0891b2', paddingVertical: 13, borderRadius: 12, marginBottom: 8, opacity: sending ? 0.6 : 1 }}
                   onPress={handleKotAndBill}
                   disabled={sending}
                   activeOpacity={0.85}
