@@ -1047,6 +1047,28 @@ class ApiClient {
     return result;
   }
 
+  // Dynamic parties (Path A): add another independent party (check) to a table on demand.
+  // Base table stays Party A; siblings are named 7-B / 7-C… Returns { party }.
+  async addTableParty(restaurantId, tableId, partyName = null) {
+    const result = await this.request(`/api/tables/${restaurantId}/add-party`, {
+      method: 'POST',
+      data: { tableId, partyName: partyName || null },
+    });
+    this.invalidateCache('/api/tables/');
+    this.invalidateCache('/api/floors/');
+    return result;
+  }
+  // Remove an empty party (no active order).
+  async removeTableParty(restaurantId, tableId) {
+    const result = await this.request(`/api/tables/${restaurantId}/remove-party`, {
+      method: 'POST',
+      data: { tableId },
+    });
+    this.invalidateCache('/api/tables/');
+    this.invalidateCache('/api/floors/');
+    return result;
+  }
+
   // Get orders
   async getOrders(restaurantId, params = {}, { onRefreshed } = {}) {
     const queryString = new URLSearchParams(params).toString();

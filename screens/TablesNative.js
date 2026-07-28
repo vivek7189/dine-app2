@@ -667,6 +667,41 @@ export default function TablesScreen() {
     }
   };
 
+  // Dynamic parties (Path A): add another independent party (check) to a table on demand and
+  // jump straight into Take Order for it — no pre-splitting. Base stays Party A; new sibling is
+  // 7-B / 7-C… Mirrors the web flow and reuses the same order-taking navigation.
+  const [addingParty, setAddingParty] = useState(false);
+  const handleAddParty = async (table) => {
+    const rid = restaurantIdRef.current || selectedRestaurant?.id;
+    if (!table || !rid || addingParty) return;
+    setShowTableActions(false);
+    setAddingParty(true);
+    try {
+      const res = await apiClient.addTableParty(rid, table.id);
+      const party = res?.party;
+      // Refresh floors/tables so the new sibling + its chip appear.
+      loadFloorsAndTables(rid);
+      if (party?.id) {
+        const tableFloor = getFloorForTable(table);
+        const currentFloorName = tableFloor?.name || tableFloor?.floorName || table._floorName || '';
+        const floorId = tableFloor?.id || table._floorId || '';
+        if (user?.role?.toLowerCase() === 'waiter') {
+          setWaiterOrderContext({ tableId: party.id, tableNumber: party.name, floorName: currentFloorName, floorId });
+          setShowWaiterOrderModal(true);
+        } else {
+          router.push({
+            pathname: '/(tabs)/menu',
+            params: { tableId: party.id, tableNumber: party.name, floorName: currentFloorName, floorId, navStamp: Date.now().toString() },
+          });
+        }
+      }
+    } catch (err) {
+      Alert.alert('Could not add party', err?.message || 'Please try again.');
+    } finally {
+      setAddingParty(false);
+    }
+  };
+
   const handleResetAllTables = async () => {
     const occupiedCount = tables.filter(t => t.status === 'occupied').length;
     if (occupiedCount === 0) {
@@ -1031,6 +1066,10 @@ export default function TablesScreen() {
     const isCleaning = normalizedStatus === 'cleaning';
     const isOutOfService = normalizedStatus === 'out-of-service';
 
+    // Dynamic parties: this base table's sibling parties + whether it can host them.
+    const partiesEnabled = !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
+    const parties = partiesByBase[table.id] || [];
+
     const cardContent = (
       <TouchableOpacity
         style={[
@@ -1152,6 +1191,28 @@ export default function TablesScreen() {
                 </View>
               )}
             </View>
+
+            {/* Party chips (Path A) — A = this base table; siblings B/C… open their own order.
+                Only shown once a sibling exists, so single-party tables stay clean. */}
+            {partiesEnabled && parties.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                <Text style={{ fontSize: 8, fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: 0.3, marginRight: 1 }}>Parties</Text>
+                <View style={{ width: 18, height: 18, borderRadius: 5, backgroundColor: '#7c3aed', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 9, fontWeight: '800', color: '#fff' }}>A</Text>
+                </View>
+                {parties.map((p) => {
+                  const pOcc = !!p.currentOrderId || p.status === 'occupied' || p.status === 'serving';
+                  return (
+                    <TouchableOpacity key={p.id} onPress={() => handleTablePress(p)} style={{ width: 18, height: 18, borderRadius: 5, backgroundColor: pOcc ? '#fef3c7' : '#ede9fe', borderWidth: 1, borderColor: pOcc ? '#fcd34d' : '#ddd6fe', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: pOcc ? '#b45309' : '#7c3aed' }}>{p.partyLabel || '?'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity onPress={() => handleAddParty(table)} style={{ width: 18, height: 18, borderRadius: 5, backgroundColor: '#fff', borderWidth: 1, borderStyle: 'dashed', borderColor: '#c4b5fd', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="add" size={11} color="#7c3aed" />
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
         {/* Bottom status color bar */}
@@ -1432,6 +1493,7 @@ export default function TablesScreen() {
   const showTableActionSheet = (table) => {
     setActionTable(table);
     const status = table.status || 'available';
+    const canHostParties = !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
 
     if (Platform.OS === 'ios') {
       const options = [];
@@ -1443,6 +1505,11 @@ export default function TablesScreen() {
         actions.push(() => handleTablePress(table));
         options.push('Book Table');
         actions.push(() => openBookingForm(table));
+      }
+      // New Party — start another independent check on this table (base stays Party A).
+      if (canHostParties && (status === 'available' || status === 'occupied' || status === 'cleaning')) {
+        options.push('New Party');
+        actions.push(() => handleAddParty(table));
       }
       if (status === 'reserved' && (table.bookingId || table.reservationId)) {
         options.push('Check In');
@@ -1678,8 +1745,18 @@ export default function TablesScreen() {
 
   const stats = getTableStats();
   // When selectedFloor is null ("All"), show all tables; otherwise show selected floor's tables
-  let currentFloorTables = selectedFloor ? (selectedFloor.tables || []) : tables;
-  
+  // Dynamic parties (Path A): map each base table id → its sibling parties (B, C…), and keep the
+  // siblings OUT of the standalone grid — they surface as compact chips on the base card instead.
+  const partiesByBase = {};
+  (tables || []).forEach((t) => {
+    if (t.isPartyTable && t.partyOfTableId) {
+      (partiesByBase[t.partyOfTableId] = partiesByBase[t.partyOfTableId] || []).push(t);
+    }
+  });
+  Object.values(partiesByBase).forEach((arr) => arr.sort((a, b) => (a.partyLabel || '').localeCompare(b.partyLabel || '')));
+
+  let currentFloorTables = (selectedFloor ? (selectedFloor.tables || []) : tables).filter((t) => !t.isPartyTable);
+
   // Sort tables: text-named tables first (alphabetically), then pure numbers (numerically)
   // Example: "Sofa", "apple sofa 1", "apple sofa 2", "banana table 1", then "1", "2", "3", "10"
   const sortTablesAlphabetically = (tables) => {
@@ -2472,6 +2549,15 @@ export default function TablesScreen() {
                     <Text style={styles.actionSheetBtnText}>Book Table</Text>
                   </TouchableOpacity>
                 </>
+              )}
+
+              {/* New Party — another independent check on this table (base stays Party A). */}
+              {actionTable && !actionTable.isSubTable && !actionTable.isPartyTable && !actionTable.isSplit && !actionTable.mergeGroupId && !actionTable.mergedInto
+                && ['available', 'occupied', 'cleaning'].includes(actionTable.status || 'available') && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => handleAddParty(actionTable)}>
+                  <Ionicons name="people" size={20} color="#7c3aed" />
+                  <Text style={styles.actionSheetBtnText}>New Party</Text>
+                </TouchableOpacity>
               )}
 
               {actionTable?.status === 'reserved' && (actionTable?.bookingId || actionTable?.reservationId) && (
