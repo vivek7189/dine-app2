@@ -1088,6 +1088,14 @@ export default function TablesScreen() {
         onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
+        {/* ⋮ Options button — opens the clean actions sheet (discoverable; not only long-press). */}
+        <TouchableOpacity
+          onPress={() => showTableActionSheet(table)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={{ position: 'absolute', top: 5, right: 5, zIndex: 5, width: 24, height: 24, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.75)', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Ionicons name="ellipsis-vertical" size={13} color="#64748b" />
+        </TouchableOpacity>
         {/* Card Inner */}
         <View style={[styles.cardInner, isTablet && { padding: sp(12) }]}>
           {/* Table Content */}
