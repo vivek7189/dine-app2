@@ -1088,13 +1088,14 @@ export default function TablesScreen() {
         onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
-        {/* ⋮ Options button — opens the clean actions sheet (discoverable; not only long-press). */}
+        {/* Options button — opens the clean actions sheet (discoverable; not only long-press).
+            Solid white pill + gear icon so it's clearly visible on any card colour. */}
         <TouchableOpacity
           onPress={() => showTableActionSheet(table)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          style={{ position: 'absolute', top: 5, right: 5, zIndex: 5, width: 24, height: 24, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.75)', alignItems: 'center', justifyContent: 'center' }}
+          style={{ position: 'absolute', top: 5, right: 5, zIndex: 5, width: 26, height: 26, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }}
         >
-          <Ionicons name="ellipsis-vertical" size={13} color="#64748b" />
+          <Ionicons name="settings-outline" size={14} color="#475569" />
         </TouchableOpacity>
         {/* Card Inner */}
         <View style={[styles.cardInner, isTablet && { padding: sp(12) }]}>
