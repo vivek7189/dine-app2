@@ -919,32 +919,35 @@ export default function MenuScreen() {
   // Handle order type change from CartModal/CashierCartModal → auto-select pricing rule
   const handleOrderTypeChange = useCallback((newType) => {
     if (!multiPricingEnabled) return;
-    const t = (newType || '').toLowerCase();
-    // Channel order types (takeaway/delivery) are ALWAYS auto-locked to their
-    // matching pricing rule. If no rule exists for that channel, fall back to the
-    // base price (activePricingRuleId = null) — mirrors web. This is what fixes
-    // "switch to Delivery but price stays on the previous Takeaway zone".
-    if (TAKEAWAY_NAMES.includes(t)) {
-      const rule = pricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
+    const t = (newType || '').toLowerCase().trim();
+    const isDineInLike = DINEIN_NAMES.includes(t) || t === 'counter';
+
+    // CHANNEL order types (takeaway / delivery / custom like "snoonu"): lock to the pricing rule
+    // whose NAME matches this order type. Exact-name match handles CUSTOM channels; the alias sets
+    // handle takeaway/delivery spelling variants. No matching rule → base price (null). Whenever
+    // the tab changes, activePricingRuleId updates → the re-price effect re-resolves every cart
+    // line (item- AND variant/sub-price) to that channel's price. Extends web (which only knew
+    // takeaway/delivery) to any admin-defined channel.
+    if (!isDineInLike) {
+      let rule = pricingRules.find(r => r.isActive && (r.name || '').toLowerCase().trim() === t);
+      if (!rule && TAKEAWAY_NAMES.includes(t)) rule = pricingRules.find(r => r.isActive && TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
+      if (!rule && DELIVERY_NAMES.includes(t)) rule = pricingRules.find(r => r.isActive && DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
       setActivePricingRuleId(rule ? rule.id : null);
-      setAutoSelectedRule(true);
-    } else if (DELIVERY_NAMES.includes(t)) {
-      const rule = pricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()) && r.isActive);
-      setActivePricingRuleId(rule ? rule.id : null);
-      setAutoSelectedRule(true);
-    } else {
-      // Dine-in/counter: floor-based auto-selection (locked) → else clear to base
-      // and let the user pick a zone from the selector.
-      setAutoSelectedRule(false);
-      const floorName = params.floorName || selectedTable?.floor || '';
-      if (floorName) {
-        const matched = pricingRules.find(r =>
-          (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
-        );
-        if (matched) { setActivePricingRuleId(matched.id); setAutoSelectedRule(true); return; }
-      }
-      setActivePricingRuleId(null);
+      setAutoSelectedRule(!!rule);
+      return;
     }
+
+    // DINE-IN / COUNTER: floor-based auto-selection (locked) → else clear to base and let the
+    // user pick a zone from the selector.
+    setAutoSelectedRule(false);
+    const floorName = params.floorName || selectedTable?.floor || '';
+    if (floorName) {
+      const matched = pricingRules.find(r =>
+        (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
+      );
+      if (matched) { setActivePricingRuleId(matched.id); setAutoSelectedRule(true); return; }
+    }
+    setActivePricingRuleId(null);
   }, [multiPricingEnabled, pricingRules, params.floorName, selectedTable]);
 
   // Handle table number entered from CashierCartModal → lookup floor → auto-select pricing rule
