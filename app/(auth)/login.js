@@ -159,7 +159,7 @@ export default function LoginScreen() {
 
   // LAN pairing fields
   const [lanHost, setLanHost] = useState('');
-  const [lanPort, setLanPort] = useState('3847');
+  const [lanPort, setLanPort] = useState('3003');
   const [lanPairingCode, setLanPairingCode] = useState('');
   const [lanStep, setLanStep] = useState('connect'); // 'connect' | 'staff-login'
   const [lanStaffList, setLanStaffList] = useState([]);
@@ -591,31 +591,42 @@ export default function LoginScreen() {
     }
   };
 
-  // ==================== LAN: Pair & Login ====================
+  // ==================== LAN: Connect to local server, then login ====================
+  // Connect this device to the on-prem local server (the machine running the backend +
+  // local Postgres on the restaurant Wi-Fi). We just point the API + real-time at it and
+  // verify it's reachable — then staff log in against it with their normal User ID +
+  // password (works fully offline). No pairing code / old hub protocol needed.
   const handleLanPair = async () => {
-    if (!lanHost || !lanPairingCode) {
-      setError('Please enter hub IP and pairing code');
+    if (!lanHost) {
+      setError('Please enter the server IP address');
       return;
     }
     setLoading(true);
     setError('');
     try {
-      await lanClient.init();
-      const result = await lanClient.pair(lanHost, parseInt(lanPort) || 3847, lanPairingCode, 'Waiter Device');
-      // Set LAN client on API
-      apiClient.setLanClient(lanClient);
-      // Get staff list for login
-      if (result.seedData?.staff) {
-        setLanStaffList(result.seedData.staff);
-      }
+      let host = lanHost.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+      const port = (lanPort || '3003').trim();
+      const url = `http://${host}${host.includes(':') ? '' : ':' + port}`;
+      // Verify the server is reachable on the LAN.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(`${url}/api/health`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      // Route all API calls + real-time to the local server for this device.
+      await apiClient.setLocalServer(url);
       setLanStep('staff-login');
     } catch (err) {
-      setError(err.message || 'Pairing failed');
+      setError(err.name === 'AbortError'
+        ? 'Could not reach the server — check the IP and that you are on the restaurant Wi-Fi.'
+        : (err.message || 'Connection failed'));
     } finally {
       setLoading(false);
     }
   };
 
+  // Once connected, this is a normal staff login — apiClient.staffLogin() hits the local
+  // server (its baseURL is now the server) and verifies the User ID + password offline.
   const handleLanStaffLogin = async () => {
     if (!loginId || !password) {
       setError('Please enter User ID and password');
@@ -624,16 +635,11 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
     try {
-      const result = await lanClient.staffLogin(loginId, password);
-      if (result.success && result.token) {
-        await apiClient.setToken(result.token);
-        await apiClient.setUser({
-          ...result.user,
-          restaurant: result.restaurant,
-        });
+      const response = await apiClient.staffLogin(loginId, password);
+      if (response.token) {
         router.replace('/(tabs)/home');
       } else {
-        setError(result.error || 'Login failed');
+        setError(response.error || 'Login failed');
       }
     } catch (err) {
       setError(err.message || 'Login failed');
@@ -1247,10 +1253,10 @@ export default function LoginScreen() {
         {/* Form */}
         <View style={styles.form}>
           <Text style={styles.title}>
-            {loginMode === 'owner' ? getOwnerTitle() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Staff Login' : 'Join LAN Hub') : 'Staff Login'}
+            {loginMode === 'owner' ? getOwnerTitle() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Staff Login' : 'Connect to Server') : 'Staff Login'}
           </Text>
           <Text style={styles.description}>
-            {loginMode === 'owner' ? getOwnerDescription() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Enter your staff credentials' : 'Connect to your restaurant hub') : 'Enter your credentials to continue'}
+            {loginMode === 'owner' ? getOwnerDescription() : loginMode === 'lan' ? (lanStep === 'staff-login' ? 'Enter your staff credentials' : 'Connect to your restaurant server') : 'Enter your credentials to continue'}
           </Text>
 
           {error ? (
@@ -1264,7 +1270,7 @@ export default function LoginScreen() {
             lanStep === 'connect' ? (
               <View>
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Hub IP Address</Text>
+                  <Text style={styles.label}>Server IP Address</Text>
                   <TextInput
                     style={styles.input}
                     placeholder="192.168.1.50"
@@ -1280,7 +1286,7 @@ export default function LoginScreen() {
                   <Text style={styles.label}>Port</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="3847"
+                    placeholder="3003"
                     placeholderTextColor={Colors.textLight}
                     value={lanPort}
                     onChangeText={setLanPort}
@@ -1288,34 +1294,21 @@ export default function LoginScreen() {
                     editable={!loading}
                   />
                 </View>
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Pairing Code</Text>
-                  <TextInput
-                    style={[styles.input, { fontSize: 24, fontWeight: '700', textAlign: 'center', letterSpacing: 6 }]}
-                    placeholder="000000"
-                    placeholderTextColor={Colors.textLight}
-                    value={lanPairingCode}
-                    onChangeText={(t) => setLanPairingCode(t.replace(/\D/g, '').slice(0, 6))}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    editable={!loading}
-                  />
-                </View>
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.buttonDisabled]}
                   onPress={handleLanPair}
-                  disabled={loading || !lanHost || lanPairingCode.length !== 6}
+                  disabled={loading || !lanHost}
                 >
                   {loading ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.primaryButtonText}>Connect to Hub</Text>
+                    <Text style={styles.primaryButtonText}>Connect to Server</Text>
                   )}
                 </TouchableOpacity>
                 <View style={styles.staffHint}>
                   <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
                   <Text style={styles.staffHintText}>
-                    Get the IP address and pairing code from the hub terminal display
+                    Enter the address shown in the DineOpen Server window, then log in with your staff ID.
                   </Text>
                 </View>
               </View>
