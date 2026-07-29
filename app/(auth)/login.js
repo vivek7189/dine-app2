@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import lanClient from '../../services/lanClient';
+import { getLocalServerUrl } from '../../services/localServer';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -157,12 +158,15 @@ export default function LoginScreen() {
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
 
-  // LAN pairing fields
-  const [lanHost, setLanHost] = useState('');
+  // LAN pairing fields — default to the server's fixed mDNS hostname so staff never
+  // type an IP (it auto-resolves to the server's current IP on the LAN, iOS-native).
+  const [lanHost, setLanHost] = useState('dineopen-server.local');
   const [lanPort, setLanPort] = useState('3003');
+  const lanAutoTried = useRef(false);
   const [lanPairingCode, setLanPairingCode] = useState('');
   const [lanStep, setLanStep] = useState('connect'); // 'connect' | 'staff-login'
   const [lanStaffList, setLanStaffList] = useState([]);
+  const [lanConnectedUrl, setLanConnectedUrl] = useState(null); // the server we're connected to (for the ✓ banner)
 
   // Owner auth method: 'main' (shows google + method picks), 'email', 'phone', 'register', 'emailOtp', 'phoneOtp'
   const [ownerStep, setOwnerStep] = useState('main');
@@ -596,9 +600,13 @@ export default function LoginScreen() {
   // local Postgres on the restaurant Wi-Fi). We just point the API + real-time at it and
   // verify it's reachable — then staff log in against it with their normal User ID +
   // password (works fully offline). No pairing code / old hub protocol needed.
-  const handleLanPair = async () => {
+  // opts.silent = true → used by the auto-try when the LAN screen opens; on failure it
+  // stays quiet (server not found yet) and leaves the manual field for the user. Called
+  // from onPress it receives the press event (opts.silent undefined) → normal behaviour.
+  const handleLanPair = async (opts = {}) => {
+    const silent = opts && opts.silent === true;
     if (!lanHost) {
-      setError('Please enter the server IP address');
+      if (!silent) setError('Please enter the server address');
       return;
     }
     setLoading(true);
@@ -609,21 +617,35 @@ export default function LoginScreen() {
       const url = `http://${host}${host.includes(':') ? '' : ':' + port}`;
       // Verify the server is reachable on the LAN.
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const timer = setTimeout(() => ctrl.abort(), silent ? 3500 : 6000);
       const res = await fetch(`${url}/api/health`, { signal: ctrl.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
       // Route all API calls + real-time to the local server for this device.
       await apiClient.setLocalServer(url);
+      setLanConnectedUrl(url);
       setLanStep('staff-login');
     } catch (err) {
-      setError(err.name === 'AbortError'
-        ? 'Could not reach the server — check the IP and that you are on the restaurant Wi-Fi.'
-        : (err.message || 'Connection failed'));
+      if (!silent) {
+        setError(err.name === 'AbortError'
+          ? 'Could not reach the server — check you are on the restaurant Wi-Fi, or enter the IP shown in the DineOpen Server window.'
+          : (err.message || 'Connection failed'));
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // When the LAN screen opens, silently try the fixed hostname once. If the server is
+  // there (typical), the user is auto-advanced to login with nothing to type. This runs
+  // ONLY in LAN mode — it never touches the normal online (owner/staff cloud) flow.
+  useEffect(() => {
+    if (loginMode === 'lan' && lanStep === 'connect' && !lanConnectedUrl && !lanAutoTried.current) {
+      lanAutoTried.current = true;
+      handleLanPair({ silent: true });
+    }
+    if (loginMode !== 'lan') lanAutoTried.current = false;
+  }, [loginMode, lanStep, lanConnectedUrl]);
 
   // Once connected, this is a normal staff login — apiClient.staffLogin() hits the local
   // server (its baseURL is now the server) and verifies the User ID + password offline.
@@ -660,6 +682,15 @@ export default function LoginScreen() {
       } catch (e) {
         console.warn('LAN client init error:', e.message);
       }
+      // If this device is already pointed at a local server (from a previous session),
+      // surface it so the LAN screen shows the connected state instead of a blank form.
+      try {
+        const existing = getLocalServerUrl();
+        if (existing) {
+          setLanConnectedUrl(existing);
+          setLanHost(existing.replace(/^https?:\/\//i, ''));
+        }
+      } catch (_) {}
     })();
   }, []);
 
@@ -1243,10 +1274,13 @@ export default function LoginScreen() {
           onPress={() => {
             setLoginMode('lan');
             setError('');
+            // Always land on the server-entry step so re-tapping visibly reopens the
+            // form. If already connected, the field is pre-filled and a ✓ banner shows.
+            setLanStep('connect');
           }}
         >
           <Text style={{ fontSize: 12, color: loginMode === 'lan' ? '#6366f1' : Colors.textLight, fontWeight: '600' }}>
-            <Ionicons name="wifi-outline" size={12} /> Join Restaurant LAN
+            <Ionicons name="wifi-outline" size={12} /> {lanConnectedUrl ? 'Restaurant LAN ✓' : 'Join Restaurant LAN'}
           </Text>
         </TouchableOpacity>
 
@@ -1270,15 +1304,16 @@ export default function LoginScreen() {
             lanStep === 'connect' ? (
               <View>
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Server IP Address</Text>
+                  <Text style={styles.label}>Server Address</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="192.168.1.50"
+                    placeholder="dineopen-server.local"
                     placeholderTextColor={Colors.textLight}
                     value={lanHost}
                     onChangeText={setLanHost}
-                    keyboardType="decimal-pad"
+                    keyboardType="default"
                     autoCapitalize="none"
+                    autoCorrect={false}
                     editable={!loading}
                   />
                 </View>
@@ -1305,15 +1340,35 @@ export default function LoginScreen() {
                     <Text style={styles.primaryButtonText}>Connect to Server</Text>
                   )}
                 </TouchableOpacity>
+                {lanConnectedUrl ? (
+                  <TouchableOpacity
+                    style={styles.connectedBanner}
+                    onPress={() => { setError(''); setLanStep('staff-login'); }}
+                  >
+                    <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                    <Text style={styles.connectedBannerText}>
+                      Already connected to <Text style={{ fontWeight: '700' }}>{lanConnectedUrl.replace(/^https?:\/\//i, '')}</Text> — tap to log in
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
                 <View style={styles.staffHint}>
                   <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
                   <Text style={styles.staffHintText}>
-                    Enter the address shown in the DineOpen Server window, then log in with your staff ID.
+                    Leave this as <Text style={{ fontWeight: '700' }}>dineopen-server.local</Text> — it finds the server automatically on the restaurant Wi-Fi. Or type the IP shown in the DineOpen Server window.
                   </Text>
                 </View>
               </View>
             ) : (
               <View>
+                <View style={styles.connectedBanner}>
+                  <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                  <Text style={styles.connectedBannerText}>
+                    Connected to <Text style={{ fontWeight: '700' }}>{(lanConnectedUrl || '').replace(/^https?:\/\//i, '')}</Text>
+                  </Text>
+                  <TouchableOpacity onPress={() => { setError(''); setLanStep('connect'); }}>
+                    <Text style={styles.connectedChange}>Change</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>User ID / Login ID</Text>
                   <TextInput
@@ -1701,6 +1756,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#92400e',
     flex: 1,
+  },
+  // Connected banner (LAN)
+  connectedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 16,
+  },
+  connectedBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#065f46',
+  },
+  connectedChange: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#059669',
   },
   // Staff hint
   staffHint: {
