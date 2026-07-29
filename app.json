@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.93.7",
+    "version": "2.93.8",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -35,14 +35,16 @@
         "NSSpeechRecognitionUsageDescription": "DineOpen uses speech recognition to convert spoken orders into text for faster order entry.",
         "NSLocationWhenInUseUsageDescription": "DineOpen uses your location to verify attendance clock-in/out at your workplace.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "DineOpen tracks your location during active deliveries so the restaurant owner can monitor delivery progress.",
-        "UIBackgroundModes": ["location"],
+        "UIBackgroundModes": [
+          "location"
+        ],
         "NSBluetoothAlwaysUsageDescription": "DineOpen uses Bluetooth to connect to thermal receipt printers for silent auto-printing of bills and tokens.",
         "NSBluetoothPeripheralUsageDescription": "DineOpen uses Bluetooth to connect to thermal receipt printers."
       }
     },
     "android": {
       "package": "com.dineopen.waiter",
-      "versionCode": 145,
+      "versionCode": 146,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#DC4A3A"
@@ -76,6 +78,14 @@
           "locationAlwaysAndWhenInUsePermission": "DineOpen tracks your location during active deliveries so the restaurant owner can monitor delivery progress.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
         }
       ]
     ],

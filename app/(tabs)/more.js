@@ -150,6 +150,7 @@ export default function MoreScreen() {
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: null, color: '#3b82f6', iconBg: '#eff6ff' },
         { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, color: '#64748b', iconBg: '#f1f5f9' },
+        { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],
     },
     {

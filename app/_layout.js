@@ -11,6 +11,8 @@ import { OfflineProvider, useOffline } from '../hooks/useOffline';
 import ImagePrintHost from '../components/ImagePrintHost';
 import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
 import { loadCurrencyConfig } from '../utils/formatCurrency';
+import apiClient from '../services/api';
+import lanClient from '../services/lanClient';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -23,6 +25,19 @@ function PinGate({ children }) {
   const [checked, setChecked] = useState(false);
 
   // Check PIN on mount and when offline state changes
+  // Local-server (offline LAN) bootstrap — runs once at launch, before any API call.
+  // Loads the persisted local server URL (routes API there) and registers the LAN
+  // client so real-time connects once the restaurant is known (setRestaurantBaseURL).
+  useEffect(() => {
+    (async () => {
+      try {
+        apiClient.setLanClient(lanClient);
+        await lanClient.init();
+        await apiClient.initLocalServerRouting();
+      } catch (_) {}
+    })();
+  }, []);
+
   useEffect(() => {
     checkPinLock();
   }, [effectivelyOffline]);

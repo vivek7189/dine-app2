@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { getLocalServerUrl, setLocalServerUrl, initLocalServer } from './localServer';
 
 // Get API URL from environment or use deployed backend
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2-phi.vercel.app';
@@ -96,13 +97,53 @@ class ApiClient {
    * Otherwise, fall back to the default.
    */
   setRestaurantBaseURL(restaurant) {
+    // Local-server (offline LAN) mode always wins — never route back to the cloud.
+    const localSrv = getLocalServerUrl();
     const customUrl = restaurant?.pgBackendUrl;
-    const newBase = customUrl || API_BASE_URL;
+    const newBase = localSrv || customUrl || API_BASE_URL;
     if (this.baseURL !== newBase) {
-      console.log(`🔀 API routing: ${newBase}${customUrl ? ' (pgBackendUrl)' : ' (default)'}`);
+      console.log(`🔀 API routing: ${newBase}${localSrv ? ' (local server)' : customUrl ? ' (pgBackendUrl)' : ' (default)'}`);
       this.baseURL = newBase;
       this.clearAllCache();
     }
+    // In local-server mode, (re)connect LAN real-time for this restaurant. This choke
+    // point runs on login + restaurant switch, so realtime auto-wires with no extra code.
+    try {
+      if (localSrv && restaurant?.id && this._lanClient?.connectServer) {
+        this._lanClient.connectServer(localSrv, restaurant.id);
+      }
+    } catch (_) {}
+  }
+
+  /**
+   * Load the persisted local-server URL (call once at startup) and route to it if set.
+   */
+  async initLocalServerRouting() {
+    const url = await initLocalServer();
+    if (url) {
+      this.baseURL = url;
+      console.log('🖥️  Local server routing active:', url);
+    }
+    return url;
+  }
+
+  /**
+   * Point this device at the on-prem local server (or clear with null/'').
+   * Persists, switches API routing, and (re)connects LAN real-time if we know the
+   * restaurant + LAN client.
+   */
+  async setLocalServer(url, { restaurantId } = {}) {
+    const norm = await setLocalServerUrl(url);
+    this.baseURL = norm || API_BASE_URL;
+    this.clearAllCache();
+    try {
+      if (this._lanClient) {
+        if (norm && restaurantId) this._lanClient.connectServer(norm, restaurantId);
+        else this._lanClient.disconnectServer && this._lanClient.disconnectServer();
+      }
+    } catch (_) {}
+    console.log(norm ? `🖥️  Local server set: ${norm}` : '☁️  Local server cleared — using cloud');
+    return norm;
   }
 
   setBusinessDayStartHour(hour) {

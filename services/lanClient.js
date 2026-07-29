@@ -7,6 +7,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { io as socketIO } from 'socket.io-client';
 
 const LAN_CONFIG_KEY = 'dineopen_lan_config';
 
@@ -174,6 +175,67 @@ class LanClient {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
     }
+  }
+
+  // ─── Direct local-server (pg backend) real-time via socket.io ───────────
+  // The NEW offline model runs the REAL backend on a local server (see
+  // services/localServer.js). Its live events come over socket.io (not the raw-WS
+  // hub protocol above). We connect here and bridge each { category, type, ...payload }
+  // event into _emit(type, payload) so ALL existing lanClient.onEvent('order-created'
+  // | 'table-status-updated' | …) consumers work unchanged. API calls still go the
+  // normal authenticated fetch path (api.js baseURL = local server) — isPaired() stays
+  // false so we don't route through the old hub proxy.
+
+  connectServer(url, restaurantId) {
+    if (!url || !restaurantId) return;
+    // Reuse the socket if already pointed at the same server + restaurant.
+    if (this.serverSocket && this._serverUrl === url && this._serverRid === restaurantId) return;
+    this.disconnectServer();
+    this._serverUrl = url;
+    this._serverRid = restaurantId;
+    try {
+      this.serverSocket = socketIO(url, {
+        transports: ['websocket'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 8000,
+        forceNew: true,
+      });
+      this.serverSocket.on('connect', () => {
+        console.log('[LanClient] socket.io connected to local server', url);
+        try { this.serverSocket.emit('join', { restaurantId }); } catch (_) {}
+      });
+      this.serverSocket.on('event', (evt) => {
+        if (!evt || !evt.type) return;
+        // Fire the same event name the screens already listen for.
+        this._emit(evt.type, evt);
+        // Back-compat generic bucket used by some screens.
+        this._emit('change', evt);
+      });
+      this.serverSocket.on('disconnect', () => {
+        console.log('[LanClient] socket.io disconnected from local server');
+      });
+      this.serverSocket.on('connect_error', (e) => {
+        console.warn('[LanClient] socket.io connect_error:', e && e.message);
+      });
+    } catch (err) {
+      console.error('[LanClient] Failed to connect to local server:', err);
+      this.serverSocket = null;
+    }
+  }
+
+  disconnectServer() {
+    if (this.serverSocket) {
+      try { this.serverSocket.close(); } catch (_) {}
+      this.serverSocket = null;
+    }
+    this._serverUrl = null;
+    this._serverRid = null;
+  }
+
+  isServerConnected() {
+    return !!(this.serverSocket && this.serverSocket.connected);
   }
 
   // ─── Event System ─────────────────────────────────────────────────────
