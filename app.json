@@ -39,7 +39,12 @@
           "location"
         ],
         "NSBluetoothAlwaysUsageDescription": "DineOpen uses Bluetooth to connect to thermal receipt printers for silent auto-printing of bills and tokens.",
-        "NSBluetoothPeripheralUsageDescription": "DineOpen uses Bluetooth to connect to thermal receipt printers."
+        "NSBluetoothPeripheralUsageDescription": "DineOpen uses Bluetooth to connect to thermal receipt printers.",
+        "NSLocalNetworkUsageDescription": "DineOpen connects to your restaurant's local server on this Wi-Fi so the app keeps working (orders, tables, KOT printing) with no internet.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
