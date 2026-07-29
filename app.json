@@ -80,14 +80,7 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
-        }
-      ]
+      "./plugins/withLanNetworkSecurity"
     ],
     "scheme": "dineopen",
     "extra": {
