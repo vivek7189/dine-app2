@@ -232,6 +232,31 @@ class ApiClient {
     }
   }
 
+  // Role-based landing tab after login (opt-in via posSettings.roleLandingPages,
+  // shared with web). Returns an Expo Router path; falls back to /(tabs)/home.
+  // `userData` optional — read from storage when omitted.
+  async getRoleLandingRoute(userData) {
+    const HOME = '/(tabs)/home';
+    try {
+      const user = userData || await this.getUser();
+      if (!user) return HOME;
+      const role = (user.role || '').toLowerCase();
+      const posSettings = user.restaurant?.posSettings || null;
+      if (!posSettings?.roleLandingEnabled) return HOME;
+      const dest = posSettings?.roleLandingPages?.[role];
+      // Map shared web paths -> app tab routes.
+      const MAP = {
+        '/tables': '/(tabs)/tables',
+        '/orders': '/(tabs)/orders',
+        '/kot': '/(tabs)/kitchen',
+        '/menu': '/(tabs)/menu',
+        '/dashboard': '/(tabs)/menu', // billing is done from the menu/cart screen
+        '/home': HOME,
+      };
+      return (dest && MAP[dest]) || HOME;
+    } catch { return HOME; }
+  }
+
   // Set user data in storage
   async setUser(userData) {
     try {

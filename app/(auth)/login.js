@@ -220,7 +220,7 @@ export default function LoginScreen() {
   const checkAuth = async () => {
     const isAuth = await apiClient.isAuthenticated();
     if (isAuth) {
-      router.replace('/(tabs)/home');
+      router.replace(await apiClient.getRoleLandingRoute());
     }
   };
 
@@ -270,7 +270,7 @@ export default function LoginScreen() {
       );
 
       if (backendResponse.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError('Login failed. Please try again.');
       }
@@ -341,7 +341,7 @@ export default function LoginScreen() {
       );
 
       if (backendResponse.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError('Login failed. Please try again.');
       }
@@ -368,7 +368,7 @@ export default function LoginScreen() {
       const response = await apiClient.emailLogin(email, emailPassword);
 
       if (response.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else if (response.verificationRequired) {
         setError('Email not verified. Please check your inbox.');
       } else {
@@ -426,7 +426,7 @@ export default function LoginScreen() {
       );
 
       if (response.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError(response.message || 'Registration failed');
       }
@@ -514,7 +514,7 @@ export default function LoginScreen() {
         const response = await apiClient.phoneVerifyOtp(fullNumber, phoneOtp);
 
         if (response.token) {
-          router.replace('/(tabs)/home');
+          router.replace(await apiClient.getRoleLandingRoute());
         } else {
           setError(response.error || 'Verification failed. Please try again.');
         }
@@ -544,7 +544,7 @@ export default function LoginScreen() {
       );
 
       if (backendResponse.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError('Login failed. Please try again.');
       }
@@ -584,7 +584,7 @@ export default function LoginScreen() {
     try {
       const response = await apiClient.staffLogin(loginId, password);
       if (response.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError('Login failed. Please check your credentials.');
       }
@@ -659,7 +659,7 @@ export default function LoginScreen() {
     try {
       const response = await apiClient.staffLogin(loginId, password);
       if (response.token) {
-        router.replace('/(tabs)/home');
+        router.replace(await apiClient.getRoleLandingRoute());
       } else {
         setError(response.error || 'Login failed');
       }
