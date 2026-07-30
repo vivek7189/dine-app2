@@ -10,6 +10,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
 import { TabModeProvider } from '../../contexts/TabModeContext';
+import { TerminalLockProvider } from '../../contexts/TerminalLockContext';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
 import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
@@ -342,16 +343,51 @@ function BillingPrewarmer() {
   );
 }
 
+// Loads terminalLock config from the logged-in restaurant and wraps the app in
+// the PIN-lock provider. No-op (pass-through) until posSettings.terminalLock.enabled.
+function TerminalLockGate({ children }) {
+  const [cfg, setCfg] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const userData = await apiClient.getUser();
+        const restaurant = userData?.restaurant || null;
+        setCfg({
+          restaurantId: userData?.restaurantId || restaurant?.id || null,
+          restaurantName: restaurant?.name || null,
+          terminalLock: restaurant?.posSettings?.terminalLock || null,
+        });
+      } catch {
+        setCfg({ restaurantId: null, restaurantName: null, terminalLock: null });
+      }
+    })();
+  }, []);
+
+  // Until config resolves, render children unlocked (avoids a flash before we know).
+  if (!cfg) return children;
+  return (
+    <TerminalLockProvider
+      restaurantId={cfg.restaurantId}
+      restaurantName={cfg.restaurantName}
+      terminalLock={cfg.terminalLock}
+    >
+      {children}
+    </TerminalLockProvider>
+  );
+}
+
 export default function TabsLayout() {
   return (
     <TabModeProvider>
     <TabBarProvider>
-      <View style={{ flex: 1 }}>
-        <TabsNavigator />
-        <BillingPrewarmer />
-        <PrinterNotificationOverlay />
-        <OrderReadyNotificationOverlay />
-      </View>
+      <TerminalLockGate>
+        <View style={{ flex: 1 }}>
+          <TabsNavigator />
+          <BillingPrewarmer />
+          <PrinterNotificationOverlay />
+          <OrderReadyNotificationOverlay />
+        </View>
+      </TerminalLockGate>
     </TabBarProvider>
     </TabModeProvider>
   );

@@ -1212,6 +1212,17 @@ class ApiClient {
   async createOrder(orderData) {
     const offlineStore = require('./offlineStore');
 
+    // Terminal-lock attribution: if a shared-terminal operator has unlocked the app,
+    // stamp the order with who placed it (unless the caller already set it). No-op
+    // when terminal lock is off (no stored operator).
+    if (orderData && !orderData.operatorId) {
+      try {
+        const raw = await AsyncStorage.getItem('dineTerminalOperator');
+        const op = raw ? JSON.parse(raw) : null;
+        if (op && op.id) { orderData.operatorId = op.id; orderData.operatorName = op.name; }
+      } catch {}
+    }
+
     const result = await this.offlineWrite('/api/orders', {
       method: 'POST',
       data: orderData,
@@ -2840,10 +2851,13 @@ class ApiClient {
 
   // Verify/record a payment
   async verifyPayment(paymentData) {
-    return this.request('/api/payments/verify', {
+    const res = await this.request('/api/payments/verify', {
       method: 'POST',
       data: paymentData,
     });
+    // Terminal-lock: a settled order ends this operator's session (if lock is on).
+    try { require('./terminalLockEvents').emitTerminalOrderComplete(); } catch {}
+    return res;
   }
 
   // ==================== CUSTOMER WALLET ====================
@@ -2936,6 +2950,21 @@ class ApiClient {
 
   async getLeaveBalances(restaurantId, staffId) {
     return this.request(`/api/attendance/${restaurantId}/leave/balances/${staffId}`);
+  }
+
+  // ==================== TERMINAL PIN LOCK ====================
+
+  // Verify a staff PIN to unlock the shared terminal. Returns { valid, operator:{id,name,role} }.
+  async verifyStaffPin(restaurantId, pin) {
+    return this.request(`/api/staff/${restaurantId}/verify-pin`, { method: 'POST', data: { pin } });
+  }
+
+  // Owner/admin: set, change, or disable a staff member's terminal PIN.
+  async updateStaffPin(staffId, { pin, enabled } = {}) {
+    const data = {};
+    if (pin != null) data.pin = pin;
+    if (enabled != null) data.enabled = enabled;
+    return this.request(`/api/staff/${staffId}/pin`, { method: 'PATCH', data });
   }
 
   // ==================== PARKING MANAGEMENT ====================
