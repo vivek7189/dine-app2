@@ -687,10 +687,24 @@ const leftRight = (left, right, width = CHARS) => {
   return l + ' '.repeat(gap) + r;
 };
 
-// Thermal-safe currency: ₹ may not be supported by all thermal printers (Code Page 437/850)
-// Falls back to 'Rs.' if getCurrencySymbol returns a non-ASCII symbol
+// Thermal-safe currency: ₹ (and most non-ASCII currency glyphs) are NOT in a
+// thermal printer's single-byte code page (CP437/CP1252). Sending the UTF-8 bytes
+// prints garbage (e.g. "Ré‖") AND inflates the line width so trailing digits wrap.
+// So map any non-ASCII symbol to a safe ASCII equivalent for the thermal TEXT path.
 import { getCurrencySymbol as _getCS } from '../utils/formatCurrency';
-const RS = _getCS();
+const toThermalSymbol = (sym) => {
+  const s = String(sym == null ? '' : sym).trim();
+  if (/^[\x20-\x7E]*$/.test(s)) return s; // already printable ASCII (KSh, Rs, $, etc.)
+  const MAP = {
+    '₹': 'Rs', '₨': 'Rs', '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₩': 'KRW', '₺': 'TRY',
+    '₦': 'NGN', '﷼': 'SR', 'د.إ': 'AED', 'ر.س': 'SR', 'ر.ق': 'QR', '₪': 'ILS',
+    '฿': 'THB', '₫': 'VND', '₱': 'PHP', '₴': 'UAH', '₸': 'KZT', '৳': 'BDT',
+  };
+  if (MAP[s]) return MAP[s];
+  const ascii = s.replace(/[^\x20-\x7E]/g, '').trim();
+  return ascii || 'Rs';
+};
+const RS = toThermalSymbol(_getCS());
 
 // Wrap long text into multiple centered lines
 const wrapText = (text, width = CHARS) => {
@@ -725,7 +739,7 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
-  const RS = invoiceData.currencySymbol || _getCS();
+  const RS = toThermalSymbol(invoiceData.currencySymbol || _getCS());
   const ps = invoiceData.printSettings || invoiceData || {};
   const bl = ps.billLayout || {};
   const W = getChars(ps);
