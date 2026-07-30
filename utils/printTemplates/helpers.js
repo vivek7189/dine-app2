@@ -121,6 +121,8 @@ export function getSublineHtml(item) {
     sub += '<br/><small style="color:#666;">+ ' + custs.map(c => esc(c.name || c)).join(', ') + '</small>';
   }
   if (item.notes) sub += `<br/><small style="font-style:italic;color:#888;">Note: ${esc(item.notes)}</small>`;
+  // HSN/SAC code (India GST invoice) — shown only when the item carries one.
+  if (item.hsnCode) sub += `<br/><small style="color:#888;">HSN: ${esc(String(item.hsnCode))}</small>`;
   return sub;
 }
 

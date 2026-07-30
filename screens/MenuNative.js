@@ -1266,6 +1266,9 @@ export default function MenuScreen() {
       category: item.category || '',
       categoryId: item.categoryId || null,
       taxGroupId: item.taxGroupId || null,
+      // Carry per-item tax fields onto the order (bill/reports) — mirrors web
+      ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+      ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
       selectedVariant: item.selectedVariant || null,
       selectedCustomizations: Array.isArray(item.selectedCustomizations) ? item.selectedCustomizations : [],
       basePrice: typeof item.originalPrice === 'number' ? item.originalPrice : item.price,
