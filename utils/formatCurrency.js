@@ -14,6 +14,7 @@ let _currencyConfig = {
   locale: 'en-IN',
   thousandSeparator: ',',
   decimalSeparator: '.',
+  countryCode: 'IN',
 };
 
 /**
@@ -29,7 +30,13 @@ export function setCurrencyConfig(config) {
     locale: config.locale || 'en-IN',
     thousandSeparator: config.thousandSeparator || ',',
     decimalSeparator: config.decimalSeparator || '.',
+    countryCode: (config.countryCode || (config.locale || '').split('-')[1] || 'IN').toUpperCase(),
   };
+}
+
+/** Current restaurant country code (e.g. 'IN', 'AE') — set at login / switch. */
+export function getCountryCode() {
+  return _currencyConfig.countryCode;
 }
 
 /**

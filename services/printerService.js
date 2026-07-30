@@ -37,6 +37,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
+import { splitIndiaGst } from '../utils/printTemplates/helpers';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
@@ -750,6 +751,7 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
+  try { splitIndiaGst(invoiceData); } catch (_) { /* never block printing */ } // India: GST -> CGST + SGST
   const RS = toThermalSymbol(invoiceData.currencySymbol || _getCS());
   const ps = invoiceData.printSettings || invoiceData || {};
   const bl = ps.billLayout || {};
@@ -1102,6 +1104,7 @@ export const wrapKOTTextInHTML = (text) => {
 // so callers can fall back to text.
 export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
   try {
+    try { splitIndiaGst(invoiceData); } catch (_) { /* never block */ } // India: GST -> CGST + SGST
     return renderBill(invoiceData, printSettings || invoiceData.printSettings || {}, {});
   } catch (e) {
     console.warn('generateBillHTML failed:', e?.message);

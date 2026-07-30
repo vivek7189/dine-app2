@@ -3,6 +3,25 @@
 // doesn't have a separate printFontSizes module.
 
 import { seatLetter } from '../seatOrdering';
+import { getCountryCode } from '../formatCurrency';
+
+// India GST invoice compliance: split a single "GST" tax line into CGST + SGST
+// (half each) for display. DISPLAY ONLY — total unchanged. India-gated (must NOT
+// split Singapore/Australia GST). Idempotent; rounding-safe. Mirrors dine-frontend.
+export function splitIndiaGst(invoice) {
+  if (!invoice || !Array.isArray(invoice.taxBreakdown) || invoice.taxBreakdown.length === 0) return invoice;
+  const cc = String(invoice.countryCode || getCountryCode() || '').toUpperCase();
+  const enabled = invoice.gstSplit === true || (invoice.gstSplit == null && cc === 'IN');
+  if (!enabled) return invoice;
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  invoice.taxBreakdown = invoice.taxBreakdown.flatMap(t => {
+    const name = String(t && t.name || '').trim();
+    if (!t || !/^gst$/i.test(name) || !(Number(t.rate) > 0)) return [t];
+    const hr = Number(t.rate) / 2, amt = Number(t.amount) || 0, cgst = r2(amt / 2), sgst = r2(amt - cgst);
+    return [{ ...t, name: 'CGST', rate: hr, amount: cgst }, { ...t, name: 'SGST', rate: hr, amount: sgst }];
+  });
+  return invoice;
+}
 
 // ── Print Font System ──────────────────────────────────────────────────────────
 
