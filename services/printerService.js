@@ -694,14 +694,25 @@ const leftRight = (left, right, width = CHARS) => {
 import { getCurrencySymbol as _getCS } from '../utils/formatCurrency';
 const toThermalSymbol = (sym) => {
   const s = String(sym == null ? '' : sym).trim();
-  if (/^[\x20-\x7E]*$/.test(s)) return s; // already printable ASCII (KSh, Rs, $, etc.)
+  if (/^[\x20-\x7E]*$/.test(s)) return s; // already printable ASCII (KSh, TSh, $, R$, CFA, Rs, RM, Rp, kr, etc.)
+  // Covers every non-ASCII symbol in dine-frontend's currencyData.js + common extras.
   const MAP = {
-    '₹': 'Rs', '₨': 'Rs', '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₩': 'KRW', '₺': 'TRY',
-    '₦': 'NGN', '﷼': 'SR', 'د.إ': 'AED', 'ر.س': 'SR', 'ر.ق': 'QR', '₪': 'ILS',
-    '฿': 'THB', '₫': 'VND', '₱': 'PHP', '₴': 'UAH', '₸': 'KZT', '৳': 'BDT',
+    '₹': 'Rs', '₨': 'Rs',                 // India / Pakistan / Nepal
+    'лв': 'lev',                          // Bulgaria (BGN)
+    'ر.س': 'SR', '﷼': 'SR',              // Saudi Riyal
+    '.د.ب': 'BD', 'د.ب': 'BD',           // Bahrain Dinar
+    'د.إ': 'AED',                         // UAE Dirham
+    'ر.ق': 'QR',                          // Qatar Riyal
+    'GH₵': 'GHc', '₵': 'GHc',             // Ghana Cedi
+    'Kč': 'Kc',                           // Czech Koruna
+    'zł': 'zl',                           // Polish Zloty
+    '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₩': 'KRW', '₺': 'TRY',
+    '₦': 'NGN', '₪': 'ILS', '฿': 'THB', '₫': 'VND', '₱': 'PHP',
+    '₴': 'UAH', '₸': 'KZT', '৳': 'BDT', '₡': 'CRC', '₲': 'PYG',
   };
   if (MAP[s]) return MAP[s];
-  const ascii = s.replace(/[^\x20-\x7E]/g, '').trim();
+  // Fallback: keep ASCII letters/digits (e.g. "GH₵" -> "GH"), trim stray punctuation.
+  const ascii = s.replace(/[^\x20-\x7E]/g, '').replace(/^[^A-Za-z0-9$]+|[^A-Za-z0-9$]+$/g, '').trim();
   return ascii || 'Rs';
 };
 const RS = toThermalSymbol(_getCS());
