@@ -8,6 +8,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Modal, ActivityIndicator, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import { onTerminalOrderComplete } from '../services/terminalLockEvents';
@@ -31,6 +32,16 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const idleTimer = useRef(null);
+  const router = useRouter();
+
+  // Escape valve — sign out entirely. Prevents being stuck on the lock (e.g. wrong
+  // account, or lock enabled before this device's staff had a PIN). After sign-out
+  // the owner can log in / disable the lock from the web admin.
+  const signOut = useCallback(async () => {
+    try { await AsyncStorage.removeItem(STORAGE_KEY); } catch {}
+    try { await apiClient.logout(); } catch {}
+    try { router.replace('/(auth)/login'); } catch {}
+  }, [router]);
 
   // Initialise from the stored session; lock if none & enabled.
   useEffect(() => {
@@ -107,6 +118,10 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
       <Modal visible={enabled && locked} transparent animationType="fade" onRequestClose={() => {}}>
         <View style={styles.backdrop}>
           <View style={styles.card}>
+            <TouchableOpacity style={styles.signOut} disabled={busy} onPress={signOut} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.signOutIcon}>⏻</Text>
+              <Text style={styles.signOutTxt}>Sign out</Text>
+            </TouchableOpacity>
             <View style={styles.iconWrap}><Text style={styles.iconTxt}>🔒</Text></View>
             <Text style={styles.title}>{restaurantName || 'Terminal locked'}</Text>
             <Text style={styles.sub}>Enter your PIN to continue</Text>
@@ -150,7 +165,7 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  card: { width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' },
+  card: { position: 'relative', width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' },
   iconWrap: { width: 54, height: 54, borderRadius: 16, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   iconTxt: { fontSize: 24 },
   title: { fontSize: 17, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
@@ -166,6 +181,9 @@ const styles = StyleSheet.create({
   unlock: { width: '100%', marginTop: 6, paddingVertical: 14, borderRadius: 12, backgroundColor: '#ef4444', alignItems: 'center' },
   unlockOff: { backgroundColor: '#fca5a5' },
   unlockTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  signOut: { position: 'absolute', top: 12, right: 12, zIndex: 2, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  signOutIcon: { color: '#64748b', fontSize: 13, fontWeight: '900' },
+  signOutTxt: { color: '#64748b', fontSize: 11, fontWeight: '700' },
 });
 
 export default TerminalLockContext;

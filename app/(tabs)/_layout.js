@@ -363,13 +363,14 @@ function TerminalLockGate({ children }) {
     })();
   }, []);
 
-  // Until config resolves, render children unlocked (avoids a flash before we know).
-  if (!cfg) return children;
+  // Always render the Provider (stable tree — no remount of the tabs when config
+  // resolves). Until cfg loads it is a pass-through (terminalLock undefined ->
+  // enabled=false); once cfg arrives with the lock enabled, the provider locks.
   return (
     <TerminalLockProvider
-      restaurantId={cfg.restaurantId}
-      restaurantName={cfg.restaurantName}
-      terminalLock={cfg.terminalLock}
+      restaurantId={cfg?.restaurantId}
+      restaurantName={cfg?.restaurantName}
+      terminalLock={cfg?.terminalLock}
     >
       {children}
     </TerminalLockProvider>
