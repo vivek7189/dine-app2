@@ -1,5 +1,16 @@
 import { useMemo } from 'react';
 
+// Order-type tax gating (mirrors dine-frontend OrderSummary + dine-backend). A tax
+// with NO `orderTypes` (absent/empty) applies to ALL order types — today's
+// behavior. When set, applies only to the listed types. Normalizes dine_in.
+export function taxAppliesToOrderType(tax, orderType) {
+  const list = tax && tax.orderTypes;
+  if (!Array.isArray(list) || list.length === 0) return true;
+  const canon = (x) => String(x || '').toLowerCase().replace(/[_\s]+/g, '-');
+  const cur = canon(orderType);
+  return list.some((x) => canon(x) === cur);
+}
+
 /**
  * Resolve which taxes apply to a given item.
  * Priority: item.taxGroupId > category.taxGroupId > restaurant default taxes
@@ -71,6 +82,7 @@ export function computeTaxBreakdown({
   discountedSubtotal = 0,
   serviceChargeAmount = 0,
   defaultTaxName = 'Tax',
+  orderType = '',
 }) {
   let taxBreakdown = [];
   let totalTax = 0;
@@ -94,7 +106,8 @@ export function computeTaxBreakdown({
       const itemTaxable = Math.max(0, itemTotal - itemDiscShare);
       const itemSCShare = discountedSubtotal > 0 ? (Math.max(0, itemTotal - itemDiscShare) / discountedSubtotal) * serviceChargeAmount : 0;
       const itemTaxableWithSC = itemTaxable + itemSCShare;
-      const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories);
+      const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories)
+        .filter(tax => taxAppliesToOrderType(tax, orderType));
       const totalRate = itemTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
       for (const tax of itemTaxes) {
         const amt = isInclusive
@@ -114,7 +127,7 @@ export function computeTaxBreakdown({
     const taxableAmount = discountedSubtotal + serviceChargeAmount;
     const isGlobalInclusive = taxSettings.taxInclusivePricing === true;
     if (taxSettings.taxes && taxSettings.taxes.length > 0) {
-      const enabledTaxes = taxSettings.taxes.filter(t => t.enabled);
+      const enabledTaxes = taxSettings.taxes.filter(t => t.enabled && taxAppliesToOrderType(t, orderType));
       const totalRate = enabledTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
       taxBreakdown = enabledTaxes.map(t => ({
         name: t.name,
@@ -163,6 +176,7 @@ export default function useBillingCalculation({
   cart = [],        // Cart items (needed for per-item tax)
   categories = [],  // Restaurant categories with taxGroupId (needed for per-item tax)
   defaultTaxName = 'Tax',  // Fallback tax name when no named taxes defined (from currencySettings.taxLabel)
+  orderType = '',          // Current order type — for order-type tax gating (dine-in/takeaway/delivery)
 }) {
   return useMemo(() => {
     // Step 1: Total discount.
@@ -184,7 +198,7 @@ export default function useBillingCalculation({
 
     // Step 4: Tax (shared with MenuNative via computeTaxBreakdown)
     const { taxBreakdown, totalTax, exclusiveTaxTotal } = computeTaxBreakdown({
-      cart, taxSettings, categories, totalDiscount, discountedSubtotal, serviceChargeAmount, defaultTaxName,
+      cart, taxSettings, categories, totalDiscount, discountedSubtotal, serviceChargeAmount, defaultTaxName, orderType,
     });
 
     // Step 5: After tax + tips — only add exclusive tax (inclusive is already in subtotal)
@@ -214,5 +228,5 @@ export default function useBillingCalculation({
       roundOffAmount,
       grandTotal,
     };
-  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, couponDiscount, compAmount, voidAmount, taxSettings, billingSettings, tipAmount, cart, categories]);
+  }, [subtotal, offerDiscount, manualDiscountAmount, loyaltyDiscount, couponDiscount, compAmount, voidAmount, taxSettings, billingSettings, tipAmount, cart, categories, orderType]);
 }

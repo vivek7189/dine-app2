@@ -715,6 +715,7 @@ export default function CartModal({
     cart,
     categories,
     defaultTaxName,
+    orderType,
   });
 
   // Loyalty max redeemable
