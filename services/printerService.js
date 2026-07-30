@@ -37,7 +37,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
-import { splitIndiaGst } from '../utils/printTemplates/helpers';
+import { splitIndiaGst, attachInclusiveSplits } from '../utils/printTemplates/helpers';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
@@ -753,6 +753,7 @@ export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
   try { splitIndiaGst(invoiceData); } catch (_) { /* never block printing */ } // India: GST -> CGST + SGST
   const RS = toThermalSymbol(invoiceData.currencySymbol || _getCS());
+  try { attachInclusiveSplits(invoiceData, RS); } catch (_) {} // per-item MRP + tax (thermal-safe symbol)
   const ps = invoiceData.printSettings || invoiceData || {};
   const bl = ps.billLayout || {};
   const W = getChars(ps);
@@ -836,6 +837,8 @@ export const generateBillText = (invoiceData) => {
     const totalStr = `${RS}${fmt(total)}`;
     const rightPart = `${priceStr}  ${totalStr}`;
     lines.push(leftRight(qtyStr, rightPart, W));
+    // Tax-inclusive per-item split (MRP + tax) — thermal-safe symbol already baked in.
+    if (item.taxSplitLabel) lines.push(`  ${item.taxSplitLabel}`);
   });
 
   lines.push(_LINE);
@@ -1104,6 +1107,7 @@ export const wrapKOTTextInHTML = (text) => {
 // so callers can fall back to text.
 export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
   try {
+    try { attachInclusiveSplits(invoiceData, invoiceData.currencySymbol || '₹'); } catch (_) {} // per-item MRP + tax
     try { splitIndiaGst(invoiceData); } catch (_) { /* never block */ } // India: GST -> CGST + SGST
     return renderBill(invoiceData, printSettings || invoiceData.printSettings || {}, {});
   } catch (e) {

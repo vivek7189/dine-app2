@@ -23,6 +23,36 @@ export function splitIndiaGst(invoice) {
   return invoice;
 }
 
+// Per-item tax-inclusive split (MRP + tax) for the bill — mirrors dine-frontend.
+// `cs` is the currency symbol to embed (pass the THERMAL-safe symbol on the
+// thermal path so it stays ASCII). DISPLAY only; base+tax === line total.
+const _incR2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const _incLineTotal = (it) => {
+  if (it.soldByWeight && it.itemWeight) return it.priceUnit === 'per_100g' ? (it.price || 0) * (it.itemWeight / 100) : (it.price || 0) * it.itemWeight;
+  const unit = it.price != null ? it.price : (it.total ? it.total / (it.quantity || 1) : 0);
+  return _incR2((unit || 0) * (it.quantity || 1));
+};
+export function attachInclusiveSplits(invoice, cs) {
+  if (!invoice || !Array.isArray(invoice.items)) return invoice;
+  const tb = invoice.taxBreakdown || [];
+  const inclTaxes = tb.filter(t => t && t.inclusive);
+  const globalInclusive = invoice.taxInclusiveMode === 'inclusive' || inclTaxes.length > 0;
+  const inclusiveRate = inclTaxes.reduce((s, t) => s + (Number(t.rate) || 0), 0) || (globalInclusive ? tb.reduce((s, t) => s + (Number(t.rate) || 0), 0) : 0);
+  if (!globalInclusive && !invoice.items.some(it => it && it.taxInclusive === true)) return invoice;
+  const sym = cs != null ? cs : (invoice.currencySymbol || '');
+  const taxName = inclTaxes.length === 1 ? (inclTaxes[0].name || 'Tax') : 'Tax';
+  invoice.items = invoice.items.map(it => {
+    if (!it || it.taxSplit) return it;
+    const isIncl = it.taxInclusive === true || (it.taxInclusive !== false && globalInclusive);
+    if (!isIncl || inclusiveRate <= 0) return it;
+    const line = _incLineTotal(it);
+    const tax = _incR2(line * inclusiveRate / (100 + inclusiveRate));
+    const base = _incR2(line - tax);
+    return { ...it, taxSplit: { base, tax, rate: inclusiveRate }, taxSplitLabel: `MRP ${sym}${base.toFixed(2)} + ${taxName} ${inclusiveRate}% ${sym}${tax.toFixed(2)}` };
+  });
+  return invoice;
+}
+
 // ── Print Font System ──────────────────────────────────────────────────────────
 
 const PRINT_FONTS = [
@@ -121,6 +151,8 @@ export function getSublineHtml(item) {
     sub += '<br/><small style="color:#666;">+ ' + custs.map(c => esc(c.name || c)).join(', ') + '</small>';
   }
   if (item.notes) sub += `<br/><small style="font-style:italic;color:#888;">Note: ${esc(item.notes)}</small>`;
+  // Tax-inclusive per-item split (MRP + tax) — set by attachInclusiveSplits().
+  if (item.taxSplitLabel) sub += `<br/><small style="color:#888;">${esc(item.taxSplitLabel)}</small>`;
   // HSN/SAC code (India GST invoice) — shown only when the item carries one.
   if (item.hsnCode) sub += `<br/><small style="color:#888;">HSN: ${esc(String(item.hsnCode))}</small>`;
   return sub;
