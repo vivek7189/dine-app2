@@ -148,7 +148,7 @@ export default function WaiterHomeNative() {
     const eventNames = ['order-created', 'order-status-updated', 'order-updated', 'order-deleted'];
     const lanUnsubs = [];
 
-    if (lanClient.isPaired()) {
+    if (lanClient.isPaired() || lanClient.isServerConnected()) { // old hub OR new on-prem local server (offline LAN)
       eventNames.forEach(evt => {
         lanUnsubs.push(lanClient.onEvent(evt, handleEvent));
       });

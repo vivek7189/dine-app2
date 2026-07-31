@@ -242,7 +242,7 @@ export default function MenuScreen() {
     const lanUnsubs = [];
 
     // LAN Hub WebSocket events (when paired)
-    if (lanClient.isPaired()) {
+    if (lanClient.isPaired() || lanClient.isServerConnected()) { // old hub OR new on-prem local server (offline LAN)
       menuEvents.forEach(evt => {
         lanUnsubs.push(lanClient.onEvent(evt, debouncedRefresh));
       });

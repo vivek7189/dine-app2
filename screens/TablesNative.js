@@ -514,7 +514,7 @@ export default function TablesScreen() {
     const lanUnsubs = [];
 
     // LAN Hub WebSocket events (when paired)
-    if (lanClient.isPaired()) {
+    if (lanClient.isPaired() || lanClient.isServerConnected()) { // old hub OR new on-prem local server (offline LAN)
       lanUnsubs.push(lanClient.onEvent('table-status-updated', handleTableStatusUpdated));
       lanUnsubs.push(lanClient.onEvent('order-created', handleOrderCreated));
       lanUnsubs.push(lanClient.onEvent('order-updated', handleOrderCompletionEvent));
