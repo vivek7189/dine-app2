@@ -151,8 +151,10 @@ export default function KitchenScreen() {
     const eventNames = ['order-created', 'order-status-updated', 'order-updated', 'order-deleted'];
     const lanUnsubs = [];
 
-    // LAN Hub WebSocket events (when paired)
-    if (lanClient.isPaired()) {
+    // LAN events — via the old hub (isPaired) OR the new on-prem local server
+    // (isServerConnected). Without the isServerConnected() branch, the kitchen screen
+    // got NO live updates offline (Firebase RTDB below never delivers with no internet).
+    if (lanClient.isPaired() || lanClient.isServerConnected()) {
       eventNames.forEach(evt => {
         lanUnsubs.push(lanClient.onEvent(evt, handleEvent));
       });

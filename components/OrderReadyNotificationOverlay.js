@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
 import { database } from '../config/firebase';
 import apiClient from '../services/api';
+import lanClient from '../services/lanClient';
 
 const DURATION = 6000;
 
@@ -35,17 +36,10 @@ export default function OrderReadyNotificationOverlay() {
 
   // Subscribe to Firebase RTDB for order-ready events
   useEffect(() => {
-    if (!restaurantId || !database || userRole !== 'waiter') return;
+    if (!restaurantId || userRole !== 'waiter') return;
 
-    const now = Date.now();
-    const ordersQuery = query(
-      ref(database, `events/${restaurantId}/orders`),
-      orderByChild('ts'),
-      startAt(now)
-    );
-
-    const handler = (snapshot) => {
-      const data = snapshot.val();
+    // Data-level handler — works for both LAN and RTDB events (same payload shape).
+    const processReady = (data) => {
       if (!data || data.type !== 'order-status-updated') return;
       if (data.status !== 'ready') return;
 
@@ -62,10 +56,29 @@ export default function OrderReadyNotificationOverlay() {
       Vibration.vibrate([100, 200, 100]);
     };
 
-    onChildAdded(ordersQuery, handler);
+    // LAN events via the on-prem local server (offline) or old hub — without this the
+    // waiter got NO "order ready" alert with no internet (RTDB below never delivers).
+    const lanUnsubs = [];
+    if (lanClient.isPaired() || lanClient.isServerConnected()) {
+      lanUnsubs.push(lanClient.onEvent('order-status-updated', processReady));
+    }
+
+    // Firebase RTDB (cloud).
+    let rtdbCleanup = () => {};
+    if (database) {
+      const ordersQuery = query(
+        ref(database, `events/${restaurantId}/orders`),
+        orderByChild('ts'),
+        startAt(Date.now())
+      );
+      const handler = (snapshot) => processReady(snapshot.val());
+      onChildAdded(ordersQuery, handler);
+      rtdbCleanup = () => off(ordersQuery, 'child_added', handler);
+    }
 
     return () => {
-      off(ordersQuery, 'child_added', handler);
+      lanUnsubs.forEach((fn) => fn && fn());
+      rtdbCleanup();
     };
   }, [restaurantId, userRole]);
 
