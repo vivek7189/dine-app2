@@ -797,7 +797,8 @@ export default function TablesScreen() {
         splitPayments: order.splitPayments || null,
       };
       const billText = printerService.generateBillText(invoiceData);
-      printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+      let billImageHtml; try { billImageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings || printSettingsRef.current || {}); } catch (_) {}
+      printerService.printWithFeedback({ text: billText, imageHtml: billImageHtml, silentOnly: true, label: 'Bill' })
         .then(r => {
           if (!r.success && r.notify !== false) {
             toast.warning(r.error || 'Bill could not be printed. Check printer connection.', 4000, 'Print Failed');
@@ -887,7 +888,8 @@ export default function TablesScreen() {
         isPreBill: true,
       };
       const billText = printerService.generateBillText(invoiceData);
-      const result = await printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Pre-Bill' });
+      let billImageHtml; try { billImageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings || printSettingsRef.current || {}); } catch (_) {}
+      const result = await printerService.printWithFeedback({ text: billText, imageHtml: billImageHtml, silentOnly: true, label: 'Pre-Bill' });
       if (result.success) {
         toast.success('Pre-bill printed successfully', 3000);
       } else if (result.notify !== false) {

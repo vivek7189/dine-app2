@@ -738,7 +738,7 @@ export default function MenuScreen() {
               const ps = pRes.printSettings || pRes || {};
               setPrintSettings(ps);
               // Configure opt-in image (HTML) receipt printing (default OFF).
-              try { printerService.setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth }); } catch (_) {}
+              try { printerService.setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth, autoImageForCurrency: ps.autoImageForCurrency }); } catch (_) {}
             }
           } catch { /* ignore */ }
         })(),

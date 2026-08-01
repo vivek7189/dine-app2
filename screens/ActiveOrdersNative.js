@@ -372,7 +372,8 @@ export default function ActiveOrdersNative() {
       }
       const invoiceData = buildInvoiceData(order, !isCompleted);
       const billText = printerService.generateBillText(invoiceData);
-      const result = await printerService.printWithFeedback({ text: billText, silentOnly: true, label });
+      let billImageHtml; try { billImageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings || {}); } catch (_) {}
+      const result = await printerService.printWithFeedback({ text: billText, imageHtml: billImageHtml, silentOnly: true, label });
       if (result.success) {
         toast.success(`${label} printed`, 2000);
       } else if (result.notify !== false) {

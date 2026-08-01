@@ -52,7 +52,7 @@ const PRINT_TOGGLES = [
   {
     key: 'imagePrintEnabled',
     title: 'Image Receipts (beta)',
-    hint: 'Print bill/KOT as a designed image (same look as desktop) instead of plain text. Only for thermal printers that support image printing — falls back to text automatically. Leave OFF unless supported.',
+    hint: 'Print bill/KOT as a designed image (same look as desktop) instead of plain text. Only for thermal printers that support image printing — falls back to text automatically. Leave OFF unless supported. (Note: symbols like ₹ that no thermal printer can print as text auto-use image so the real symbol shows; it falls back to "Rs" if the printer can\'t do images.)',
     icon: 'image-outline',
     color: '#0891b2',
     bg: '#ecfeff',
@@ -133,7 +133,7 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       setIsDirty(false);
       await AsyncStorage.setItem(`${STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
       // Apply the image-print flag to the running session immediately (default OFF).
-      try { require('../services/printerService').setImagePrintConfig({ enabled: settings.imagePrintEnabled, printerWidth: settings.printerWidth }); } catch (_) {}
+      try { require('../services/printerService').setImagePrintConfig({ enabled: settings.imagePrintEnabled, printerWidth: settings.printerWidth, autoImageForCurrency: settings.autoImageForCurrency }); } catch (_) {}
       if (onSettingsChange) onSettingsChange(settings);
       Alert.alert('Saved', 'Print settings updated successfully.');
     } catch (error) {

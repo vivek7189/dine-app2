@@ -56,8 +56,14 @@ let printerInitialized = { bluetooth: false, network: false, usb: false };
 // to an image and prints it (same layout as desktop). Falls back to ESC/POS text on any failure.
 let _imagePrintEnabled = false;
 let _imagePrintWidth = 576; // px; 58mm ≈ 384, 80mm ≈ 576
-export const setImagePrintConfig = ({ enabled, printerWidth } = {}) => {
+// Auto-use the image path for receipts whose currency symbol can't render on a thermal
+// code page (₹, ر.ق, GH₵, …) so the REAL glyph prints instead of the ASCII fallback ("Rs").
+// On by default; falls back to sanitized text if the printer can't do images. Set
+// autoImageForCurrency:false to force plain text even for those currencies.
+let _autoImageForCurrency = true;
+export const setImagePrintConfig = ({ enabled, printerWidth, autoImageForCurrency } = {}) => {
   _imagePrintEnabled = !!enabled;
+  if (autoImageForCurrency !== undefined) _autoImageForCurrency = !!autoImageForCurrency;
   const w = String(printerWidth ?? '');
   if (w.includes('58') || w === '384') _imagePrintWidth = 384;
   else if (w.includes('80') || w === '576') _imagePrintWidth = 576;
@@ -729,6 +735,16 @@ const sanitizeThermalText = (text) => {
   }
   return out;
 };
+// True when the receipt uses a currency symbol that a thermal code page CANNOT render
+// (₹, ر.ق, GH₵, …). The ONLY way to show the REAL glyph (not "Rs") is the image/raster
+// path, so we auto-prefer image printing for these — exactly what mature POS apps do.
+const hasNonAsciiCurrency = (text) => {
+  const s = String(text == null ? '' : text);
+  for (const glyph of Object.keys(CURRENCY_ASCII)) {
+    if (s.includes(glyph)) return true;
+  }
+  return false;
+};
 const RS = toThermalSymbol(_getCS());
 
 // Wrap long text into multiple centered lines
@@ -1355,11 +1371,13 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
         }
       }
 
-      // OPT-IN image print (default OFF). When enabled AND html is available, print the receipt
-      // as an image (same layout as the desktop bill/KOT). On ANY failure we fall through to the
-      // existing ESC/POS text path below — so this can never break printing. Skipped entirely
-      // when the flag is off.
-      if (_imagePrintEnabled && (imageHtml || html) && connectionType !== 'airprint') {
+      // Image print — used when EITHER the store opted in (imagePrintEnabled) OR the receipt
+      // uses a currency symbol no thermal code page can render (₹, ر.ق, …), so the REAL glyph
+      // prints instead of the "Rs" ASCII fallback — the standard approach when a symbol isn't
+      // in any printer code page. Requires HTML to render from. On ANY failure we fall through
+      // to the ESC/POS text path below (which sanitizes ₹→Rs), so this can never break printing.
+      const wantImageForCurrency = _autoImageForCurrency && hasNonAsciiCurrency(imageHtml || html || text);
+      if ((_imagePrintEnabled || wantImageForCurrency) && (imageHtml || html) && connectionType !== 'airprint') {
         try {
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };
