@@ -9,7 +9,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Modal, ActivityIndicator, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import { onTerminalOrderComplete } from '../services/terminalLockEvents';
@@ -22,10 +22,21 @@ const TerminalLockContext = createContext({
 
 export const useTerminalLock = () => useContext(TerminalLockContext);
 
+// Same "pages that stay unlocked" whitelist as web (posSettings.terminalLock.unlockedPages
+// uses web paths); map the web paths to this app's tab routes. The Kitchen Display is
+// /kot on web ↔ the kitchen tab here — it must never be covered.
+const WEB_TO_APP_ROUTE = { '/kot': '/kitchen', '/kitchen': '/kitchen', '/orders': '/orders', '/tables': '/tables', '/home': '/home', '/analytics': '/analytics', '/inventory': '/inventory' };
+
 export function TerminalLockProvider({ restaurantId, restaurantName, terminalLock, children }) {
   const enabled = !!(terminalLock && terminalLock.enabled);
   const mode = terminalLock?.mode || 'after-order'; // 'after-order' | 'idle' | 'both'
   const idleSeconds = Math.max(15, Number(terminalLock?.idleSeconds) || 60);
+
+  // Suppress the lock overlay on whitelisted pages (default: the kitchen display).
+  const pathname = usePathname();
+  const unlockedWeb = Array.isArray(terminalLock?.unlockedPages) ? terminalLock.unlockedPages : ['/kot'];
+  const unlockedRoutes = unlockedWeb.map((p) => WEB_TO_APP_ROUTE[p] || p);
+  const overlaySuppressed = !!(pathname && unlockedRoutes.some((p) => p && (pathname === p || pathname.startsWith(p + '/'))));
 
   const [operator, setOperator] = useState(null);
   const [locked, setLocked] = useState(false);
@@ -116,7 +127,7 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
           {children}
         </View>
       ) : children}
-      <Modal visible={enabled && locked} transparent animationType="fade" onRequestClose={() => {}}>
+      <Modal visible={enabled && locked && !overlaySuppressed} transparent animationType="fade" onRequestClose={() => {}}>
         {/* Translucent + blurred so staff can glance at the screen behind, while the
             overlay still blocks all interaction until unlocked. */}
         <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
