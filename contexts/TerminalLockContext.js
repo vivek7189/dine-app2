@@ -8,6 +8,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Modal, ActivityIndicator, StyleSheet } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
@@ -116,6 +117,9 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
         </View>
       ) : children}
       <Modal visible={enabled && locked} transparent animationType="fade" onRequestClose={() => {}}>
+        {/* Translucent + blurred so staff can glance at the screen behind, while the
+            overlay still blocks all interaction until unlocked. */}
+        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
         <View style={styles.backdrop}>
           <View style={styles.card}>
             <TouchableOpacity style={styles.signOut} disabled={busy} onPress={signOut} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -164,7 +168,7 @@ export function TerminalLockProvider({ restaurantId, restaurantName, terminalLoc
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.35)', alignItems: 'center', justifyContent: 'center', padding: 20 },
   card: { position: 'relative', width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 20, padding: 24, alignItems: 'center' },
   iconWrap: { width: 54, height: 54, borderRadius: 16, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   iconTxt: { fontSize: 24 },
