@@ -693,28 +693,41 @@ const leftRight = (left, right, width = CHARS) => {
 // prints garbage (e.g. "Ré‖") AND inflates the line width so trailing digits wrap.
 // So map any non-ASCII symbol to a safe ASCII equivalent for the thermal TEXT path.
 import { getCurrencySymbol as _getCS } from '../utils/formatCurrency';
+// Covers every non-ASCII symbol in dine-frontend's currencyData.js + common extras.
+// Longest/most-specific keys FIRST so multi-char glyphs (GH₵, ر.س) replace before their
+// single-char components (₵, ر) when used as a global text sweep.
+const CURRENCY_ASCII = {
+  'GH₵': 'GHc',                         // Ghana Cedi (multi-char — before ₵)
+  'ر.س': 'SR', '.د.ب': 'BD', 'د.ب': 'BD', 'د.إ': 'AED', 'ر.ق': 'QR', // Gulf (multi-char)
+  '₹': 'Rs', '₨': 'Rs',                 // India / Pakistan / Nepal
+  'лв': 'lev',                          // Bulgaria (BGN)
+  '﷼': 'SR',                            // Saudi Riyal (single glyph)
+  '₵': 'GHc',                           // Ghana Cedi
+  'Kč': 'Kc',                           // Czech Koruna
+  'zł': 'zl',                           // Polish Zloty
+  '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₩': 'KRW', '₺': 'TRY',
+  '₦': 'NGN', '₪': 'ILS', '฿': 'THB', '₫': 'VND', '₱': 'PHP',
+  '₴': 'UAH', '₸': 'KZT', '৳': 'BDT', '₡': 'CRC', '₲': 'PYG',
+};
 const toThermalSymbol = (sym) => {
   const s = String(sym == null ? '' : sym).trim();
   if (/^[\x20-\x7E]*$/.test(s)) return s; // already printable ASCII (KSh, TSh, $, R$, CFA, Rs, RM, Rp, kr, etc.)
-  // Covers every non-ASCII symbol in dine-frontend's currencyData.js + common extras.
-  const MAP = {
-    '₹': 'Rs', '₨': 'Rs',                 // India / Pakistan / Nepal
-    'лв': 'lev',                          // Bulgaria (BGN)
-    'ر.س': 'SR', '﷼': 'SR',              // Saudi Riyal
-    '.د.ب': 'BD', 'د.ب': 'BD',           // Bahrain Dinar
-    'د.إ': 'AED',                         // UAE Dirham
-    'ر.ق': 'QR',                          // Qatar Riyal
-    'GH₵': 'GHc', '₵': 'GHc',             // Ghana Cedi
-    'Kč': 'Kc',                           // Czech Koruna
-    'zł': 'zl',                           // Polish Zloty
-    '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₩': 'KRW', '₺': 'TRY',
-    '₦': 'NGN', '₪': 'ILS', '฿': 'THB', '₫': 'VND', '₱': 'PHP',
-    '₴': 'UAH', '₸': 'KZT', '৳': 'BDT', '₡': 'CRC', '₲': 'PYG',
-  };
-  if (MAP[s]) return MAP[s];
+  if (CURRENCY_ASCII[s]) return CURRENCY_ASCII[s];
   // Fallback: keep ASCII letters/digits (e.g. "GH₵" -> "GH"), trim stray punctuation.
   const ascii = s.replace(/[^\x20-\x7E]/g, '').replace(/^[^A-Za-z0-9$]+|[^A-Za-z0-9$]+$/g, '').trim();
   return ascii || 'Rs';
+};
+// FINAL SAFETY NET for the raw thermal TEXT path: replace any non-ASCII currency glyph
+// left ANYWHERE in the fully-assembled receipt with its ASCII equivalent, right before
+// the bytes go to the printer. This guarantees no path (bill / KOT / token / a stale
+// or future template, or a pre-formatted amount that embedded ₹) can send a symbol the
+// printer's single-byte code page (CP437/CP1252) renders as garbage (e.g. "Γé¦139").
+const sanitizeThermalText = (text) => {
+  let out = String(text == null ? '' : text);
+  for (const [glyph, ascii] of Object.entries(CURRENCY_ASCII)) {
+    if (out.includes(glyph)) out = out.split(glyph).join(ascii);
+  }
+  return out;
 };
 const RS = toThermalSymbol(_getCS());
 
@@ -1214,7 +1227,10 @@ const printViaThermal = async (text) => {
   const mod = getThermalModule();
   if (!mod) throw new Error('No thermal printer connected');
   // Strip logo tag — thermal printers don't support images via ESC/POS text
-  const cleanText = text.replace(/^<LOGO:.+?>\n?/, '');
+  let cleanText = text.replace(/^<LOGO:.+?>\n?/, '');
+  // Final safety net: force any non-ASCII currency glyph (₹, ر.س, GH₵, …) to ASCII so
+  // the printer's code page can't turn it into garbage. Covers every text path at once.
+  cleanText = sanitizeThermalText(cleanText);
   // Guard against empty payloads — sending just newlines causes blank paper + cut
   if (!cleanText || !cleanText.trim()) {
     console.warn('printViaThermal: skipping empty payload');
@@ -1534,7 +1550,8 @@ export const printToStationPrinter = async (stationConfig, text) => {
   }
 
   // Strip logo tag and validate payload
-  const cleanText = (text || '').replace(/^<LOGO:.+?>\n?/, '');
+  // Same currency safety net as printViaThermal (this per-station path bypasses it).
+  const cleanText = sanitizeThermalText((text || '').replace(/^<LOGO:.+?>\n?/, ''));
   if (!cleanText || !cleanText.trim()) {
     return { success: false, error: 'Empty print payload' };
   }
