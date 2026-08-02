@@ -44,6 +44,13 @@ class ApiClient {
    * Check if the app is effectively offline.
    */
   isEffectivelyOffline() {
+    // When pinned to an on-prem local server (offline LAN mode), that server is reachable
+    // over the local network REGARDLESS of internet. So we are NOT "effectively offline":
+    // orders/writes must go straight to it (via the normal request path) so the server and
+    // every other terminal see them live — not sit in the SQLite sync queue until internet
+    // returns. If the server is momentarily unreachable, offlineWrite's try/catch still
+    // falls back to the queue, so this stays safe.
+    if (getLocalServerUrl()) return false;
     return this._offlineState?.isEffectivelyOffline?.() ?? false;
   }
 
