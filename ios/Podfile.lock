@@ -1602,6 +1602,28 @@ PODS:
     - Yoga
   - react-native-thermal-receipt-printer (1.2.0-rc.2):
     - React
+  - react-native-view-shot (4.0.3):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - react-native-webview (13.15.0):
     - hermes-engine
     - RCTRequired
@@ -2452,6 +2474,7 @@ DEPENDENCIES:
   - "react-native-netinfo (from `../node_modules/@react-native-community/netinfo`)"
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
   - react-native-thermal-receipt-printer (from `../node_modules/react-native-thermal-receipt-printer`)
+  - react-native-view-shot (from `../node_modules/react-native-view-shot`)
   - react-native-webview (from `../node_modules/react-native-webview`)
   - react-native-worklets-core (from `../node_modules/react-native-worklets-core`)
   - react-native-zeroconf (from `../node_modules/react-native-zeroconf`)
@@ -2662,6 +2685,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-safe-area-context"
   react-native-thermal-receipt-printer:
     :path: "../node_modules/react-native-thermal-receipt-printer"
+  react-native-view-shot:
+    :path: "../node_modules/react-native-view-shot"
   react-native-webview:
     :path: "../node_modules/react-native-webview"
   react-native-worklets-core:
@@ -2842,6 +2867,7 @@ SPEC CHECKSUMS:
   react-native-netinfo: b71941e80630ec2db186ab770e1138e344208bd0
   react-native-safe-area-context: c5d42c4294aa175415947e23c2ac956253abfc7d
   react-native-thermal-receipt-printer: 1ac37fbaa14f544e605bd32d3927ec8ffe2a204b
+  react-native-view-shot: 8853a6bacbf77899d550773a84986f251f509ffc
   react-native-webview: ea441b2e73f711c183580fb6db89aa587f0dd92a
   react-native-worklets-core: cec1e5dc5da1017b0586136ab79ef1b422684ac2
   react-native-zeroconf: eb2e5584308f20f5fc3eb0cea2ceafbbd345b48b
