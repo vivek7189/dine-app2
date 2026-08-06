@@ -1632,8 +1632,11 @@ export default function CartModal({
               )}
 
               {/* One-click KOT + Bill (flag-gated via onKotAndBill; default off).
-                  Places order + prints KOT + prints bill, unpaid — settle after. */}
-              {onKotAndBill && !isWaiterMode && (
+                  Places order + prints KOT + prints bill, unpaid — settle after.
+                  Shown for ALL modes incl. waiter (matches web: the kotThenBill flag
+                  enables it for every role). Totals come from the cart, not the hidden
+                  billing panels, so it works in waiter mode too. */}
+              {onKotAndBill && (
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#0891b2', paddingVertical: 13, borderRadius: 12, marginBottom: 8, opacity: sending ? 0.6 : 1 }}
                   onPress={handleKotAndBill}
