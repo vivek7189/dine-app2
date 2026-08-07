@@ -17,7 +17,10 @@
     "updates": {
       "url": "https://u.expo.dev/dcfa8510-7c36-4f3c-badd-1888ca992d6c",
       "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "ON_LOAD"
+      "checkAutomatically": "ON_LOAD",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     },
     "runtimeVersion": "2.90.0",
     "web": {
