@@ -1364,9 +1364,24 @@ const printViaThermalImage = async (html) => {
   }), 'printImageData');
 };
 
+// Ensure the HTML declares the thermal paper size so iOS AirPrint / the print dialog lays it
+// out at the printer's width instead of A4/Letter (which scales the receipt down → tiny print).
+// Idempotent: leaves HTML untouched if it already sets @page. Works for both the rich renderBill
+// HTML and the monospace text wrapper.
+const _ensureThermalPageSize = (html) => {
+  if (typeof html !== 'string' || !html) return html;
+  if (/@page\b/i.test(html)) return html;
+  const paper = _imagePrintWidth <= 384 ? 58 : 80;
+  const rule = `<style>@page{size:${paper}mm auto;margin:0}</style>`;
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${rule}</head>`);
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => `${m}${rule}`);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => `${m}<head>${rule}</head>`);
+  return `<head>${rule}</head>${html}`;
+};
+
 // Silent print via AirPrint (iOS - no dialog when printer URL is saved)
 const printViaAirPrint = async (html, printerUrl) => {
-  await Print.printAsync({ html, printer: printerUrl });
+  await Print.printAsync({ html: _ensureThermalPageSize(html), printer: printerUrl });
 };
 
 // ==================== PUBLIC API ====================
@@ -1447,7 +1462,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
           message: 'Silent print failed. Printer may be disconnected. Opening print dialog as fallback.',
         });
       }
-      await Print.printAsync({ html });
+      await Print.printAsync({ html: _ensureThermalPageSize(html) });
       return { method: 'dialog' };
     }
 
