@@ -103,6 +103,7 @@ export default function MenuScreen() {
   const [selectedCategory, setSelectedCategory] = useState('all-items');
   const [searchTerm, setSearchTerm] = useState('');
   const [shortCodeSearch, setShortCodeSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(''); // debounced lowercase name-search term
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
@@ -633,6 +634,13 @@ export default function MenuScreen() {
     setAutoSelectedRule(false);
   }, [selectedTable, params.floorName, multiPricingEnabled, pricingRules]);
 
+  // Debounce the free-text search so a large menu (100s of items) isn't re-filtered on every
+  // keystroke. The input stays instant (controlled); only the filtering waits ~180ms.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim().toLowerCase()), 180);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   // Use useMemo instead of useEffect to prevent infinite loops
   const filteredItems = useMemo(() => {
     let filtered = [...menuItems];
@@ -644,12 +652,11 @@ export default function MenuScreen() {
       );
     }
 
-    // Filter by search term (name or description)
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
+    // Filter by search term (name or description) — uses the debounced value.
+    if (debouncedSearch) {
       filtered = filtered.filter(item =>
-        item.name?.toLowerCase().includes(term) ||
-        item.description?.toLowerCase().includes(term)
+        item.name?.toLowerCase().includes(debouncedSearch) ||
+        item.description?.toLowerCase().includes(debouncedSearch)
       );
     }
 
@@ -666,7 +673,7 @@ export default function MenuScreen() {
     filtered = filtered.filter(item => item.status === 'active');
 
     return filtered;
-  }, [selectedCategory, searchTerm, shortCodeSearch, menuItems]);
+  }, [selectedCategory, debouncedSearch, shortCodeSearch, menuItems]);
 
   const loadInitialData = async () => {
     try {
@@ -3379,6 +3386,11 @@ export default function MenuScreen() {
           tabBar?.handleScroll(y);
         }}
         scrollEventThrottle={16}
+        // Keep the list interactive while the search keyboard is up — without these, the first
+        // tap only dismisses the keyboard, so after searching it felt "stuck" (couldn't tap an
+        // item or leave the screen). Scrolling now also dismisses the keyboard.
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         data={filteredItems}
         renderItem={renderMenuItem}
         keyExtractor={(item) => item.id}
