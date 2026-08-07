@@ -1116,6 +1116,20 @@ export const generateKOTText = (data) => {
   return lines.join('\n');
 };
 
+// Paper-width-aware CSS for the AirPrint / system print-dialog HTML fallback. Without this
+// the receipt was hardcoded to max-width:80mm, and iOS scaled that 80mm page DOWN to fit a
+// 58mm printer → tiny print in the corner. Derive width from the configured printer width.
+const _htmlReceiptCss = () => {
+  const is58 = _imagePrintWidth <= 384;
+  const paper = is58 ? 58 : 80;   // physical paper size for @page
+  const bodyMm = is58 ? 56 : 78;  // content width (paper minus a hair)
+  const fs = is58 ? 11 : 13;      // font size that fits 32 (58mm) / 48 (80mm) monospace chars
+  const pad = is58 ? 2 : 3;
+  return `@page{size:${paper}mm auto;margin:0}`
+    + `body{font-family:'Courier New',monospace;width:${bodyMm}mm;max-width:${bodyMm}mm;margin:0 auto;padding:${pad}mm;font-size:${fs}px;box-sizing:border-box;}`
+    + `pre{white-space:pre-wrap;word-wrap:break-word;margin:0;}`;
+};
+
 export const wrapKOTTextInHTML = (text) => {
   // Extract and render logo tag if present
   let logoHtml = '';
@@ -1127,7 +1141,7 @@ export const wrapKOTTextInHTML = (text) => {
   }
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
+<style>${_htmlReceiptCss()}</style>
 </head><body>${logoHtml}<pre>${cleanText}</pre></body></html>`;
 };
 
@@ -1483,7 +1497,7 @@ export const printTestPage = async () => {
 
   const testHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>body{font-family:'Courier New',monospace;max-width:80mm;margin:0 auto;padding:20px;font-size:14px;}pre{white-space:pre-wrap;word-wrap:break-word;}</style>
+<style>${_htmlReceiptCss()}</style>
 </head><body><pre>${testText}</pre></body></html>`;
 
   return printContent({ html: testHtml, text: testText });
