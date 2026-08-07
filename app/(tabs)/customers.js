@@ -64,6 +64,7 @@ export default function CustomersScreen() {
   // ── Customer list state ─────────────────────────────
   const [customers, setCustomers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(''); // debounced lowercase search term
   const [sortBy, setSortBy] = useState('lastOrderDate');
   const [sortOrder, setSortOrder] = useState('desc');
   const [showSortPicker, setShowSortPicker] = useState(false);
@@ -306,11 +307,17 @@ export default function CustomersScreen() {
   };
 
   // ── Filter & sort customers ─────────────────────────
+  // Debounce the search so a large customer base isn't re-filtered on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim().toLowerCase()), 180);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   const filteredCustomers = React.useMemo(() => {
     let list = Array.isArray(customers) ? [...customers] : [];
 
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
+    if (debouncedSearch) {
+      const term = debouncedSearch;
       list = list.filter(c =>
         c.name?.toLowerCase().includes(term) ||
         c.phone?.includes(term) ||
@@ -338,7 +345,7 @@ export default function CustomersScreen() {
     });
 
     return list;
-  }, [customers, searchTerm, sortBy, sortOrder]);
+  }, [customers, debouncedSearch, sortBy, sortOrder]);
 
   // ── Customer CRUD ───────────────────────────────────
   const validateForm = () => {
@@ -1855,6 +1862,10 @@ export default function CustomersScreen() {
             data={filteredCustomers}
             keyExtractor={(item) => item.id}
             renderItem={renderCustomerItem}
+            // Keep the list tappable while the search keyboard is up (avoids the "stuck after
+            // search" trap); scrolling dismisses the keyboard.
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             contentContainerStyle={[styles.listContent, tabletContentStyle]}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />

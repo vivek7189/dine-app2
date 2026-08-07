@@ -542,6 +542,10 @@ export default function OrderHistoryScreen() {
           data={filteredOrders}
           renderItem={renderOrderCard}
           keyExtractor={(item, index) => String(item.id || item._id || item.orderId || item.orderNumber || index)}
+          // Keep the list tappable while the search keyboard is up (avoids the "stuck after
+          // search" trap); scrolling dismisses the keyboard.
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           contentContainerStyle={[styles.listContent, isTablet && { maxWidth: 700, alignSelf: 'center', width: '100%' }]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadOrders(1, false); }} colors={[Colors.primary]} />
