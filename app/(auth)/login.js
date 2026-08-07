@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import lanClient from '../../services/lanClient';
 import { getLocalServerUrl } from '../../services/localServer';
+import LanPinLogin from '../../components/LanPinLogin';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 
@@ -165,6 +166,7 @@ export default function LoginScreen() {
   const lanAutoTried = useRef(false);
   const [lanPairingCode, setLanPairingCode] = useState('');
   const [lanStep, setLanStep] = useState('connect'); // 'connect' | 'staff-login'
+  const [lanAuthMode, setLanAuthMode] = useState('pin'); // LAN staff login: 'pin' (default) | 'password'
   const [lanStaffList, setLanStaffList] = useState([]);
   const [lanConnectedUrl, setLanConnectedUrl] = useState(null); // the server we're connected to (for the ✓ banner)
 
@@ -1148,7 +1150,17 @@ export default function LoginScreen() {
     }
   };
 
-  const renderStaffLogin = () => (
+  const renderStaffLogin = () => {
+    // On the LAN (local server), default to the "Who's working → PIN" login. Cloud staff
+    // login (no local server) is unchanged — always ID + password.
+    if (getLocalServerUrl() && lanAuthMode === 'pin') {
+      return (
+        <View style={styles.formContent}>
+          <LanPinLogin onUsePassword={() => setLanAuthMode('password')} />
+        </View>
+      );
+    }
+    return (
     <View style={styles.formContent}>
       <View style={styles.inputContainer}>
         <Text style={styles.label}>User ID or Username</Text>
@@ -1192,14 +1204,21 @@ export default function LoginScreen() {
         )}
       </TouchableOpacity>
 
-      <View style={styles.staffHint}>
-        <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
-        <Text style={styles.staffHintText}>
-          Use the credentials provided by your restaurant owner
-        </Text>
-      </View>
+      {getLocalServerUrl() ? (
+        <TouchableOpacity onPress={() => setLanAuthMode('pin')} style={{ marginTop: 4, alignItems: 'center' }}>
+          <Text style={{ color: '#ef4444', fontWeight: '700', fontSize: 14 }}>Sign in with PIN instead</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.staffHint}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
+          <Text style={styles.staffHintText}>
+            Use the credentials provided by your restaurant owner
+          </Text>
+        </View>
+      )}
     </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

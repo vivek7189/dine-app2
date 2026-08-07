@@ -834,6 +834,42 @@ class ApiClient {
     return response;
   }
 
+  // LAN "Who's working → PIN" login. Same endpoint the desktop local-server app uses:
+  // identifier (staff phone/email) + PIN -> a real token (no prior session needed).
+  async pinLogin(identifier, pin) {
+    const response = await this.request('/api/auth/pin/login', {
+      method: 'POST',
+      data: { identifier, pin, platform: 'dine-app' },
+    });
+    if (response.token) {
+      await this.setToken(response.token);
+      this._cache.clear();
+      if (response.user) {
+        await this.setUser({
+          ...response.user,
+          restaurant: response.restaurant,
+          owner: response.owner,
+        });
+        if (response.restaurant) this.setRestaurantBaseURL(response.restaurant);
+        this._triggerBackgroundSeed(response.user.restaurantId || response.restaurant?.id);
+      }
+    }
+    return response;
+  }
+
+  // Staff roster for the "Who's working" PIN screen — local-server (LAN) only. Public endpoint
+  // (pre-login); returns { restaurant, members:[{ id, name, identifier, role }] }.
+  async getRoster() {
+    const base = getLocalServerUrl();
+    if (!base) return { members: [] };
+    try {
+      const r = await fetch(`${base}/api/local-server/roster`);
+      return await r.json();
+    } catch (_) {
+      return { members: [] };
+    }
+  }
+
   // ==================== OWNER AUTH ====================
 
   // Google login (owner)
