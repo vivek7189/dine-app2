@@ -1324,12 +1324,27 @@ const printViaThermalImage = async (html) => {
   // shortly after dispatch. Wrapped in the shared print timeout as a backstop.
   await withPrintTimeout(new Promise((resolve, reject) => {
     let settled = false;
+    const onErr = (err) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(new Error(String(err))); else resolve();
+    };
     try {
-      nativeMod.printImageData(fileUri, (err) => {
-        if (settled) return;
-        settled = true;
-        if (err) reject(new Error(String(err))); else resolve();
-      });
+      // The native printImageData signature differs by platform:
+      //  • iOS  → printImageData(imgUrl, {imageWidth, printerWidthType, paddingX}, fail)
+      //           WITHOUT the options dict, iOS silently downscales the receipt to 150px wide
+      //           (tiny print in the top-left corner). Pass the real width so it prints full width.
+      //  • Android → printImageData(imgUrl, callback); it prints the bitmap 1:1 at its pixel width,
+      //           so the render width (_imagePrintWidth) already controls it — keep the 2-arg call.
+      if (Platform.OS === 'ios') {
+        nativeMod.printImageData(
+          fileUri,
+          { imageWidth: _imagePrintWidth, printerWidthType: _imagePrintWidth <= 384 ? '58' : '80', paddingX: 0 },
+          onErr
+        );
+      } else {
+        nativeMod.printImageData(fileUri, onErr);
+      }
     } catch (e) { if (!settled) { settled = true; reject(e); } return; }
     setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1500);
   }), 'printImageData');
