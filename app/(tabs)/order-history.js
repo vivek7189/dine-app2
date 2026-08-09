@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -70,6 +70,11 @@ export default function OrderHistoryScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // Refs for the focused poll: always call the latest loader and read current state without
+  // stale closures, so the Orders list auto-refreshes without ever disrupting pagination.
+  const loadOrdersRef = useRef(null);
+  const pollGuardRef = useRef({ page: 1, busy: false, modalOpen: false });
   const [totalOrders, setTotalOrders] = useState(0);
   const [selectedStatus, setSelectedStatus] = useState('all');       // all | completed | cancelled | refunded
   const [selectedPayStatus, setSelectedPayStatus] = useState('all'); // all | paid | partial | due
@@ -115,9 +120,29 @@ export default function OrderHistoryScreen() {
     if (restaurantId) loadOrders(1, false);
   }, [restaurantId, dateMode, customStartDate, customEndDate, selectedStatus, selectedPayStatus, selectedOrderType, selectedPayMethod, debouncedSearch]);
 
+  // Keep the poll guard fresh so the interval never disrupts pagination, an open order,
+  // or an in-flight action.
+  useEffect(() => {
+    pollGuardRef.current = {
+      page,
+      busy: loading || refreshing || loadingMore || actionBusy || restoringOrder,
+      modalOpen: !!selectedOrder || settleModal || refundModal,
+    };
+  }, [page, loading, refreshing, loadingMore, actionBusy, restoringOrder, selectedOrder, settleModal, refundModal]);
+
+  // Refresh on focus AND poll while visible so newly placed orders show up without a manual
+  // refresh or an app restart. The poll only auto-reloads page 1 when nothing is in progress
+  // and no modal is open, so it never disrupts the user. Interval is cleared on blur.
   useFocusEffect(
     useCallback(() => {
-      if (restaurantId && !loading) loadOrders(1, false);
+      if (restaurantId && !loading) loadOrdersRef.current?.(1, false);
+      const pollId = setInterval(() => {
+        const g = pollGuardRef.current;
+        if (restaurantId && g.page === 1 && !g.busy && !g.modalOpen) {
+          loadOrdersRef.current?.(1, false);
+        }
+      }, 20000);
+      return () => clearInterval(pollId);
     }, [restaurantId])
   );
 
@@ -204,6 +229,8 @@ export default function OrderHistoryScreen() {
       setRefreshing(false);
     }
   };
+
+  loadOrdersRef.current = loadOrders;
 
   const loadMore = () => {
     if (loadingMore || loading || !hasMore) return;

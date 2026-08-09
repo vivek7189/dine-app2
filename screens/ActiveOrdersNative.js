@@ -179,9 +179,14 @@ export default function ActiveOrdersNative() {
 
   useEffect(() => { loadData(true); }, []);
 
+  // Refresh on focus AND poll while the screen is visible, so newly placed orders always
+  // show up even if the real-time (RTDB/LAN) event is missed or no tab switch occurred.
+  // Interval is cleared on blur so it never runs in the background.
   useFocusEffect(
     useCallback(() => {
       if (restaurantId) loadDataRef.current?.(false);
+      const pollId = setInterval(() => { loadDataRef.current?.(false); }, 15000);
+      return () => clearInterval(pollId);
     }, [restaurantId])
   );
 
