@@ -11,6 +11,8 @@
  * 6. Generic fallback
  */
 
+const { LIQUOR_KEYWORD_MAP } = require('./liquorImages');
+
 // ─── Keyword → filename mapping ───
 const KEYWORD_MAP = [
   // === Specific Thalis ===
@@ -498,21 +500,30 @@ const KEYWORD_MAP = [
   [['potato', 'aloo'], 'potato-dish.jpg'],
 ];
 
-// Build flat lookup sorted by keyword length (longest first)
+// Normalize so punctuation in item names ("Bailey's", "DH Red Claret (Dry)") still matches.
+const _normalizeText = (s) => (s || '').toLowerCase()
+  .replace(/[-–—]/g, ' ')
+  .replace(/[^a-z0-9 ]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// Build flat lookup sorted by keyword length (longest first).
+// Brand/liquor entries merged in from liquorImages.js (served from dineopen.com/placeholder-images/liquor/).
 const _keywordIndex = [];
-for (const [keywords, filename] of KEYWORD_MAP) {
+for (const [keywords, filename] of [...LIQUOR_KEYWORD_MAP, ...KEYWORD_MAP]) {
   if (!filename) continue;
   const kws = Array.isArray(keywords) ? keywords : [keywords];
   for (const kw of kws) {
-    _keywordIndex.push([kw.toLowerCase(), filename]);
+    _keywordIndex.push([_normalizeText(kw), filename]);
   }
 }
 _keywordIndex.sort((a, b) => b[0].length - a[0].length);
 
 function matchKeywords(text) {
-  if (!text) return null;
+  const t = _normalizeText(text);
+  if (!t) return null;
   for (const [kw, filename] of _keywordIndex) {
-    if (text.includes(kw)) return filename;
+    if (kw && t.includes(kw)) return filename;
   }
   return null;
 }
