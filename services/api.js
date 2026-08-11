@@ -10,6 +10,10 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2-phi.ve
 // Frontend web URL for WebView embeds (mobile layout)
 export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
 
+// AsyncStorage key for the restaurant's chosen cloud backend (dine-admin "pgBackendUrl" switch).
+// Persisted so the app routes to the right backend on the first call after a restart.
+const BACKEND_URL_KEY = 'dineopen_backend_url';
+
 class ApiClient {
   constructor() {
     this.baseURL = API_BASE_URL;
@@ -108,6 +112,14 @@ class ApiClient {
     const localSrv = getLocalServerUrl();
     const customUrl = restaurant?.pgBackendUrl;
     const newBase = localSrv || customUrl || API_BASE_URL;
+    // Persist the restaurant's chosen backend (set from dine-admin) so the NEXT app launch routes
+    // there BEFORE the first API call — otherwise a migrated restaurant would hit the default
+    // backend on startup until the tabs layout re-fetches the user. Local-server mode is persisted
+    // separately and takes precedence, so only persist the cloud choice here.
+    try {
+      if (customUrl) AsyncStorage.setItem(BACKEND_URL_KEY, customUrl);
+      else AsyncStorage.removeItem(BACKEND_URL_KEY);
+    } catch (_) {}
     if (this.baseURL !== newBase) {
       console.log(`🔀 API routing: ${newBase}${localSrv ? ' (local server)' : customUrl ? ' (pgBackendUrl)' : ' (default)'}`);
       this.baseURL = newBase;
@@ -132,6 +144,24 @@ class ApiClient {
       console.log('🖥️  Local server routing active:', url);
     }
     return url;
+  }
+
+  /**
+   * Load the persisted restaurant backend URL (dine-admin switch) and route to it at startup — so
+   * the very first API call after a restart already hits the chosen backend (e.g. GCP Cloud Run).
+   * Call once at launch, AFTER initLocalServerRouting (local server always wins). No-op if a local
+   * server is active or nothing was persisted.
+   */
+  async initBackendRouting() {
+    if (getLocalServerUrl()) return this.baseURL; // local server already routed + wins
+    try {
+      const url = await AsyncStorage.getItem(BACKEND_URL_KEY);
+      if (url) {
+        this.baseURL = url;
+        console.log('🔀 Backend routing active (persisted pgBackendUrl):', url);
+      }
+    } catch (_) {}
+    return this.baseURL;
   }
 
   /**
@@ -291,6 +321,13 @@ class ApiClient {
     this.clearAllCache();
     // Clear auth tokens
     await this.clearToken();
+    // Clear the persisted backend choice + reset routing to default, so the NEXT login (possibly a
+    // different user/restaurant on a shared device) authenticates against the default backend and
+    // then re-routes from its own restaurant.pgBackendUrl. Local-server mode is separate and stays.
+    try {
+      await AsyncStorage.removeItem(BACKEND_URL_KEY);
+      if (!getLocalServerUrl()) this.baseURL = API_BASE_URL;
+    } catch (_) {}
     // Clear all AsyncStorage cache entries (cache_floors_*, cache_* etc.)
     try {
       const allKeys = await AsyncStorage.getAllKeys();

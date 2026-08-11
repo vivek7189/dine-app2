@@ -34,6 +34,9 @@ function PinGate({ children }) {
         apiClient.setLanClient(lanClient);
         await lanClient.init();
         await apiClient.initLocalServerRouting();
+        // Then apply the persisted cloud backend choice (dine-admin switch) so the first API call
+        // after a restart hits the chosen backend. No-op if a local server is active (it wins).
+        await apiClient.initBackendRouting();
       } catch (_) {}
     })();
   }, []);

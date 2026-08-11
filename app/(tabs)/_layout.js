@@ -71,6 +71,9 @@ function TabsNavigator() {
               const res = await apiClient.getRestaurant(restaurantId);
               const freshType = res?.restaurant?.businessType || res?.businessType || 'restaurant';
               setBusinessType(freshType);
+              // Re-apply backend routing from the fresh doc (it carries pgBackendUrl) in case the
+              // stored login object predates the dine-admin switch.
+              if (res?.restaurant) apiClient.setRestaurantBaseURL(res.restaurant);
               if (res?.restaurant?.parkingEnabled || res?.parkingEnabled) setParkingEnabled(true);
             } catch (e) {
               setBusinessType('restaurant');
