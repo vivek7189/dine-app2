@@ -24,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import MenuItemForm from '../../components/MenuItemForm';
+import BulkMenuUploadModal from '../../components/BulkMenuUploadModal';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
 import { hasFeatureAccess } from '../../utils/permissions';
@@ -40,6 +41,7 @@ export default function MenuManagementScreen() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -310,56 +312,10 @@ export default function MenuManagementScreen() {
     }
   };
 
-  const handleUploadFile = () => {
-    Alert.alert(
-      'Upload Menu',
-      'Choose a file type to upload your menu from',
-      [
-        {
-          text: 'Photo from Gallery',
-          onPress: async () => {
-            try {
-              const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                quality: 0.8,
-              });
-              if (!result.canceled && result.assets?.[0]) {
-                await uploadAndExtract({
-                  uri: result.assets[0].uri,
-                  name: 'menu.jpg',
-                  type: 'image/jpeg',
-                });
-              }
-            } catch (error) {
-              setUploadError(error.message || 'Upload failed');
-            }
-          },
-        },
-        {
-          text: 'PDF or CSV File',
-          onPress: async () => {
-            try {
-              const result = await DocumentPicker.getDocumentAsync({
-                type: ['application/pdf', 'text/csv'],
-                copyToCacheDirectory: true,
-              });
-              if (!result.canceled && result.assets?.[0]) {
-                const asset = result.assets[0];
-                await uploadAndExtract({
-                  uri: asset.uri,
-                  name: asset.name || 'menu',
-                  type: asset.mimeType || 'application/pdf',
-                });
-              }
-            } catch (error) {
-              setUploadError(error.message || 'Upload failed');
-            }
-          },
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  };
+  // Open the clean AI upload modal (pick → extract with AI → review & edit → save). Replaces the
+  // old Alert-based auto-save flow with the same review UX as dine-frontend, using the same
+  // bulkUploadMenu / bulkSaveMenuItems API + AI model.
+  const handleUploadFile = () => setShowBulkUpload(true);
 
   const filterItems = () => {
     let filtered = [...menuItems].filter(i => i.status !== 'deleted');
@@ -1269,6 +1225,19 @@ export default function MenuManagementScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* AI Menu Upload (pick → extract with AI → review & edit → save) */}
+      <BulkMenuUploadModal
+        visible={showBulkUpload}
+        onClose={() => setShowBulkUpload(false)}
+        restaurantId={restaurantId}
+        apiClient={apiClient}
+        onSaved={(n) => {
+          setHasDefaultMenu(false);
+          setUploadSuccess(`${n} item${n === 1 ? '' : 's'} added to your menu!`);
+          loadMenu(restaurantId);
+        }}
+      />
 
       {/* Processing Modal */}
       {uploading && (
