@@ -1269,14 +1269,19 @@ const printViaThermal = async (text) => {
   const printOpts = { beep: false, cut: true, tailingLine: true };
   const payload = cleanText + '\n\n\n';
 
+  // (printContent already reconnected the BLE/USB link on demand before calling us.)
+  // Retry is transport-aware: BLE/USB recover a dropped link by reconnect+re-dispatch (safe — a failed
+  // BLE write printed nothing), so allow a few attempts. WiFi stays at ONE attempt because re-dispatch
+  // to a working socket physically double-prints. This reverses the 3→1 cut that killed BLE recovery.
+  const maxAttempts = connectionType === 'network' ? 1 : 3;
   let lastErr = null;
 
-  for (let attempt = 0; attempt < MAX_PRINT_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Wait before retries (not before first attempt)
     if (attempt > 0) {
-      const backoffMs = RETRY_DELAYS[attempt - 1] || 1500;
-      console.log(`Print retry ${attempt}/${MAX_PRINT_RETRIES - 1} in ${backoffMs}ms...`);
-      emitPrinterEvent({ type: 'retrying', attempt, maxRetries: MAX_PRINT_RETRIES });
+      const backoffMs = RETRY_DELAYS[attempt - 1] || 1200;
+      console.log(`Print retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms...`);
+      emitPrinterEvent({ type: 'retrying', attempt, maxRetries: maxAttempts });
       await delay(backoffMs);
 
       // Reconnect before retry
@@ -1294,10 +1299,18 @@ const printViaThermal = async (text) => {
         lastErr = new Error('No thermal printer module available');
         continue;
       }
-      await withPrintTimeout(
-        currentMod.printBill(payload, printOpts),
-        `printBill attempt ${attempt + 1}`,
-      );
+      // printBill is FIRE-AND-FORGET: it returns undefined and the lib swallows the native error
+      // callback (console.warn). So we must NOT pass its return value to withPrintTimeout — that
+      // calls `.then()` on undefined and ALWAYS throws, making every text print falsely "fail" (and
+      // fall through to the dead AirPrint dialog). Dispatch it inside a Promise instead, mirroring
+      // printViaThermalImage: a synchronous throw (e.g. no live connection) rejects; otherwise resolve
+      // shortly after dispatch.
+      await withPrintTimeout(new Promise((resolve, reject) => {
+        try {
+          currentMod.printBill(payload, printOpts);
+        } catch (e) { reject(e); return; }
+        setTimeout(resolve, 350);
+      }), `printBill attempt ${attempt + 1}`);
       // Success — emit event and return
       if (attempt > 0) {
         emitPrinterEvent({ type: 'print_recovered', attempt: attempt + 1 });
@@ -1305,7 +1318,7 @@ const printViaThermal = async (text) => {
       return;
     } catch (err) {
       lastErr = err;
-      console.warn(`Print attempt ${attempt + 1}/${MAX_PRINT_RETRIES} failed:`, err.message);
+      console.warn(`Print attempt ${attempt + 1}/${maxAttempts} failed:`, err.message);
     }
   }
 
@@ -1415,6 +1428,17 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
         }
       }
 
+      // Reconnect-on-demand for Bluetooth/USB BEFORE sending. These links drop when the printer
+      // sleeps / powers off / goes out of range (overnight, or after staff leave the table), yet the
+      // saved connection still reads "connected" and the native lib can't report a failed write. So
+      // refresh the bond right before printing — the first order of the day (or after any idle gap)
+      // then just works, the way Square/Toast/Loyverse behave. Covers BOTH the image and text paths
+      // below. WiFi is EXCLUDED (re-dispatch to a live socket is what caused duplicate prints).
+      if (connectionType === 'bluetooth' || connectionType === 'usb') {
+        emitPrinterEvent({ type: 'reconnecting' });
+        try { await tryReconnect(); } catch (_) { /* the send paths below still try + retry */ }
+      }
+
       // Image print — used when EITHER the store opted in (imagePrintEnabled) OR the receipt
       // uses a currency symbol no thermal code page can render (₹, ر.ق, …), so the REAL glyph
       // prints instead of the "Rs" ASCII fallback — the standard approach when a symbol isn't
@@ -1453,7 +1477,21 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       return { method: 'skipped', reason: 'no-connected-printer' };
     }
 
-    // Fallback: system print dialog
+    // A THERMAL printer (Bluetooth / WiFi / USB) is configured but the silent print failed — do NOT
+    // open the iOS system print dialog. That dialog can only reach an AirPrint printer, never a
+    // Bluetooth/serial thermal printer, so it just shows "No Printer Selected / Printing did not
+    // complete" and confuses the owner. Surface a clear, actionable failure instead so they can turn
+    // the printer on / reconnect and retry — the way a real POS reports a printer problem.
+    if (connectedPrinter && connectionType && connectionType !== 'airprint') {
+      emitPrinterEvent({
+        type: 'print_failed',
+        message: 'Could not reach the printer. Make sure it is switched on and in range, then reconnect it in Printer Settings and try again.',
+      });
+      throw new Error('Printer not responding. Turn it on / reconnect and try again.');
+    }
+
+    // Fallback: system print dialog — only when there is NO thermal printer (AirPrint or none),
+    // where the OS picker is the right way to choose a printer.
     if (html) {
       if (mode === 'silent') {
         // We were supposed to print silently but couldn't — notify user

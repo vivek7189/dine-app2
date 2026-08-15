@@ -99,8 +99,8 @@ android {
         applicationId 'com.dineopen.waiter'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 153
-        versionName "2.98.0"
+        versionCode 154
+        versionName "2.98.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

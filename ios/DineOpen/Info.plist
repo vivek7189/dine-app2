@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.97.0</string>
+	<string>2.98.2</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>
@@ -47,7 +47,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>151</string>
+	<string>155</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -59,14 +59,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>DineOpen connects to your restaurant's local server on this Wi-Fi so the app keeps working (orders, tables, KOT printing) with no internet.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>DineOpen uses Bluetooth to connect to thermal receipt printers for silent auto-printing of bills and tokens.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>DineOpen uses Bluetooth to connect to thermal receipt printers.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>DineOpen uses your camera to scan QR codes for table orders, capture menu item photos, and scan supplier invoices for inventory management.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DineOpen connects to your restaurant's local server on this Wi-Fi so the app keeps working (orders, tables, KOT printing) with no internet.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>DineOpen tracks your location during active deliveries so the restaurant owner can monitor delivery progress.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

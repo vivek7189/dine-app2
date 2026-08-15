@@ -34,6 +34,7 @@ export default function PrinterSetup({ restaurantId }) {
   const [connectingIP, setConnectingIP] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [lastError, setLastError] = useState(null); // live printer health — last print/connection error
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const mountedRef = useRef(true);
@@ -71,6 +72,34 @@ export default function PrinterSetup({ restaurantId }) {
     });
     return () => sub.remove();
   }, [savedPrinter, reconnecting]);
+
+  // Live printer health — reflect the ACTUAL last print/connection outcome in the status chip,
+  // instead of the stale "we have a saved printer" flag. This is how good POS apps show a real,
+  // trustworthy status: green only when it's actually working; a clear error the moment it isn't.
+  useEffect(() => {
+    const unsub = printerService.onPrinterEvent((event) => {
+      if (!mountedRef.current || !event) return;
+      switch (event.type) {
+        case 'reconnecting':
+          setReconnecting(true);
+          break;
+        case 'reconnected':
+        case 'print_recovered':
+          setReconnecting(false);
+          setConnected(true);
+          setLastError(null);
+          break;
+        case 'print_failed':
+        case 'disconnected':
+          setReconnecting(false);
+          setLastError(event.message || 'Printer not responding. Reconnect and try again.');
+          break;
+        default:
+          break;
+      }
+    });
+    return () => { try { unsub && unsub(); } catch (_) {} };
+  }, []);
 
   // Pulse animation for scanning
   useEffect(() => {
@@ -242,9 +271,13 @@ export default function PrinterSetup({ restaurantId }) {
     setTesting(true);
     try {
       await printerService.printTestPage();
+      // A successful test proves the link is truly alive — clear any stale error + mark healthy.
+      if (mountedRef.current) { setLastError(null); setConnected(true); }
       Alert.alert('Test Successful', 'Test page sent to printer.');
     } catch (err) {
-      Alert.alert('Test Failed', err.message || 'Could not print test page');
+      const msg = err.message || 'Could not print test page';
+      if (mountedRef.current) setLastError(msg);
+      Alert.alert('Test Failed', msg);
     } finally {
       if (mountedRef.current) setTesting(false);
     }
@@ -278,21 +311,32 @@ export default function PrinterSetup({ restaurantId }) {
     return (
       <View style={styles.container}>
         <View style={styles.card}>
-          {/* Status banner */}
-          <View style={[styles.statusBanner, { backgroundColor: reconnecting ? '#eff6ff' : connected ? '#f0fdf4' : '#fef3c7' }]}>
-            {reconnecting ? (
-              <ActivityIndicator size="small" color="#2563eb" />
-            ) : (
-              <Ionicons
-                name={connected ? 'checkmark-circle' : 'alert-circle-outline'}
-                size={20}
-                color={connected ? '#16a34a' : '#d97706'}
-              />
-            )}
-            <Text style={[styles.statusBannerText, { color: reconnecting ? '#2563eb' : connected ? '#16a34a' : '#d97706' }]}>
-              {reconnecting ? 'Reconnecting to printer...' : connected ? 'Printer connected and ready' : 'Printer disconnected'}
-            </Text>
-          </View>
+          {/* Status banner — reflects the ACTUAL last outcome: reconnecting / working / not responding */}
+          {(() => {
+            const isError = !!lastError && !reconnecting;
+            const bg = reconnecting ? '#eff6ff' : isError ? '#fef2f2' : connected ? '#f0fdf4' : '#fef3c7';
+            const fg = reconnecting ? '#2563eb' : isError ? '#dc2626' : connected ? '#16a34a' : '#d97706';
+            const icon = isError ? 'close-circle' : connected ? 'checkmark-circle' : 'alert-circle-outline';
+            const title = reconnecting ? 'Reconnecting to printer…'
+              : isError ? 'Printer not responding'
+              : connected ? 'Printer connected and ready'
+              : 'Printer disconnected';
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: bg }]}>
+                {reconnecting ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : (
+                  <Ionicons name={icon} size={20} color={fg} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.statusBannerText, { color: fg }]}>{title}</Text>
+                  {isError && lastError ? (
+                    <Text style={{ fontSize: 12, color: '#b91c1c', marginTop: 2 }}>{lastError}</Text>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })()}
 
           {/* Printer info */}
           <View style={styles.connectedInfo}>
