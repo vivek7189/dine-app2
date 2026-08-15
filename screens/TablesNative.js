@@ -1771,10 +1771,19 @@ export default function TablesScreen() {
   // Sort tables: text-named tables first (alphabetically), then pure numbers (numerically)
   // Example: "Sofa", "apple sofa 1", "apple sofa 2", "banana table 1", then "1", "2", "3", "10"
   const sortTablesAlphabetically = (tables) => {
+    // A saved manual `order` (drag-drop rearrange from web/app) wins, so the arrangement is
+    // identical for every device/user of the restaurant. Tables without an `order` fall back
+    // to the name sort below, so existing data is unaffected.
+    const ord = (x) => (x != null && Number.isFinite(Number(x)) ? Number(x) : null);
     return [...tables].sort((a, b) => {
+      const oa = ord(a.order), ob = ord(b.order);
+      if (oa != null && ob != null && oa !== ob) return oa - ob;
+      if (oa != null && ob == null) return -1;
+      if (oa == null && ob != null) return 1;
+
       const nameA = (a.name || '').trim();
       const nameB = (b.name || '').trim();
-      
+
       // Check if both are pure numbers (like "1", "2", "10")
       const isPureNumberA = /^\d+$/.test(nameA);
       const isPureNumberB = /^\d+$/.test(nameB);
