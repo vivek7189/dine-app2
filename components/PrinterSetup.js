@@ -10,6 +10,7 @@ import {
   Platform,
   Animated,
   AppState,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
@@ -35,6 +36,7 @@ export default function PrinterSetup({ restaurantId }) {
   const [scanComplete, setScanComplete] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [lastError, setLastError] = useState(null); // live printer health — last print/connection error
+  const [scanError, setScanError] = useState(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const mountedRef = useRef(true);
@@ -80,6 +82,22 @@ export default function PrinterSetup({ restaurantId }) {
     const unsub = printerService.onPrinterEvent((event) => {
       if (!mountedRef.current || !event) return;
       switch (event.type) {
+        case 'health':
+          if (event.status === 'checking') {
+            setReconnecting(true);
+          } else if (event.status === 'connected') {
+            setReconnecting(false);
+            setConnected(true);
+            setLastError(null);
+          } else if (event.status === 'disconnected') {
+            setReconnecting(false);
+            setConnected(false);
+            setLastError('Printer is not reachable. Switch it on and tap Reconnect.');
+          } else if (event.status === 'none') {
+            setReconnecting(false);
+            setConnected(false);
+          }
+          break;
         case 'reconnecting':
           setReconnecting(true);
           break;
@@ -92,6 +110,7 @@ export default function PrinterSetup({ restaurantId }) {
         case 'print_failed':
         case 'disconnected':
           setReconnecting(false);
+          setConnected(false);
           setLastError(event.message || 'Printer not responding. Reconnect and try again.');
           break;
         default:
@@ -144,6 +163,7 @@ export default function PrinterSetup({ restaurantId }) {
     setScanning(true);
     setScanComplete(false);
     setDiscoveredPrinters([]);
+    setScanError(null);
     try {
       if (isIOS) {
         const btDevices = await printerService.discoverBluetoothPrinters();
@@ -156,8 +176,11 @@ export default function PrinterSetup({ restaurantId }) {
       }
     } catch (err) {
       console.error('Scan error:', err);
+      if (mountedRef.current) setScanError(err?.message || 'Printer scan failed.');
     } finally {
       if (mountedRef.current) {
+        const btError = printerService.getLastBluetoothError?.();
+        if (btError) setScanError(btError);
         setScanning(false);
         setScanComplete(true);
       }
@@ -172,6 +195,7 @@ export default function PrinterSetup({ restaurantId }) {
 
   const handleConnectPrinter = async (printer) => {
     setConnecting(printer.id);
+    const previousPrinter = await printerService.getSavedPrinter();
     try {
       if (printer.type === 'bluetooth') {
         await printerService.connectBluetoothPrinter(printer.macAddress);
@@ -183,17 +207,41 @@ export default function PrinterSetup({ restaurantId }) {
 
       await printerService.savePrinter(printer);
       await printerService.setPrinterMode('silent');
+
+      // A connection callback alone is not enough: dispatch a complete test payload before showing
+      // the green "ready" state. Android confirms socket flush; iOS confirms delivery into its
+      // vendor SDK. The paper output remains the staff's final physical confirmation.
+      if (printer.type === 'bluetooth') {
+        const testResult = await printerService.printTestPage();
+        if (!testResult?.method?.startsWith('silent-bluetooth')) {
+          throw new Error('Bluetooth connected, but the test page could not be sent. Check paper, cover and printer power.');
+        }
+      }
       if (!mountedRef.current) return;
       setSavedPrinter(printer);
       setConnected(true);
       setShowChangeFlow(false);
       setDiscoveredPrinters([]);
       setScanComplete(false);
-      Alert.alert('Printer Connected', `${printer.name} is ready.\nAll bills and tokens will print automatically.`);
+      Alert.alert(
+        'Printer Connected',
+        `${printer.name} is ready.${printer.type === 'bluetooth' ? '\nA test page was sent successfully.' : ''}\nAll bills and tokens will print automatically.`,
+      );
     } catch (err) {
+      // Roll back a failed replacement so an existing working printer is never lost.
+      try {
+        await printerService.disconnectPrinter();
+        if (previousPrinter) {
+          await printerService.savePrinter(previousPrinter);
+          await printerService.autoReconnect();
+        } else {
+          await printerService.clearSavedPrinter();
+          await printerService.setPrinterMode('dialog');
+        }
+      } catch (_) {}
       if (!mountedRef.current) return;
       Alert.alert('Connection Failed', err.message || `Could not connect to ${printer.name}. Make sure it is on and in range.`);
-      setConnected(false);
+      setConnected(!!previousPrinter && printerService.isConnected());
     } finally {
       if (mountedRef.current) setConnecting(null);
     }
@@ -319,6 +367,7 @@ export default function PrinterSetup({ restaurantId }) {
             const icon = isError ? 'close-circle' : connected ? 'checkmark-circle' : 'alert-circle-outline';
             const title = reconnecting ? 'Reconnecting to printer…'
               : isError ? 'Printer not responding'
+              : connected && savedPrinter.type === 'bluetooth' ? 'Bluetooth connection verified'
               : connected ? 'Printer connected and ready'
               : 'Printer disconnected';
             return (
@@ -332,6 +381,10 @@ export default function PrinterSetup({ restaurantId }) {
                   <Text style={[styles.statusBannerText, { color: fg }]}>{title}</Text>
                   {isError && lastError ? (
                     <Text style={{ fontSize: 12, color: '#b91c1c', marginTop: 2 }}>{lastError}</Text>
+                  ) : connected && savedPrinter.type === 'bluetooth' ? (
+                    <Text style={{ fontSize: 11.5, color: '#166534', marginTop: 2 }}>
+                      Socket is live. Paper, cover and battery must still be checked on the printer.
+                    </Text>
                   ) : null}
                 </View>
               </View>
@@ -446,7 +499,9 @@ export default function PrinterSetup({ restaurantId }) {
               </Animated.View>
               <View>
                 <Text style={styles.scanningTitle}>Finding printers...</Text>
-                <Text style={styles.scanningHint}>Bluetooth, WiFi{Platform.OS === 'android' ? ' & USB' : ''}</Text>
+                <Text style={styles.scanningHint}>
+                  {Platform.OS === 'ios' ? 'Checking nearby BLE & WiFi' : 'Checking paired Bluetooth, WiFi & USB'}
+                </Text>
               </View>
             </View>
             {/* STOP SCAN BUTTON */}
@@ -467,7 +522,9 @@ export default function PrinterSetup({ restaurantId }) {
               </Text>
               <Text style={styles.scanHeaderHint}>
                 {scanComplete && discoveredPrinters.length === 0
-                  ? 'Make sure printer is on and nearby'
+                  ? (scanError || (Platform.OS === 'ios'
+                    ? 'Make sure the BLE printer is switched on, compatible and nearby'
+                    : 'Make sure the printer is paired, switched on and nearby'))
                   : scanComplete
                   ? 'Tap a printer to connect'
                   : 'Scan to discover nearby printers'}
@@ -537,9 +594,24 @@ export default function PrinterSetup({ restaurantId }) {
         {/* Empty state with tips */}
         {scanComplete && discoveredPrinters.length === 0 && !scanning && (
           <View style={styles.emptyTips}>
+            {scanError && (
+              <View style={styles.scanErrorBox}>
+                <Ionicons name="alert-circle-outline" size={17} color="#b91c1c" />
+                <Text style={styles.scanErrorText}>{scanError}</Text>
+                {/permission|settings/i.test(scanError) && (
+                  <TouchableOpacity onPress={() => Linking.openSettings().catch(() => {})} style={styles.openSettingsBtn}>
+                    <Text style={styles.openSettingsText}>Open Settings</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
             <View style={styles.tipRow}>
               <Ionicons name="bluetooth" size={16} color="#2563eb" />
-              <Text style={styles.tipText}>Bluetooth: Pair printer in phone Settings first</Text>
+              <Text style={styles.tipText}>
+                {Platform.OS === 'ios'
+                  ? 'Bluetooth: Keep a compatible BLE printer on and nearby'
+                  : 'Bluetooth: Pair printer in phone Settings first'}
+              </Text>
             </View>
             {Platform.OS === 'android' && (
               <View style={styles.tipRow}>
@@ -619,7 +691,9 @@ export default function PrinterSetup({ restaurantId }) {
         </View>
         <View style={styles.helpContent}>
           <Text style={styles.helpText}>
-            <Text style={styles.helpBold}>Bluetooth:</Text> Turn on printer, pair it in your phone's Bluetooth settings, then come back and tap Scan.{'\n\n'}
+            <Text style={styles.helpBold}>Bluetooth:</Text>{Platform.OS === 'ios'
+              ? ' Turn on a BLE-compatible printer, keep it nearby, allow Bluetooth access, then tap Scan. Bluetooth Classic-only printers may support Android but not iPhone.'
+              : " Turn on the printer, pair it in Android's Bluetooth settings, then come back and tap Scan."}{'\n\n'}
             <Text style={styles.helpBold}>WiFi:</Text> Connect printer and phone to the same WiFi. It should appear automatically. If not, find the IP on the printer's config page (hold feed button 5 sec) and enter it above.
             {Platform.OS === 'android' ? '\n\n' : ''}
             {Platform.OS === 'android' ? <Text style={styles.helpBold}>USB:</Text> : null}
@@ -878,6 +952,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingBottom: Spacing.md,
     gap: 10,
+  },
+  scanErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    borderRadius: 9,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  scanErrorText: {
+    flex: 1,
+    color: '#991b1b',
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+  openSettingsBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+  },
+  openSettingsText: {
+    color: '#b91c1c',
+    fontSize: 11,
+    fontWeight: '800',
   },
   tipRow: {
     flexDirection: 'row',

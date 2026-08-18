@@ -290,7 +290,7 @@ export default function PrinterSettingsScreen() {
           {(() => {
             const st = printerHealth?.status || 'none';
             const map = {
-              connected:    { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', icon: 'checkmark-circle', label: 'Printer connected' },
+              connected:    { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', icon: 'checkmark-circle', label: 'Printer connection verified' },
               checking:     { color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: 'sync',              label: 'Checking printer…' },
               disconnected: { color: '#dc2626', bg: '#fef2f2', border: '#fecaca', icon: 'close-circle',      label: 'Printer disconnected' },
               none:         { color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb', icon: 'print-outline',      label: 'No printer set up' },

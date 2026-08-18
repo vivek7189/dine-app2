@@ -286,7 +286,8 @@ export async function printKOTsByStation(orderData, printStations, categories, k
       }
 
       try {
-        await printerService.printContent({ html, text, silentOnly: true });
+        const result = await printerService.printContent({ html, text, silentOnly: true });
+        if (result?.method === 'skipped') throw new Error(result.reason || 'Print skipped');
         printed++;
         logPrintDiag(rid, { phase: 'printed', kind: 'kot', via: 'local-single', orderId, stationName: group.stationName, success: true }, verbose);
       } catch (err) {
@@ -318,7 +319,8 @@ export async function printKOTsByStation(orderData, printStations, categories, k
         // No station printer configured — fall back to default printer
         console.warn(`No network printer for station "${group.stationName}" — printing to default`);
         try {
-          await printerService.printContent({ html: null, text, silentOnly: true });
+          const result = await printerService.printContent({ html: null, text, silentOnly: true });
+          if (result?.method === 'skipped') throw new Error(result.reason || 'Print skipped');
           printed++;
           logPrintDiag(rid, { phase: 'printed', kind: 'kot', via: 'local-station', orderId, stationId: group.stationId, stationName: group.stationName, success: true, reason: 'no-station-printer-used-default' }, verbose);
         } catch (err) {
@@ -337,7 +339,8 @@ export async function printKOTsByStation(orderData, printStations, categories, k
           logPrintDiag(rid, { phase: 'failed', kind: 'kot', via: 'local-station', orderId, stationId: group.stationId, stationName: group.stationName, method: 'tcp', configuredDeviceName: printerAddr, success: false, reason: 'printer-unreachable', error: result.error || 'station printer print failed' }, verbose);
           // Fallback: try default printer
           try {
-            await printerService.printContent({ html: null, text, silentOnly: true });
+            const fallbackResult = await printerService.printContent({ html: null, text, silentOnly: true });
+            if (fallbackResult?.method === 'skipped') throw new Error(fallbackResult.reason || 'Print skipped');
             printed++;
             console.log(`Fallback to default printer succeeded for station "${group.stationName}"`);
             logPrintDiag(rid, { phase: 'printed', kind: 'kot', via: 'local-station', orderId, stationId: group.stationId, stationName: group.stationName, success: true, reason: 'fell-back-to-default' }, verbose);

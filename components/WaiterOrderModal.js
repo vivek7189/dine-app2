@@ -718,7 +718,7 @@ export default function WaiterOrderModal({
               .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
               .catch(() => {});
           }).catch(() => {});
-        } else if (stationCount < 2) {
+        } else {
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
           const _oid = kotData?.orderId || kotData?.id || orderId;
@@ -728,9 +728,6 @@ export default function WaiterOrderModal({
               if (!r.success && r.notify !== false) toast.error(r.error);
             })
             .catch((e) => { logPrintDiag(restaurantId, { phase: 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: false, reason: 'print-exception', error: e?.message || String(e) }); });
-        } else {
-          // stationCount >= 2 but local KOT printing OFF on this device → desktop/remote handles it.
-          logPrintDiag(restaurantId, { phase: 'skipped', kind: 'kot', via: 'remote', orderId: kotData?.orderId || kotData?.id || orderId, reason: 'local-kot-disabled-multi' });
         }
       }
 

@@ -473,8 +473,33 @@ export default function MenuScreen() {
         }
       };
 
+      const refreshPrintConfig = async () => {
+        if (!restaurantId) return;
+        try {
+          const [settingsRes, stationsRes, localKot] = await Promise.all([
+            apiClient.getPrintSettings(restaurantId),
+            apiClient.getPrintStations(restaurantId),
+            getLocalKotPrintingEnabled(),
+          ]);
+          const ps = settingsRes?.printSettings || settingsRes || {};
+          setPrintSettings(ps);
+          setLocalKotPrintingOn(!!localKot);
+          if (stationsRes?.success) {
+            setPrintStationCount((stationsRes.printStations || []).filter(s => s.enabled).length);
+          }
+          printerService.setImagePrintConfig({
+            enabled: ps.imagePrintEnabled,
+            printerWidth: ps.printerWidth,
+            autoImageForCurrency: ps.autoImageForCurrency,
+          });
+        } catch (e) {
+          console.log('Print config refresh error:', e?.message || e);
+        }
+      };
+
       refreshUserData();
       refreshPricingRules();
+      refreshPrintConfig();
     }, [restaurantId])
   );
 
@@ -1606,8 +1631,9 @@ export default function MenuScreen() {
               .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
               .catch(() => {});
           }).catch(() => {});
-        } else if (printStationCount < 2) {
-          // Single station: print to default printer
+        } else {
+          // Single station, or multi-station routing disabled on this device: use the saved
+          // default printer. printWithFeedback itself skips locally when Desktop Print is on.
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
           // imageHtml = rich designed KOT, used only by the opt-in image-print path (else ignored).
@@ -1616,7 +1642,6 @@ export default function MenuScreen() {
             .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
             .catch(() => {});
         }
-        // else: multi-station + !localKotPrintingOn → desktop handles it
       }
 
       // Close the cart sheet first, then show the KOT modal once it has finished
@@ -1867,14 +1892,13 @@ export default function MenuScreen() {
                   .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
                   .catch(() => {});
               }).catch(() => {});
-            } else if (printStationCount < 2) {
-              // Single station: print to default printer
+            } else {
+              // Use the saved default printer when local station routing is disabled.
               const kotText = printerService.generateKOTText(kotData);
               printerService.printWithFeedback({ text: kotText, silentOnly: true, label: 'KOT' })
                 .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
                 .catch(() => {});
             }
-            // else: multi-station + !localKotPrintingOn → desktop handles it
           }
         }
 
@@ -1975,8 +1999,8 @@ export default function MenuScreen() {
                 .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
                 .catch(() => {});
             }).catch(() => {});
-          } else if (printStationCount < 2) {
-            // Single station: print to default printer
+          } else {
+            // Use the saved default printer when local station routing is disabled.
             const kotText = printerService.generateKOTText(kotData);
             const kotHtml = printerService.wrapKOTTextInHTML(kotText);
             const kotImageHtml = printerService.generateKOTHTML(kotData, printSettings || {});
@@ -1984,7 +2008,6 @@ export default function MenuScreen() {
               .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
               .catch(() => {});
           }
-          // else: multi-station + !localKotPrintingOn → desktop handles it
         }
 
         if (isBarTabMode) {

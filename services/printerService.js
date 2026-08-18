@@ -44,6 +44,8 @@ const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
 const PRINT_NOTIF_KEY = 'dine_print_notifications'; // 'true' | 'false'
 const REMOTE_PRINT_KEY = 'dine_remote_print'; // 'true' | 'false' — print from desktop app
 const DISCONNECT_ALERT_KEY = 'dine_printer_disconnect_alert'; // 'true' | 'false' — show disconnect alert when no remote print
+const PENDING_PRINT_JOBS_KEY = 'dine_pending_print_jobs_v1';
+const MAX_PENDING_PRINT_JOBS = 10;
 
 // ==================== PRINTER STATE ====================
 
@@ -76,6 +78,13 @@ let activeZeroconf = null;
 let _reconnectPromise = null; // shared Promise so concurrent callers wait for reconnect
 let printerEventListeners = [];
 let _heartbeatTimer = null; // WiFi heartbeat interval ID
+let _activePrintJobs = 0;
+let _lastBluetoothError = null;
+// iOS PrinterSDK connects using an opaque CoreBluetooth Printer object, not just the persisted
+// UUID. Remember UUIDs found in this JS process so a cold-start reconnect can rescan only when the
+// native object needs to be recreated, rather than delaying every print with a scan.
+const _knownBluetoothDeviceIds = new Set();
+let _jobStoreChain = Promise.resolve();
 
 // ==================== PRINT QUEUE ====================
 // Serializes all print jobs so only one runs at a time.
@@ -89,7 +98,11 @@ const enqueuePrint = (fn) => {
     // The actual error is forwarded to the caller via reject().
     _printQueueChain = _printQueueChain
       .catch(() => {}) // recover from previous failure so chain continues
-      .then(() => fn())
+      .then(async () => {
+        _activePrintJobs += 1;
+        try { return await fn(); }
+        finally { _activePrintJobs = Math.max(0, _activePrintJobs - 1); }
+      })
       .then(resolve, reject);
   });
 };
@@ -97,8 +110,7 @@ const enqueuePrint = (fn) => {
 // ==================== PRINT TIMEOUT & RETRY CONFIG ====================
 
 const PRINT_TIMEOUT_MS = 15000; // 15 seconds — WiFi printers can be slow to ACK
-const MAX_PRINT_RETRIES = 1; // Single attempt — retries cause duplicate prints on WiFi
-const RETRY_DELAYS = []; // No retry delays needed with single attempt
+const RETRY_DELAYS = [800, 1500];
 
 const withPrintTimeout = (promise, label = 'Print') => {
   return new Promise((resolve, reject) => {
@@ -203,33 +215,112 @@ export const clearSavedPrinter = async () => {
   connectionType = null;
 };
 
+// ==================== FAILED-JOB RECOVERY ====================
+// Persist before dispatch and remove only after a confirmed/accepted send. Jobs are NEVER retried
+// automatically because a cheap thermal printer cannot prove paper output; automatic retry could
+// duplicate a KOT. Staff can explicitly retry after checking the printer.
+
+const readPendingPrintJobs = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_PRINT_JOBS_KEY);
+    const jobs = raw ? JSON.parse(raw) : [];
+    return Array.isArray(jobs) ? jobs : [];
+  } catch { return []; }
+};
+
+const mutatePendingPrintJobs = (mutator) => {
+  const run = async () => {
+    const current = await readPendingPrintJobs();
+    const next = await mutator(current);
+    await AsyncStorage.setItem(PENDING_PRINT_JOBS_KEY, JSON.stringify((next || []).slice(-MAX_PENDING_PRINT_JOBS)));
+    return next;
+  };
+  const result = _jobStoreChain.then(run, run);
+  _jobStoreChain = result.catch(() => {});
+  return result;
+};
+
+const createPendingPrintJob = async ({ html, text, imageHtml, silentOnly, label }) => {
+  const id = `print-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = {
+    id, label: label || 'Print', createdAt: Date.now(), updatedAt: Date.now(), status: 'queued',
+    payload: { html: html || null, text: text || null, imageHtml: imageHtml || null, silentOnly: silentOnly !== false },
+  };
+  await mutatePendingPrintJobs(jobs => [...jobs, job]);
+  return id;
+};
+
+const updatePendingPrintJob = (id, patch) => mutatePendingPrintJobs(jobs => jobs.map(job => (
+  job.id === id ? { ...job, ...patch, updatedAt: Date.now() } : job
+)));
+
+const removePendingPrintJob = (id) => mutatePendingPrintJobs(jobs => jobs.filter(job => job.id !== id));
+
+export const getPendingPrintJobs = async () => {
+  await _jobStoreChain.catch(() => {});
+  return readPendingPrintJobs();
+};
+
+export const dismissPendingPrintJob = async (id) => removePendingPrintJob(id);
+
+export const retryPendingPrintJob = async (id) => {
+  const jobs = await getPendingPrintJobs();
+  const job = jobs.find(j => j.id === id);
+  if (!job) return { success: false, method: 'missing', error: 'Print job no longer exists' };
+  await updatePendingPrintJob(id, { status: 'retrying', error: null });
+  return printWithFeedback({ ...job.payload, label: job.label, _existingJobId: id });
+};
+
 // ==================== BLUETOOTH PERMISSIONS ====================
 
 // On Android 12+ (API 31+), BLUETOOTH_CONNECT and BLUETOOTH_SCAN are runtime permissions.
 // Calling BLE APIs without them causes a native SecurityException crash.
-const ensureBluetoothPermissions = async () => {
+const ensureBluetoothPermissions = async ({ forScan = false, request = true } = {}) => {
   if (Platform.OS !== 'android') return true;
   try {
     // Android 12+ (API 31) requires runtime BT permissions
     // On older Android, these permissions don't exist and are auto-granted
     if (Platform.Version >= 31) {
-      const statuses = await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-      ]);
+      const wanted = [PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT];
+      if (forScan) wanted.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+      const alreadyGranted = await Promise.all(wanted.map(p => PermissionsAndroid.check(p)));
+      if (alreadyGranted.every(Boolean)) return true;
+      if (!request) return false;
+      const statuses = await PermissionsAndroid.requestMultiple(wanted);
       const connectGranted = statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
-      const scanGranted = statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
+      const scanGranted = !forScan || statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
       if (!connectGranted || !scanGranted) {
-        console.log('Bluetooth permissions not granted');
+        const permanentlyDenied = wanted.some(p => statuses[p] === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN);
+        _lastBluetoothError = permanentlyDenied
+          ? 'Bluetooth permission is permanently denied. Open phone Settings and allow Nearby devices.'
+          : 'Bluetooth permission was not granted.';
         return false;
       }
+    } else if (forScan) {
+      // Android 6-11 gate Bluetooth discovery/device visibility behind location permission.
+      const fine = PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION;
+      const granted = await PermissionsAndroid.check(fine);
+      if (!granted) {
+        if (!request) return false;
+        const status = await PermissionsAndroid.request(fine);
+        if (status !== PermissionsAndroid.RESULTS.GRANTED) {
+          _lastBluetoothError = status === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN
+            ? 'Location permission is permanently denied. Open phone Settings to discover Bluetooth printers.'
+            : 'Location permission is required to find paired Bluetooth printers on this Android version.';
+          return false;
+        }
+      }
     }
+    _lastBluetoothError = null;
     return true;
   } catch (err) {
     console.error('Error requesting Bluetooth permissions:', err);
+    _lastBluetoothError = err?.message || 'Could not check Bluetooth permissions.';
     return false;
   }
 };
+
+export const getLastBluetoothError = () => _lastBluetoothError;
 
 // ==================== DISCOVERY ====================
 
@@ -238,7 +329,7 @@ export const discoverBluetoothPrinters = async () => {
   if (!BLEPrinter) return [];
   try {
     // Request runtime Bluetooth permissions on Android 12+ before touching BLE APIs
-    const hasPerms = await ensureBluetoothPermissions();
+    const hasPerms = await ensureBluetoothPermissions({ forScan: true });
     if (!hasPerms) return [];
 
     if (!printerInitialized.bluetooth) {
@@ -246,13 +337,28 @@ export const discoverBluetoothPrinters = async () => {
       printerInitialized.bluetooth = true;
     }
     const devices = await BLEPrinter.getDeviceList();
-    return (devices || []).map(d => ({
+    const mapped = (devices || []).map(d => ({
       id: d.inner_mac_address || d.device_name,
       name: d.device_name || 'Unknown Printer',
       macAddress: d.inner_mac_address,
       type: 'bluetooth',
     }));
+    mapped.forEach(device => {
+      if (device.macAddress) _knownBluetoothDeviceIds.add(device.macAddress);
+    });
+    _lastBluetoothError = mapped.length === 0
+      ? Platform.OS === 'ios'
+        ? 'No compatible BLE printer found. Keep it switched on and nearby. Some Bluetooth Classic printers support Android only.'
+        : 'No paired Bluetooth printer found. Pair the printer in phone Bluetooth Settings, then scan again.'
+      : null;
+    return mapped;
   } catch (err) {
+    const message = err?.message || String(err);
+    _lastBluetoothError = /no device found/i.test(message)
+      ? Platform.OS === 'ios'
+        ? 'No compatible BLE printer found. Keep it switched on and nearby, then scan again.'
+        : 'No paired Bluetooth printer found. Pair the printer in phone Bluetooth Settings, then scan again.'
+      : message;
     console.error('Bluetooth discovery error:', err);
     printerInitialized.bluetooth = false;
     return [];
@@ -455,7 +561,7 @@ export const discoverAllPrinters = async (onPrinterFound) => {
   // Request Bluetooth permissions FIRST (before any parallel discovery)
   // so the permission dialog isn't killed by a parallel native crash
   if (Platform.OS === 'android') {
-    await ensureBluetoothPermissions();
+    await ensureBluetoothPermissions({ forScan: true });
   }
 
   if (activeScanCancelled) return [];
@@ -539,9 +645,26 @@ export const connectBluetoothPrinter = async (macAddress) => {
     await BLEPrinter.init();
     printerInitialized.bluetooth = true;
   }
-  await BLEPrinter.connectPrinter(macAddress);
+  // On iOS the saved UUID alone cannot recreate the vendor SDK's Printer object after the app is
+  // killed. Perform one bounded BLE rediscovery on cold start, then reuse that object for normal
+  // reconnects/prints. Android connects directly from its persisted MAC/bonded device record.
+  if (Platform.OS === 'ios' && !_knownBluetoothDeviceIds.has(macAddress)) {
+    const discovered = await discoverBluetoothPrinters();
+    if (!discovered.some(device => device.macAddress === macAddress)) {
+      const error = new Error('Saved Bluetooth printer was not found. Switch it on, keep it nearby, and try again.');
+      _lastBluetoothError = error.message;
+      throw error;
+    }
+  }
+  try {
+    await withPrintTimeout(BLEPrinter.connectPrinter(macAddress), 'Bluetooth connection');
+  } catch (err) {
+    _lastBluetoothError = err?.message || String(err);
+    throw err;
+  }
   connectedPrinter = macAddress;
   connectionType = 'bluetooth';
+  _lastBluetoothError = null;
   return true;
 };
 
@@ -627,46 +750,10 @@ export const ensureConnected = async () => {
 // ==================== AUTO-RECONNECT ====================
 
 export const autoReconnect = async () => {
-  const saved = await getSavedPrinter();
-  if (!saved) return false;
-  try {
-    // Close any stale connection first (BT needs runtime permissions on Android 12+)
-    try {
-      if (connectionType === 'bluetooth' && BLEPrinter) {
-        const hasPerms = await ensureBluetoothPermissions();
-        if (hasPerms) await BLEPrinter.closeConn();
-      } else if (connectionType === 'network' && NetPrinter) {
-        await NetPrinter.closeConn();
-      } else if (connectionType === 'usb' && USBPrinter) {
-        await USBPrinter.closeConn();
-      }
-    } catch { /* ignore close errors */ }
-    connectedPrinter = null;
-    connectionType = null;
-
-    if (saved.type === 'airprint' && saved.url) {
-      connectedPrinter = saved.url;
-      connectionType = 'airprint';
-      return true;
-    } else if (saved.type === 'bluetooth' && saved.macAddress) {
-      // Don't crash if BT permissions not granted — just return false
-      const hasPerms = await ensureBluetoothPermissions();
-      if (!hasPerms) return false;
-      await connectBluetoothPrinter(saved.macAddress);
-      return true;
-    } else if (saved.type === 'network' && saved.host) {
-      await connectNetworkPrinter(saved.host, saved.port || 9100);
-      return true;
-    } else if (saved.type === 'usb' && saved.vendorId) {
-      await connectUSBPrinter(saved.vendorId, saved.productId);
-      return true;
-    }
-  } catch (err) {
-    console.error('Auto-reconnect failed:', err);
-    // Don't emit printer event here — callers (PrinterSetup, etc.) handle
-    // failure with their own UI (Alert dialog, status indicator).
-  }
-  return false;
+  // Use the shared reconnect promise so app-start, foreground health, settings and an order
+  // cannot close/re-open the same Bluetooth socket at the same time.
+  if (_activePrintJobs > 0) return !!connectedPrinter;
+  return tryReconnect();
 };
 
 // ==================== LIVE CONNECTION HEALTH ====================
@@ -691,10 +778,19 @@ export const getPrinterHealth = () => ({
 
 const setHealth = (status) => {
   lastHealthCheck = Date.now();
+  const previous = printerHealth;
   const changed = status !== printerHealth;
   printerHealth = status;
   // Always emit so the UI's "last checked" updates; UI can debounce on `status`.
   emitPrinterEvent({ type: 'health', status, changed, connectionType, printer: connectedPrinter, ts: lastHealthCheck });
+  if (changed && status === 'disconnected') {
+    const message = connectionType === 'bluetooth' && _lastBluetoothError
+      ? `Bluetooth printer disconnected: ${_lastBluetoothError}`
+      : 'Printer is not reachable. Switch it on and tap Retry before the next order.';
+    emitPrinterEvent({ type: 'disconnected', message, connectionType, printer: connectedPrinter, ts: lastHealthCheck });
+  } else if (changed && status === 'connected' && previous === 'disconnected') {
+    emitPrinterEvent({ type: 'reconnected', connectionType, printer: connectedPrinter, ts: lastHealthCheck });
+  }
 };
 
 // Short-timeout TCP reachability test for a network printer (reuses the scan probe technique):
@@ -728,15 +824,10 @@ export const probePrinterAlive = async () => {
     return host ? await netProbe(host, port) : false;
   }
   if (type === 'bluetooth') {
-    // BT has no reliable live "isConnected" — check the bonded device is still present. The
-    // definitive test is a reconnect, which checkAndHeal() does when this returns false.
-    try {
-      if (!BLEPrinter) return false;
-      const mac = saved?.macAddress || connectedPrinter;
-      const devices = await BLEPrinter.getDeviceList().catch(() => []);
-      const present = Array.isArray(devices) && devices.some(d => (d?.inner_mac_address || d?.macAddress || d?.address) === mac);
-      return present && !!connectedPrinter;
-    } catch { return false; }
+    // A bonded/paired device remains in getDeviceList() while powered off, so it is NOT a health
+    // signal. Close and establish a fresh RFCOMM socket; this is the only dependable readiness
+    // check exposed by this class of low-cost Bluetooth thermal printer.
+    return await tryReconnect();
   }
   // USB rarely drops; AirPrint is resolved per-print — trust the flag.
   return !!connectedPrinter;
@@ -746,7 +837,9 @@ export const probePrinterAlive = async () => {
 export const healConnection = async () => {
   if (_healing) return printerHealth === 'connected';
   _healing = true;
-  emitPrinterEvent({ type: 'reconnecting' });
+  // Do not flash a reconnect banner every heartbeat while a printer remains powered off.
+  // Explicit print attempts still emit their own reconnecting event.
+  if (printerHealth !== 'disconnected') emitPrinterEvent({ type: 'reconnecting' });
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const ok = await autoReconnect();
@@ -765,6 +858,8 @@ export const healConnection = async () => {
 // Never shows 'connected' without a fresh probe/reconnect this call.
 export const checkAndHeal = async () => {
   if (_checking) return printerHealth;
+  // Never let the health monitor close a socket while a receipt is being written.
+  if (_activePrintJobs > 0) return printerHealth;
   _checking = true;
   try {
     const saved = await getSavedPrinter();
@@ -1343,19 +1438,23 @@ const tryReconnect = async () => {
       if (!saved) return false;
       // Close stale connection first (BT needs runtime permissions on Android 12+)
       try {
-        if (connectionType === 'bluetooth' && BLEPrinter) {
+        if ((connectionType === 'bluetooth' || saved.type === 'bluetooth') && BLEPrinter) {
           const hasPerms = await ensureBluetoothPermissions();
           if (hasPerms) await BLEPrinter.closeConn();
-        } else if (connectionType === 'network' && NetPrinter) {
+        } else if ((connectionType === 'network' || saved.type === 'network') && NetPrinter) {
           await NetPrinter.closeConn();
-        } else if (connectionType === 'usb' && USBPrinter) {
+        } else if ((connectionType === 'usb' || saved.type === 'usb') && USBPrinter) {
           await USBPrinter.closeConn();
         }
       } catch { /* ignore close errors on dead socket */ }
       connectedPrinter = null;
       connectionType = null;
       // Re-establish connection (with timeout to avoid blocking queue on unreachable printer)
-      if (saved.type === 'network' && saved.host) {
+      if (saved.type === 'airprint' && saved.url) {
+        connectedPrinter = saved.url;
+        connectionType = 'airprint';
+        return true;
+      } else if (saved.type === 'network' && saved.host) {
         await withPrintTimeout(connectNetworkPrinter(saved.host, saved.port || 9100), 'reconnect-network');
         return true;
       } else if (saved.type === 'bluetooth' && saved.macAddress) {
@@ -1370,6 +1469,9 @@ const tryReconnect = async () => {
       return false;
     } catch (err) {
       console.error('Reconnect failed:', err);
+      if ((await getSavedPrinter())?.type === 'bluetooth') {
+        _lastBluetoothError = err?.message || String(err);
+      }
       return false;
     } finally {
       _reconnectPromise = null;
@@ -1383,7 +1485,7 @@ const tryReconnect = async () => {
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Silent print via thermal printer (Bluetooth / WiFi / USB)
-// On failure, reconnects and retries up to MAX_PRINT_RETRIES times with backoff
+// On failure, Bluetooth/USB reconnect with bounded backoff; WiFi never redispatches automatically.
 const printViaThermal = async (text) => {
   const mod = getThermalModule();
   if (!mod) throw new Error('No thermal printer connected');
@@ -1430,15 +1532,18 @@ const printViaThermal = async (text) => {
         lastErr = new Error('No thermal printer module available');
         continue;
       }
-      // printBill is FIRE-AND-FORGET: it returns undefined and the lib swallows the native error
-      // callback (console.warn). So we must NOT pass its return value to withPrintTimeout — that
-      // calls `.then()` on undefined and ALWAYS throws, making every text print falsely "fail" (and
-      // fall through to the dead AirPrint dialog). Dispatch it inside a Promise instead, mirroring
-      // printViaThermalImage: a synchronous throw (e.g. no live connection) rejects; otherwise resolve
-      // shortly after dispatch.
+      // New Android Bluetooth builds return a Promise after native OutputStream.flush(). Older
+      // binaries and the other transports remain fire-and-forget, so this accepts both contracts.
       await withPrintTimeout(new Promise((resolve, reject) => {
         try {
-          currentMod.printBill(payload, printOpts);
+          const dispatched = currentMod.printBill(payload, printOpts);
+          // Patched Android BLE returns a Promise that settles after OutputStream.flush().
+          // Other transports/library builds remain fire-and-forget, so retain the compatible
+          // short dispatch grace period for them.
+          if (dispatched && typeof dispatched.then === 'function') {
+            dispatched.then(resolve, reject);
+            return;
+          }
         } catch (e) { reject(e); return; }
         setTimeout(resolve, 350);
       }), `printBill attempt ${attempt + 1}`);
@@ -1446,6 +1551,7 @@ const printViaThermal = async (text) => {
       if (attempt > 0) {
         emitPrinterEvent({ type: 'print_recovered', attempt: attempt + 1 });
       }
+      setHealth('connected');
       return;
     } catch (err) {
       lastErr = err;
@@ -1458,6 +1564,7 @@ const printViaThermal = async (text) => {
     type: 'print_failed',
     message: 'Print failed after multiple retries. Check printer connection.',
   });
+  setHealth('disconnected');
   throw lastErr;
 };
 
@@ -1545,29 +1652,41 @@ const printViaAirPrint = async (html, printerUrl) => {
 export const printContent = async ({ html, text, imageHtml, silentOnly = false }) => {
   return enqueuePrint(async () => {
     const mode = await getPrinterMode();
+    const wantsSilent = mode === 'silent' || silentOnly;
+    const savedPrinter = wantsSilent ? await getSavedPrinter() : null;
 
-    if ((mode === 'silent' || silentOnly) && connectedPrinter) {
+    // Establish a real connection at job time. This deliberately runs even when the in-memory
+    // connection is empty (e.g. app started before the printer was switched on). Bluetooth/USB
+    // are refreshed before every job because their stale sockets otherwise accept a dispatch and
+    // print nothing. Network is reconnected only when missing to avoid duplicate TCP dispatches.
+    if (wantsSilent && savedPrinter) {
+      const refreshLink = savedPrinter.type === 'bluetooth'
+        || savedPrinter.type === 'usb'
+        || !connectedPrinter
+        || connectionType !== savedPrinter.type;
+      if (refreshLink) {
+        emitPrinterEvent({ type: 'reconnecting', connectionType: savedPrinter.type });
+        const reconnected = await tryReconnect();
+        if (reconnected) {
+          setHealth('connected');
+          emitPrinterEvent({ type: 'reconnected', connectionType: savedPrinter.type });
+        } else {
+          setHealth('disconnected');
+        }
+      }
+    }
+
+    if (wantsSilent && connectedPrinter) {
       // iOS AirPrint - silent with saved printer URL
-      if (connectionType === 'airprint' && html) {
+      if (connectionType === 'airprint' && (html || imageHtml)) {
         try {
-          await printViaAirPrint(html, connectedPrinter);
+          await printViaAirPrint(html || imageHtml, connectedPrinter);
           return { method: 'silent-airprint' };
         } catch (err) {
           console.error('AirPrint silent failed:', err);
           if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
           // fall through to dialog
         }
-      }
-
-      // Reconnect-on-demand for Bluetooth/USB BEFORE sending. These links drop when the printer
-      // sleeps / powers off / goes out of range (overnight, or after staff leave the table), yet the
-      // saved connection still reads "connected" and the native lib can't report a failed write. So
-      // refresh the bond right before printing — the first order of the day (or after any idle gap)
-      // then just works, the way Square/Toast/Loyverse behave. Covers BOTH the image and text paths
-      // below. WiFi is EXCLUDED (re-dispatch to a live socket is what caused duplicate prints).
-      if (connectionType === 'bluetooth' || connectionType === 'usb') {
-        emitPrinterEvent({ type: 'reconnecting' });
-        try { await tryReconnect(); } catch (_) { /* the send paths below still try + retry */ }
       }
 
       // Image print — used when EITHER the store opted in (imagePrintEnabled) OR the receipt
@@ -1604,8 +1723,11 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
 
     // silentOnly mode: never open dialog — notify user that printer is not connected
     if (silentOnly) {
-      emitPrinterEvent({ type: 'disconnected', message: 'Printer not connected. Please connect a printer in Settings.' });
-      return { method: 'skipped', reason: 'no-connected-printer' };
+      const message = savedPrinter?.type === 'bluetooth' && _lastBluetoothError
+        ? `Bluetooth printer not ready: ${_lastBluetoothError}`
+        : 'Printer not connected. Please connect a printer in Settings.';
+      emitPrinterEvent({ type: 'disconnected', message, connectionType: savedPrinter?.type || null });
+      return { method: 'skipped', reason: 'no-connected-printer', error: message };
     }
 
     // A THERMAL printer (Bluetooth / WiFi / USB) is configured but the silent print failed — do NOT
@@ -1613,7 +1735,8 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
     // Bluetooth/serial thermal printer, so it just shows "No Printer Selected / Printing did not
     // complete" and confuses the owner. Surface a clear, actionable failure instead so they can turn
     // the printer on / reconnect and retry — the way a real POS reports a printer problem.
-    if (connectedPrinter && connectionType && connectionType !== 'airprint') {
+    if ((connectedPrinter && connectionType && connectionType !== 'airprint')
+      || (savedPrinter && savedPrinter.type !== 'airprint')) {
       emitPrinterEvent({
         type: 'print_failed',
         message: 'Could not reach the printer. Make sure it is switched on and in range, then reconnect it in Printer Settings and try again.',
@@ -1820,10 +1943,14 @@ export const printToStationPrinter = async (stationConfig, text) => {
 
       // 3. Print
       const payload = cleanText + '\n\n\n';
-      await withPrintTimeout(
-        NetPrinter.printBill(payload, { beep: false, cut: true, tailingLine: true }),
-        `print-station-${stationHost}`,
-      );
+      const stationDispatch = NetPrinter.printBill(payload, { beep: false, cut: true, tailingLine: true });
+      if (stationDispatch && typeof stationDispatch.then === 'function') {
+        await withPrintTimeout(stationDispatch, `print-station-${stationHost}`);
+      } else {
+        // Upstream NetPrinter is fire-and-forget. Do not pass undefined to withPrintTimeout
+        // (which previously made every station job report failure and trigger a duplicate fallback).
+        await new Promise(resolve => setTimeout(resolve, 350));
+      }
 
       return { success: true };
     } catch (err) {
@@ -1854,7 +1981,7 @@ export const printToStationPrinter = async (stationConfig, text) => {
   });
 };
 
-export const printWithFeedback = async ({ html, text, imageHtml, silentOnly = true, label = 'Print' }) => {
+export const printWithFeedback = async ({ html, text, imageHtml, silentOnly = true, label = 'Print', _existingJobId = null }) => {
   // If remote print is enabled, skip local printing — desktop app handles it via Firebase RTDB
   const remotePrint = await getRemotePrintEnabled();
   if (remotePrint) {
@@ -1862,34 +1989,42 @@ export const printWithFeedback = async ({ html, text, imageHtml, silentOnly = tr
   }
 
   const notifEnabled = await getPrintNotificationsEnabled();
+  let jobId = _existingJobId;
+  try {
+    if (!jobId) jobId = await createPendingPrintJob({ html, text, imageHtml, silentOnly, label });
+    else await updatePendingPrintJob(jobId, { status: 'queued', error: null });
+  } catch (_) { /* persistence must never prevent the actual print */ }
+
+  const fail = async (error, method = 'error') => {
+    if (jobId) {
+      try { await updatePendingPrintJob(jobId, { status: 'failed', error }); } catch (_) {}
+    }
+    emitPrinterEvent({
+      type: 'print_failed', message: error, jobId, canRetry: !!jobId,
+    });
+    return { success: false, method, notify: notifEnabled, error, jobId };
+  };
+
   try {
     const result = await printContent({ html, text, imageHtml, silentOnly });
 
     if (result?.method?.startsWith('silent-') || result?.method === 'dialog') {
-      return { success: true, method: result.method, notify: false };
+      if (jobId) { try { await removePendingPrintJob(jobId); } catch (_) {} }
+      return { success: true, method: result.method, notify: false, jobId };
     }
 
     if (result?.method === 'skipped') {
       const reason = result.reason || 'unknown';
       // Distinguish between "no printer" vs "print attempt failed"
       const isPrinterMissing = reason === 'no-connected-printer' || reason === 'no-printer-match';
-      return {
-        success: false,
-        method: 'skipped',
-        notify: notifEnabled,
-        error: isPrinterMissing
-          ? `${label} not printed — no printer connected`
-          : `${label} print failed — ${reason}`,
-      };
+      return fail(isPrinterMissing
+        ? (result.error ? `${label} not printed — ${result.error}` : `${label} not printed — no printer connected`)
+        : `${label} print failed — ${reason}`, 'skipped');
     }
 
-    return { success: true, method: result?.method || 'unknown', notify: false };
+    if (jobId) { try { await removePendingPrintJob(jobId); } catch (_) {} }
+    return { success: true, method: result?.method || 'unknown', notify: false, jobId };
   } catch (err) {
-    return {
-      success: false,
-      method: 'error',
-      notify: notifEnabled,
-      error: `${label} print failed — ${err.message || 'unknown error'}`,
-    };
+    return fail(`${label} print failed — ${err.message || 'unknown error'}`);
   }
 };

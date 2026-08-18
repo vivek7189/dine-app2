@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Spacing, BorderRadius } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import * as printerService from '../services/printerService';
+import apiClient from '../services/api';
 import { getPrintStationConfig, printKOTsByStation } from '../services/multiPrinterService';
 import { renderKOT } from '../utils/printTemplates/index';
 import { getItemSubline } from '../utils/itemSubline';
@@ -131,23 +132,39 @@ export default function KOTModal({
     }
     setPrinting(true);
     try {
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) {
+        const remoteOrderId = orderData.orderId || orderData.id;
+        if (!remoteOrderId) throw new Error('Order ID is missing; cannot queue desktop reprint.');
+        await apiClient.triggerPrint(remoteOrderId, 'kot');
+        Alert.alert('Sent to Desktop Print', 'KOT queued for the desktop printer.');
+        return;
+      }
+
       const restaurantId = orderData.restaurantId;
       if (restaurantId) {
         const { stations, mode, categories } = await getPrintStationConfig(restaurantId);
         if (stations.length > 1) {
           const result = await printKOTsByStation(orderData, stations, categories, mode, printSettings);
           if (result.printed > 0) {
-            setPrinting(false);
+            Alert.alert('Sent to printer', `${result.printed} KOT print job${result.printed === 1 ? '' : 's'} sent.`);
             return;
           }
         }
       }
       const kotText = generateKOTText(orderData);
       const kotHtml = renderKOT(buildKotData(), printSettings, {});
-      await printerService.printContent({ html: kotHtml, text: kotText });
+      const result = await printerService.printWithFeedback({
+        html: kotHtml,
+        text: kotText,
+        silentOnly: false,
+        label: 'KOT reprint',
+      });
+      if (!result.success) throw new Error(result.error || 'KOT could not be printed.');
+      Alert.alert('Sent to printer', 'KOT was sent to the configured printer.');
     } catch (error) {
       console.error('Print error:', error);
-      Alert.alert('Error', 'Failed to print. Check printer connection.');
+      Alert.alert('Print failed', error?.message || 'Failed to print. Check printer connection.');
     } finally {
       setPrinting(false);
     }

@@ -290,8 +290,8 @@ Thank you for your order!
   };
 
   // Silent print: uses saved printer (thermal/AirPrint) — no dialog fallback
-  const silentPrint = async ({ html, text }) => {
-    return printerService.printContent({ html, text, silentOnly: true });
+  const silentPrint = async ({ html, text, label = 'Print' }) => {
+    return printerService.printWithFeedback({ html, text, silentOnly: true, label });
   };
 
   // Dialog print: always opens system print dialog — for manual button taps
@@ -318,7 +318,8 @@ Thank you for your order!
             const token = tokens[i];
             const tokenHtml = buildTokenSlipHTML(token);
             const tokenText = printerService.generateTokenText(token);
-            await silentPrint({ html: tokenHtml, text: tokenText });
+            const result = await silentPrint({ html: tokenHtml, text: tokenText, label: `Token ${i + 1}` });
+            if (!result.success) throw new Error(result.error || `Token ${i + 1} could not be printed.`);
             if (i < tokens.length - 1) await pause(350);
           } catch (err) {
             console.error(`Token ${i + 1} print failed:`, err);
@@ -331,6 +332,7 @@ Thank you for your order!
       }
     } catch (err) {
       console.error('Token print error:', err);
+      throw err;
     } finally {
       setTokenPrinting(false);
     }
@@ -340,9 +342,21 @@ Thank you for your order!
   const handlePrint = async () => {
     try {
       const html = generateInvoiceHTML();
-      await dialogPrint({ html });
+      const text = printerService.generateBillText(invoiceData);
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) {
+        const orderId = invoiceData.orderId || invoiceData.id;
+        if (!orderId) throw new Error('Order ID is missing; cannot queue desktop reprint.');
+        const apiClient = require('../services/api').default;
+        await apiClient.triggerPrint(orderId, 'bill');
+        Alert.alert('Sent to Desktop Print', 'Bill queued for the desktop printer.');
+        return;
+      }
+      const result = await printerService.printWithFeedback({ html, text, silentOnly: false, label: 'Bill reprint' });
+      if (!result.success) throw new Error(result.error || 'Bill could not be printed.');
+      Alert.alert('Sent to printer', 'Bill was sent to the configured printer.');
     } catch (error) {
-      Alert.alert('Error', 'Failed to print bill');
+      Alert.alert('Print failed', error?.message || 'Failed to print bill');
     }
   };
 
@@ -350,10 +364,39 @@ Thank you for your order!
   const handlePrintAll = async () => {
     try {
       const html = generateInvoiceHTML();
-      await dialogPrint({ html });
-      await printFoodCourtTokens({ silent: false });
+      const text = printerService.generateBillText(invoiceData);
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) {
+        const orderId = invoiceData.orderId || invoiceData.id;
+        if (!orderId) throw new Error('Order ID is missing; cannot queue desktop reprint.');
+        const apiClient = require('../services/api').default;
+        await apiClient.triggerPrint(orderId, 'bill');
+        Alert.alert('Sent to Desktop Print', 'Bill queued. The desktop app will apply its bill/token settings.');
+        return;
+      }
+      const result = await printerService.printWithFeedback({ html, text, silentOnly: false, label: 'Bill reprint' });
+      if (!result.success) throw new Error(result.error || 'Bill could not be printed.');
+      await printFoodCourtTokens({ silent: true });
+      Alert.alert('Sent to printer', 'Bill and configured token jobs were sent to the local printer.');
     } catch (error) {
-      Alert.alert('Error', 'Failed to print');
+      Alert.alert('Print failed', error?.message || 'Failed to print');
+    }
+  };
+
+  const handlePrintTokensOnly = async () => {
+    try {
+      const remotePrint = await printerService.getRemotePrintEnabled();
+      if (remotePrint) {
+        Alert.alert(
+          'Desktop Print is enabled',
+          'Token-only reprints must be started from the desktop app. This device will not send a duplicate local print.',
+        );
+        return;
+      }
+      await printFoodCourtTokens({ silent: true });
+      Alert.alert('Sent to printer', 'Configured token jobs were sent to the local printer.');
+    } catch (error) {
+      Alert.alert('Print failed', error?.message || 'Failed to print tokens');
     }
   };
 
@@ -644,7 +687,7 @@ Thank you for your order!
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => printFoodCourtTokens({ silent: false })}
+                    onPress={handlePrintTokensOnly}
                     disabled={tokenPrinting}
                     style={{
                       flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

@@ -2,7 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { onPrinterEvent, getRemotePrintEnabled, getDisconnectAlertEnabled } from '../services/printerService';
+import {
+  onPrinterEvent,
+  getRemotePrintEnabled,
+  getDisconnectAlertEnabled,
+  getPrintNotificationsEnabled,
+  getPendingPrintJobs,
+  retryPendingPrintJob,
+} from '../services/printerService';
 
 const EVENT_CONFIG = {
   disconnected: {
@@ -29,10 +36,17 @@ const EVENT_CONFIG = {
     title: 'Printer Issue',
     duration: 4000,
   },
+  print_failed: {
+    bg: '#fef2f2', border: '#ef4444', text: '#991b1b',
+    icon: 'alert-circle-outline', iconColor: '#ef4444',
+    title: 'Print Failed',
+    duration: 8000,
+  },
 };
 
 export default function PrinterNotificationOverlay() {
   const [notification, setNotification] = useState(null);
+  const [retrying, setRetrying] = useState(false);
   const translateY = useRef(new Animated.Value(-100)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const dismissTimer = useRef(null);
@@ -50,16 +64,40 @@ export default function PrinterNotificationOverlay() {
         if (remotePrint) return;
         const alertEnabled = await getDisconnectAlertEnabled();
         if (!alertEnabled) return;
+      } else if (event.type === 'print_failed') {
+        const remotePrint = await getRemotePrintEnabled();
+        if (remotePrint) return;
+        const notificationsEnabled = await getPrintNotificationsEnabled();
+        if (!notificationsEnabled) return;
       }
       // Dedup: suppress same event type within 2 seconds
       const now = Date.now();
-      if (lastEventRef.current.type === event.type && now - lastEventRef.current.ts < 2000) return;
-      lastEventRef.current = { type: event.type, ts: now };
+      if (lastEventRef.current.type === event.type
+        && lastEventRef.current.jobId === event.jobId
+        && now - lastEventRef.current.ts < 2000) return;
+      lastEventRef.current = { type: event.type, jobId: event.jobId, ts: now };
       setNotification({
         ...config,
         message: event.message || config.title,
+        jobId: event.jobId,
+        canRetry: !!event.canRetry,
       });
     });
+
+    // A job may have been interrupted while the app was killed/backgrounded. Never auto-reprint
+    // (that risks duplicates); surface an explicit recovery action instead.
+    Promise.all([getPendingPrintJobs(), getRemotePrintEnabled(), getPrintNotificationsEnabled()]).then(([jobs, remote, notifications]) => {
+      if (remote || !notifications) return;
+      const latest = jobs[jobs.length - 1];
+      if (!latest) return;
+      const config = EVENT_CONFIG.print_failed;
+      setNotification({
+        ...config,
+        message: `${latest.label || 'Print'} was not confirmed. Check the printer, then tap Retry.`,
+        jobId: latest.id,
+        canRetry: true,
+      });
+    }).catch(() => {});
     return unsub;
   }, []);
 
@@ -92,6 +130,28 @@ export default function PrinterNotificationOverlay() {
     ]).start(() => setNotification(null));
   };
 
+  const handleRetry = async () => {
+    if (!notification?.jobId || retrying) return;
+    setRetrying(true);
+    setNotification(prev => prev ? { ...prev, message: 'Reconnecting and retrying…', canRetry: false, duration: 30000 } : prev);
+    try {
+      const result = await retryPendingPrintJob(notification.jobId);
+      if (result.success) {
+        const config = EVENT_CONFIG.reconnected;
+        setNotification({ ...config, title: 'Print Sent', message: 'The print job was sent successfully.' });
+      } else {
+        setNotification(prev => prev ? {
+          ...EVENT_CONFIG.print_failed,
+          message: result.error || 'Retry failed. Check the printer and try again.',
+          jobId: result.jobId || notification.jobId,
+          canRetry: true,
+        } : prev);
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   if (!notification) return null;
 
   return (
@@ -114,6 +174,11 @@ export default function PrinterNotificationOverlay() {
             </Text>
           )}
         </View>
+        {notification.canRetry && (
+          <TouchableOpacity onPress={handleRetry} disabled={retrying} style={styles.retryButton}>
+            <Text style={styles.retryText}>{retrying ? 'Retrying…' : 'Retry'}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity onPress={dismiss} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="close" size={16} color={notification.text} />
         </TouchableOpacity>
@@ -148,6 +213,18 @@ const styles = StyleSheet.create({
   textContainer: {
     flex: 1,
     marginRight: 8,
+  },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.75)',
+    marginRight: 10,
+  },
+  retryText: {
+    color: '#991b1b',
+    fontSize: 12,
+    fontWeight: '800',
   },
   title: {
     fontSize: 13,

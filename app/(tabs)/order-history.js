@@ -18,7 +18,9 @@ import { useFocusEffect } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../services/api';
+import * as printerService from '../../services/printerService';
 import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -45,6 +47,8 @@ export default function OrderHistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
+  const [restaurant, setRestaurant] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [userRole, setUserRole] = useState('');
@@ -58,6 +62,7 @@ export default function OrderHistoryScreen() {
   const [settleModal, setSettleModal] = useState(false);
   const [settleAmount, setSettleAmount] = useState('');
   const [settleMethod, setSettleMethod] = useState('cash');
+  const printSettingsRef = useRef({});
 
   // Date filter
   const [dateMode, setDateMode] = useState('today');
@@ -150,8 +155,24 @@ export default function OrderHistoryScreen() {
     try {
       const userData = await apiClient.getUser();
       const rid = userData?.restaurantId || userData?.restaurant?.id;
+      setCurrentUser(userData || null);
+      if (userData?.restaurant) setRestaurant(userData.restaurant);
       if (rid) setRestaurantId(rid);
       if (userData?.role) setUserRole(userData.role);
+      if (rid) {
+        try {
+          const cached = await AsyncStorage.getItem(`dine_print_settings_${rid}`);
+          if (cached) printSettingsRef.current = JSON.parse(cached);
+        } catch (_) {}
+        apiClient.getPrintSettings(rid).then(result => {
+          printSettingsRef.current = result?.printSettings || result || {};
+        }).catch(() => {});
+        if (!userData?.restaurant) {
+          apiClient.getRestaurant(rid).then(result => {
+            setRestaurant(result?.restaurant || result || null);
+          }).catch(() => {});
+        }
+      }
     } catch (e) {
       console.error('Failed to load user:', e);
     }
@@ -318,9 +339,101 @@ export default function OrderHistoryScreen() {
   const handleReprint = async (order, type) => {
     try {
       setActionBusy(true);
-      await apiClient.triggerPrint(order.id || order._id, type);
-      Alert.alert('Sent to printer', `${type === 'bill' ? 'Bill' : 'KOT'} reprint queued.`);
-    } catch (e) { Alert.alert('Error', e.message || 'Reprint failed'); }
+      const label = type === 'bill' ? 'Bill' : 'KOT';
+      const remotePrint = await printerService.getRemotePrintEnabled();
+
+      if (remotePrint) {
+        await apiClient.triggerPrint(order.id || order._id, type);
+        Alert.alert(
+          'Sent to Desktop Print',
+          `${label} queued for the desktop printer. Make sure the desktop app is open and connected.`,
+        );
+        return;
+      }
+
+      let text;
+      let imageHtml;
+      if (type === 'kot') {
+        text = printerService.generateKOTText({
+          restaurantName: restaurant?.name || '',
+          orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
+          tableNumber: order.tableNumber || '',
+          floorName: order.floorName || '',
+          orderType: order.orderType || 'dine-in',
+          items: order.items || [],
+          specialInstructions: order.specialInstructions || '',
+          waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || currentUser?.name || '',
+          printSettings: printSettingsRef.current || {},
+          covers: order.covers || 1,
+        });
+      } else {
+        const calculatedSubtotal = (order.items || []).reduce(
+          (sum, item) => sum + Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
+          0,
+        );
+        const subtotal = Number(order.subtotal ?? calculatedSubtotal);
+        const invoiceData = {
+          orderId: order.id || order._id,
+          orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
+          restaurantName: restaurant?.name || '',
+          restaurantInfo: restaurant || {},
+          items: (order.items || []).map(item => ({
+            ...item,
+            name: item.name || item.itemName || 'Item',
+            quantity: item.quantity || 1,
+            price: Number(item.price || 0),
+            total: Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
+          })),
+          subtotal,
+          tax: Number(order.taxAmount || order.totalTax || 0),
+          taxRate: Number(order.taxRate || 0),
+          taxEnabled: !!(order.taxAmount > 0 || order.totalTax > 0 || order.taxBreakdown?.length),
+          taxBreakdown: order.taxBreakdown || null,
+          grandTotal: Number(order.finalAmount ?? order.totalAmount ?? subtotal),
+          customerName: order.customerInfo?.name || order.customerName || 'Walk-in Customer',
+          customerMobile: order.customerInfo?.phone || order.customerPhone || '',
+          orderType: order.orderType || 'dine-in',
+          paymentMethod: order.paymentMethod || 'cash',
+          timestamp: order.completedAt || order.createdAt || order.timestamp || new Date(),
+          staffName: order.staffInfo?.name || currentUser?.name || 'Staff',
+          tableNumber: order.tableNumber || '',
+          floorName: order.floorName || '',
+          waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || currentUser?.name || '',
+          offerDiscount: Number(order.offerDiscount ?? order.discountAmount ?? 0),
+          manualDiscount: Number(order.manualDiscount || 0),
+          loyaltyDiscount: Number(order.loyaltyDiscount || 0),
+          couponDiscount: Number(order.couponDiscount || 0),
+          couponCode: order.couponCode || null,
+          serviceChargeAmount: Number(order.serviceChargeAmount || 0),
+          serviceChargeRate: Number(order.serviceChargeRate || 0),
+          tipAmount: Number(order.tipAmount || 0),
+          roundOffAmount: Number(order.roundOffAmount || 0),
+          cashReceived: order.cashReceived ?? null,
+          changeReturned: order.changeReturned ?? null,
+          splitPayments: order.splitPayments || null,
+          printSettings: printSettingsRef.current || {},
+        };
+        text = printerService.generateBillText(invoiceData);
+        try {
+          imageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings);
+        } catch (_) {}
+      }
+
+      const result = await printerService.printWithFeedback({
+        text,
+        imageHtml,
+        silentOnly: true,
+        label: `${label} reprint`,
+      });
+      if (result.success) {
+        Alert.alert('Sent to printer', `${label} was sent to the local printer.`);
+      } else if (result.notify !== false) {
+        Alert.alert(
+          'Print failed',
+          `${result.error || `${label} could not be printed.`}\n\nThe job is saved. Turn on/reconnect the printer, then tap Retry in the print alert.`,
+        );
+      }
+    } catch (e) { Alert.alert('Print failed', e.message || 'Reprint failed'); }
     finally { setActionBusy(false); }
   };
 
