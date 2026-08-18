@@ -18,8 +18,9 @@ import apiClient from '../../services/api';
 import PrinterSetup from '../../components/PrinterSetup';
 import PrintSettings from '../../components/PrintSettings';
 import { useResponsive } from '../../hooks/useResponsive';
+import usePrinterStatus from '../../hooks/usePrinterStatus';
 import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled, discoverNetworkPrinters, scanSubnetForPrinters, printToStationPrinter } from '../../services/printerService';
-import { getLocalKotPrintingEnabled, setLocalKotPrintingEnabled, getStationPrinters, saveStationPrinter, removeStationPrinter } from '../../services/multiPrinterService';
+import { getLocalKotPrintingEnabled, setLocalKotPrintingEnabled, getStationPrinters, saveStationPrinter, removeStationPrinter, hydrateFromServer } from '../../services/multiPrinterService';
 
 const APP_VERSION = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
 
@@ -52,6 +53,8 @@ export default function PrinterSettingsScreen() {
   // Multi-station local printing
   const [localKotPrinting, setLocalKotPrinting] = useState(false);
   const [stationPrinterMap, setStationPrinterMap] = useState({}); // { stationId: { type, host, port } }
+  const [syncing, setSyncing] = useState(false); // fetching shared printer config from server
+  const printerHealth = usePrinterStatus(); // live connection status (probed, auto-heals)
   const [scanningStationId, setScanningStationId] = useState(null);
   const [discoveredPrinters, setDiscoveredPrinters] = useState([]);
   const [manualIpStation, setManualIpStation] = useState(null); // stationId showing manual IP input
@@ -101,17 +104,45 @@ export default function PrinterSettingsScreen() {
     load();
   }, []);
 
-  // Fetch print station config to show multi-station info banner
+  // Fetch print station config to show multi-station info banner.
+  // Also auto-hydrate printers saved on other devices (desktop) into any EMPTY local slot —
+  // fill-only, so a printer this device already has is never touched.
   useEffect(() => {
     if (!restaurantId) return;
-    apiClient.getPrintStations(restaurantId).then(res => {
-      if (res?.success) {
-        const enabled = (res.printStations || []).filter(s => s.enabled);
-        setMultiStationCount(enabled.length);
-        setPrintStations(enabled);
-      }
-    }).catch(() => {});
+    (async () => {
+      try { await hydrateFromServer(restaurantId); } catch (_) { /* best-effort */ }
+      try {
+        const res = await apiClient.getPrintStations(restaurantId);
+        if (res?.success) {
+          const enabled = (res.printStations || []).filter(s => s.enabled);
+          setMultiStationCount(enabled.length);
+          setPrintStations(enabled);
+        }
+      } catch (_) { /* ignore */ }
+      try { setStationPrinterMap(await getStationPrinters()); } catch (_) { /* ignore */ }
+    })();
   }, [restaurantId]);
+
+  // Manual: pull the printer setup (single + per-station) the desktop saved on the server.
+  const handleSyncFromServer = useCallback(async () => {
+    if (!restaurantId || syncing) return;
+    setSyncing(true);
+    try {
+      const r = await hydrateFromServer(restaurantId);
+      try { setStationPrinterMap(await getStationPrinters()); } catch (_) {}
+      const got = (r?.stationsSet || 0) + (r?.singleSet ? 1 : 0);
+      Alert.alert(
+        'Fetched from server',
+        got > 0
+          ? `${r.stationsSet} station printer${r.stationsSet === 1 ? '' : 's'}${r.singleSet ? ' + single printer' : ''} fetched. You can still change any printer below.`
+          : 'Nothing new to fetch — this device is already up to date, or the desktop hasn’t saved any network printers yet.'
+      );
+    } catch (e) {
+      Alert.alert('Fetch failed', e?.message || 'Could not fetch printer setup from the server.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [restaurantId, syncing]);
 
   // Scan for WiFi printers for a station
   const handleScanForStation = useCallback(async (stationId) => {
@@ -255,6 +286,68 @@ export default function PrinterSettingsScreen() {
           contentContainerStyle={[styles.scrollContent, isTablet && { maxWidth: 600, alignSelf: 'center', width: '100%' }]}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Live printer connection status — probed, not assumed. Green/amber/red + tap to recheck. */}
+          {(() => {
+            const st = printerHealth?.status || 'none';
+            const map = {
+              connected:    { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', icon: 'checkmark-circle', label: 'Printer connected' },
+              checking:     { color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: 'sync',              label: 'Checking printer…' },
+              disconnected: { color: '#dc2626', bg: '#fef2f2', border: '#fecaca', icon: 'close-circle',      label: 'Printer disconnected' },
+              none:         { color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb', icon: 'print-outline',      label: 'No printer set up' },
+            };
+            const s = map[st] || map.none;
+            const secs = printerHealth?.lastChecked ? Math.max(0, Math.round((Date.now() - printerHealth.lastChecked) / 1000)) : null;
+            return (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => printerHealth?.recheck?.()}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14,
+                  padding: 14, borderRadius: 12, borderWidth: 1, borderColor: s.border, backgroundColor: s.bg,
+                }}
+              >
+                <Ionicons name={s.icon} size={22} color={s.color} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: s.color, fontWeight: '800', fontSize: 14 }}>{s.label}</Text>
+                  <Text style={{ color: '#6b7280', fontSize: 11.5, marginTop: 2 }}>
+                    {st === 'disconnected'
+                      ? 'Tap to reconnect — reconnect before taking orders.'
+                      : st === 'connected'
+                        ? `Live check${secs != null ? ` · ${secs < 5 ? 'just now' : secs + 's ago'}` : ''} · tap to re-check`
+                        : st === 'checking'
+                          ? 'Verifying the connection…'
+                          : 'Connect a printer below.'}
+                  </Text>
+                </View>
+                {st !== 'checking' && <Ionicons name="refresh" size={18} color={s.color} />}
+              </TouchableOpacity>
+            );
+          })()}
+
+          {/* Fetch the printer setup (single printer + stations) saved on the desktop / other devices,
+              so this device doesn't have to be set up again. ALWAYS visible (single or multi). */}
+          <TouchableOpacity
+            onPress={handleSyncFromServer}
+            disabled={syncing}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14,
+              padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#bfdbfe',
+              backgroundColor: '#eff6ff', opacity: syncing ? 0.6 : 1,
+            }}
+          >
+            <Ionicons name={syncing ? 'sync' : 'cloud-download-outline'} size={20} color="#2563eb" />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#1e40af', fontWeight: '800', fontSize: 14 }}>
+                {syncing ? 'Fetching…' : 'Fetch printer setup from server'}
+              </Text>
+              <Text style={{ color: '#3b82f6', fontSize: 11.5, marginTop: 2 }}>
+                Pull the printer(s) saved on the desktop / other devices. You can still change them here.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#2563eb" />
+          </TouchableOpacity>
+
           {/* Multi-station: Local KOT printing toggle + station printer assignment */}
           {multiStationCount >= 2 && !remotePrintOn && (
             <View style={styles.section}>

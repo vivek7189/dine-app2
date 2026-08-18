@@ -127,6 +127,24 @@ export default function MenuScreen() {
   const [isWaiter, setIsWaiter] = useState(false);
   const [isCashier, setIsCashier] = useState(false);
   const [canCompleteBill, setCanCompleteBill] = useState(false);
+  // Whether this user may clear/reset the selected table from the menu header.
+  // owner/admin always; other staff only if the web admin granted tables.reset.
+  const [canResetTable, setCanResetTable] = useState(false);
+
+  // Run a navigation / next-modal-open AFTER the just-closed <Modal> has finished
+  // tearing down. On Android, doing both in the same JS frame orphans the native
+  // Modal window on top of this (persistent tab) screen, swallowing every touch
+  // until the app is restarted — i.e. the menu "freezes" right after an order is
+  // placed. Deferring past the slide-out lets Android detach the window first.
+  // iOS is unaffected, so keep its timing identical (run synchronously).
+  const afterModalClose = useCallback((fn) => {
+    if (typeof fn !== 'function') return;
+    if (Platform.OS === 'android') {
+      setTimeout(fn, 320); // ~Modal slide-out (250ms) + margin
+    } else {
+      fn();
+    }
+  }, []);
   const [showImages, setShowImages] = useState(true);
   const [globalHideImages, setGlobalHideImages] = useState(false);
   const [existingOrderId, setExistingOrderId] = useState(null);
@@ -688,6 +706,7 @@ export default function MenuScreen() {
       setIsWaiter(userRole === 'waiter' || userRole === 'employee');
       setIsCashier(userRole === 'cashier' || userRole === 'sales');
       setCanCompleteBill(canPerform(userData, userData.pageAccess, 'orders', 'completeBill'));
+      setCanResetTable(canPerform(userData, userData.pageAccess, 'tables', 'reset'));
 
       const rid = userData.restaurantId || userData.restaurant?.id;
       if (!rid) {
@@ -1600,14 +1619,16 @@ export default function MenuScreen() {
         // else: multi-station + !localKotPrintingOn → desktop handles it
       }
 
-      // Show KOT Modal
+      // Close the cart sheet first, then show the KOT modal once it has finished
+      // tearing down (afterModalClose) so the two native modals never overlap in
+      // one frame on Android — that overlap orphans a window and freezes the menu.
       setKotOrderData(kotData);
-      setShowKOTModal(true);
       const orderedItems = [...cart];
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
+      afterModalClose(() => setShowKOTModal(true));
     } catch (error) {
       console.error('Error sending order:', error);
       toast.error(error.message || 'Failed to send order to kitchen. Please try again.');
@@ -1740,7 +1761,7 @@ export default function MenuScreen() {
         decrementLocalStock(orderedItems);
         setShowCart(false);
         setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
-        router.back();
+        afterModalClose(() => router.back());
       } else if (existingOrderId) {
         // Update existing order (adding items to occupied table)
         const updateData = {
@@ -1869,7 +1890,7 @@ export default function MenuScreen() {
         setShowCart(false);
         setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
         if (selectedTable) {
-          router.replace({
+          afterModalClose(() => router.replace({
             pathname: '/(tabs)/tables',
             params: {
               tableId: selectedTable?.id,
@@ -1877,9 +1898,9 @@ export default function MenuScreen() {
               tableStatus: 'occupied',
               tableNumber: selectedTable?.name,
             },
-          });
+          }));
         } else {
-          router.push('/(tabs)/orders');
+          afterModalClose(() => router.push('/(tabs)/orders'));
         }
       } else {
         const orderData = {
@@ -1988,7 +2009,7 @@ export default function MenuScreen() {
           setCart([]);
           decrementLocalStock(orderedItems);
           setShowCart(false);
-          router.back();
+          afterModalClose(() => router.back());
         } else {
           toast.success('Order placed successfully!');
           const orderedItems = [...cart];
@@ -2000,7 +2021,7 @@ export default function MenuScreen() {
           if (kotBillModeRef.current) {
             // stay put for the settle prompt
           } else if (selectedTable || params.tableId) {
-            router.replace({
+            afterModalClose(() => router.replace({
               pathname: '/(tabs)/tables',
               params: {
                 tableId: selectedTable?.id || params.tableId,
@@ -2008,9 +2029,9 @@ export default function MenuScreen() {
                 tableStatus: 'occupied',
                 tableNumber: selectedTable?.name || params.tableNumber,
               },
-            });
+            }));
           } else {
-            router.push('/(tabs)/orders');
+            afterModalClose(() => router.push('/(tabs)/orders'));
           }
         }
       }
@@ -2213,12 +2234,14 @@ export default function MenuScreen() {
         }
       }
 
+      // Close the cart first, then open the invoice modal once it has torn down
+      // (afterModalClose) — prevents an orphaned Android modal freezing the menu.
       setLastOrderData(invoiceData);
-      setShowInvoiceModal(true);
       const orderedItems = [...cart];
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
+      afterModalClose(() => setShowInvoiceModal(true));
       setSelectedTable(null);
       setIsFromTablesPage(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
@@ -2447,12 +2470,14 @@ export default function MenuScreen() {
         printerService.openCashDrawer().catch(() => {});
       }
 
+      // Close the cart first, then open the invoice modal once it has torn down
+      // (afterModalClose) — prevents an orphaned Android modal freezing the menu.
       setLastOrderData(invoiceData);
-      setShowInvoiceModal(true);
       const orderedItems = [...cart];
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
+      afterModalClose(() => setShowInvoiceModal(true));
       setSelectedTable(null);
       setIsFromTablesPage(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
@@ -2573,16 +2598,16 @@ export default function MenuScreen() {
     if (oid) {
       setKotBillSettle({ orderId: oid, amount: grandTotal, wasTable, tableParams });
     } else {
-      if (wasTable) router.replace({ pathname: '/(tabs)/tables', params: { ...tableParams, orderId: oid || '' } });
-      else router.push('/(tabs)/orders');
+      if (wasTable) afterModalClose(() => router.replace({ pathname: '/(tabs)/tables', params: { ...tableParams, orderId: oid || '' } }));
+      else afterModalClose(() => router.push('/(tabs)/orders'));
     }
   };
 
   // Navigate away after the KOT+Bill settle prompt is dismissed (settled or "later").
   const finishKotBillSettle = (settle) => {
     setKotBillSettle(null);
-    if (settle?.wasTable) router.replace({ pathname: '/(tabs)/tables', params: { ...(settle.tableParams || {}), orderId: settle.orderId } });
-    else router.push('/(tabs)/orders');
+    if (settle?.wasTable) afterModalClose(() => router.replace({ pathname: '/(tabs)/tables', params: { ...(settle.tableParams || {}), orderId: settle.orderId } }));
+    else afterModalClose(() => router.push('/(tabs)/orders'));
   };
 
   // Settle a KOT+Bill order with the tendered method → mark completed/paid.
@@ -2662,7 +2687,7 @@ export default function MenuScreen() {
       setShowCart(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       // Navigate back to bar billing
-      router.back();
+      afterModalClose(() => router.back());
     } catch (error) {
       console.error('Error saving tab:', error);
       toast.error(error.message || 'Failed to save tab.');
@@ -3051,6 +3076,7 @@ export default function MenuScreen() {
               <View style={styles.tableInfoCard}>
                 <Ionicons name={isBarTabMode ? "beer" : "restaurant"} size={14} color={Colors.primary} />
                 <Text style={styles.tableInfoText}>{isBarTabMode ? selectedTable.name : `Table ${selectedTable.name}`}</Text>
+                {canResetTable && (
                 <TouchableOpacity
                   onPress={() => {
                     setSelectedTable(null);
@@ -3062,13 +3088,14 @@ export default function MenuScreen() {
                     setActivePricingRuleId(null);
                     tableParamsStampRef.current = null;
                     lastAppliedStampRef.current = null;
-          
+
                   }}
                   style={styles.clearTableButton}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   <Ionicons name="close-circle" size={16} color={Colors.primary} />
                 </TouchableOpacity>
+                )}
               </View>
               <View style={[styles.headerIcons, { gap: 6 }]}>
                 <View style={[styles.networkDot, { backgroundColor: !effectivelyOffline ? '#22c55e' : '#ef4444' }]} />
@@ -3576,10 +3603,10 @@ export default function MenuScreen() {
 
           if (isBarTabMode) {
             // Bar tab mode: go back to bar billing
-            router.back();
+            afterModalClose(() => router.back());
           } else {
             // Always redirect to tables screen after closing KOT
-            router.replace('/(tabs)/tables');
+            afterModalClose(() => router.replace('/(tabs)/tables'));
           }
         }}
         orderData={kotOrderData}
@@ -3605,7 +3632,7 @@ export default function MenuScreen() {
           router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           // Navigate back to tables page
-          router.replace('/(tabs)/tables');
+          afterModalClose(() => router.replace('/(tabs)/tables'));
         }}
         invoiceData={lastOrderData}
         restaurantId={restaurantId}
@@ -3628,7 +3655,7 @@ export default function MenuScreen() {
           router.setParams({ tableId: '', tableNumber: '', floorName: '', navStamp: '', orderId: '' });
 
           // Navigate to Tables page for fresh table selection
-          router.replace('/(tabs)/tables');
+          afterModalClose(() => router.replace('/(tabs)/tables'));
         }}
       />
 
@@ -3840,7 +3867,7 @@ export default function MenuScreen() {
               <TouchableOpacity
                 onPress={() => {
                   setShowPrinterDisconnectModal(false);
-                  router.push('/(tabs)/printer-settings');
+                  afterModalClose(() => router.push('/(tabs)/printer-settings'));
                 }}
                 style={{ backgroundColor: '#ef4444', borderRadius: 12, paddingVertical: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
               >

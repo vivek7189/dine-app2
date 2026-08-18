@@ -9,7 +9,7 @@
 // All types support silent printing (no dialog) once configured.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, AppState } from 'react-native';
 import * as Print from 'expo-print';
 import { NativeModules } from 'react-native';
 
@@ -667,6 +667,137 @@ export const autoReconnect = async () => {
     // failure with their own UI (Alert dialog, status indicator).
   }
   return false;
+};
+
+// ==================== LIVE CONNECTION HEALTH ====================
+// The old isConnected() just returned !!connectedPrinter — "connected once = connected forever",
+// which is wrong (esp. Bluetooth, which drops silently when idle/backgrounded). This layer gives a
+// REAL, live status by actively probing the printer, auto-heals (max 2 reconnects), and streams the
+// status to the UI via the existing printer-event bus. It never fakes "connected".
+
+let printerHealth = 'none';   // 'none' | 'checking' | 'connected' | 'disconnected'
+let lastHealthCheck = 0;
+let _healing = false;
+let _checking = false;
+let _fgHeartbeat = null;
+let _monitorStarted = false;
+
+export const getPrinterHealth = () => ({
+  status: printerHealth,
+  lastChecked: lastHealthCheck,
+  connectionType,
+  printer: connectedPrinter,
+});
+
+const setHealth = (status) => {
+  lastHealthCheck = Date.now();
+  const changed = status !== printerHealth;
+  printerHealth = status;
+  // Always emit so the UI's "last checked" updates; UI can debounce on `status`.
+  emitPrinterEvent({ type: 'health', status, changed, connectionType, printer: connectedPrinter, ts: lastHealthCheck });
+};
+
+// Short-timeout TCP reachability test for a network printer (reuses the scan probe technique):
+// any TCP response (even a rejected HTTP one) = port open = printer reachable.
+const netProbe = (host, port = 9100, timeout = 2000) => new Promise((resolve) => {
+  let done = false;
+  const finish = (v) => { if (!done) { done = true; resolve(v); } };
+  const timer = setTimeout(() => finish(false), timeout);
+  let controller = null;
+  try { controller = new AbortController(); setTimeout(() => { try { controller.abort(); } catch {} }, timeout); } catch {}
+  fetch(`http://${host}:${port}/`, { method: 'HEAD', ...(controller ? { signal: controller.signal } : {}) })
+    .then(() => { clearTimeout(timer); finish(true); })
+    .catch((err) => {
+      clearTimeout(timer);
+      const msg = (err?.message || '').toLowerCase();
+      // "Network request failed" / aborted / timed out = unreachable; any OTHER error = the socket
+      // responded (e.g. JSON parse error on the raw ESC/POS reply) = port is open = reachable.
+      if (msg.includes('network request failed') || msg.includes('abort') || msg.includes('timed out') || msg.includes('timeout')) finish(false);
+      else finish(true);
+    });
+});
+
+// Actively test whether the saved/connected printer is really reachable RIGHT NOW.
+export const probePrinterAlive = async () => {
+  const saved = await getSavedPrinter();
+  const type = connectionType || saved?.type;
+  if (!type) return false;
+  if (type === 'network') {
+    const host = saved?.host || (connectedPrinter ? String(connectedPrinter).split(':')[0] : null);
+    const port = saved?.port || 9100;
+    return host ? await netProbe(host, port) : false;
+  }
+  if (type === 'bluetooth') {
+    // BT has no reliable live "isConnected" — check the bonded device is still present. The
+    // definitive test is a reconnect, which checkAndHeal() does when this returns false.
+    try {
+      if (!BLEPrinter) return false;
+      const mac = saved?.macAddress || connectedPrinter;
+      const devices = await BLEPrinter.getDeviceList().catch(() => []);
+      const present = Array.isArray(devices) && devices.some(d => (d?.inner_mac_address || d?.macAddress || d?.address) === mac);
+      return present && !!connectedPrinter;
+    } catch { return false; }
+  }
+  // USB rarely drops; AirPrint is resolved per-print — trust the flag.
+  return !!connectedPrinter;
+};
+
+// Auto-heal: try to reconnect the saved printer, up to 2 attempts with a short backoff.
+export const healConnection = async () => {
+  if (_healing) return printerHealth === 'connected';
+  _healing = true;
+  emitPrinterEvent({ type: 'reconnecting' });
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const ok = await autoReconnect();
+      if (ok) { emitPrinterEvent({ type: 'reconnected' }); return true; }
+      if (attempt < 2) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 1500));
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    _healing = false;
+  }
+};
+
+// The one entry point the UI + triggers use: probe → if dead, heal (max 2) → set live status.
+// Never shows 'connected' without a fresh probe/reconnect this call.
+export const checkAndHeal = async () => {
+  if (_checking) return printerHealth;
+  _checking = true;
+  try {
+    const saved = await getSavedPrinter();
+    if (!saved) { setHealth('none'); return 'none'; }
+    setHealth('checking');
+    const alive = await probePrinterAlive();
+    if (alive) { setHealth('connected'); return 'connected'; }
+    const healed = await healConnection();
+    setHealth(healed ? 'connected' : 'disconnected');
+    return healed ? 'connected' : 'disconnected';
+  } catch {
+    setHealth('disconnected');
+    return 'disconnected';
+  } finally {
+    _checking = false;
+  }
+};
+
+// Start the health monitor once (called from app root). Re-verifies on every foreground (so a
+// status that went stale while the app was idle/backgrounded all day is re-checked), plus a light
+// heartbeat while foregrounded. Battery-safe: no polling in the background.
+export const startPrinterHealthMonitor = () => {
+  if (_monitorStarted) return;
+  _monitorStarted = true;
+  const startHeartbeat = () => { if (!_fgHeartbeat) _fgHeartbeat = setInterval(() => { checkAndHeal().catch(() => {}); }, 45000); };
+  const stopHeartbeat = () => { if (_fgHeartbeat) { clearInterval(_fgHeartbeat); _fgHeartbeat = null; } };
+  try {
+    AppState.addEventListener('change', (state) => {
+      if (state === 'active') { checkAndHeal().catch(() => {}); startHeartbeat(); }
+      else { stopHeartbeat(); }
+    });
+    if (AppState.currentState === 'active') { checkAndHeal().catch(() => {}); startHeartbeat(); }
+  } catch { /* AppState unavailable — monitor is best-effort */ }
 };
 
 // ==================== TEXT GENERATION (ESC/POS for thermal printers) ====================

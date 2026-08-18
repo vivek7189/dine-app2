@@ -13,6 +13,7 @@ import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
 import { loadCurrencyConfig } from '../utils/formatCurrency';
 import apiClient from '../services/api';
 import lanClient from '../services/lanClient';
+import { startPrinterHealthMonitor } from '../services/printerService';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -40,6 +41,10 @@ function PinGate({ children }) {
       } catch (_) {}
     })();
   }, []);
+
+  // Live printer health: re-verify the connection on every foreground (never trust a stale
+  // "connected") + a light heartbeat while active, with auto-heal. Started once.
+  useEffect(() => { try { startPrinterHealthMonitor(); } catch (_) {} }, []);
 
   useEffect(() => {
     checkPinLock();

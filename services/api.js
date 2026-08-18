@@ -3131,6 +3131,17 @@ class ApiClient {
     return this.request(`/api/admin/print-stations/${restaurantId}`);
   }
 
+  // Report a print diagnostic (best-effort). Lets us see from the server exactly how a KOT printed
+  // — or why it didn't — on THIS device: path, station, printer, and failure reason. Never throws.
+  async logPrintDiagnostic(restaurantId, event) {
+    try {
+      if (!restaurantId || !event) return null;
+      return await this.request(`/api/print-diagnostics/${restaurantId}`, { method: 'POST', data: { event } });
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Bar Inventory
   getBarBottles(restaurantId, params = {}) {
     const qs = new URLSearchParams(params).toString();

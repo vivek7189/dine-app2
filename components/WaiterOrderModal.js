@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import * as printerService from '../services/printerService';
 import { getPrintStationConfig, printKOTsByStation, getLocalKotPrintingEnabled } from '../services/multiPrinterService';
+import { logPrintDiag } from '../services/printDiagnostics';
 import { formatCurrency } from '../utils/formatCurrency';
 import { getItemSubline } from '../utils/itemSubline';
 import { sanitizeSeat, seatLetter, isSeatOrderingEnabled } from '../utils/seatOrdering';
@@ -131,6 +132,9 @@ export default function WaiterOrderModal({
 
   // ─── Data Loading ───
   useEffect(() => {
+    // Taking an order → re-verify the printer connection now (probe + auto-heal), so a stale
+    // "connected" from earlier is caught before the waiter commits. Non-blocking.
+    if (visible) { try { printerService.checkAndHeal?.(); } catch (_) {} }
     if (!visible) {
       setCart([]);
       setExistingOrderItems(null);
@@ -717,9 +721,16 @@ export default function WaiterOrderModal({
         } else if (stationCount < 2) {
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
+          const _oid = kotData?.orderId || kotData?.id || orderId;
           printerService.printWithFeedback({ html: kotHtml, text: kotText, silentOnly: true, label: 'KOT' })
-            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-            .catch(() => {});
+            .then(r => {
+              logPrintDiag(restaurantId, { phase: r.success ? 'printed' : 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: !!r.success, reason: r.success ? undefined : 'no-printer-connected', error: r.success ? undefined : r.error });
+              if (!r.success && r.notify !== false) toast.error(r.error);
+            })
+            .catch((e) => { logPrintDiag(restaurantId, { phase: 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: false, reason: 'print-exception', error: e?.message || String(e) }); });
+        } else {
+          // stationCount >= 2 but local KOT printing OFF on this device → desktop/remote handles it.
+          logPrintDiag(restaurantId, { phase: 'skipped', kind: 'kot', via: 'remote', orderId: kotData?.orderId || kotData?.id || orderId, reason: 'local-kot-disabled-multi' });
         }
       }
 
