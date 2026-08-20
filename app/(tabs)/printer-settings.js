@@ -18,6 +18,7 @@ import apiClient from '../../services/api';
 import PrinterSetup from '../../components/PrinterSetup';
 import PrintSettings from '../../components/PrintSettings';
 import { useResponsive } from '../../hooks/useResponsive';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import usePrinterStatus from '../../hooks/usePrinterStatus';
 import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled, discoverNetworkPrinters, scanSubnetForPrinters, printToStationPrinter } from '../../services/printerService';
 import { getLocalKotPrintingEnabled, setLocalKotPrintingEnabled, getStationPrinters, saveStationPrinter, removeStationPrinter, hydrateFromServer } from '../../services/multiPrinterService';
@@ -40,6 +41,7 @@ const getStationTypeConfig = (type) => STATION_TYPE_CONFIG[type] || { icon: 'gri
 export default function PrinterSettingsScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
+  const insets = useSafeAreaInsets(); // real top inset → header clears the notch/Dynamic Island
   const [restaurantId, setRestaurantId] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -255,8 +257,9 @@ export default function PrinterSettingsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header — paddingTop from the real safe-area inset so the back button never hides under
+          the status bar / notch / Dynamic Island (the fixed 56px wasn't enough on newer iPhones). */}
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={24} color="#374151" />
         </TouchableOpacity>

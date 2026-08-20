@@ -1785,9 +1785,13 @@ class ApiClient {
   }
 
   // Upload images to menu item (max 4 images)
-  async uploadMenuItemImages(itemId, formData) {
+  async uploadMenuItemImages(itemId, formData, restaurantId) {
     const token = await this.getToken();
-    const url = `${this.baseURL}/api/menu-items/${itemId}/images`;
+    // Backend locates the item via ?restaurantId (its collection-scan fallback was
+    // removed to save Firestore reads) — without it the request 404s with
+    // "Menu item not found or access denied". Web sends it; the app must too.
+    const qs = restaurantId ? `?restaurantId=${encodeURIComponent(restaurantId)}` : '';
+    const url = `${this.baseURL}/api/menu-items/${itemId}/images${qs}`;
     const config = {
       method: 'POST',
       data: formData,
@@ -1809,8 +1813,10 @@ class ApiClient {
   }
 
   // Delete menu item image
-  async deleteMenuItemImage(itemId, imageIndex) {
-    return this.request(`/api/menu-items/${itemId}/images/${imageIndex}`, {
+  async deleteMenuItemImage(itemId, imageIndex, restaurantId) {
+    // Same as upload: backend needs ?restaurantId to find the item (scan fallback removed).
+    const qs = restaurantId ? `?restaurantId=${encodeURIComponent(restaurantId)}` : '';
+    return this.request(`/api/menu-items/${itemId}/images/${imageIndex}${qs}`, {
       method: 'DELETE',
     });
   }

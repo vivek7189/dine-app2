@@ -504,7 +504,7 @@ export default function MenuManagementScreen() {
           type: 'image/jpeg',
         });
       });
-      const response = await apiClient.uploadMenuItemImages(editingItem.id, uploadFormData);
+      const response = await apiClient.uploadMenuItemImages(editingItem.id, uploadFormData, restaurantId);
       if (response.images) {
         setFormData(prev => ({
           ...prev,
@@ -535,7 +535,7 @@ export default function MenuManagementScreen() {
 
     try {
       setUploadingImage(true);
-      await apiClient.deleteMenuItemImage(editingItem.id, index);
+      await apiClient.deleteMenuItemImage(editingItem.id, index, restaurantId);
       setFormData(prev => ({
         ...prev,
         images: prev.images.filter((_, i) => i !== index),
@@ -675,7 +675,7 @@ export default function MenuManagementScreen() {
               type: 'image/jpeg',
             });
           });
-          await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData);
+          await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData, restaurantId);
         }
         // Fire-and-forget recipe generation
         if (formData.generateRecipe && businessType !== 'bar') {
