@@ -14,8 +14,10 @@ export default function Index() {
   const checkAuth = async () => {
     const isAuth = await apiClient.isAuthenticated();
     if (isAuth) {
-      // All roles go to home — home screen adapts per role
-      router.replace('/(tabs)/home');
+      // Honor role landing on relaunch too (e.g. waiter → Tables), matching every login path.
+      // getRoleLandingRoute reads the stored user's posSettings.roleLandingPages and falls back
+      // to /(tabs)/home when role-landing is off or unset — so this never mis-routes.
+      router.replace(await apiClient.getRoleLandingRoute());
     } else {
       router.replace('/(auth)/login');
     }
