@@ -1331,6 +1331,31 @@ export default function MenuScreen() {
     };
   };
 
+  // For an order UPDATE, annotate each item with per-line KOT delta markers (isNew / isUpdated +
+  // quantityDelta) relative to the order's saved items, and compute removedItems — so the backend's
+  // KOT-update event fires ONLY the changed lines to the kitchen (remote / electron auto-print).
+  // Without these markers the backend delta filter (isNew||isUpdated) sees nothing → it either
+  // reprints the whole station slice (old bug: already-sent items re-cooked) or fires no update at
+  // all. Keyed by menuItemId||id, matching this screen's local KOT delta. Same contract the web sends.
+  const buildUpdateDelta = () => {
+    const key = (i) => `${i.menuItemId || i.id}`;
+    const items = cart.map((item) => {
+      const payload = buildItemPayload(item);
+      if (!existingOrderItems) return payload;
+      const existing = existingOrderItems.find((e) => key(e) === key(item));
+      if (!existing) return { ...payload, isNew: true };
+      if (existing.quantity !== item.quantity) {
+        return { ...payload, isUpdated: true, previousQuantity: existing.quantity, quantityDelta: item.quantity - existing.quantity };
+      }
+      return payload; // unchanged — already sent to the kitchen, no marker
+    });
+    const cartKeys = new Set(cart.map(key));
+    const removedItems = (existingOrderItems || [])
+      .filter((e) => !cartKeys.has(key(e)))
+      .map((e) => ({ ...buildItemPayload(e), isRemoved: true, previousQuantity: e.quantity }));
+    return { items, removedItems };
+  };
+
   const getCartTotal = () => {
     return cart.reduce((total, item) => total + (getEffectiveItemPrice(item) * (item.quantity || 1)), 0);
   };
@@ -1484,9 +1509,11 @@ export default function MenuScreen() {
       let orderId;
 
       if (existingOrderId) {
-        // Update existing order
+        // Update existing order — send delta-marked items so the KOT update prints only new/changed lines
+        const { items: deltaItems, removedItems: deltaRemoved } = buildUpdateDelta();
         const orderData = {
-          items: cart.map(buildItemPayload),
+          items: deltaItems,
+          ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
           status: 'confirmed', // Send directly to kitchen
         };
 
@@ -1788,9 +1815,13 @@ export default function MenuScreen() {
         setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
         afterModalClose(() => router.back());
       } else if (existingOrderId) {
-        // Update existing order (adding items to occupied table)
+        // Update existing order (adding items to occupied table) — delta-marked so the KOT update
+        // fires ONLY new/changed lines to the kitchen (remote / electron auto-print), never re-firing
+        // already-sent items.
+        const { items: deltaItems, removedItems: deltaRemoved } = buildUpdateDelta();
         const updateData = {
-          items,
+          items: deltaItems,
+          ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
           status: 'confirmed',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,

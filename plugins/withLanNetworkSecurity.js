@@ -21,6 +21,7 @@ const NSC_XML = `<?xml version="1.0" encoding="utf-8"?>
         <domain includeSubdomains="true">dineopen.com</domain>
         <domain includeSubdomains="true">vercel.app</domain>
         <domain includeSubdomains="true">run.app</domain>
+        <domain includeSubdomains="true">sslip.io</domain>
         <domain includeSubdomains="true">googleapis.com</domain>
         <domain includeSubdomains="true">firebaseio.com</domain>
         <domain includeSubdomains="true">firebasedatabase.app</domain>

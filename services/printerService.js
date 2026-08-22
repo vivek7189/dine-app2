@@ -971,6 +971,15 @@ const hasNonAsciiCurrency = (text) => {
   }
   return false;
 };
+
+// Complex scripts (Tamil/Hindi/Arabic/CJK/Thai…) can't be rendered as ESC/POS text — a thermal
+// printer's single-byte code page prints the UTF-8 bytes as garbage (Tamil "இட்லி" → "a«ça«fa»i…").
+// When present, print the receipt as an IMAGE (printViaThermalImage) so the real glyphs render.
+const hasComplexScript = (text) => {
+  const s = String(text == null ? '' : text).replace(/<[^>]+>/g, '');
+  // Devanagari→Malayalam (incl. Tamil), Arabic/Syriac, Thai/Lao, Hangul, Kana, CJK, fullwidth.
+  return /[ऀ-෿؀-߿฀-໿ᄀ-ᇿ぀-ヿ㐀-鿿가-힯＀-￯]/.test(s);
+};
 const RS = toThermalSymbol(_getCS());
 
 // Wrap long text into multiple centered lines
@@ -1694,8 +1703,14 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       // prints instead of the "Rs" ASCII fallback — the standard approach when a symbol isn't
       // in any printer code page. Requires HTML to render from. On ANY failure we fall through
       // to the ESC/POS text path below (which sanitizes ₹→Rs), so this can never break printing.
-      const wantImageForCurrency = _autoImageForCurrency && hasNonAsciiCurrency(imageHtml || html || text);
-      if ((_imagePrintEnabled || wantImageForCurrency) && (imageHtml || html) && connectionType !== 'airprint') {
+      // Image path is needed when the receipt has a non-ASCII currency glyph OR a complex script
+      // (Tamil/Hindi/Arabic/CJK…) — neither can be printed as ESC/POS text. Currency is gated on
+      // the opt-in flag; complex scripts ALWAYS force the image path (there is no ASCII fallback
+      // for them — text would print garbage). Falls through to text if the image render fails.
+      const src = imageHtml || html || text;
+      const wantImageForCurrency = _autoImageForCurrency && hasNonAsciiCurrency(src);
+      const wantImageForScript = hasComplexScript(src);
+      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript) && (imageHtml || html) && connectionType !== 'airprint') {
         try {
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };
@@ -1898,7 +1913,7 @@ export const stopHeartbeat = () => {
  * @param {string} text - ESC/POS text content
  * @returns {Promise<{ success: boolean, error?: string }>}
  */
-export const printToStationPrinter = async (stationConfig, text) => {
+export const printToStationPrinter = async (stationConfig, text, html = null) => {
   if (!stationConfig?.host || stationConfig.type !== 'network') {
     return { success: false, error: 'Only network printers supported for station assignment' };
   }
@@ -1941,15 +1956,28 @@ export const printToStationPrinter = async (stationConfig, text) => {
       connectedPrinter = `${stationHost}:${stationPort}`;
       connectionType = 'network';
 
-      // 3. Print
-      const payload = cleanText + '\n\n\n';
-      const stationDispatch = NetPrinter.printBill(payload, { beep: false, cut: true, tailingLine: true });
-      if (stationDispatch && typeof stationDispatch.then === 'function') {
-        await withPrintTimeout(stationDispatch, `print-station-${stationHost}`);
+      // 3. Print — complex scripts (Tamil/Hindi/Arabic/CJK…) can't be sent as ESC/POS text, so
+      // render them as an image to the now-connected station printer; else send fast ESC/POS text.
+      const printStationText = async () => {
+        const payload = cleanText + '\n\n\n';
+        const stationDispatch = NetPrinter.printBill(payload, { beep: false, cut: true, tailingLine: true });
+        if (stationDispatch && typeof stationDispatch.then === 'function') {
+          await withPrintTimeout(stationDispatch, `print-station-${stationHost}`);
+        } else {
+          // Upstream NetPrinter is fire-and-forget. Do not pass undefined to withPrintTimeout
+          // (which previously made every station job report failure and trigger a duplicate fallback).
+          await new Promise(resolve => setTimeout(resolve, 350));
+        }
+      };
+      if (html && hasComplexScript(html)) {
+        try {
+          await printViaThermalImage(html); // prints image to the station printer we just connected
+        } catch (imgErr) {
+          console.warn('[station] image render failed, falling back to text (may garble non-Latin):', imgErr?.message);
+          await printStationText();
+        }
       } else {
-        // Upstream NetPrinter is fire-and-forget. Do not pass undefined to withPrintTimeout
-        // (which previously made every station job report failure and trigger a duplicate fallback).
-        await new Promise(resolve => setTimeout(resolve, 350));
+        await printStationText();
       }
 
       return { success: true };

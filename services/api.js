@@ -7,12 +7,26 @@ import { getLocalServerUrl, setLocalServerUrl, initLocalServer } from './localSe
 // Get API URL from environment or use deployed backend
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2-phi.vercel.app';
 
+// True when pointed at a local/dev backend — the remote config must NEVER override
+// a developer's local backend (LAN IP / emulator / localhost).
+const IS_LOCAL_BASE = /localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\./.test(API_BASE_URL);
+
 // Frontend web URL for WebView embeds (mobile layout)
 export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://www.dineopen.com';
 
 // AsyncStorage key for the restaurant's chosen cloud backend (dine-admin "pgBackendUrl" switch).
 // Persisted so the app routes to the right backend on the first call after a restart.
 const BACKEND_URL_KEY = 'dineopen_backend_url';
+
+// ── Remote backend config (one-flip, zero-rebuild cutover) ───────────────────
+// A tiny always-up JSON hosted OFF Vercel (Google Cloud Storage). Says which
+// default backend all clients should use. Cached in AsyncStorage; read at startup
+// in initBackendRouting(), refreshed in the background for the next launch.
+// Shape: { "defaultBackend": "https://…", "v": 1 }. Baked URL edited centrally at cutover.
+const REMOTE_DEFAULT_KEY = 'dineopen_remote_default';
+const BACKEND_CONFIG_URL =
+  process.env.EXPO_PUBLIC_BACKEND_CONFIG_URL ||
+  'https://storage.googleapis.com/dineopen-public-config/backend.json';
 
 class ApiClient {
   constructor() {
@@ -155,13 +169,44 @@ class ApiClient {
   async initBackendRouting() {
     if (getLocalServerUrl()) return this.baseURL; // local server already routed + wins
     try {
-      const url = await AsyncStorage.getItem(BACKEND_URL_KEY);
-      if (url) {
-        this.baseURL = url;
-        console.log('🔀 Backend routing active (persisted pgBackendUrl):', url);
+      const pin = await AsyncStorage.getItem(BACKEND_URL_KEY);
+      if (pin) {
+        // per-restaurant pgBackendUrl pin wins over the remote default
+        this.baseURL = pin;
+        console.log('🔀 Backend routing active (persisted pgBackendUrl):', pin);
+      } else {
+        // no pin → use the cached remote-config default (the cutover switch).
+        // Never override a local/dev backend.
+        const remote = await AsyncStorage.getItem(REMOTE_DEFAULT_KEY);
+        if (remote && !IS_LOCAL_BASE) {
+          this.baseURL = remote;
+          console.log('🔀 Backend routing active (remote config):', remote);
+        }
       }
     } catch (_) {}
+    // Refresh the remote config in the background; applies on the NEXT launch.
+    // Fire-and-forget — never blocks startup, never breaks routing on failure.
+    this.refreshRemoteBackend();
     return this.baseURL;
+  }
+
+  /**
+   * Fetch the remote backend config and cache its `defaultBackend`. Used for a
+   * central, zero-rebuild cutover: edit the JSON once and every device picks it up
+   * on its next launch. Any failure (offline / 404 / bad JSON) is ignored so the
+   * last cache (or baked default) stays in effect.
+   */
+  async refreshRemoteBackend() {
+    if (IS_LOCAL_BASE) return; // dev backend — never pull in the cloud remote config
+    try {
+      const res = await fetch(BACKEND_CONFIG_URL, { cache: 'no-store' });
+      if (!res.ok) return;
+      const cfg = await res.json();
+      const url = cfg && cfg.defaultBackend;
+      if (typeof url === 'string' && /^https?:\/\//.test(url)) {
+        await AsyncStorage.setItem(REMOTE_DEFAULT_KEY, url.replace(/\/+$/, ''));
+      }
+    } catch (_) { /* keep last cache or baked default */ }
   }
 
   /**

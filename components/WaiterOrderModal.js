@@ -569,8 +569,37 @@ export default function WaiterOrderModal({
       const seatOnlyUpdate = !!(existingOrderId && orderChanges && !orderChanges.hasAnyChange && orderChanges.seatChanged);
 
       if (existingOrderId) {
+        // Annotate the updated item list with per-line delta markers (isNew / isUpdated +
+        // quantityDelta) and surface removedItems, so the backend's KOT-update event carries
+        // ONLY the changed lines to the kitchen (remote / electron auto-print). The backend
+        // filters the reprint to items where isNew||isUpdated; without these markers it either
+        // reprints the whole station slice (old bug — already-sent items re-cooked) or fires no
+        // update at all. This is the SAME contract the web dashboard sends.
+        const dKey = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+        const dSum = (arr) => { const m = new Map(); (arr || []).forEach(i => m.set(dKey(i), (m.get(dKey(i)) || 0) + (i.quantity || 0))); return m; };
+        const exMap = dSum(existingOrderItems);
+        const cMap = dSum(cart);
+        const updCredited = new Set();
+        const updateItems = cart.map((item) => {
+          const payload = buildItemPayload(item);
+          if (!existingOrderItems) return payload; // no baseline → treat as-is
+          const k = dKey(item);
+          if (!exMap.has(k)) return { ...payload, isNew: true }; // whole line is newly added
+          const prevQty = exMap.get(k), newQty = cMap.get(k);
+          if (newQty !== prevQty && !updCredited.has(k)) {
+            updCredited.add(k); // credit the qty change to one line per key
+            return { ...payload, isUpdated: true, previousQuantity: prevQty, quantityDelta: newQty - prevQty };
+          }
+          return payload; // unchanged — already sent to the kitchen, no marker
+        });
+        const updateRemoved = [];
+        (existingOrderItems || []).forEach((ex) => {
+          const k = dKey(ex);
+          if (!cMap.has(k)) updateRemoved.push({ ...buildItemPayload(ex), isRemoved: true, previousQuantity: exMap.get(k) });
+        });
         const orderData = {
-          items: cart.map(buildItemPayload),
+          items: updateItems,
+          ...(updateRemoved.length ? { removedItems: updateRemoved } : {}),
           status: 'confirmed',
           pricingRuleId: activePricingRuleId || null,
           ...(seatOnlyUpdate ? { skipKOT: true } : {}),
