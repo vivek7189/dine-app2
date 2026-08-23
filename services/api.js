@@ -125,17 +125,20 @@ class ApiClient {
     // Local-server (offline LAN) mode always wins — never route back to the cloud.
     const localSrv = getLocalServerUrl();
     const customUrl = restaurant?.pgBackendUrl;
-    const newBase = localSrv || customUrl || API_BASE_URL;
-    // Persist the restaurant's chosen backend (set from dine-admin) so the NEXT app launch routes
-    // there BEFORE the first API call — otherwise a migrated restaurant would hit the default
-    // backend on startup until the tabs layout re-fetches the user. Local-server mode is persisted
-    // separately and takes precedence, so only persist the cloud choice here.
+    // Absence of pgBackendUrl means "use the user's resolved home", NOT "force Vercel": a
+    // born-native GCP restaurant has NO pgBackendUrl. Fall back to the current resolved base
+    // (set by resolveBackendFor at login / initBackendRouting at startup), never API_BASE_URL,
+    // or a native user would be slammed to Vercel on the tab-layout re-apply (split-brain).
+    const newBase = localSrv || customUrl || this.baseURL || API_BASE_URL;
+    // Persist ONLY an explicit per-restaurant pin. Do NOT removeItem when pgBackendUrl is absent —
+    // that would drop a born-native user to Vercel on the next launch (their GCP pin, set by
+    // resolveBackendFor, must survive restart so they never need to re-login). Un-routing a home
+    // back to Vercel is applied by resolveBackendFor() at the next login.
     try {
       if (customUrl) AsyncStorage.setItem(BACKEND_URL_KEY, customUrl);
-      else AsyncStorage.removeItem(BACKEND_URL_KEY);
     } catch (_) {}
     if (this.baseURL !== newBase) {
-      console.log(`🔀 API routing: ${newBase}${localSrv ? ' (local server)' : customUrl ? ' (pgBackendUrl)' : ' (default)'}`);
+      console.log(`🔀 API routing: ${newBase}${localSrv ? ' (local server)' : customUrl ? ' (pgBackendUrl)' : ' (session home)'}`);
       this.baseURL = newBase;
       this.clearAllCache();
     }
