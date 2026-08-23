@@ -954,8 +954,43 @@ class ApiClient {
 
   // ==================== OWNER AUTH ====================
 
+  /**
+   * Resolve WHICH backend an identity belongs to BEFORE authenticating, and pin it — so a
+   * brand-new or born-native user (not present on Vercel/Firestore) is created on GCP, exactly
+   * like the web frontend. Queried against the FIXED directory (API_BASE_URL), never the current
+   * base. Pins both this.baseURL AND the persisted BACKEND_URL_KEY so send-otp → verify/register
+   * → and the next launch all hit the same backend (no split account across Firestore + Postgres).
+   * No-op in local-server mode (hard-pinned). Best-effort: resolver failure leaves the default
+   * (Vercel), so login never blocks and no account is accidentally duplicated onto GCP.
+   */
+  async resolveBackendFor({ phone, email } = {}) {
+    if (getLocalServerUrl()) return; // local-server app is hard-pinned, never repin
+    if (!phone && !email) return;
+    try {
+      const qs = phone ? `phone=${encodeURIComponent(phone)}` : `email=${encodeURIComponent(email)}`;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${API_BASE_URL}/api/auth/resolve-backend?${qs}`, { signal: ctrl.signal });
+      clearTimeout(t);
+      const rb = res.ok ? await res.json() : null;
+      const url = rb && rb.backendUrl ? String(rb.backendUrl).replace(/\/+$/, '') : '';
+      if (url) {
+        // Born-native/GCP or a toggled home — pin it.
+        try { await AsyncStorage.setItem(BACKEND_URL_KEY, url); } catch (_) {}
+        if (this.baseURL !== url) { this.baseURL = url; this.clearAllCache(); }
+      } else {
+        // Existing Vercel-home (or resolver unreachable) — clear any stale resolver pin and
+        // route to the default, mirroring the web frontend's setCloudBackend('').
+        try { await AsyncStorage.removeItem(BACKEND_URL_KEY); } catch (_) {}
+        const def = API_BASE_URL;
+        if (this.baseURL !== def) { this.baseURL = def; this.clearAllCache(); }
+      }
+    } catch (_) { /* resolver must never block login */ }
+  }
+
   // Google login (owner)
   async googleLogin(uid, email, name, picture) {
+    await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/google', {
       method: 'POST',
       data: { uid, email, name, picture, platform: 'dine-app' },
@@ -974,6 +1009,7 @@ class ApiClient {
 
   // Apple login (owner)
   async appleLogin(uid, email, name, picture) {
+    await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/apple', {
       method: 'POST',
       data: { uid, email, name, picture, platform: 'dine-app' },
@@ -992,6 +1028,7 @@ class ApiClient {
 
   // Email login (owner)
   async emailLogin(email, password) {
+    await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/email/login', {
       method: 'POST',
       data: { email, password, platform: 'dine-app' },
@@ -1010,6 +1047,7 @@ class ApiClient {
 
   // Email registration with OTP (owner)
   async emailRegister(email, password, confirmPassword, name, otp) {
+    await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/email/register', {
       method: 'POST',
       data: { email, password, confirmPassword, name, otp },
@@ -1028,6 +1066,7 @@ class ApiClient {
 
   // Send email OTP for registration or linking
   async emailSendOtp(email, purpose = 'registration') {
+    await this.resolveBackendFor({ email });
     return this.request('/api/auth/email/send-otp', {
       method: 'POST',
       data: { email, purpose },
@@ -1036,6 +1075,7 @@ class ApiClient {
 
   // Firebase verify (for phone OTP login via Firebase)
   async firebaseVerify(uid, phoneNumber, email, displayName) {
+    await this.resolveBackendFor({ phone: phoneNumber, email });
     const response = await this.request('/api/auth/firebase/verify', {
       method: 'POST',
       data: { uid, phoneNumber, email, displayName },
@@ -1054,6 +1094,7 @@ class ApiClient {
 
   // Backend phone OTP (for test/whitelisted numbers that bypass Firebase)
   async phoneSendOtp(phone) {
+    await this.resolveBackendFor({ phone });
     return this.request('/api/auth/phone/send-otp', {
       method: 'POST',
       data: { phone },
@@ -1061,6 +1102,7 @@ class ApiClient {
   }
 
   async phoneVerifyOtp(phone, otp) {
+    await this.resolveBackendFor({ phone });
     const response = await this.request('/api/auth/phone/verify-otp', {
       method: 'POST',
       data: { phone, otp, platform: 'dine-app' },
@@ -1830,6 +1872,30 @@ class ApiClient {
   }
 
   // Upload images to menu item (max 4 images)
+  // Generic image upload — SAME endpoint the web uses for the receipt logo (POST /api/upload/image,
+  // returns { imageUrl }). Used so a logo uploaded from the dine-app lands in the exact same place
+  // (printSettings.receiptLogo.url) and stays in sync with the web dashboard.
+  async uploadImage(formData) {
+    const token = await this.getToken();
+    const url = `${this.baseURL}/api/upload/image`;
+    const config = {
+      method: 'POST',
+      data: formData,
+      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    };
+    try {
+      const response = await axios(url, config);
+      return response.data; // { imageUrl }
+    } catch (error) {
+      if (error.response) {
+        throw new Error(error.response.data?.error || error.response.data?.message || 'Image upload failed');
+      }
+      throw new Error(error.message || 'Image upload failed');
+    }
+  }
+
   async uploadMenuItemImages(itemId, formData, restaurantId) {
     const token = await this.getToken();
     // Backend locates the item via ?restaurantId (its collection-scan fallback was
