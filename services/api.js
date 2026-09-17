@@ -5,7 +5,15 @@ import { router } from 'expo-router';
 import { getLocalServerUrl, setLocalServerUrl, initLocalServer } from './localServer';
 
 // Get API URL from environment or use deployed backend
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://dine-be2-phi.vercel.app';
+// GCP backend the whole fleet now runs on — the app's DEFAULT backend. Remote-config
+// (backend.json → REMOTE_DEFAULT_KEY) can still switch EVERY device to ANY url — including
+// back to Vercel — centrally, with no rebuild. This is only the baked fallback used until that
+// remote config is cached.
+const PG_API_BASE = process.env.EXPO_PUBLIC_PG_API_URL || 'https://34-93-129-104.sslip.io';
+// Baked default backend — now GCP (was Vercel). A fresh install with no cached remote-config
+// lands on GCP, never Vercel. EXPO_PUBLIC_API_URL still overrides at build time (e.g. localhost
+// for dev). To route to Vercel again, point backend.json at it — no app rebuild needed.
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || PG_API_BASE;
 
 // True when pointed at a local/dev backend — the remote config must NEVER override
 // a developer's local backend (LAN IP / emulator / localhost).
@@ -958,36 +966,25 @@ class ApiClient {
   // ==================== OWNER AUTH ====================
 
   /**
-   * Resolve WHICH backend an identity belongs to BEFORE authenticating, and pin it — so a
-   * brand-new or born-native user (not present on Vercel/Firestore) is created on GCP, exactly
-   * like the web frontend. Queried against the FIXED directory (API_BASE_URL), never the current
-   * base. Pins both this.baseURL AND the persisted BACKEND_URL_KEY so send-otp → verify/register
-   * → and the next launch all hit the same backend (no split account across Firestore + Postgres).
-   * No-op in local-server mode (hard-pinned). Best-effort: resolver failure leaves the default
-   * (Vercel), so login never blocks and no account is accidentally duplicated onto GCP.
+   * Pin the backend to use BEFORE authenticating. The whole fleet is on GCP now, so instead of
+   * asking Vercel's /api/auth/resolve-backend (which would always return GCP), we pin GCP straight
+   * from remote-config (backend.json → REMOTE_DEFAULT_KEY), falling back to the baked GCP URL
+   * (PG_API_BASE) — NEVER Vercel. To route to Vercel again, point backend.json at it (no rebuild).
+   * Pins both this.baseURL AND the persisted BACKEND_URL_KEY so send-otp → verify/register → and
+   * the next launch all hit the same backend. No-op in local-server mode (hard-pinned).
    */
   async resolveBackendFor({ phone, email } = {}) {
     if (getLocalServerUrl()) return; // local-server app is hard-pinned, never repin
-    if (!phone && !email) return;
+    // The WHOLE fleet is migrated to GCP, so pin GCP directly instead of the Vercel
+    // /api/auth/resolve-backend round-trip (which would now always return GCP anyway).
+    // Remote-config ONLY: use the cached backend.json default (centrally changeable +
+    // reversible); fall back to the baked GCP VM URL. NEVER default to Vercel.
     try {
-      const qs = phone ? `phone=${encodeURIComponent(phone)}` : `email=${encodeURIComponent(email)}`;
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
-      const res = await fetch(`${API_BASE_URL}/api/auth/resolve-backend?${qs}`, { signal: ctrl.signal });
-      clearTimeout(t);
-      const rb = res.ok ? await res.json() : null;
-      const url = rb && rb.backendUrl ? String(rb.backendUrl).replace(/\/+$/, '') : '';
-      if (url) {
-        // Born-native/GCP or a toggled home — pin it.
-        try { await AsyncStorage.setItem(BACKEND_URL_KEY, url); } catch (_) {}
-        if (this.baseURL !== url) { this.baseURL = url; this.clearAllCache(); }
-      } else {
-        // Existing Vercel-home (or resolver unreachable) — clear any stale resolver pin and
-        // route to the default, mirroring the web frontend's setCloudBackend('').
-        try { await AsyncStorage.removeItem(BACKEND_URL_KEY); } catch (_) {}
-        const def = API_BASE_URL;
-        if (this.baseURL !== def) { this.baseURL = def; this.clearAllCache(); }
-      }
+      let url = await AsyncStorage.getItem(REMOTE_DEFAULT_KEY);
+      if (!url || !/^https?:\/\//.test(url)) url = PG_API_BASE;
+      url = String(url).replace(/\/+$/, '');
+      try { await AsyncStorage.setItem(BACKEND_URL_KEY, url); } catch (_) {}
+      if (this.baseURL !== url) { this.baseURL = url; this.clearAllCache(); }
     } catch (_) { /* resolver must never block login */ }
   }
 
