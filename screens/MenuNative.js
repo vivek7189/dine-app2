@@ -985,7 +985,11 @@ export default function MenuScreen() {
     // line (item- AND variant/sub-price) to that channel's price. Extends web (which only knew
     // takeaway/delivery) to any admin-defined channel.
     if (!isDineInLike) {
-      let rule = pricingRules.find(r => r.isActive && (r.name || '').toLowerCase().trim() === t);
+      // Normalize aggressively (strip spaces/underscores/hyphens) like web (dashboard/page.js:2268)
+      // so "Take Away"/"take-away"/"takeaway" AND any custom multi-word channel match its rule.
+      const nrm = (s) => (s || '').toLowerCase().replace(/[\s_-]+/g, '');
+      const tN = nrm(t);
+      let rule = pricingRules.find(r => r.isActive && nrm(r.name) === tN);
       if (!rule && TAKEAWAY_NAMES.includes(t)) rule = pricingRules.find(r => r.isActive && TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
       if (!rule && DELIVERY_NAMES.includes(t)) rule = pricingRules.find(r => r.isActive && DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
       setActivePricingRuleId(rule ? rule.id : null);
@@ -1003,8 +1007,18 @@ export default function MenuScreen() {
       );
       if (matched) { setActivePricingRuleId(matched.id); setAutoSelectedRule(true); return; }
     }
-    setActivePricingRuleId(null);
-  }, [multiPricingEnabled, pricingRules, params.floorName, selectedTable]);
+    // No floor match. First honor a dedicated Dine-In rule; else fall back to the first dining-AREA
+    // rule (AC/Non-AC) exactly like web (dashboard/page.js:2281) so a walk-in dine-in is priced by the
+    // restaurant's zone pricing instead of dropping to BASE. Exclude channel + custom-order-type rules
+    // so a walk-in can never inherit takeaway/delivery/aggregator pricing.
+    const dineInRule = findDineInRule(pricingRules);
+    if (dineInRule) { setActivePricingRuleId(dineInRule.id); setAutoSelectedRule(true); return; }
+    const normName = (s) => (s || '').toLowerCase().replace(/[\s_-]+/g, '');
+    const otList = Array.isArray(user?.restaurant?.posSettings?.orderTypes) ? user.restaurant.posSettings.orderTypes : [];
+    const reserved = new Set(['dinein', 'takeaway', 'delivery', ...otList.map(o => normName(o.label))]);
+    const areaRules = pricingRules.filter(r => r.isActive && !reserved.has(normName(r.name)));
+    setActivePricingRuleId(areaRules.length > 0 ? areaRules[0].id : null);
+  }, [multiPricingEnabled, pricingRules, params.floorName, selectedTable, user]);
 
   // Handle table number entered from CashierCartModal → lookup floor → auto-select pricing rule
   const handleCashierTableSelect = useCallback((tableName, floorName) => {
@@ -1123,6 +1137,10 @@ export default function MenuScreen() {
         selectedCustomizations: item.selectedCustomizations || [],
         basePrice: item.basePrice || item.price,
         taxGroupId: item.taxGroupId || null,
+        // Carry per-item tax-inclusive flag so the displayed tax matches the saved bill (web parity:
+        // dashboard/page.js:3077). Without it an item-level-inclusive item on a global-EXCLUSIVE
+        // restaurant would show tax added on top while the backend saves it inclusive.
+        ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
         pricingRules: item.pricingRules || null,
         isStockManaged: item.isStockManaged || false,
         stockQuantity: item.stockQuantity,
@@ -1151,6 +1169,7 @@ export default function MenuScreen() {
           category: item.category || item.categoryId || null,
           categoryId: item.categoryId || item.category || null,
           taxGroupId: item.taxGroupId || null,
+          ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
           pricingRules: item.pricingRules || null,
           isStockManaged: item.isStockManaged || false,
           stockQuantity: item.stockQuantity,
@@ -1177,6 +1196,7 @@ export default function MenuScreen() {
         category: item.category || item.categoryId || null,
         categoryId: item.categoryId || item.category || null,
         taxGroupId: item.taxGroupId || null,
+        ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
         pricingRules: item.pricingRules || null,
         isStockManaged: item.isStockManaged || false,
         stockQuantity: item.stockQuantity,
@@ -1376,6 +1396,10 @@ export default function MenuScreen() {
       totalDiscount: 0,
       discountedSubtotal: taxableAmount,
       serviceChargeAmount: 0,
+      // Pass the selected order type so order-type-gated taxes are filtered here too, matching the
+      // CartModal panel and the backend recompute (index.js:11972). Without it a tax restricted to
+      // e.g. Dine-In would wrongly show on a Takeaway quick-total.
+      orderType,
       defaultTaxName: user?.restaurant?.currencySettings?.taxLabel || 'Tax',
     });
     const taxRate = taxBreakdown.reduce((s, t) => s + (t.rate || 0), 0);

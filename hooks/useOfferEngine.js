@@ -355,7 +355,7 @@ const useOfferEngine = ({
     // First pass: base filter (schedule/date/minOrder/scope) ignoring audience.
     const baseFiltered = filterApplicableOffers(
       allOffers.map(o => ({ ...o, audience: { type: 'all' } })), // bypass audience
-      { subtotal, cart, context: ctxForFilter, now }
+      { subtotal, cart, context: ctxForFilter, now, timezone: options.timezone || null }
     );
     // Re-map to original offers
     const baseIds = new Set(baseFiltered.map(o => getOfferId(o)));

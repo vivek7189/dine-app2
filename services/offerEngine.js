@@ -26,12 +26,48 @@ const getItemLineTotal = (item) => item.total || (item.price || 0) * (item.quant
 // Normalize category names for comparison — "Hot beverages", "Hot-Beverages", "hot_beverages" all match
 const normalizeCategory = (cat) => String(cat || '').toLowerCase().replace(/[-_\s]+/g, '');
 
+// Check if an item is excluded from a specific offer (backend parity: offerEngine.js:34)
+const isItemExcluded = (item, offer) => {
+  if (Array.isArray(offer.excludedItems) && offer.excludedItems.length > 0) {
+    if (offer.excludedItems.includes(getItemId(item))) return true;
+  }
+  if (Array.isArray(offer.excludedCategories) && offer.excludedCategories.length > 0) {
+    const normalizedExcluded = offer.excludedCategories.map(normalizeCategory);
+    if (normalizedExcluded.includes(normalizeCategory(getItemCategory(item)))) return true;
+  }
+  return false;
+};
+
 // ---------- schedule & date validation ----------
 
-const isScheduleValid = (offer, now = new Date()) => {
+const isScheduleValid = (offer, now = new Date(), timezone = null) => {
   if (!offer || !offer.schedule || offer.schedule.type !== 'recurring') return true;
-  const currentDay = now.getDay();
-  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  // Evaluate in the restaurant's local time when a timezone is provided (backend parity:
+  // offerEngine.js:47). Without one, fall back to the device clock (unchanged behavior).
+  let currentDay, currentHours, currentMins;
+  if (timezone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+      }).formatToParts(now);
+      const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+      currentDay = dayMap[weekday] ?? now.getDay();
+      currentHours = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+      currentMins = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+      if (currentHours === 24) currentHours = 0;
+    } catch (_) {
+      currentDay = now.getDay();
+      currentHours = now.getHours();
+      currentMins = now.getMinutes();
+    }
+  } else {
+    currentDay = now.getDay();
+    currentHours = now.getHours();
+    currentMins = now.getMinutes();
+  }
+  const currentTime = `${String(currentHours).padStart(2, '0')}:${String(currentMins).padStart(2, '0')}`;
   const scheduleDays = offer.schedule.days || [];
   const startTime = offer.schedule.startTime || '00:00';
   const endTime = offer.schedule.endTime || '23:59';
@@ -123,6 +159,8 @@ const calculateCrossItemBogo = (offer, cart) => {
 
   let buyUnits = 0;
   for (const item of cart) {
+    if (item.discountApplicable === false) continue;
+    if (isItemExcluded(item, offer)) continue;
     const id = getItemId(item);
     const cat = getItemCategory(item);
     const qty = item.quantity || 0;
@@ -136,6 +174,8 @@ const calculateCrossItemBogo = (offer, cart) => {
 
   const pool = [];
   for (const item of cart) {
+    if (item.discountApplicable === false) continue;
+    if (isItemExcluded(item, offer)) continue;
     const id = getItemId(item);
     if (!getItemIds.includes(id)) continue;
     const qty = item.quantity || 0;
@@ -166,19 +206,34 @@ const calculateCrossItemBogo = (offer, cart) => {
 // ---------- core discount calculation ----------
 
 const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {}) => {
+  // Cashback offers credit the wallet AFTER payment — they never reduce the current bill
+  // (backend parity: offerEngine.js:238). Prevents mobile from mis-applying them upfront.
+  if (offer && offer.promotionType === 'cashback') {
+    return { discount: 0, freeItems: [], appliedTier: null };
+  }
   if (!offer || subtotal <= 0) return { discount: 0, freeItems: [], appliedTier: null };
 
   const offerScope = offer.scope || 'order';
   let applicableSubtotal = subtotal;
 
+  // Scope filtering — also exclude non-discountable and offer-excluded items (backend parity:247)
   if (offerScope === 'category' && Array.isArray(offer.targetCategories) && offer.targetCategories.length > 0) {
     const normalizedTargets = offer.targetCategories.map(normalizeCategory);
     applicableSubtotal = cart
+      .filter(item => item.discountApplicable !== false)
+      .filter(item => !isItemExcluded(item, offer))
       .filter(item => normalizedTargets.includes(normalizeCategory(getItemCategory(item))))
       .reduce((sum, item) => sum + getItemLineTotal(item), 0);
   } else if (offerScope === 'item' && Array.isArray(offer.targetItems) && offer.targetItems.length > 0) {
     applicableSubtotal = cart
+      .filter(item => item.discountApplicable !== false)
+      .filter(item => !isItemExcluded(item, offer))
       .filter(item => offer.targetItems.includes(getItemId(item)))
+      .reduce((sum, item) => sum + getItemLineTotal(item), 0);
+  } else {
+    applicableSubtotal = cart
+      .filter(item => item.discountApplicable !== false)
+      .filter(item => !isItemExcluded(item, offer))
       .reduce((sum, item) => sum + getItemLineTotal(item), 0);
   }
 
@@ -197,13 +252,14 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
     return { discount: cross.discount, freeItems: cross.freeItems, appliedTier };
   }
 
+  // Legacy simple BOGO (same-item) — skip non-discountable and excluded items
   if (offer.promotionType === 'bogo' && offer.bogoConfig) {
-    let bogoItems = cart;
+    let bogoItems = cart.filter(item => item.discountApplicable !== false && !isItemExcluded(item, offer));
     if (offerScope === 'item' && offer.targetItems?.length > 0) {
-      bogoItems = cart.filter(item => offer.targetItems.includes(getItemId(item)));
+      bogoItems = bogoItems.filter(item => offer.targetItems.includes(getItemId(item)));
     } else if (offerScope === 'category' && offer.targetCategories?.length > 0) {
       const normalizedTargets = offer.targetCategories.map(normalizeCategory);
-      bogoItems = cart.filter(item => normalizedTargets.includes(normalizeCategory(getItemCategory(item))));
+      bogoItems = bogoItems.filter(item => normalizedTargets.includes(normalizeCategory(getItemCategory(item))));
     }
     const totalQty = bogoItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
     const buyQty = offer.bogoConfig.buyQty || 2;
@@ -217,6 +273,22 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
   } else if (applicableSubtotal > 0) {
     if (effectiveDiscountType === 'percentage') {
       let disc = (applicableSubtotal * effectiveDiscountValue) / 100;
+      if (offer.maxDiscount && disc > offer.maxDiscount) disc = offer.maxDiscount;
+      baseDiscount = Math.round(disc * 100) / 100;
+    } else if (effectiveDiscountType === 'flat_per_item') {
+      // Fixed amount off EACH qualifying unit (e.g. "KSh 76 off every beer") — backend parity:307.
+      // min(value, unitPrice) x qty across scoped, non-excluded items; never below the unit's price.
+      const applicableItems = cart
+        .filter(item => item.discountApplicable !== false && !isItemExcluded(item, offer))
+        .filter(item => {
+          if (offerScope === 'item' && offer.targetItems?.length > 0) return offer.targetItems.includes(getItemId(item));
+          if (offerScope === 'category' && offer.targetCategories?.length > 0) return offer.targetCategories.map(normalizeCategory).includes(normalizeCategory(getItemCategory(item)));
+          return true;
+        });
+      let disc = 0;
+      for (const it of applicableItems) {
+        disc += Math.min(effectiveDiscountValue, it.price || 0) * (it.quantity || 1);
+      }
       if (offer.maxDiscount && disc > offer.maxDiscount) disc = offer.maxDiscount;
       baseDiscount = Math.round(disc * 100) / 100;
     } else {
@@ -259,13 +331,15 @@ const hasScopeMatchingCart = (offer, cart) => {
   return true;
 };
 
-export const filterApplicableOffers = (offers, { subtotal, cart, context, now }) => {
+export const filterApplicableOffers = (offers, { subtotal, cart, context, now, timezone }) => {
   if (!Array.isArray(offers)) return [];
   const n = now || new Date();
   return offers.filter(offer => {
     if (!offer) return false;
     if (offer.isActive === false) return false;
-    if (!isScheduleValid(offer, n)) return false;
+    // Cashback offers are automatic post-payment credits, not selectable discounts (backend parity:359)
+    if (offer.promotionType === 'cashback') return false;
+    if (!isScheduleValid(offer, n, timezone)) return false;
     if (!isDateValid(offer, n)) return false;
     if (offer.minOrderValue && subtotal < offer.minOrderValue) return false;
     // Tiered offers: must meet at least the lowest tier's minSubtotal
@@ -308,6 +382,7 @@ export {
   isScheduleValid,
   isDateValid,
   matchesAudience,
+  isItemExcluded,
 };
 
 export default {
@@ -315,6 +390,7 @@ export default {
   isScheduleValid,
   isDateValid,
   matchesAudience,
+  isItemExcluded,
   calculateDiscountForOffer,
   calculateOfferResult,
   filterApplicableOffers,
