@@ -65,25 +65,31 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk DineOpen-Waiter.apk
+      - name: Rename APK (stable + version-stamped)
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk DineOpen-Waiter.apk
+          VER="${GITHUB_REF_NAME#v}"           # strip leading v → e.g. 2.98.15 (empty for manual runs)
+          echo "APK_VER=$VER" >> "$GITHUB_ENV"
+          if [ -n "$VER" ]; then cp DineOpen-Waiter.apk "DineOpen-Waiter-${VER}.apk"; fi
 
       - name: Publish to android-latest release (stable download link)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          NOTE="Latest DineOpen Waiter/POS Android APK${APK_VER:+ (v$APK_VER)}. Direct install — allow 'Install unknown apps'."
           gh release view android-latest >/dev/null 2>&1 \
-            && gh release upload android-latest DineOpen-Waiter.apk --clobber \
+            && { gh release upload android-latest DineOpen-Waiter.apk --clobber; gh release edit android-latest --notes "$NOTE"; } \
             || gh release create android-latest DineOpen-Waiter.apk \
-                 --title "DineOpen Waiter App (Android APK)" \
-                 --notes "Latest DineOpen Waiter/POS Android APK. Direct install — allow 'Install unknown apps'."
+                 --title "DineOpen Waiter App (Android APK)" --notes "$NOTE"
+          # also attach the version-stamped file to the stable release so the site can offer a versioned filename
+          if [ -n "$APK_VER" ]; then gh release upload android-latest "DineOpen-Waiter-${APK_VER}.apk" --clobber; fi
 
       - name: Also publish a versioned release (history)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" DineOpen-Waiter.apk \
+          gh release create "${{ github.ref_name }}" "DineOpen-Waiter-${APK_VER}.apk" \
             --title "DineOpen Waiter ${{ github.ref_name }}" \
             --notes "Android APK for ${{ github.ref_name }}." || true
 
