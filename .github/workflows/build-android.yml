@@ -56,7 +56,14 @@ jobs:
 
       - name: Decode release keystore
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+          # Strip ALL whitespace before decoding — wrapped/newline-laden base64 secrets
+          # decode to a corrupt keystore ("Tag number over 30 is not supported" at signing).
+          printf '%s' "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '[:space:]' | base64 -d > release.keystore
+          # Fail fast (seconds, not a 20-min build) with a clear message if it's unreadable.
+          if ! keytool -list -keystore release.keystore -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >/dev/null 2>&1; then
+            echo "::error::release.keystore is unreadable. Re-upload the ANDROID_KEYSTORE_BASE64 secret with:  base64 -w0 release.keystore  (or on macOS: base64 -i release.keystore | tr -d '\\n' | pbcopy), and verify ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_PASSWORD / ANDROID_KEY_ALIAS."
+            exit 1
+          fi
           cat > keystore.properties <<EOF
           storeFile=release.keystore
           storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
