@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  AppState,
   Alert,
   ScrollView,
   Animated,
@@ -168,7 +169,8 @@ export default function LoginScreen() {
   const [lanStep, setLanStep] = useState('connect'); // 'connect' | 'staff-login'
   const [lanAuthMode, setLanAuthMode] = useState('pin'); // LAN staff login: 'pin' (default) | 'password'
   const [lanStaffList, setLanStaffList] = useState([]);
-  const [lanConnectedUrl, setLanConnectedUrl] = useState(null); // the server we're connected to (for the ✓ banner)
+  const [lanConnectedUrl, setLanConnectedUrl] = useState(null); // the server we last pointed at (for the banner)
+  const [lanLiveStatus, setLanLiveStatus] = useState('unknown'); // LIVE reachability: 'unknown'|'checking'|'online'|'offline'
 
   // Owner auth method: 'main' (shows google + method picks), 'email', 'phone', 'register', 'emailOtp', 'phoneOtp'
   const [ownerStep, setOwnerStep] = useState('main');
@@ -605,6 +607,27 @@ export default function LoginScreen() {
   // opts.silent = true → used by the auto-try when the LAN screen opens; on failure it
   // stays quiet (server not found yet) and leaves the manual field for the user. Called
   // from onPress it receives the press event (opts.silent undefined) → normal behaviour.
+  // LIVE reachability probe for the saved LAN server — drives the connection banner so it reflects
+  // the ACTUAL state, not a stale saved value. Sets lanLiveStatus online/offline. Never throws.
+  const probeLan = async (rawUrl) => {
+    const base = (rawUrl || getLocalServerUrl() || '').trim();
+    if (!base) { setLanLiveStatus('offline'); return false; }
+    const url = base.startsWith('http') ? base : `http://${base}`;
+    setLanLiveStatus('checking');
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 3500);
+      const res = await fetch(`${url}/api/health`, { signal: ctrl.signal });
+      clearTimeout(t);
+      const ok = !!res.ok;
+      setLanLiveStatus(ok ? 'online' : 'offline');
+      return ok;
+    } catch (_) {
+      setLanLiveStatus('offline');
+      return false;
+    }
+  };
+
   const handleLanPair = async (opts = {}) => {
     const silent = opts && opts.silent === true;
     if (!lanHost) {
@@ -626,8 +649,10 @@ export default function LoginScreen() {
       // Route all API calls + real-time to the local server for this device.
       await apiClient.setLocalServer(url);
       setLanConnectedUrl(url);
+      setLanLiveStatus('online');
       setLanStep('staff-login');
     } catch (err) {
+      setLanLiveStatus('offline'); // live check failed → banner must not claim "connected"
       if (!silent) {
         setError(err.name === 'AbortError'
           ? 'Could not reach the server — check you are on the restaurant Wi-Fi, or enter the IP shown in the DineOpen Server window.'
@@ -691,10 +716,22 @@ export default function LoginScreen() {
         if (existing) {
           setLanConnectedUrl(existing);
           setLanHost(existing.replace(/^https?:\/\//i, ''));
+          probeLan(existing); // verify it's ACTUALLY reachable — never show a stale "connected"
         }
       } catch (_) {}
     })();
   }, []);
+
+  // Keep the LAN connection banner LIVE while the connect screen is open: re-probe on entry, every
+  // 8s, and whenever the app returns to foreground — so a dropped Wi-Fi flips it to "not connected"
+  // instead of a stale green success.
+  useEffect(() => {
+    if (loginMode !== 'lan' || lanStep !== 'connect' || !lanConnectedUrl) return;
+    probeLan(lanConnectedUrl);
+    const id = setInterval(() => probeLan(lanConnectedUrl), 8000);
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') probeLan(lanConnectedUrl); });
+    return () => { clearInterval(id); sub.remove(); };
+  }, [loginMode, lanStep, lanConnectedUrl]);
 
   // ==================== COUNTRY PICKER ====================
   const filteredCountries = countrySearch
@@ -1299,7 +1336,7 @@ export default function LoginScreen() {
           }}
         >
           <Text style={{ fontSize: 12, color: loginMode === 'lan' ? '#6366f1' : Colors.textLight, fontWeight: '600' }}>
-            <Ionicons name="wifi-outline" size={12} /> {lanConnectedUrl ? 'Restaurant LAN ✓' : 'Join Restaurant LAN'}
+            <Ionicons name="wifi-outline" size={12} /> {lanLiveStatus === 'online' ? 'Restaurant LAN ✓' : 'Join Restaurant LAN'}
           </Text>
         </TouchableOpacity>
 
@@ -1359,16 +1396,30 @@ export default function LoginScreen() {
                     <Text style={styles.primaryButtonText}>Connect to Server</Text>
                   )}
                 </TouchableOpacity>
-                {lanConnectedUrl ? (
+                {lanConnectedUrl && lanLiveStatus === 'online' ? (
                   <TouchableOpacity
                     style={styles.connectedBanner}
                     onPress={() => { setError(''); setLanStep('staff-login'); }}
                   >
                     <Ionicons name="checkmark-circle" size={18} color="#059669" />
                     <Text style={styles.connectedBannerText}>
-                      Already connected to <Text style={{ fontWeight: '700' }}>{lanConnectedUrl.replace(/^https?:\/\//i, '')}</Text> — tap to log in
+                      Connected to <Text style={{ fontWeight: '700' }}>{lanConnectedUrl.replace(/^https?:\/\//i, '')}</Text> — tap to log in
                     </Text>
                   </TouchableOpacity>
+                ) : lanConnectedUrl && lanLiveStatus === 'checking' ? (
+                  <View style={styles.checkingBanner}>
+                    <ActivityIndicator size="small" color="#2563eb" />
+                    <Text style={styles.checkingBannerText}>
+                      Checking connection to <Text style={{ fontWeight: '700' }}>{lanConnectedUrl.replace(/^https?:\/\//i, '')}</Text>…
+                    </Text>
+                  </View>
+                ) : lanConnectedUrl && lanLiveStatus === 'offline' ? (
+                  <View style={styles.offlineBanner}>
+                    <Ionicons name="cloud-offline-outline" size={18} color="#dc2626" />
+                    <Text style={styles.offlineBannerText}>
+                      Not connected — join the restaurant Wi-Fi, then tap “Connect to Server”.
+                    </Text>
+                  </View>
                 ) : null}
                 <View style={styles.staffHint}>
                   <Ionicons name="information-circle-outline" size={16} color={Colors.textLight} />
@@ -1797,6 +1848,38 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#059669',
+  },
+  checkingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 16,
+  },
+  checkingBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1e3a8a',
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 16,
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#991b1b',
   },
   // Staff hint
   staffHint: {

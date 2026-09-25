@@ -1710,7 +1710,10 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       const src = imageHtml || html || text;
       const wantImageForCurrency = _autoImageForCurrency && hasNonAsciiCurrency(src);
       const wantImageForScript = hasComplexScript(src);
-      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript) && (imageHtml || html) && connectionType !== 'airprint') {
+      // A receipt logo is an <img> — ESC/POS text can't print images, so force the image path when
+      // the HTML contains one (the bill template only emits it when receiptLogo is enabled).
+      const wantImageForLogo = /<img\b/i.test(imageHtml || html || '');
+      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript || wantImageForLogo) && (imageHtml || html) && connectionType !== 'airprint') {
         try {
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };

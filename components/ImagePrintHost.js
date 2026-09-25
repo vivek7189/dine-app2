@@ -87,7 +87,10 @@ export default function ImagePrintHost() {
     : '<html><body></body></html>';
 
   // Measure after load; posted back via onMessage.
-  const injected = 'setTimeout(function(){try{window.ReactNativeWebView.postMessage(String(document.body.scrollHeight||document.documentElement.scrollHeight||400));}catch(e){}},150); true;';
+  // Wait for images (e.g. the receipt logo) to finish loading before measuring/snapshotting, else a
+  // remote-URL logo can be captured blank. Falls back to a 3s hard cap so a slow/broken image can
+  // never block the print. Base64/data-URI logos are already complete → measures immediately.
+  const injected = '(function(){function done(){try{window.ReactNativeWebView.postMessage(String(document.body.scrollHeight||document.documentElement.scrollHeight||400));}catch(e){}}var imgs=Array.prototype.slice.call(document.images||[]);var pending=imgs.filter(function(im){return !im.complete;});if(pending.length===0){setTimeout(done,150);return;}var left=pending.length,finished=false;function one(){if(finished)return;left--;if(left<=0){finished=true;setTimeout(done,80);}}pending.forEach(function(im){im.addEventListener("load",one);im.addEventListener("error",one);});setTimeout(function(){if(!finished){finished=true;done();}},3000);})(); true;';
 
   if (!job) return null;
 
