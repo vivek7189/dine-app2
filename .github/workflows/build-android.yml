@@ -45,6 +45,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Default packages include the obsolete 'tools' package (removed from Google's
+          # repo) which makes sdkmanager fail — this broke every build since ~Jul 2026.
+          # Install only platform-tools; Gradle downloads the platform/build-tools it needs.
+          packages: 'platform-tools'
 
       - name: Install dependencies
         run: npm ci
