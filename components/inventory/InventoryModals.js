@@ -7,6 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { CATEGORY_OPTIONS, UNIT_OPTIONS } from './useInventoryData';
+import { fmtQty } from '../../utils/formatQty';
 
 // ── Shared Modal Wrapper ─────────────────────────────
 const ModalWrapper = ({ visible, onClose, title, children }) => (
@@ -347,7 +348,7 @@ export function ViewRecipeModal({ visible, onClose, recipe, inventoryItems, getI
           return (
             <View key={idx} style={styles.viewIngRow}>
               <Text style={styles.viewIngName}>{ing.inventoryItemName || ing.name || 'Item'}</Text>
-              <Text style={styles.viewIngQty}>{ing.quantity} {ing.unit}</Text>
+              <Text style={styles.viewIngQty}>{fmtQty(ing.quantity)} {ing.unit}</Text>
               {cost > 0 && <Text style={styles.viewIngCost}>{'\u20B9'}{cost.toFixed(2)}</Text>}
             </View>
           );
@@ -436,7 +437,7 @@ export function QuickStockModal({
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.qsName}>{item.name}</Text>
-                  <Text style={styles.qsSub}>Current: {item.currentStock || 0} {item.unit}{adj !== 0 ? ` → ${newStock}` : ''}</Text>
+                  <Text style={styles.qsSub}>Current: {fmtQty(item.currentStock || 0)} {item.unit}{adj !== 0 ? ` → ${fmtQty(newStock)}` : ''}</Text>
                 </View>
                 <View style={styles.qsControls}>
                   <TouchableOpacity style={styles.qsBtn} onPress={() => setAdj(id, adj - 1)}>
@@ -703,7 +704,7 @@ export function QuickOrderModal({
                       <TouchableOpacity style={styles.qsBtn} onPress={() => updateManualItemQty(item.menuItemId, -1)}>
                         <Ionicons name="remove" size={16} color="#ef4444" />
                       </TouchableOpacity>
-                      <Text style={styles.qoQty}>{item.quantity}</Text>
+                      <Text style={styles.qoQty}>{fmtQty(item.quantity)}</Text>
                       <TouchableOpacity style={styles.qsBtn} onPress={() => updateManualItemQty(item.menuItemId, 1)}>
                         <Ionicons name="add" size={16} color="#10b981" />
                       </TouchableOpacity>
@@ -854,7 +855,7 @@ export function LogWasteModal({
                     }}
                   >
                     <Text style={{ fontSize: 14, color: Colors.textDark }}>{item.name}</Text>
-                    <Text style={{ fontSize: 11, color: Colors.textLight }}>{item.currentStock} {item.unit} in stock</Text>
+                    <Text style={{ fontSize: 11, color: Colors.textLight }}>{fmtQty(item.currentStock)} {item.unit} in stock</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -988,7 +989,7 @@ export function AILeftoverModal({
                 }}>
                   <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textDark }}>{item.name}</Text>
                   <Text style={{ fontSize: 12, color: Colors.textLight, marginTop: 2 }}>
-                    {item.quantity} {item.unit} · {item.recipeName || 'AI estimated'}
+                    {fmtQty(item.quantity)} {item.unit} · {item.recipeName || 'AI estimated'}
                   </Text>
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                     <TouchableOpacity

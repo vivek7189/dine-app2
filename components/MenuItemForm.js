@@ -1269,9 +1269,9 @@ export default function MenuItemForm({
                   style={styles.input}
                   placeholder="0"
                   placeholderTextColor={Colors.textLight}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   value={String(formData.stockQuantity ?? '')}
-                  onChangeText={(text) => setFormData({ ...formData, stockQuantity: text ? parseInt(text) || 0 : '' })}
+                  onChangeText={(text) => setFormData({ ...formData, stockQuantity: text })}
                 />
               </View>
               <View style={[styles.inputGroup, { flex: 1, marginLeft: Spacing.xs, marginBottom: 0 }]}>
@@ -1291,9 +1291,9 @@ export default function MenuItemForm({
                   style={styles.input}
                   placeholder="5"
                   placeholderTextColor={Colors.textLight}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   value={String(formData.lowStockThreshold ?? '')}
-                  onChangeText={(text) => setFormData({ ...formData, lowStockThreshold: text ? parseInt(text) || 0 : '' })}
+                  onChangeText={(text) => setFormData({ ...formData, lowStockThreshold: text })}
                 />
               </View>
             </View>
@@ -1304,9 +1304,9 @@ export default function MenuItemForm({
                   style={styles.input}
                   placeholder="1"
                   placeholderTextColor={Colors.textLight}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   value={String(formData.deductionQuantity ?? 1)}
-                  onChangeText={(text) => setFormData({ ...formData, deductionQuantity: text ? parseInt(text) || 1 : 1 })}
+                  onChangeText={(text) => setFormData({ ...formData, deductionQuantity: text })}
                 />
               </View>
               <View style={[styles.inputGroup, { flex: 2, marginLeft: Spacing.sm, marginBottom: 0, justifyContent: 'flex-end' }]}>
@@ -1319,21 +1319,14 @@ export default function MenuItemForm({
         )}
       </View>
 
-      {/* Generate Smart Recipe — only for new items, not bar */}
-      {!isEditing && businessType !== 'bar' && (
+      {/* How this item uses inventory (no AI recipes: the owner makes recipes in Inventory) */}
+      {businessType !== 'bar' && (
         <View style={styles.inputGroup}>
-          <TouchableOpacity
-            style={[
-              styles.statusButton,
-              { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingHorizontal: 14 },
-              formData.generateRecipe && { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-            ]}
-            onPress={() => setFormData({ ...formData, generateRecipe: !formData.generateRecipe })}
-          >
-            <Ionicons name={formData.generateRecipe ? 'checkbox' : 'square-outline'} size={18} color={formData.generateRecipe ? '#fff' : Colors.textLight} />
-            <Text style={[styles.statusText, formData.generateRecipe && { color: '#fff' }]}>Generate Smart Recipe</Text>
-          </TouchableOpacity>
-          <Text style={[styles.hintText, { marginTop: 4 }]}>Auto-create recipe with ingredients list using AI</Text>
+          <Text style={[styles.hintText, { marginTop: 0 }]}>
+            {formData.isStockManaged
+              ? 'Each sale reduces this item\'s own inventory count.'
+              : 'Sold as-is (Coke, water, chips)? Turn on Track Stock so each sale reduces inventory. A cooked dish? Add its recipe in Inventory → Recipes. An inventory item with the same name alone does not link them.'}
+          </Text>
         </View>
       )}
 

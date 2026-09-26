@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Alert } from 'react-native';
 import apiClient from '../../services/api';
 import * as ImagePicker from 'expo-image-picker';
+import { fmtQty } from '../../utils/formatQty';
 
 const CATEGORY_OPTIONS = [
   'Vegetables', 'Fruits', 'Dairy', 'Meat', 'Seafood', 'Grains',
@@ -693,7 +694,7 @@ export default function useInventoryData() {
         name: recipeFormData.name,
         category: recipeFormData.category,
         description: recipeFormData.description,
-        ingredients: recipeFormData.ingredients.map(i => `${i.quantity}${i.unit} ${i.inventoryItemName}`).join(', '),
+        ingredients: recipeFormData.ingredients.map(i => `${fmtQty(i.quantity)}${i.unit} ${i.inventoryItemName}`).join(', '),
         servings: recipeFormData.servings,
       });
       if (res.steps?.length > 0) {

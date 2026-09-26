@@ -107,7 +107,7 @@ export default function MenuManagementScreen() {
     // Tax
     taxInclusive: null,
     // Recipe
-    generateRecipe: true,
+    generateRecipe: false, // recipes are made by the owner in Inventory (no AI)
     // Sold by weight
     soldByWeight: false,
     priceUnit: 'per_kg',
@@ -369,7 +369,7 @@ export default function MenuManagementScreen() {
       stockUnit: 'pcs',
       deductionQuantity: 1,
       taxInclusive: null,
-      generateRecipe: true,
+      generateRecipe: false, // recipes are made by the owner in Inventory (no AI)
       soldByWeight: false,
       priceUnit: 'per_kg',
       pluCode: '',
@@ -643,11 +643,15 @@ export default function MenuManagementScreen() {
       // Stock management
       itemData.isStockManaged = !!formData.isStockManaged;
       if (formData.isStockManaged) {
-        itemData.stockQuantity = typeof formData.stockQuantity === 'number' ? formData.stockQuantity : parseInt(formData.stockQuantity) || 0;
-        itemData.lowStockThreshold = typeof formData.lowStockThreshold === 'number' ? formData.lowStockThreshold : parseInt(formData.lowStockThreshold) || 5;
+        // Decimals allowed (1.5 kg in stock, 0.25 kg per sale).
+        itemData.stockQuantity = typeof formData.stockQuantity === 'number' ? formData.stockQuantity : parseFloat(formData.stockQuantity) || 0;
+        itemData.lowStockThreshold = typeof formData.lowStockThreshold === 'number' ? formData.lowStockThreshold : (Number.isFinite(parseFloat(formData.lowStockThreshold)) ? parseFloat(formData.lowStockThreshold) : 5);
         itemData.stockUnit = formData.stockUnit || 'pcs';
-        itemData.deductionQuantity = parseInt(formData.deductionQuantity) || 1;
+        itemData.deductionQuantity = parseFloat(formData.deductionQuantity) > 0 ? parseFloat(formData.deductionQuantity) : 1;
         itemData.isAvailable = itemData.stockQuantity > 0;
+        // The count this form opened with: the server applies only the owner's change to the live
+        // stock, so sales made while the form was open are not added back.
+        if (editingItem && editingItem.isStockManaged) itemData.baseStockQuantity = editingItem.stockQuantity ?? null;
       }
 
       // Multi-tier pricing rules (per-item)
@@ -676,14 +680,6 @@ export default function MenuManagementScreen() {
             });
           });
           await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData, restaurantId);
-        }
-        // Fire-and-forget recipe generation
-        if (formData.generateRecipe && businessType !== 'bar') {
-          apiClient.generateRecipeSteps(restaurantId, {
-            name: formData.name,
-            category: formData.category,
-            description: formData.description,
-          }).catch(() => {}); // silent failure
         }
       }
 

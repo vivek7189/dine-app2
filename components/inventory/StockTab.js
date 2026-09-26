@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
+import { fmtQty } from '../../utils/formatQty';
 
 const SORT_OPTIONS = [
   { key: 'name', label: 'Name' },
@@ -76,7 +77,7 @@ export default function StockTab({
             <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: color }]} />
           </View>
           <Text style={[styles.stockLabel, { color }]}>
-            {Number(item.currentStock) || 0} {item.unit}
+            {fmtQty(Number(item.currentStock) || 0)} {item.unit}
           </Text>
         </View>
 
@@ -88,7 +89,7 @@ export default function StockTab({
           {item.maxStock ? (
             <View style={styles.metaItem}>
               <Text style={styles.metaLabel}>Max</Text>
-              <Text style={styles.metaValue}>{item.maxStock}</Text>
+              <Text style={styles.metaValue}>{fmtQty(item.maxStock)}</Text>
             </View>
           ) : null}
           {usage > 0 && (
@@ -101,7 +102,7 @@ export default function StockTab({
             <View style={styles.metaItem}>
               <Text style={styles.metaLabel}>Wasted</Text>
               <Text style={[styles.metaValue, { color: '#ea580c' }]}>
-                {item.wastedQty} {item.unit}
+                {fmtQty(item.wastedQty)} {item.unit}
               </Text>
             </View>
           )}

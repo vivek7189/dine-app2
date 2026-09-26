@@ -5,6 +5,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { fmtQty } from '../../utils/formatQty';
 
 const PERIODS = [
   { key: 'today', label: 'Today' },
@@ -154,7 +155,7 @@ export default function WasteTab({
                 {alert.itemName || alert.name}
               </Text>
               <Text style={styles.alertItemDetail}>
-                {alert.quantity} {alert.unit} {'\u2022'} Expired {formatDate(alert.expiryDate)}
+                {fmtQty(alert.quantity)} {alert.unit} {'\u2022'} Expired {formatDate(alert.expiryDate)}
               </Text>
             </View>
             <View style={styles.alertActions}>

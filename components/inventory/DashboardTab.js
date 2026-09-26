@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from '
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { fmtQty } from '../../utils/formatQty';
 
 export default function DashboardTab({
   totalItems, lowStockCount, totalValue, categoryCount, suppliers,
@@ -123,7 +124,7 @@ export default function DashboardTab({
                 <View style={{ flex: 1 }}>
                   <Text style={styles.lowStockName}>{item.name}</Text>
                   <Text style={styles.lowStockMeta}>
-                    {Number(item.currentStock) || 0} / {Number(item.minStock) || 0} {item.unit}
+                    {fmtQty(Number(item.currentStock) || 0)} / {fmtQty(Number(item.minStock) || 0)} {item.unit}
                   </Text>
                   <View style={styles.barBg}>
                     <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: color }]} />

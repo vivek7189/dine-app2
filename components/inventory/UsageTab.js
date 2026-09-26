@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollVi
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { fmtQty } from '../../utils/formatQty';
 
 const PERIODS = [
   { key: 'today', label: 'Today' },
@@ -71,7 +72,7 @@ export default function UsageTab({
             <View key={item._id || item.inventoryItemId || idx} style={styles.summaryCard}>
               <Text style={styles.summaryName} numberOfLines={1}>{item.name || item.inventoryItemName || 'Item'}</Text>
               <Text style={styles.summaryQty}>
-                {Number(item.totalQuantity || item.quantity || 0).toFixed(1)} {item.unit || ''}
+                {fmtQty(Number(item.totalQuantity || item.quantity || 0))} {item.unit || ''}
               </Text>
               {Number(item.totalCost || item.cost || 0) > 0 && (
                 <Text style={styles.summaryCost}>

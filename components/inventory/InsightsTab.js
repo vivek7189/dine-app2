@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
+import { fmtQty } from '../../utils/formatQty';
 
 const URGENCY_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
 const RISK_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
@@ -155,7 +156,7 @@ export default function InsightsTab({
       {expandedReport === 'lowStock' && lowStockItems.length > 0 && (
         <View style={styles.reportExpanded}>
           {lowStockItems.map(i => (
-            <Text key={i._id || i.id} style={styles.reportItem}>• {i.name}: {i.currentStock} / {i.minStock} {i.unit}</Text>
+            <Text key={i._id || i.id} style={styles.reportItem}>• {i.name}: {fmtQty(i.currentStock)} / {fmtQty(i.minStock)} {i.unit}</Text>
           ))}
         </View>
       )}
