@@ -469,6 +469,9 @@ export default function useInventoryData() {
         category: itemFormData.category,
         unit: itemFormData.unit,
         currentStock: Number(itemFormData.currentStock) || 0,
+        // Stock the form started from — the server applies only the change to the LIVE stock,
+        // so orders deducted while the form was open aren't wiped.
+        baseStock: Number(editingItem.currentStock) || 0,
         minStock: Number(itemFormData.minStock) || 0,
         maxStock: Number(itemFormData.maxStock) || 0,
         costPerUnit: Number(itemFormData.costPerUnit) || 0,
@@ -777,9 +780,9 @@ export default function useInventoryData() {
       await Promise.all(adjustments.map(([itemId, adjustment]) => {
         const item = inventoryItems.find(i => (i.id || i._id) === itemId);
         if (!item) return null;
-        const newStock = Math.max(0, (Number(item.currentStock) || 0) + adjustment);
         const batch = quickStockBatchInfo[itemId] || {};
-        const payload = { currentStock: newStock };
+        // Send only the change — the server adds it to the LIVE stock.
+        const payload = { stockAdjustment: adjustment };
         if (adjustment > 0 && batch.mfgDate) payload.mfgDate = batch.mfgDate;
         if (adjustment > 0 && batch.expiryDays) payload.expiryDays = parseInt(batch.expiryDays);
         return apiClient.updateInventoryItem(restaurantId, itemId, payload);
