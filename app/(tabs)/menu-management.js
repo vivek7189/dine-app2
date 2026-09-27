@@ -657,7 +657,8 @@ export default function MenuManagementScreen() {
         itemData.lowStockThreshold = typeof formData.lowStockThreshold === 'number' ? formData.lowStockThreshold : (Number.isFinite(parseFloat(formData.lowStockThreshold)) ? parseFloat(formData.lowStockThreshold) : 5);
         itemData.stockUnit = formData.stockUnit || 'pcs';
         itemData.deductionQuantity = parseFloat(formData.deductionQuantity) > 0 ? parseFloat(formData.deductionQuantity) : 1;
-        itemData.isAvailable = itemData.stockQuantity > 0;
+        // Only a count the owner actually typed decides availability (turning tracking on with a blank count must not hide the item)
+        if (formData.stockQuantity !== '' && formData.stockQuantity != null) itemData.isAvailable = itemData.stockQuantity > 0;
         // The count this form opened with: the server applies only the owner's change to the live
         // stock, so sales made while the form was open are not added back.
         if (editingItem && editingItem.isStockManaged) itemData.baseStockQuantity = editingItem.stockQuantity ?? null;

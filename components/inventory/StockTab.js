@@ -23,7 +23,7 @@ export default function StockTab({
 
   const getTodayUsage = (itemId) => {
     const u = todayUsageSummary.find(s => s.inventoryItemId === itemId);
-    return u ? Number(u.totalQuantity || u.quantity || 0) : 0;
+    return u ? Number(u.totalQuantityConsumed ?? u.totalQuantity ?? u.quantity ?? 0) : 0;
   };
 
   const renderItem = ({ item }) => {

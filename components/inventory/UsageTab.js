@@ -72,15 +72,15 @@ export default function UsageTab({
             <View key={item._id || item.inventoryItemId || idx} style={styles.summaryCard}>
               <Text style={styles.summaryName} numberOfLines={1}>{item.name || item.inventoryItemName || 'Item'}</Text>
               <Text style={styles.summaryQty}>
-                {fmtQty(Number(item.totalQuantity || item.quantity || 0))} {item.unit || ''}
+                {fmtQty(Number(item.totalQuantityConsumed ?? item.totalQuantity ?? item.quantity ?? 0))} {item.unit || ''}
               </Text>
-              {Number(item.totalCost || item.cost || 0) > 0 && (
+              {Number(item.totalCostConsumed ?? item.totalCost ?? item.cost ?? 0) > 0 && (
                 <Text style={styles.summaryCost}>
-                  {'\u20B9'}{Number(item.totalCost || item.cost || 0).toFixed(0)}
+                  {'\u20B9'}{Number(item.totalCostConsumed ?? item.totalCost ?? item.cost ?? 0).toFixed(0)}
                 </Text>
               )}
-              {Number(item.orderCount || 0) > 0 && (
-                <Text style={styles.summaryOrders}>{item.orderCount} orders</Text>
+              {Number(item.transactionCount ?? item.orderCount ?? 0) > 0 && (
+                <Text style={styles.summaryOrders}>{item.transactionCount ?? item.orderCount} sales</Text>
               )}
             </View>
           ))}
@@ -117,7 +117,7 @@ export default function UsageTab({
                   </Text>
                 </View>
                 <Text style={[styles.txQty, { color: isNeg ? '#ef4444' : '#10b981' }]}>
-                  {isNeg ? '' : '+'}{qtyChange} {tx.unit || ''}
+                  {isNeg ? '' : '+'}{fmtQty(qtyChange)} {tx.unit || ''}
                 </Text>
                 <View style={[styles.srcBadge, { backgroundColor: srcColor + '18' }]}>
                   <Text style={[styles.srcText, { color: srcColor }]}>{source.charAt(0).toUpperCase() + source.slice(1)}</Text>
