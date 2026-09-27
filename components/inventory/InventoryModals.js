@@ -820,7 +820,7 @@ export function LogWasteModal({
   const filtered = search
     ? inventoryItems.filter(i => i.name?.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
     : [];
-  const reasons = ['spillage', 'expired', 'damaged', 'leftover', 'shrinkage', 'other'];
+  const reasons = ['spillage', 'expired', 'damaged', 'leftover', 'shrinkage', 'staff_meal', 'complimentary', 'other'];
 
   return (
     <ModalWrapper visible={visible} onClose={onClose} title="Log Waste">
@@ -888,7 +888,7 @@ export function LogWasteModal({
                 fontSize: 12, fontWeight: '600',
                 color: wasteFormData.reason === r ? '#fff' : Colors.textMedium,
               }}>
-                {r.charAt(0).toUpperCase() + r.slice(1)}
+                {({ staff_meal: 'Staff meal', complimentary: 'Complimentary' })[r] || (r.charAt(0).toUpperCase() + r.slice(1))}
               </Text>
             </TouchableOpacity>
           ))}

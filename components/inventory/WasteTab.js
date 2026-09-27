@@ -21,6 +21,8 @@ const REASONS = [
   { key: 'damaged', label: 'Damaged' },
   { key: 'leftover', label: 'Leftover' },
   { key: 'shrinkage', label: 'Shrinkage' },
+  { key: 'staff_meal', label: 'Staff meal' },
+  { key: 'complimentary', label: 'Complimentary' },
   { key: 'other', label: 'Other' },
 ];
 
@@ -30,6 +32,8 @@ const REASON_COLORS = {
   damaged:   { bg: '#f5f3ff', color: '#8b5cf6' },
   leftover:  { bg: '#eff6ff', color: '#3b82f6' },
   shrinkage: { bg: '#fdf2f8', color: '#ec4899' },
+  staff_meal:    { bg: '#ecfdf5', color: '#059669' },
+  complimentary: { bg: '#fff7ed', color: '#ea580c' },
   other:     { bg: '#f3f4f6', color: '#6b7280' },
 };
 
