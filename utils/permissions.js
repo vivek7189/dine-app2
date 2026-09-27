@@ -91,3 +91,25 @@ function hasFeatureAccess(user, feature, bypassRoles = []) {
 }
 
 module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform, hasFeatureAccess };
+
+// Floor / waiter-app roles: a plain `menu: true` means "use the menu"; what they may change comes from
+// Admin → Waiter App → Menu permissions (restaurant.posSettings.waiterAppConfig). Same rule as the backend.
+export const WAITER_APP_MENU_ROLES = ['waiter', 'captain', 'employee', 'chef', 'cook', 'kitchen', 'parcel', 'delivery', 'steward', 'runner', 'helper'];
+
+export function canDoMenu(user, operation, waiterAppConfig) {
+  const role = String(user?.role || '').toLowerCase();
+  if (['owner', 'admin'].includes(role)) return true;
+  const pa = user?.pageAccess;
+  if (WAITER_APP_MENU_ROLES.includes(role) && !(pa?.menu && typeof pa.menu === 'object')) {
+    if (!pa?.menu) return false;
+    const cfg = waiterAppConfig || {};
+    if (operation === 'read') return true;
+    if (operation === 'markOutOfStock') return cfg.menuCanMarkOutOfStock !== false;
+    if (operation === 'update') return cfg.menuCanEdit === true;
+    if (operation === 'add') return cfg.menuCanAdd === true;
+    if (operation === 'delete') return cfg.menuCanDelete === true;
+    return false;
+  }
+  if (['manager', 'cashier'].includes(role) && !pa?.menu) return true; // screen was always open to them
+  return !!resolveFeaturePermissions(pa, 'menu')[operation];
+}

@@ -27,7 +27,7 @@ import MenuItemForm from '../../components/MenuItemForm';
 import BulkMenuUploadModal from '../../components/BulkMenuUploadModal';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
-import { hasFeatureAccess } from '../../utils/permissions';
+import { hasFeatureAccess, canDoMenu } from '../../utils/permissions';
 import { getCurrencySymbol } from '../../utils/formatCurrency';
 import { describeSchedule, isScheduleOpen } from '../../utils/menuSchedule';
 
@@ -65,6 +65,8 @@ export default function MenuManagementScreen() {
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
   const [savingCategory, setSavingCategory] = useState(false);
   const [userRole, setUserRole] = useState('');
+  // Menu rights on this screen (buttons hidden when not allowed; the backend enforces the same rules)
+  const [menuPerms, setMenuPerms] = useState({ add: false, edit: false, del: false, hide: false });
   // QR Code
   const [showQRModal, setShowQRModal] = useState(false);
   // Restaurant data for QR
@@ -134,6 +136,12 @@ export default function MenuManagementScreen() {
       // owner/admin always allowed; manager/cashier kept for backwards compat; custom roles check pageAccess
       const role = userData.role?.toLowerCase();
       setUserRole(role || '');
+      // What this user may change (owner sets waiter rights in Admin → Waiter App → Menu permissions)
+      const wac = userData.restaurant?.posSettings?.waiterAppConfig || {};
+      setMenuPerms({
+        add: canDoMenu(userData, 'add', wac), edit: canDoMenu(userData, 'update', wac),
+        del: canDoMenu(userData, 'delete', wac), hide: canDoMenu(userData, 'markOutOfStock', wac),
+      });
       if (!['owner', 'admin', 'manager', 'cashier'].includes(role) && !hasFeatureAccess(userData, 'menu')) {
         Alert.alert(
           'Access Denied',
@@ -838,12 +846,15 @@ export default function MenuManagementScreen() {
                       color={item.isFavorite ? Colors.accentYellow : Colors.textLight}
                     />
                   </TouchableOpacity>
+                  {menuPerms.edit && (
                   <TouchableOpacity
                     style={styles.actionBtn}
                     onPress={() => handleEdit(item)}
                   >
                     <Ionicons name="create-outline" size={18} color={Colors.info} />
                   </TouchableOpacity>
+                  )}
+                  {menuPerms.hide && (
                   <TouchableOpacity
                     style={[styles.actionBtn, isOutOfStock && styles.actionBtnOutOfStock]}
                     onPress={() => handleToggleAvailability(item)}
@@ -854,12 +865,15 @@ export default function MenuManagementScreen() {
                       color={isOutOfStock ? Colors.accentGreen : Colors.secondary}
                     />
                   </TouchableOpacity>
+                  )}
+                  {menuPerms.del && (
                   <TouchableOpacity
                     style={styles.actionBtn}
                     onPress={() => handleDelete(item)}
                   >
                     <Ionicons name="trash-outline" size={18} color={Colors.error} />
                   </TouchableOpacity>
+                  )}
                 </>
               )}
             </View>
@@ -1025,9 +1039,11 @@ export default function MenuManagementScreen() {
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
+                {menuPerms.add && (
                 <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
                   <Text style={styles.saveButtonText}>Add Item</Text>
                 </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -1051,12 +1067,16 @@ export default function MenuManagementScreen() {
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => setShowQRModal(true)}>
             <Ionicons name="qr-code-outline" size={20} color="#dc2626" />
           </TouchableOpacity>
+          {menuPerms.add && (
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#ecfdf5' }]} onPress={handleTakePhoto}>
             <Ionicons name="camera-outline" size={20} color="#10b981" />
           </TouchableOpacity>
+          )}
+          {menuPerms.add && (
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fffbeb' }]} onPress={handleUploadFile}>
             <Ionicons name="cloud-upload-outline" size={20} color="#f59e0b" />
           </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -1124,6 +1144,7 @@ export default function MenuManagementScreen() {
             This is a demo menu to help you explore DineOpen. Adding your own items will automatically replace it.
           </Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
+            {menuPerms.add && (
             <TouchableOpacity
               onPress={handleUploadFile}
               style={{
@@ -1140,6 +1161,7 @@ export default function MenuManagementScreen() {
               <Ionicons name="cloud-upload" size={16} color="#fff" />
               <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Upload Menu</Text>
             </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={handleAdd}
               style={{
@@ -1180,9 +1202,11 @@ export default function MenuManagementScreen() {
       />
 
       {/* FAB */}
+      {menuPerms.add && (
       <TouchableOpacity style={styles.fab} onPress={handleAdd}>
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
+      )}
 
       {/* Add/Edit Modal */}
       <Modal
@@ -1406,18 +1430,22 @@ export default function MenuManagementScreen() {
                       <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{cat.description}</Text>
                     ) : null}
                   </View>
+                  {menuPerms.edit && (
                   <TouchableOpacity
                     style={{ padding: 8 }}
                     onPress={() => handleEditCategory(cat)}
                   >
                     <Ionicons name="create-outline" size={18} color="#3b82f6" />
                   </TouchableOpacity>
+                  )}
+                  {menuPerms.del && (
                   <TouchableOpacity
                     style={{ padding: 8 }}
                     onPress={() => handleDeleteCategory(cat)}
                   >
                     <Ionicons name="trash-outline" size={18} color="#ef4444" />
                   </TouchableOpacity>
+                  )}
                 </View>
               ))}
               <View style={{ height: 40 }} />
