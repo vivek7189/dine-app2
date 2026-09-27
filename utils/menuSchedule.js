@@ -72,14 +72,14 @@ function describeSchedule(schedule) {
 }
 
 // Is this menu item orderable now? Item timing AND its category / sub-category timings must all allow it.
-// categories: restaurant.categories ([{ name, availabilitySchedule }]).
+// categories: restaurant.categories ([{ id, name, availabilitySchedule }]) — matched by name or id.
 function itemAvailability(item, categories, date, tz) {
   if (!item) return { available: true };
   const cats = Array.isArray(categories) ? categories : [];
   const checks = [{ schedule: item.availabilitySchedule, source: 'item' }];
   for (const nm of [item.category, item.subCategory]) {
     if (!nm) continue;
-    const c = cats.find(x => x && x.name === nm);
+    const c = cats.find(x => x && (x.name === nm || x.id === nm)); // items store the category name or its id
     if (c && c.availabilitySchedule) checks.push({ schedule: c.availabilitySchedule, source: 'category', name: c.name });
   }
   for (const c of checks) {
