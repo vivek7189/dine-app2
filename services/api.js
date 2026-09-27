@@ -2870,6 +2870,27 @@ class ApiClient {
     return this.request(`/api/ai/waste-summary/${restaurantId}`);
   }
 
+  // Stock count (stock take): draft → submitted → posted. Online only (needs live system stock).
+  async getStockCounts(restaurantId) {
+    return this.request(`/api/inventory/${restaurantId}/stock-counts`);
+  }
+
+  async getStockCount(restaurantId, countId) {
+    return this.request(`/api/inventory/${restaurantId}/stock-counts/${countId}`);
+  }
+
+  async createStockCount(restaurantId, data) {
+    return this.request(`/api/inventory/${restaurantId}/stock-counts`, { method: 'POST', data: data || {} });
+  }
+
+  async saveStockCountLines(restaurantId, countId, lines) {
+    return this.request(`/api/inventory/${restaurantId}/stock-counts/${countId}/lines`, { method: 'PATCH', data: { lines } });
+  }
+
+  async stockCountAction(restaurantId, countId, action) {
+    return this.request(`/api/inventory/${restaurantId}/stock-counts/${countId}/${action}`, { method: 'POST', data: {} });
+  }
+
   // Waste Management
   async getWasteEntries(restaurantId, params = {}) {
     const qs = new URLSearchParams(params).toString();

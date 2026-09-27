@@ -22,6 +22,7 @@ import UsageTab from '../../components/inventory/UsageTab';
 import ProcurementTab from '../../components/inventory/ProcurementTab';
 import InsightsTab from '../../components/inventory/InsightsTab';
 import WasteTab from '../../components/inventory/WasteTab';
+import CountTab from '../../components/inventory/CountTab';
 import {
   AddEditItemModal, AddSupplierModal, AddEditRecipeModal,
   ViewRecipeModal, QuickStockModal, AddPurchaseOrderModal, QuickOrderModal,
@@ -33,6 +34,7 @@ const TABS = [
   { key: 'stock', label: 'Stock', icon: 'cube' },
   { key: 'recipes', label: 'Recipes', icon: 'restaurant' },
   { key: 'usage', label: 'Usage', icon: 'time' },
+  { key: 'count', label: 'Count', icon: 'clipboard' },
   { key: 'procurement', label: 'Procurement', icon: 'cart' },
   { key: 'insights', label: 'AI Insights', icon: 'sparkles' },
   { key: 'waste', label: 'Waste', icon: 'trash' },
@@ -166,6 +168,12 @@ export default function InventoryScreen() {
             handlePeriodChange={inv.handlePeriodChange} applyCustomDateRange={inv.applyCustomDateRange}
           />
         );
+      case 'count':
+        return (
+          <OnlineOnly mode="badge">
+            <CountTab restaurantId={inv.restaurantId} inventoryItems={inv.inventoryItems} onPosted={inv.onRefresh} />
+          </OnlineOnly>
+        );
       case 'procurement':
         return (
           <ProcurementTab
@@ -273,7 +281,7 @@ export default function InventoryScreen() {
 
       {/* Content with pull-to-refresh */}
       <View style={styles.content}>
-        {inv.activeTab === 'stock' || inv.activeTab === 'recipes' || inv.activeTab === 'waste' ? (
+        {inv.activeTab === 'stock' || inv.activeTab === 'recipes' || inv.activeTab === 'waste' || inv.activeTab === 'count' ? (
           // FlatList tabs handle their own scroll
           renderTabContent()
         ) : (
