@@ -29,6 +29,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
 import { hasFeatureAccess } from '../../utils/permissions';
 import { getCurrencySymbol } from '../../utils/formatCurrency';
+import { describeSchedule, isScheduleOpen } from '../../utils/menuSchedule';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
 
@@ -799,6 +800,14 @@ export default function MenuManagementScreen() {
               )}
             </View>
             <Text style={styles.menuItemCategory}>{item.category || 'Uncategorized'}</Text>
+            {!!describeSchedule(item.availabilitySchedule) && (() => {
+              const open = isScheduleOpen(item.availabilitySchedule, new Date());
+              return (
+                <Text style={{ alignSelf: 'flex-start', marginTop: 3, fontSize: 10.5, fontWeight: '700', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden', color: open ? '#3730a3' : '#b91c1c', backgroundColor: open ? '#eef2ff' : '#fee2e2' }} numberOfLines={1}>
+                  {open ? `🕐 ${describeSchedule(item.availabilitySchedule)}` : `Not available now · ${describeSchedule(item.availabilitySchedule)}`}
+                </Text>
+              );
+            })()}
           </View>
 
           {item.description && (

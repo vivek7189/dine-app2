@@ -50,6 +50,7 @@ import { sanitizeSeat } from '../utils/seatOrdering';
 import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
 import { computeTaxBreakdown } from '../hooks/useBillingCalculation';
+import useTimedMenu from '../hooks/useTimedMenu';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -98,7 +99,7 @@ export default function MenuScreen() {
   const bottomInset = Platform.OS === 'android' ? Math.max(insets.bottom, 24) : insets.bottom;
   const tabBarHeight = r(64, 74) + bottomInset + 17; // +17 for version label in AnimatedTabBar
   const cols = gridColumns();
-  const [menuItems, setMenuItems] = useState([]);
+  const [menuItemsRaw, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all-items');
   const [searchTerm, setSearchTerm] = useState('');
@@ -120,6 +121,8 @@ export default function MenuScreen() {
   const [showKOTModal, setShowKOTModal] = useState(false);
   const [kotOrderData, setKotOrderData] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
+  // Menu timings: items outside their hours show as "Not available now" (display copy — never saved)
+  const menuItems = useTimedMenu(menuItemsRaw, restaurantId);
   const [user, setUser] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
   const [deliveryStaff, setDeliveryStaff] = useState([]); // for delivery-order assignment
@@ -1120,7 +1123,8 @@ export default function MenuScreen() {
   const addToCart = useCallback((item) => {
     // Block out-of-stock items
     if (item.isAvailable === false) {
-      Alert.alert('Out of Stock', `"${item.name}" is currently out of stock`);
+      if (item.timingClosed) Alert.alert('Not available right now', `"${item.name}" is available ${item.timingText || 'only at set times'}`);
+      else Alert.alert('Out of Stock', `"${item.name}" is currently out of stock`);
       return;
     }
 
@@ -2984,6 +2988,11 @@ export default function MenuScreen() {
             {typeSubtitle && (
               <Text style={styles.cardTypeSubtitle} numberOfLines={1}>{typeSubtitle}</Text>
             )}
+            {item.timingClosed && (
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', backgroundColor: '#111827', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 3 }} numberOfLines={1}>
+                Not available now{item.timingText ? ` · ${item.timingText}` : ''}
+              </Text>
+            )}
             <StockExpiryBadges />
             <View style={styles.cardPriceRow}>
               <View>
@@ -3054,6 +3063,11 @@ export default function MenuScreen() {
           )}
           {typeSubtitle && (
             <Text style={styles.cardTypeSubtitle} numberOfLines={1}>{typeSubtitle}</Text>
+          )}
+          {item.timingClosed && (
+            <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', backgroundColor: '#111827', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 3 }} numberOfLines={1}>
+              Not available now{item.timingText ? ` · ${item.timingText}` : ''}
+            </Text>
           )}
           <StockExpiryBadges />
           <View style={styles.cardPriceRow}>

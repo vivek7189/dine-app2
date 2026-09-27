@@ -20,6 +20,7 @@ import ItemCustomizationModal from './ItemCustomizationModal';
 import KOTModal from './KOTModal';
 import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
+import useTimedMenu from '../hooks/useTimedMenu';
 
 // ─── Multi-tier pricing helpers (mirror screens/MenuNative.js) ───
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
@@ -78,10 +79,12 @@ export default function WaiterOrderModal({
 
   // Data state
   const [loading, setLoading] = useState(true);
-  const [menuItems, setMenuItems] = useState([]);
+  const [menuItemsRaw, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [user, setUser] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
+  // Menu timings: items outside their hours show as "Not available now" (display copy — never saved)
+  const menuItems = useTimedMenu(menuItemsRaw, restaurantId);
   const [restaurantName, setRestaurantName] = useState('');
   // Multi-tier pricing (zones). Waiter orders are dine-in from a table, so the active rule is
   // resolved from the table's floor mapping (no manual zone picker in this flow).
@@ -319,6 +322,11 @@ export default function WaiterOrderModal({
 
   // ─── Cart Actions ───
   const addToCart = useCallback((item) => {
+    if (item && item.isAvailable === false) {
+      Alert.alert(item.timingClosed ? 'Not available right now' : 'Out of stock',
+        item.timingClosed ? `"${item.name}" is available ${item.timingText || 'only at set times'}` : `"${item.name}" is currently out of stock`);
+      return;
+    }
     const hasOptions = (item.variants?.length > 0) || (item.customizations?.length > 0) || (item.modifierGroups?.length > 0);
     if (hasOptions) {
       setCustomizationItem(item);
@@ -800,7 +808,7 @@ export default function WaiterOrderModal({
 
   // ─── Item Card ───
   const renderMenuItem = useCallback(({ item }) => {
-    const isOutOfStock = item.isStockManaged && (item.stockQuantity === 0 || item.stockQuantity === null);
+    const isOutOfStock = item.isAvailable === false || (item.isStockManaged && (item.stockQuantity === 0 || item.stockQuantity === null));
     const cartQty = cart.filter(c => (c.menuItemId || c.id) === item.id).reduce((s, c) => s + c.quantity, 0);
     const isVeg = item.isVeg;
 
@@ -822,7 +830,11 @@ export default function WaiterOrderModal({
         {item.isStockManaged && !isOutOfStock && (
           <Text style={st.stockText}>{item.stockQuantity} left</Text>
         )}
-        {isOutOfStock && <Text style={[st.stockText, { color: '#ef4444' }]}>Out of stock</Text>}
+        {isOutOfStock && (
+          <Text style={[st.stockText, { color: '#ef4444' }]} numberOfLines={2}>
+            {item.timingClosed ? `Not available now${item.timingText ? ` · ${item.timingText}` : ''}` : 'Out of stock'}
+          </Text>
+        )}
 
         <View style={st.menuItemBottom}>
           <Text style={st.menuItemPrice}>{formatCurrency(item.price)}</Text>
