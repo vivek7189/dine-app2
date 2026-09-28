@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
+import { registerStaffPush } from '../../services/staffPush';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
@@ -59,6 +60,8 @@ function TabsNavigator() {
         // Route to correct backend based on restaurant config
         if (userData.restaurant) apiClient.setRestaurantBaseURL(userData.restaurant);
         apiClient.setBusinessDayStartHour(userData.restaurant?.posSettings?.businessDayStartHour || 0);
+        // Phone notifications for shift schedule updates (best-effort, never blocks the app).
+        registerStaffPush(userData.restaurantId || userData.restaurant?.id);
         const storedType = userData.restaurant?.businessType;
         if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
@@ -290,6 +293,7 @@ function TabsNavigator() {
 
       {/* === Hidden tabs === */}
       <Tabs.Screen name="attendance" options={{ href: null }} />
+      <Tabs.Screen name="my-shifts" options={{ href: null }} />
       <Tabs.Screen name="hotel" options={{ href: null }} />
       <Tabs.Screen name="menu-management" options={{ href: null }} />
       <Tabs.Screen name="offers" options={{ href: null }} />

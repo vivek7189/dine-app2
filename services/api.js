@@ -373,6 +373,8 @@ class ApiClient {
 
   // Full logout: clear auth + all caches (in-memory + AsyncStorage)
   async logout() {
+    // Stop shift notifications for this person on this phone (shared devices).
+    try { require('./staffPush').resetStaffPush(); } catch (_) {}
     // Clear in-memory API cache
     this.clearAllCache();
     // Clear auth tokens
