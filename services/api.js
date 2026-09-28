@@ -1796,6 +1796,18 @@ class ApiClient {
     return result;
   }
 
+  // Delete the WHOLE menu (owner / admin only; reason required — the server keeps a full copy).
+  async bulkDeleteMenuItems(restaurantId, reason) {
+    const result = await this.request(`/api/menus/${restaurantId}/bulk-delete`, {
+      method: 'DELETE',
+      data: { reason: reason || '' },
+    });
+    this.invalidateCache(`/api/menus/${restaurantId}`);
+    this.invalidateCache('/api/menus/');
+    this.invalidateCache(`/api/categories/${restaurantId}`);
+    return result;
+  }
+
   async deleteMenuItem(itemId, restaurantId) {
     const query = restaurantId ? `?restaurantId=${restaurantId}` : '';
     const result = await this.request(`/api/menus/item/${itemId}${query}`, {

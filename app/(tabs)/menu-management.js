@@ -11,6 +11,7 @@ import {
   Modal,
   Image,
   Platform,
+  KeyboardAvoidingView,
   RefreshControl,
   ScrollView,
   Share,
@@ -65,6 +66,10 @@ export default function MenuManagementScreen() {
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
   const [savingCategory, setSavingCategory] = useState(false);
   const [userRole, setUserRole] = useState('');
+  // Delete whole menu (owner / admin only)
+  const [showDeleteAll, setShowDeleteAll] = useState(false);
+  const [deleteAllReason, setDeleteAllReason] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
   // Menu rights on this screen (buttons hidden when not allowed; the backend enforces the same rules)
   const [menuPerms, setMenuPerms] = useState({ add: false, edit: false, del: false, hide: false });
   // QR Code
@@ -434,6 +439,25 @@ export default function MenuManagementScreen() {
     });
     setEditingItem(item);
     setShowAddModal(true);
+  };
+
+  const canDeleteWholeMenu = ['owner', 'co-owner', 'admin'].includes(userRole);
+  const handleDeleteAll = async () => {
+    const reason = deleteAllReason.trim();
+    if (reason.length < 3 || deletingAll) return;
+    try {
+      setDeletingAll(true);
+      const res = await apiClient.bulkDeleteMenuItems(restaurantId, reason);
+      setShowDeleteAll(false);
+      setDeleteAllReason('');
+      setMenuItems([]);
+      await loadMenu(restaurantId);
+      Alert.alert('Menu deleted', `${res?.deletedCount || 0} items were deleted.`);
+    } catch (error) {
+      Alert.alert('Could not delete', error.message || 'Failed to delete the menu');
+    } finally {
+      setDeletingAll(false);
+    }
   };
 
   const handleDelete = (item) => {
@@ -1078,8 +1102,48 @@ export default function MenuManagementScreen() {
             <Ionicons name="cloud-upload-outline" size={20} color="#f59e0b" />
           </TouchableOpacity>
           )}
+          {canDeleteWholeMenu && menuItems.some(i => i.status !== 'deleted') && (
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => { setDeleteAllReason(''); setShowDeleteAll(true); }}>
+            <Ionicons name="trash-outline" size={20} color="#dc2626" />
+          </TouchableOpacity>
+          )}
         </View>
       </View>
+
+      {/* Delete whole menu — reason required, owner / admin only */}
+      <Modal visible={showDeleteAll} transparent animationType="fade" onRequestClose={() => !deletingAll && setShowDeleteAll(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.delAllOverlay}>
+          <View style={styles.delAllCard}>
+            <View style={styles.delAllIcon}><Ionicons name="warning" size={28} color="#dc2626" /></View>
+            <Text style={styles.delAllTitle}>Delete the whole menu?</Text>
+            <Text style={styles.delAllText}>
+              All {menuItems.filter(i => i.status !== 'deleted').length} items and all categories will be removed from the POS, waiter app and QR menu. This cannot be undone from the app.
+            </Text>
+            <Text style={styles.delAllLabel}>Reason for deletion *</Text>
+            <TextInput
+              style={styles.delAllInput}
+              value={deleteAllReason}
+              onChangeText={setDeleteAllReason}
+              placeholder="e.g. Uploading a new menu for the new season"
+              placeholderTextColor="#9ca3af"
+              multiline
+              editable={!deletingAll}
+            />
+            <View style={styles.delAllButtons}>
+              <TouchableOpacity style={[styles.delAllBtn, { backgroundColor: '#f3f4f6' }]} disabled={deletingAll} onPress={() => setShowDeleteAll(false)}>
+                <Text style={[styles.delAllBtnText, { color: '#374151' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.delAllBtn, { backgroundColor: deleteAllReason.trim().length >= 3 && !deletingAll ? '#dc2626' : '#9ca3af' }]}
+                disabled={deleteAllReason.trim().length < 3 || deletingAll}
+                onPress={handleDeleteAll}
+              >
+                {deletingAll ? <ActivityIndicator color="white" size="small" /> : <Text style={styles.delAllBtnText}>Yes, delete all</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {uploadError ? <Text style={styles.inlineError}>{uploadError}</Text> : null}
       {uploadSuccess ? <Text style={styles.inlineSuccess}>{uploadSuccess}</Text> : null}
@@ -1596,6 +1660,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '500',
   },
+  delAllOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  delAllCard: { backgroundColor: 'white', borderRadius: 16, padding: 20 },
+  delAllIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 12 },
+  delAllTitle: { fontSize: 18, fontWeight: '700', color: '#111827', textAlign: 'center', marginBottom: 8 },
+  delAllText: { fontSize: 13.5, color: '#6b7280', textAlign: 'center', lineHeight: 19, marginBottom: 16 },
+  delAllLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 },
+  delAllInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 10, minHeight: 70, fontSize: 14, color: '#111827', textAlignVertical: 'top' },
+  delAllButtons: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  delAllBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  delAllBtnText: { color: 'white', fontWeight: '700', fontSize: 14.5 },
   headerActions: {
     flexDirection: 'row',
     gap: 6,
