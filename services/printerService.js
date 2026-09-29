@@ -1031,6 +1031,7 @@ export const generateBillText = (invoiceData) => {
   const rLogo = ps.receiptLogo;
   if (rLogo?.enabled && rLogo?.url) {
     lines.push(`<LOGO:${rLogo.url}>`);
+    _logoSizeByUrl[rLogo.url] = Number(rLogo.size) || 0; // used by printLogoRaster (text path)
   }
 
   // ── Header ──
@@ -1580,6 +1581,24 @@ const printViaThermal = async (text) => {
 // Flag-gated IMAGE print: render the receipt HTML → image file → printImageData on the same
 // connected thermal printer. Throws on any failure so the caller falls back to the ESC/POS text
 // path. Requires <ImagePrintHost> mounted. Reuses the native printImageData bridge (BLE/Net/USB).
+// ESC/POS text can't carry an image, so a text-path bill used to drop the receipt logo silently.
+// Print the logo on its own as a small raster (same image pipeline as image receipts) just before
+// the text bill. Only when the bill text carries a <LOGO:url> marker (receiptLogo enabled).
+const _logoSizeByUrl = {};
+const printLogoRaster = async (text) => {
+  const m = String(text || '').match(/^<LOGO:(.+?)>/);
+  if (!m) return false;
+  const url = m[1];
+  let safeUrl = url;
+  try { safeUrl = encodeURI(decodeURI(url)); } catch (_) { safeUrl = encodeURI(url); } // spaces / ( )
+  const w = Math.max(80, Math.min(Number(_logoSizeByUrl[url]) || 160, _imagePrintWidth));
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>`
+    + `<body style="margin:0;background:#fff"><div style="text-align:center;padding:4px 0">`
+    + `<img src="${safeUrl.replace(/"/g, '%22')}" style="width:${w}px;max-width:100%;height:auto" /></div></body></html>`;
+  await printViaThermalImage(html);
+  return true;
+};
+
 const printViaThermalImage = async (html) => {
   const { htmlToImageFile, hasImagePrintHost } = require('./imagePrintService');
   if (!hasImagePrintHost()) throw new Error('image-print host not mounted');
@@ -1708,6 +1727,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       // the opt-in flag; complex scripts ALWAYS force the image path (there is no ASCII fallback
       // for them — text would print garbage). Falls through to text if the image render fails.
       const src = imageHtml || html || text;
+      let imagePathFailed = false;
       const wantImageForCurrency = _autoImageForCurrency && hasNonAsciiCurrency(src);
       const wantImageForScript = hasComplexScript(src);
       // A receipt logo is an <img> — ESC/POS text can't print images, so force the image path when
@@ -1718,6 +1738,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };
         } catch (imgErr) {
+          imagePathFailed = true;
           console.warn('[imagePrint] failed, falling back to text:', imgErr?.message);
           // fall through to the text path (unchanged)
         }
@@ -1725,6 +1746,11 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
 
       // Thermal printers (Bluetooth / WiFi / USB) - silent with ESC/POS text
       if (connectionType !== 'airprint' && text) {
+        // Receipt logo on the text path: print it as a small image first. Skipped when this
+        // printer already failed an image job above; a logo failure never blocks the bill.
+        if (!imagePathFailed && /^<LOGO:/.test(text)) {
+          try { await printLogoRaster(text); } catch (logoErr) { console.warn('[logo] raster print skipped:', logoErr?.message); }
+        }
         try {
           await printViaThermal(text);
           return { method: `silent-${connectionType}` };
