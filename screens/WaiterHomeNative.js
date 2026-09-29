@@ -9,6 +9,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { ref, onChildAdded, off, query, orderByChild, startAt } from 'firebase/database';
 import { database } from '../config/firebase';
 import apiClient from '../services/api';
+import restaurantEvents from '../services/restaurantEvents';
 import lanClient from '../services/lanClient';
 import { Colors, Spacing, Shadows } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -130,6 +131,13 @@ export default function WaiterHomeNative() {
   loadDataRef.current = loadData;
 
   useEffect(() => { loadData(true); }, []);
+  // Owner changed the Waiter App settings in web Admin → show/hide home buttons without a re-login
+  useEffect(() => {
+    const unsub = restaurantEvents.on('settings', ({ restaurantId, posSettings } = {}) => {
+      setRestaurant(prev => (prev && (!restaurantId || !prev.id || prev.id === restaurantId) ? { ...prev, posSettings } : prev));
+    });
+    return unsub;
+  }, []);
 
   useFocusEffect(
     useCallback(() => {

@@ -94,6 +94,18 @@ module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeatureP
 
 // Floor / waiter-app roles: a plain `menu: true` means "use the menu"; what they may change comes from
 // Admin → Waiter App → Menu permissions (restaurant.posSettings.waiterAppConfig). Same rule as the backend.
+// Admin → Waiter App settings (tabs, More-menu items, table buttons) apply to waiters, and to any
+// other role the owner ticked under "Apply these settings to" (waiterAppConfig.applyToRoles).
+// Owner / admin / co-owner / manager are never limited by them.
+export function followsWaiterAppConfig(role, waiterAppConfig) {
+  const r = String(role || '').toLowerCase();
+  if (!r) return false;
+  if (r === 'waiter') return true;
+  if (['owner', 'admin', 'co-owner', 'manager'].includes(r)) return false;
+  const list = Array.isArray(waiterAppConfig?.applyToRoles) ? waiterAppConfig.applyToRoles : [];
+  return list.some(x => String(x).toLowerCase() === r);
+}
+
 export const WAITER_APP_MENU_ROLES = ['waiter', 'captain', 'employee', 'chef', 'cook', 'kitchen', 'parcel', 'delivery', 'steward', 'runner', 'helper'];
 
 export function canDoMenu(user, operation, waiterAppConfig) {

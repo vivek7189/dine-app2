@@ -17,6 +17,8 @@ import { WebView } from 'react-native-webview';
 import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
 import OrderReadyNotificationOverlay from '../../components/OrderReadyNotificationOverlay';
 import restaurantEvents from '../../services/restaurantEvents';
+import { startRestaurantSettingsRefresh } from '../../services/restaurantSettingsRefresh';
+import { followsWaiterAppConfig } from '../../utils/permissions';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -101,6 +103,16 @@ function TabsNavigator() {
     return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
 
+  // Owner changed settings in web Admin → pick them up on app start / back to foreground
+  // (was: only after a re-login).
+  useEffect(() => {
+    const stop = startRestaurantSettingsRefresh();
+    const unsub = restaurantEvents.on('settings', ({ posSettings } = {}) => {
+      setWaiterAppConfig((posSettings && posSettings.waiterAppConfig) || {});
+    });
+    return () => { stop(); if (typeof unsub === 'function') unsub(); };
+  }, []);
+
   const roleLower = userRole?.toLowerCase() || '';
   const { r } = useResponsive();
   const iconSize = r(26, 30);
@@ -173,6 +185,8 @@ function TabsNavigator() {
           href: (() => {
             if (!roleLower) return undefined;
             if (roleLower === 'waiter') return (waiterAppConfig.showTablesTab !== false && waiterPageAllowed(pageAccess, 'tables')) ? undefined : null;
+            // other roles the owner applied the Waiter App settings to
+            if (followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showTablesTab === false) return null;
             if (['owner', 'admin', 'captain', 'manager'].includes(roleLower)) return undefined;
             // For cashier, sales, employee, and custom roles — check pageAccess
             if (pageAccess) {
@@ -214,6 +228,7 @@ function TabsNavigator() {
             // management (web 'menu' key). Gating it on 'menu' removed ordering from waiters whose owner
             // had switched menu editing off.
             if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && waiterPageAllowed(pageAccess, 'dashboard')) ? undefined : null;
+            if (followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showMenuTab === false) return null;
             if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {
@@ -255,7 +270,7 @@ function TabsNavigator() {
             />
           ),
           headerShown: false,
-          href: roleLower === 'waiter' && waiterAppConfig.showOrdersTab === false ? null : undefined,
+          href: followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showOrdersTab === false ? null : undefined,
         }}
       />
 

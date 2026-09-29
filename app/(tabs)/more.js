@@ -23,7 +23,7 @@ import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import BusinessSettings from '../../components/BusinessSettings';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
 import lanClient from '../../services/lanClient';
-import { resolveFeaturePermissions } from '../../utils/permissions';
+import { resolveFeaturePermissions, followsWaiterAppConfig } from '../../utils/permissions';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 import { useTabModes } from '../../contexts/TabModeContext';
 
@@ -69,7 +69,11 @@ export default function MoreScreen() {
       setRestaurant(newRest);
       loadUserData();
     });
-    return unsub;
+    // Owner changed settings in web Admin → refreshed in the background; show them now
+    const unsubSettings = restaurantEvents.on('settings', ({ restaurantId, posSettings } = {}) => {
+      setRestaurant(prev => (prev && (!restaurantId || !prev.id || prev.id === restaurantId) ? { ...prev, posSettings } : prev));
+    });
+    return () => { unsub(); unsubSettings(); };
   }, []);
 
   const loadUserData = async () => {
@@ -242,8 +246,8 @@ export default function MoreScreen() {
   const waiterAppConfig = restaurant?.posSettings?.waiterAppConfig || {};
 
   const shouldShowItem = (item) => {
-    // Waiter app config overrides for waiter role
-    if (role === 'waiter') {
+    // Waiter app config overrides — waiters and any role the owner applied it to
+    if (followsWaiterAppConfig(role, waiterAppConfig)) {
       const waiterConfigMap = {
         'Kitchen Display': 'showKitchenDisplay',
         'Attendance': 'showAttendance',
@@ -471,7 +475,7 @@ export default function MoreScreen() {
         </View>
 
         {/* ── Printer Settings Quick Access ──────────── */}
-        {(role !== 'waiter' || waiterAppConfig.showPrinterSettings !== false) && (
+        {(!followsWaiterAppConfig(role, waiterAppConfig) || waiterAppConfig.showPrinterSettings !== false) && (
           <TouchableOpacity
             style={styles.printerCard}
             onPress={() => handleNavigate('/(tabs)/printer-settings')}

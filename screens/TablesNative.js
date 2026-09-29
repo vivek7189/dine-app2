@@ -37,7 +37,7 @@ import TableFloorPlanNative from '../components/TableFloorPlanNative';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
-import { canPerform } from '../utils/permissions';
+import { canPerform, followsWaiterAppConfig } from '../utils/permissions';
 import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
@@ -132,7 +132,11 @@ export default function TablesScreen() {
       setLoading(true);
       loadInitialData();
     });
-    return unsub;
+    // Owner changed settings in web Admin (e.g. table buttons) → apply without a re-login
+    const unsubSettings = restaurantEvents.on('settings', ({ restaurantId, posSettings } = {}) => {
+      setSelectedRestaurant(prev => (prev && (!restaurantId || prev.id === restaurantId) ? { ...prev, posSettings } : prev));
+    });
+    return () => { unsub(); unsubSettings(); };
   }, []);
 
   // Process floors response and update all related state
@@ -1959,7 +1963,7 @@ export default function TablesScreen() {
           <Text style={styles.restaurantName} numberOfLines={1}>{selectedRestaurant?.name || 'Restaurant'}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          {canResetTables && !(userRole === 'waiter' && waiterAppConfig.showResetTablesButton === false) && (
+          {canResetTables && !(followsWaiterAppConfig(userRole, waiterAppConfig) && waiterAppConfig.showResetTablesButton === false) && (
             <TouchableOpacity onPress={handleResetAllTables} style={[styles.headerActionBtn, { backgroundColor: '#fef2f2' }]}>
               <Ionicons name="refresh-circle-outline" size={16} color="#ef4444" />
             </TouchableOpacity>
@@ -1969,7 +1973,7 @@ export default function TablesScreen() {
               <Ionicons name="add" size={16} color="#3b82f6" />
             </TouchableOpacity>
           )}
-          {!(userRole === 'waiter' && waiterAppConfig.showRefreshButton === false) && (
+          {!(followsWaiterAppConfig(userRole, waiterAppConfig) && waiterAppConfig.showRefreshButton === false) && (
             <TouchableOpacity onPress={onRefresh} disabled={refreshing} style={[styles.headerActionBtn, { backgroundColor: '#eef2ff' }]}>
               <Ionicons name="sync-outline" size={16} color="#6366f1" />
             </TouchableOpacity>
