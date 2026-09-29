@@ -15,6 +15,23 @@ const PG_API_BASE = process.env.EXPO_PUBLIC_PG_API_URL || 'https://34-93-129-104
 // for dev). To route to Vercel again, point backend.json at it — no app rebuild needed.
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || PG_API_BASE;
 
+// The app talks ONLY to our own GCP backend. A restaurant pin (pgBackendUrl), an old saved pin, or
+// the remote config pointing anywhere else (the retired Vercel / Cloud Run backends) is ignored →
+// the GCP box. api.dineopen.com is the same box behind our domain (reserved for a later switch).
+// Local-server (offline LAN) mode and a dev EXPO_PUBLIC_API_URL are separate and unaffected.
+const ALLOWED_CLOUD_HOSTS = new Set([
+  (() => { try { return new URL(PG_API_BASE).hostname; } catch (_) { return '34-93-129-104.sslip.io'; } })(),
+  '34-93-129-104.sslip.io',
+  'api.dineopen.com',
+]);
+function cloudBase(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol === 'https:' && ALLOWED_CLOUD_HOSTS.has(u.hostname.toLowerCase())) return `${u.origin}`;
+  } catch (_) { /* fall through */ }
+  return PG_API_BASE;
+}
+
 // True when pointed at a local/dev backend — the remote config must NEVER override
 // a developer's local backend (LAN IP / emulator / localhost).
 const IS_LOCAL_BASE = /localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\./.test(API_BASE_URL);
@@ -132,7 +149,8 @@ class ApiClient {
   setRestaurantBaseURL(restaurant) {
     // Local-server (offline LAN) mode always wins — never route back to the cloud.
     const localSrv = getLocalServerUrl();
-    const customUrl = restaurant?.pgBackendUrl;
+    // restaurant pin — only our own GCP backend (a Vercel / Cloud Run pin → GCP)
+    const customUrl = restaurant?.pgBackendUrl ? cloudBase(restaurant.pgBackendUrl) : null;
     // Absence of pgBackendUrl means "use the user's resolved home", NOT "force Vercel": a
     // born-native GCP restaurant has NO pgBackendUrl. Fall back to the current resolved base
     // (set by resolveBackendFor at login / initBackendRouting at startup), never API_BASE_URL,
@@ -182,15 +200,16 @@ class ApiClient {
     try {
       const pin = await AsyncStorage.getItem(BACKEND_URL_KEY);
       if (pin) {
-        // per-restaurant pgBackendUrl pin wins over the remote default
-        this.baseURL = pin;
+        // per-restaurant pgBackendUrl pin wins over the remote default (only our GCP backend)
+        this.baseURL = cloudBase(pin);
+        if (this.baseURL !== pin) { try { await AsyncStorage.setItem(BACKEND_URL_KEY, this.baseURL); } catch (_) {} }
         console.log('🔀 Backend routing active (persisted pgBackendUrl):', pin);
       } else {
         // no pin → use the cached remote-config default (the cutover switch).
         // Never override a local/dev backend.
         const remote = await AsyncStorage.getItem(REMOTE_DEFAULT_KEY);
         if (remote && !IS_LOCAL_BASE) {
-          this.baseURL = remote;
+          this.baseURL = cloudBase(remote);
           console.log('🔀 Backend routing active (remote config):', remote);
         }
       }
@@ -1017,8 +1036,7 @@ class ApiClient {
     // reversible); fall back to the baked GCP VM URL. NEVER default to Vercel.
     try {
       let url = await AsyncStorage.getItem(REMOTE_DEFAULT_KEY);
-      if (!url || !/^https?:\/\//.test(url)) url = PG_API_BASE;
-      url = String(url).replace(/\/+$/, '');
+      url = cloudBase(url); // only our own GCP backend (anything else / missing → the GCP box)
       try { await AsyncStorage.setItem(BACKEND_URL_KEY, url); } catch (_) {}
       if (this.baseURL !== url) { this.baseURL = url; this.clearAllCache(); }
     } catch (_) { /* resolver must never block login */ }
