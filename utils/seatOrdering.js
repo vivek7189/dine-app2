@@ -37,6 +37,22 @@ export function seatLabel(seat, tableNumber) {
     : letter;
 }
 
+// Per-CHAIR orders (posSettings.seatOrdering === 'chair'): each chair on a table is its own order
+// with an order-level `chairNumber` letter ("A", "B"). Different from per-ITEM seats above.
+export function isChairModeEnabled(posSettings) {
+  return posSettings?.seatOrdering === 'chair';
+}
+
+// Display-only, same as the web's withSeatLabel (printHtmlGenerator.js): when an order/KOT/bill has
+// a chair, show it next to the table ("7 · Seat B"). Returns a shallow clone; no chair → unchanged.
+export function withSeatLabel(obj) {
+  if (!obj) return obj;
+  const seat = obj.chairNumber ?? obj.customerInfo?.chairNumber ?? obj.customerInfo?.seat;
+  if (seat == null || String(seat).trim() === '' || !obj.tableNumber) return obj;
+  if (String(obj.tableNumber).includes('· Seat')) return obj; // already labelled — never double up
+  return { ...obj, tableNumber: `${obj.tableNumber} · Seat ${String(seat).trim()}` };
+}
+
 // Feature flag check: posSettings.seatOrdering = 'off' | 'optional' | 'required'.
 export function isSeatOrderingEnabled(posSettings) {
   const v = posSettings?.seatOrdering;

@@ -1829,6 +1829,12 @@ class ApiClient {
     return result;
   }
 
+  // Open (unsettled) orders — per-chair tables list each chair's order from this. Short lookback:
+  // a chair order is from today; the server caches per lookback and refreshes on any order change.
+  async getOpenOrders(restaurantId, lookbackDays = 2) {
+    return this.request(`/api/orders/${restaurantId}/open?lookbackDays=${lookbackDays}`, { method: 'GET' });
+  }
+
   // Deleted / hidden menu items (getMenu returns active ones only) + restore
   async getHiddenMenuItems(restaurantId) {
     return this.request(`/api/menus/${restaurantId}/hidden`, { method: 'GET' });

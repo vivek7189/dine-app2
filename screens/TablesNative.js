@@ -42,6 +42,7 @@ import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
 import { orderItemsSignature } from '../utils/orderSignature';
+import { isChairModeEnabled } from '../utils/seatOrdering';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
@@ -95,6 +96,8 @@ export default function TablesScreen() {
   const [moveModalTable, setMoveModalTable] = useState(null);
   const [showWaiterOrderModal, setShowWaiterOrderModal] = useState(false);
   const [waiterOrderContext, setWaiterOrderContext] = useState(null);
+  // Per-chair tables: { table, loading, orders } while the "choose a chair" sheet is open
+  const [chairSheet, setChairSheet] = useState(null);
   const { toast, ToastView } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
   const isInitialLoadRef = useRef(true);
@@ -620,7 +623,7 @@ export default function TablesScreen() {
     }
   }, []);
 
-  const handleTablePress = (table) => {
+  const legacyTablePress = (table) => {
     // Don't allow any actions if table is out of service
     if (table.status === 'out-of-service') {
       Alert.alert('Table Out of Service', `Table ${table.name} is currently out of service and cannot be used.`);
@@ -666,6 +669,68 @@ export default function TablesScreen() {
     } else {
       Alert.alert('Table Unavailable', `Table ${table.name} is ${table.status}.`);
     }
+  };
+
+  // ── Per-chair orders (posSettings.seatOrdering === 'chair', same as the web POS) ──────────────
+  // Each chair on a table is its own order (chairNumber "A", "B"…). Tapping a table lists the
+  // chairs' open bills and lets the waiter start a new chair. Anything else — or if the chair list
+  // can't load — behaves exactly as before (legacyTablePress).
+  const chairModeOn = () => isChairModeEnabled(selectedRestaurantRef.current?.posSettings || selectedRestaurant?.posSettings);
+
+  const handleTablePress = (table) => {
+    const st = table?.status || 'available';
+    if (chairModeOn() && !table?.isPartyTable && ['available', 'occupied', 'serving', 'cleaning'].includes(st)) {
+      openChairSheet(table);
+      return;
+    }
+    legacyTablePress(table);
+  };
+
+  const openChairSheet = async (table) => {
+    const rid = restaurantIdRef.current || selectedRestaurant?.id;
+    setChairSheet({ table, loading: true, orders: [] });
+    try {
+      const res = await apiClient.getOpenOrders(rid, 2);
+      const name = String(table.name || '').trim();
+      const orders = (res?.openOrders || []).filter(o => String(o.tableNumber || '').trim() === name);
+      // The table's own current order, if the list missed it (never hide a live bill)
+      if (table.currentOrderId && !orders.some(o => o.id === table.currentOrderId)) {
+        orders.push({ id: table.currentOrderId, chairNumber: null, orderNumber: null, amount: null });
+      }
+      orders.sort((a, b) => String(a.chairNumber || '').localeCompare(String(b.chairNumber || '')));
+      setChairSheet(prev => (prev && prev.table?.id === table.id ? { table, loading: false, orders } : prev));
+    } catch (e) {
+      // Couldn't load the chairs → same behaviour as before chair mode
+      setChairSheet(null);
+      legacyTablePress(table);
+    }
+  };
+
+  // Start a NEW order for this table — chairNumber null = the whole table.
+  const startChairOrder = (table, chairNumber) => {
+    setChairSheet(null);
+    const tableFloor = getFloorForTable(table);
+    const floorName = tableFloor?.name || tableFloor?.floorName || '';
+    const floorId = tableFloor?.id || '';
+    const chair = chairNumber ? String(chairNumber) : '';
+    if (user?.role?.toLowerCase() === 'waiter') {
+      setWaiterOrderContext({ tableId: table.id, tableNumber: table.name, floorName, floorId, chairNumber: chair || null });
+      setShowWaiterOrderModal(true);
+    } else {
+      router.push({
+        pathname: '/(tabs)/menu',
+        params: { tableId: table.id, tableNumber: table.name, floorName, floorId, chairNumber: chair, navStamp: Date.now().toString() },
+      });
+    }
+  };
+
+  // Open one chair's existing bill (same view as tapping an occupied table before).
+  const openChairOrder = (table, orderId) => {
+    setChairSheet(null);
+    setSelectedOrderId(orderId);
+    setSelectedTableForOrder(table);
+    setOrderModalMode('view');
+    setShowOrderModal(true);
   };
 
   // Dynamic parties (Path A): add another independent party (check) to a table on demand and
@@ -1006,6 +1071,7 @@ export default function TablesScreen() {
         floorName: floorNameVal,
         floorId: tableFloor?.id || '',
         existingOrderId: order.id,
+        chairNumber: order.chairNumber || null,
       });
       setShowWaiterOrderModal(true);
       return;
@@ -1020,6 +1086,7 @@ export default function TablesScreen() {
         floorId: tableFloor?.id || '',
         orderId: order.id,
         dailyOrderId: order.dailyOrderId || order.orderNumber || null,
+        chairNumber: order.chairNumber || null,
         cartItems,
         // Fingerprint of the items as loaded — sent with the update so the server can refuse (409)
         // if another device changed this order meanwhile, instead of overwriting its items.
@@ -1073,7 +1140,7 @@ export default function TablesScreen() {
     const isOutOfService = normalizedStatus === 'out-of-service';
 
     // Dynamic parties: this base table's sibling parties + whether it can host them.
-    const partiesEnabled = !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
+    const partiesEnabled = !isChairModeEnabled(selectedRestaurant?.posSettings) && !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
     const parties = partiesByBase[table.id] || [];
 
     const cardContent = (
@@ -1508,7 +1575,7 @@ export default function TablesScreen() {
   const showTableActionSheet = (table) => {
     setActionTable(table);
     const status = table.status || 'available';
-    const canHostParties = !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
+    const canHostParties = !chairModeOn() && !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
 
     if (Platform.OS === 'ios') {
       const options = [];
@@ -2179,6 +2246,79 @@ export default function TablesScreen() {
         }}
       />
 
+      {/* Per-chair tables: pick a chair's open bill or start a new chair (seatOrdering 'chair') */}
+      <Modal visible={!!chairSheet} transparent animationType="slide" onRequestClose={() => setChairSheet(null)}>
+        <TouchableOpacity activeOpacity={1} style={styles.actionSheetOverlay} onPress={() => setChairSheet(null)}>
+          <TouchableOpacity activeOpacity={1} style={styles.actionSheetCard} onPress={() => {}}>
+            {(() => {
+              if (!chairSheet) return null;
+              const { table, loading, orders } = chairSheet;
+              const used = new Set(orders.map(o => String(o.chairNumber || '').toUpperCase()).filter(Boolean));
+              const maxIdx = [...used].reduce((m, c) => (c.length === 1 ? Math.max(m, c.charCodeAt(0) - 64) : m), 0);
+              const count = Math.min(26, Math.max(6, maxIdx + 2));
+              const freeLetters = Array.from({ length: count }, (_, i) => String.fromCharCode(65 + i)).filter(l => !used.has(l));
+              const tableBusy = orders.length > 0 || !!table.currentOrderId || ['occupied', 'serving'].includes(table.status);
+              return (
+                <>
+                  <Text style={styles.actionSheetTitle}>Table {table.name}</Text>
+                  <Text style={styles.actionSheetSubtitle}>{tableBusy ? 'Open a chair\'s bill or add a new chair' : 'Order for the whole table or one chair'}</Text>
+                  {loading ? (
+                    <ActivityIndicator color={Colors.primary} style={{ marginVertical: 24 }} />
+                  ) : (
+                    <ScrollView style={{ maxHeight: 420 }}>
+                      {orders.map(o => (
+                        <TouchableOpacity key={o.id} style={[styles.actionSheetBtn, { borderBottomWidth: 1, borderBottomColor: '#f3f4f6' }]} onPress={() => openChairOrder(table, o.id)}>
+                          <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: o.chairNumber ? '#fef3c7' : '#f3f4f6', alignItems: 'center', justifyContent: 'center' }}>
+                            {o.chairNumber
+                              ? <Text style={{ fontSize: 15, fontWeight: '800', color: '#b45309' }}>{o.chairNumber}</Text>
+                              : <Ionicons name="grid-outline" size={16} color="#4b5563" />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.actionSheetBtnText}>{o.chairNumber ? `Chair ${o.chairNumber}` : 'Whole table'}{o.orderNumber ? `  ·  #${o.orderNumber}` : ''}</Text>
+                            {(o.amount != null || o.itemCount) ? (
+                              <Text style={{ fontSize: 12, color: Colors.textMedium, marginTop: 2 }}>
+                                {[o.itemCount ? `${o.itemCount} item${o.itemCount === 1 ? '' : 's'}` : null, o.amount != null ? formatCurrency(o.amount) : null].filter(Boolean).join('  ·  ')}
+                              </Text>
+                            ) : null}
+                          </View>
+                          <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+                        </TouchableOpacity>
+                      ))}
+
+                      {!tableBusy && (
+                        <TouchableOpacity style={[styles.actionSheetBtn, { borderBottomWidth: 1, borderBottomColor: '#f3f4f6' }]} onPress={() => startChairOrder(table, null)}>
+                          <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center' }}>
+                            <Ionicons name="grid-outline" size={16} color="#16a34a" />
+                          </View>
+                          <Text style={[styles.actionSheetBtnText, { flex: 1 }]}>Whole table</Text>
+                          <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+                        </TouchableOpacity>
+                      )}
+
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.textMedium, marginTop: 14, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                        {tableBusy ? 'New chair' : 'Or order for a chair'}
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {freeLetters.map(l => (
+                          <TouchableOpacity key={l} onPress={() => startChairOrder(table, l)}
+                            style={{ minWidth: 44, height: 40, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#bbf7d0', backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 4 }}>
+                            <Ionicons name="add" size={14} color="#16a34a" />
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: '#166534' }}>{l}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  )}
+                  <TouchableOpacity style={[styles.actionSheetBtn, { justifyContent: 'center', marginTop: 8 }]} onPress={() => setChairSheet(null)}>
+                    <Text style={[styles.actionSheetBtnText, { color: Colors.textMedium }]}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Waiter Order Modal — self-contained menu + cart (replaces tab navigation for waiter) */}
       <WaiterOrderModal
         visible={showWaiterOrderModal}
@@ -2188,6 +2328,7 @@ export default function TablesScreen() {
         floorName={waiterOrderContext?.floorName}
         floorId={waiterOrderContext?.floorId}
         existingOrderId={waiterOrderContext?.existingOrderId}
+        chairNumber={waiterOrderContext?.chairNumber || null}
         posSettings={posSettings}
         onOrderSent={() => {
           setShowWaiterOrderModal(false);
@@ -2576,7 +2717,7 @@ export default function TablesScreen() {
               )}
 
               {/* New Party — another independent check on this table (base stays Party A). */}
-              {actionTable && !actionTable.isSubTable && !actionTable.isPartyTable && !actionTable.isSplit && !actionTable.mergeGroupId && !actionTable.mergedInto
+              {actionTable && !chairModeOn() && !actionTable.isSubTable && !actionTable.isPartyTable && !actionTable.isSplit && !actionTable.mergeGroupId && !actionTable.mergedInto
                 && ['available', 'occupied', 'cleaning'].includes(actionTable.status || 'available') && (
                 <TouchableOpacity style={styles.actionSheetBtn} onPress={() => handleAddParty(actionTable)}>
                   <Ionicons name="people" size={20} color="#7c3aed" />

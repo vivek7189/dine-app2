@@ -71,9 +71,14 @@ export default function WaiterOrderModal({
   existingOrderId,
   onOrderSent,
   posSettings,
+  chairNumber: chairNumberProp = null, // per-chair tables (seatOrdering 'chair'): this order's chair
 }) {
   // Fingerprint of the order's items as loaded — see utils/orderSignature.js (stale-order guard)
   const baseItemsSigRef = useRef(null);
+  // Chair of this order: from the table screen, or read off the loaded order (add-items)
+  const [loadedChair, setLoadedChair] = useState(null);
+  const chairNumber = chairNumberProp || loadedChair || null;
+  const tableLabel = tableNumber ? `${tableNumber}${chairNumber ? ` · Seat ${chairNumber}` : ''}` : '';
   const { fs, r, isTablet } = useResponsive();
   const { toast, ToastView } = useToast();
   const insets = useSafeAreaInsets();
@@ -145,6 +150,7 @@ export default function WaiterOrderModal({
     if (!visible) {
       setCart([]);
       setExistingOrderItems(null);
+      setLoadedChair(null);
       setSpecialInstructions('');
       setSelectedCategory('all');
       setSearchTerm('');
@@ -254,6 +260,7 @@ export default function WaiterOrderModal({
                 selectedVariant: i.selectedVariant || null,
                 seat: sanitizeSeat(i.seat),
               })));
+              setLoadedChair(order.chairNumber || order.customerInfo?.chairNumber || null);
               if (order.specialInstructions) setSpecialInstructions(order.specialInstructions);
               // Pre-fill customer info from existing order
               if (order.customerPhone) setCustomerPhone(order.customerPhone);
@@ -652,6 +659,8 @@ export default function WaiterOrderModal({
           ...(hasCustomer && { customerInfo }),
           ...(customerPhone && { customerPhone }),
           ...(customerData?.id && { customerId: customerData.id }),
+          // per-chair table: this chair's own order (server ignores it unless the store uses chair mode)
+          ...(chairNumber && tableNumber ? { chairNumber } : {}),
           ...printClaims,
         };
         response = await apiClient.createOrder(orderData);
@@ -723,6 +732,7 @@ export default function WaiterOrderModal({
         orderId,
         restaurantId,
         tableNumber: tableNumber || '',
+        chairNumber: chairNumber || null, // printed "Table 7 · Seat B"
         floorName: floorName || '',
         roomNumber: response.order?.roomNumber || null,
         isIncremental,
@@ -1078,7 +1088,7 @@ export default function WaiterOrderModal({
             {tableNumber && (
               <View style={st.reviewContextChip}>
                 <Ionicons name="grid-outline" size={11} color={PRIMARY_DARK} />
-                <Text style={st.reviewContextText}>Table {tableNumber}</Text>
+                <Text style={st.reviewContextText}>Table {tableLabel}</Text>
               </View>
             )}
             {floorName && (
@@ -1316,7 +1326,7 @@ export default function WaiterOrderModal({
           </TouchableOpacity>
           <View style={st.headerInfo}>
             <Text style={st.headerTitle} numberOfLines={1}>
-              {tableNumber ? `Table ${tableNumber}` : existingOrderId ? 'Edit Order' : 'New Order'}
+              {tableNumber ? `Table ${tableLabel}` : existingOrderId ? 'Edit Order' : 'New Order'}
             </Text>
             {floorName ? <Text style={st.headerSub}>{floorName}</Text> : null}
           </View>

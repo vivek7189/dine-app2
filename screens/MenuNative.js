@@ -562,7 +562,7 @@ export default function MenuScreen() {
       tableParamsStampRef.current = stamp;
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
-      setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '', floorId: params.floorId || '' });
+      setSelectedTable({ id: params.tableId, name: params.tableNumber, floor: params.floorName || '', floorId: params.floorId || '', chair: params.chairNumber ? String(params.chairNumber) : '' });
       setIsFromTablesPage(true);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
@@ -584,7 +584,7 @@ export default function MenuScreen() {
     if (params.barTabMode === 'true') {
       setIsBarTabMode(true);
     }
-  }, [params.tableId, params.tableNumber, params.existingOrder, params.orderId, params.barTabMode, params.navStamp]);
+  }, [params.tableId, params.tableNumber, params.existingOrder, params.orderId, params.barTabMode, params.navStamp, params.chairNumber]);
 
   // When menu tab regains focus WITHOUT fresh table params, clear stale table selection
   // This handles: user taps "Menu" tab directly (no table context) or navigates back
@@ -628,7 +628,7 @@ export default function MenuScreen() {
               tableParamsStampRef.current = stamp;
               lastAppliedStampRef.current = stamp;
               freshParamsRef.current = true;
-              setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '' });
+              setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '', chair: data.chairNumber ? String(data.chairNumber) : '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
               baseItemsSigRef.current = data.baseItemsSignature || null;
@@ -1656,6 +1656,8 @@ export default function MenuScreen() {
           tableId: selectedTable?.id || null,
           floorId: selectedTable?.floorId || null,
           floorName: selectedTable?.floor || null,
+          // per-chair table: this chair's own order (server ignores it unless the store uses chair mode)
+          ...(selectedTable?.chair && tableNumber ? { chairNumber: selectedTable.chair } : {}),
           items: cart.map(buildItemPayload),
           orderType: 'dine-in',
           paymentMethod: 'cash',
@@ -1745,6 +1747,7 @@ export default function MenuScreen() {
         orderNumber,
         orderId,
         tableNumber: tableNumber,
+        chairNumber: selectedTable?.chair || null, // printed "Table 7 · Seat B"
         floorName: selectedTable?.floor || '',
         roomNumber: response.order?.roomNumber || null,
         isIncremental,
@@ -2047,6 +2050,7 @@ export default function MenuScreen() {
               orderId: existingOrderId,
               dailyOrderId: updateResponse?.order?.dailyOrderId || updateResponse?.order?.orderNumber || existingDailyOrderId || '',
               tableNumber: selectedTable?.name || '',
+              chairNumber: selectedTable?.chair || null,
               floorName: selectedTable?.floor || '',
               isIncremental,
               items: filterKotExcludedItems(kotItems, printSettings).map(item => ({
@@ -2133,6 +2137,8 @@ export default function MenuScreen() {
           orderType: isBarTabMode ? 'dine-in' : orderType,
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           status: isBarTabMode ? 'completed' : 'confirmed',
+          // per-chair table: this chair's own order (server ignores it unless the store uses chair mode)
+          ...(selectedTable?.chair && isDineIn && !isBarTabMode ? { chairNumber: selectedTable.chair } : {}),
           ...printClaims,
           staffInfo: {
             waiterId: user?.id,
@@ -2176,6 +2182,7 @@ export default function MenuScreen() {
             orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || '',
             orderId: response.order?.id,
             tableNumber: orderData.tableNumber || '',
+            chairNumber: orderData.chairNumber || null,
             floorName: selectedTable?.floor || '',
             roomNumber: response.order?.roomNumber || null,
             items: filterKotExcludedItems(cart, printSettings).map(item => ({ name: item.name, category: item.category || null, categoryId: item.categoryId || null, quantity: item.quantity, notes: item.notes || '', selectedVariant: item.selectedVariant || null, selectedCustomizations: item.selectedCustomizations || [] })),
@@ -2590,6 +2597,8 @@ export default function MenuScreen() {
       const orderData = {
         restaurantId,
         ...(tableNum && { tableNumber: tableNum }),
+        // per-chair table: this chair's own order (server ignores it unless the store uses chair mode)
+        ...(tableNum && selectedTable?.chair && !existingOrderId ? { chairNumber: selectedTable.chair } : {}),
         // Full line payload (variant, add-ons, seat, base price, edited price) — the old
         // {id,name,price,qty} made the backend re-price variant/add-on lines to the menu base
         // and, on an occupied table, re-KOT unchanged lines as removed + new.
@@ -3400,7 +3409,7 @@ export default function MenuScreen() {
               </TouchableOpacity>
               <View style={styles.tableInfoCard}>
                 <Ionicons name={isBarTabMode ? "beer" : "restaurant"} size={14} color={Colors.primary} />
-                <Text style={styles.tableInfoText}>{isBarTabMode ? selectedTable.name : `Table ${selectedTable.name}`}</Text>
+                <Text style={styles.tableInfoText}>{isBarTabMode ? selectedTable.name : `Table ${selectedTable.name}${selectedTable.chair ? ` · Seat ${selectedTable.chair}` : ''}`}</Text>
                 {canResetTable && (
                 <TouchableOpacity
                   onPress={() => {
@@ -3694,7 +3703,7 @@ export default function MenuScreen() {
             {selectedTable && (
               <View style={styles.orderInfoTableChip}>
                 <Ionicons name="restaurant-outline" size={13} color="#dc2626" />
-                <Text style={styles.orderInfoTableText}>{selectedTable.name}</Text>
+                <Text style={styles.orderInfoTableText}>{selectedTable.name}{selectedTable.chair ? ` · ${selectedTable.chair}` : ''}</Text>
                 {selectedTable.floor ? (
                   <Text style={styles.orderInfoFloorText}>{selectedTable.floor}</Text>
                 ) : null}

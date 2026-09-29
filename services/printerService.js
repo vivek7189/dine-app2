@@ -35,7 +35,7 @@ try {
 }
 import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
-import { seatLetter } from '../utils/seatOrdering';
+import { seatLetter, withSeatLabel } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
 import { splitIndiaGst, attachInclusiveSplits } from '../utils/printTemplates/helpers';
 
@@ -1015,6 +1015,7 @@ const itemRow = (name, qty, amount, width = CHARS) => {
 
 export const generateBillText = (invoiceData) => {
   if (!invoiceData) return '';
+  invoiceData = withSeatLabel(invoiceData); // per-chair orders: "Table 7 · Seat B"
   try { splitIndiaGst(invoiceData); } catch (_) { /* never block printing */ } // India: GST -> CGST + SGST
   const RS = toThermalSymbol(invoiceData.currencySymbol || _getCS());
   try { attachInclusiveSplits(invoiceData, RS); } catch (_) {} // per-item MRP + tax (thermal-safe symbol)
@@ -1275,6 +1276,7 @@ const formatKOTDate = (date) => {
 };
 
 export const generateKOTText = (data) => {
+  data = withSeatLabel(data); // per-chair orders: "Table 7 · Seat B"
   const ps = data.printSettings || data || {};
   const kl = ps.kotLayout || {};
   const W = getChars(ps);
@@ -1421,6 +1423,7 @@ export const wrapKOTTextInHTML = (text) => {
 // Rich, designed receipt (same template family as the dashboard bill). Returns null on failure
 // so callers can fall back to text.
 export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
+  invoiceData = withSeatLabel(invoiceData) || {}; // per-chair orders: "Table 7 · Seat B"
   try {
     try { attachInclusiveSplits(invoiceData, invoiceData.currencySymbol || '₹'); } catch (_) {} // per-item MRP + tax
     try { splitIndiaGst(invoiceData); } catch (_) { /* never block */ } // India: GST -> CGST + SGST
@@ -1433,6 +1436,7 @@ export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
 
 // Generate KOT HTML using the template system (for AirPrint / WebView)
 export const generateKOTHTML = (orderData, printSettings = {}) => {
+  orderData = withSeatLabel(orderData) || {}; // per-chair orders: "Table 7 · Seat B"
   const kotData = {
     restaurantName: orderData.restaurantName || '',
     restaurantPhone: orderData.restaurantPhone || '',
