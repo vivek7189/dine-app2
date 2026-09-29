@@ -16,6 +16,7 @@ import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
 import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
 import OrderReadyNotificationOverlay from '../../components/OrderReadyNotificationOverlay';
+import restaurantEvents from '../../services/restaurantEvents';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -37,6 +38,7 @@ function TabsNavigator() {
   const [businessType, setBusinessType] = useState(null);
   const [parkingEnabled, setParkingEnabled] = useState(false);
   const [isDeliveryPartner, setIsDeliveryPartner] = useState(false);
+  const [tabsKey, setTabsKey] = useState(0); // bumped on restaurant switch → remount all tabs
   const [waiterAppConfig, setWaiterAppConfig] = useState({});
 
   useEffect(() => {
@@ -89,6 +91,14 @@ function TabsNavigator() {
       }
     };
     checkAuth();
+    // Restaurant switched (More → switch outlet): re-read the user (role, page access, waiter-app
+    // config, backend routing) and remount every tab so ALL screens — including the web screens,
+    // kitchen display, order history and active orders — load the new outlet (several kept the old one).
+    const unsub = restaurantEvents.on('switch', () => {
+      checkAuth();
+      setTabsKey(k => k + 1);
+    });
+    return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
 
   const roleLower = userRole?.toLowerCase() || '';
@@ -103,6 +113,7 @@ function TabsNavigator() {
 
   return (
     <Tabs
+      key={`tabs-${tabsKey}`}
       tabBar={(props) => <AnimatedTabBar {...props} />}
       screenOptions={{
         headerShown: false,

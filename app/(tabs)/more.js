@@ -101,6 +101,21 @@ export default function MoreScreen() {
       // Clear all caches (AsyncStorage + in-memory API cache)
       await clearCache('cache_');
       apiClient.clearAllCache?.();
+      // Staff (not owner / admin): their login token carries the outlet — get one for the new outlet
+      // from the backend (it also checks they're assigned there). Without it, API calls kept going
+      // out with the old outlet's token. A refusal stops the switch here (nothing half-switched).
+      const roleNow = String(user?.role || '').toLowerCase();
+      if (!['owner', 'co-owner', 'admin'].includes(roleNow)) {
+        try {
+          const sw = await apiClient.request('/api/auth/staff/switch-restaurant', { method: 'POST', data: { restaurantId: newRestaurantId } });
+          if (sw?.token) await apiClient.setToken(sw.token);
+        } catch (swErr) {
+          // 403 = not assigned to that outlet → stop. Anything else (e.g. 404 for older accounts kept
+          // in the users table) → continue exactly as before this change.
+          if (swErr?.status === 403) throw swErr;
+          console.warn('staff switch token not refreshed:', swErr?.message);
+        }
+      }
       // Update backend preference
       await apiClient.updateUserPreferences({ defaultRestaurantId: newRestaurantId });
       // Fetch fresh restaurant data
@@ -117,7 +132,9 @@ export default function MoreScreen() {
       setShowRestaurantModal(false);
     } catch (error) {
       console.error('Error switching restaurant:', error);
-      Alert.alert('Error', 'Failed to switch restaurant. Please try again.');
+      Alert.alert('Error', error?.status === 403
+        ? 'You are not assigned to that restaurant. Ask the owner to add you there.'
+        : 'Failed to switch restaurant. Please try again.');
     } finally {
       setSwitchingRestaurant(false);
       setSwitchingRestaurantId(null);
