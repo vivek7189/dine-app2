@@ -1025,11 +1025,12 @@ class ApiClient {
   }
 
   // Google login (owner)
-  async googleLogin(uid, email, name, picture) {
+  // idToken (Firebase ID token): lets the server VERIFY the sign-in instead of trusting the uid.
+  async googleLogin(uid, email, name, picture, idToken = null) {
     await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/google', {
       method: 'POST',
-      data: { uid, email, name, picture, platform: 'dine-app' },
+      data: { uid, email, name, picture, platform: 'dine-app', ...(idToken ? { idToken } : {}) },
     });
 
     if (response.token) {
@@ -1044,11 +1045,11 @@ class ApiClient {
   }
 
   // Apple login (owner)
-  async appleLogin(uid, email, name, picture) {
+  async appleLogin(uid, email, name, picture, idToken = null) {
     await this.resolveBackendFor({ email });
     const response = await this.request('/api/auth/apple', {
       method: 'POST',
-      data: { uid, email, name, picture, platform: 'dine-app' },
+      data: { uid, email, name, picture, platform: 'dine-app', ...(idToken ? { idToken } : {}) },
     });
 
     if (response.token) {
@@ -1110,11 +1111,11 @@ class ApiClient {
   }
 
   // Firebase verify (for phone OTP login via Firebase)
-  async firebaseVerify(uid, phoneNumber, email, displayName) {
+  async firebaseVerify(uid, phoneNumber, email, displayName, idToken = null) {
     await this.resolveBackendFor({ phone: phoneNumber, email });
     const response = await this.request('/api/auth/firebase/verify', {
       method: 'POST',
-      data: { uid, phoneNumber, email, displayName },
+      data: { uid, phoneNumber, email, displayName, ...(idToken ? { idToken } : {}) },
     });
 
     if (response.token) {

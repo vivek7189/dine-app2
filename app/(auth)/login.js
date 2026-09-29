@@ -270,7 +270,8 @@ export default function LoginScreen() {
         user.uid,
         user.email,
         user.displayName || user.email?.split('@')[0],
-        user.photoURL
+        user.photoURL,
+        await (typeof user.getIdToken === "function" ? user.getIdToken() : Promise.resolve(null)).catch(() => null) // server verifies the sign-in (not just the uid)
       );
 
       if (backendResponse.token) {
@@ -341,7 +342,8 @@ export default function LoginScreen() {
         user.uid,
         appleEmail || user.email,
         displayName || user.displayName || user.email?.split('@')[0],
-        user.photoURL
+        user.photoURL,
+        await (typeof user.getIdToken === "function" ? user.getIdToken() : Promise.resolve(null)).catch(() => null)
       );
 
       if (backendResponse.token) {
@@ -544,7 +546,8 @@ export default function LoginScreen() {
         firebaseUser.uid,
         firebaseUser.phoneNumber,
         firebaseUser.email,
-        firebaseUser.displayName
+        firebaseUser.displayName,
+        await (typeof firebaseUser.getIdToken === "function" ? firebaseUser.getIdToken() : Promise.resolve(null)).catch(() => null)
       );
 
       if (backendResponse.token) {
