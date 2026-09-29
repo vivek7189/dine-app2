@@ -2,12 +2,13 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { tokenGuardJS } from '../utils/trustedWebUrl';
+import { tokenGuardJS, sessionResetJS, downloadBridgeJS } from '../utils/trustedWebUrl';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../services/api';
 import * as printerService from '../services/printerService';
 import { useResponsive } from '../hooks/useResponsive';
+import { handleWebDownloadMessage } from '../services/webDownload';
 
 /**
  * Shared WebView screen for tab navigation.
@@ -98,6 +99,8 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       const parts = [];
       // Runs on every page this WebView loads — only hand the login token to DineOpen pages.
       parts.push(tokenGuardJS());
+      parts.push(sessionResetJS(userData?.id || userData?.userId || userData?._id));
+      parts.push(downloadBridgeJS()); // exports / downloads → share sheet
       if (token) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
       if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
@@ -144,6 +147,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
   const handleWebViewMessage = useCallback(async (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      if (await handleWebDownloadMessage(data)) return; // file export from the page
 
       // Navigation signal from WebView (e.g. "go back to tables tab after order")
       if (data.type === 'navigate') {

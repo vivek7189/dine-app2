@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { isTrustedWebUrl, tokenGuardJS } from '../../utils/trustedWebUrl';
+import { isTrustedWebUrl, tokenGuardJS, sessionResetJS, downloadBridgeJS } from '../../utils/trustedWebUrl';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
+import { handleWebDownloadMessage } from '../../services/webDownload';
 
 export default function WebViewScreen() {
   const { url, title } = useLocalSearchParams();
@@ -63,6 +64,8 @@ export default function WebViewScreen() {
       const parts = [];
       // The script runs on EVERY page this WebView loads — only hand the token to DineOpen pages.
       parts.push(tokenGuardJS());
+      parts.push(sessionResetJS(userData?.id || userData?.userId || userData?._id));
+      parts.push(downloadBridgeJS()); // exports / downloads → share sheet
       if (token) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
       if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
@@ -122,6 +125,9 @@ export default function WebViewScreen() {
           source={{ uri: authUrl }}
           style={styles.webview}
           injectedJavaScriptBeforeContentLoaded={injectedJS}
+          onMessage={(e) => {
+            try { handleWebDownloadMessage(JSON.parse(e.nativeEvent.data)); } catch (_) { /* not ours */ }
+          }}
           onLoadStart={() => { setLoading(true); setLoadFailed(false); }}
           onLoadEnd={() => setLoading(false)}
           onNavigationStateChange={(navState) => {

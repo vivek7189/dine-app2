@@ -161,7 +161,7 @@ function TabsNavigator() {
           // owner/admin/waiter/manager always see tables; other roles need pageAccess.tables
           href: (() => {
             if (!roleLower) return undefined;
-            if (roleLower === 'waiter') return waiterAppConfig.showTablesTab !== false ? undefined : null;
+            if (roleLower === 'waiter') return (waiterAppConfig.showTablesTab !== false && waiterPageAllowed(pageAccess, 'tables')) ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager'].includes(roleLower)) return undefined;
             // For cashier, sales, employee, and custom roles — check pageAccess
             if (pageAccess) {
@@ -199,7 +199,7 @@ function TabsNavigator() {
             if (businessType === 'bar') return null;
             // owner/admin/waiter/manager/cashier always see menu tab
             if (!roleLower) return undefined;
-            if (roleLower === 'waiter') return waiterAppConfig.showMenuTab !== false ? undefined : null;
+            if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && waiterPageAllowed(pageAccess, 'menu')) ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {
@@ -383,6 +383,16 @@ function TerminalLockGate({ children }) {
       {children}
     </TerminalLockProvider>
   );
+}
+
+// Same rule as the web (dashboard layout, WAITER_ENFORCEABLE_KEYS): a waiter's page is hidden only when
+// the owner EXPLICITLY turned it off in Staff → page access; not configured = allowed (unchanged).
+function waiterPageAllowed(pageAccess, key) {
+  if (!pageAccess) return true;
+  const v = pageAccess[key];
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'object') return Object.values(v).some(Boolean);
+  return !!v;
 }
 
 export default function TabsLayout() {

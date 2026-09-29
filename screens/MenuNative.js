@@ -2394,6 +2394,10 @@ export default function MenuScreen() {
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
         splitPayments: discountData.splitPayments || null,
+        // printed: wallet used / amount to pay, and paid + balance due for part-paid or credit bills
+        walletRedeemAmount: discountData.walletRedeemAmount || 0,
+        paidAmount: partialFields?.paidAmount ?? null,
+        outstandingAmount: partialFields?.outstandingAmount ?? null,
         printSettings: printSettings || {},
       };
 
@@ -2633,6 +2637,10 @@ export default function MenuScreen() {
         cashReceived: discountData.cashReceived || null,
         changeReturned: discountData.changeReturned || null,
         splitPayments: discountData.splitPayments || null,
+        // printed: wallet used / amount to pay, and paid + balance due for part-paid or credit bills
+        walletRedeemAmount: discountData.walletRedeemAmount || 0,
+        paidAmount: partialFields?.paidAmount ?? null,
+        outstandingAmount: partialFields?.outstandingAmount ?? null,
         printSettings: printSettings || {},
       };
 

@@ -336,7 +336,22 @@ export default function OrderHistoryScreen() {
   const canManage = ['owner', 'manager', 'cashier'].includes((userRole || '').toLowerCase());
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
 
+  // Same gate as web order history (Admin → Billing Settings → reprintKotRoles / reprintBillRoles):
+  // empty list (default) = everyone; owner/admin always; otherwise only the listed roles.
+  const canReprintKind = (kind) => {
+    const bs = restaurant?.billingSettings || {};
+    const roles = kind === 'kot' ? bs.reprintKotRoles : bs.reprintBillRoles;
+    if (!Array.isArray(roles) || roles.length === 0) return true;
+    const role = String(userRole || '').toLowerCase();
+    if (role === 'owner' || role === 'admin') return true;
+    return roles.map(r => String(r).toLowerCase()).includes(role);
+  };
+
   const handleReprint = async (order, type) => {
+    if (!canReprintKind(type === 'kot' ? 'kot' : 'bill')) {
+      Alert.alert('Not allowed', `Your role is not allowed to reprint ${type === 'kot' ? 'KOTs' : 'bills'}. Ask the owner or manager.`);
+      return;
+    }
     try {
       setActionBusy(true);
       const label = type === 'bill' ? 'Bill' : 'KOT';
@@ -404,6 +419,13 @@ export default function OrderHistoryScreen() {
           loyaltyDiscount: Number(order.loyaltyDiscount || 0),
           couponDiscount: Number(order.couponDiscount || 0),
           couponCode: order.couponCode || null,
+          // reprint carries the saved payment details so it matches the original bill
+          walletRedeemAmount: Number(order.walletRedeemAmount || 0),
+          splitPayments: Array.isArray(order.splitPayments) ? order.splitPayments : null,
+          cashReceived: Number(order.cashReceived || 0) || null,
+          changeReturned: Number(order.changeReturned || 0) || null,
+          paidAmount: order.paidAmount ?? null,
+          outstandingAmount: order.outstandingAmount ?? null,
           serviceChargeAmount: Number(order.serviceChargeAmount || 0),
           serviceChargeRate: Number(order.serviceChargeRate || 0),
           tipAmount: Number(order.tipAmount || 0),

@@ -386,6 +386,19 @@ class ApiClient {
       await AsyncStorage.removeItem(BACKEND_URL_KEY);
       if (!getLocalServerUrl()) this.baseURL = API_BASE_URL;
     } catch (_) {}
+    // Shared phones: drop the previous person's / restaurant's cached data so the next login never
+    // sees it (restaurant info, staff list, tax / pricing / currency / business settings, terminal
+    // operator, half-finished "add items" and web-billing hand-offs). Device settings — paired
+    // printers, station printers, offline mode + PIN, LAN hub, tab-mode preference — are kept.
+    // Offline-queued orders are NOT touched (real sales that still have to sync).
+    try {
+      await AsyncStorage.multiRemove([
+        'dine_restaurant_info', 'dine_staff_list', 'dine_tax_settings', 'dine_multi_pricing',
+        'dine_zone_pricing', 'dine_business_settings', 'dine_order_mgmt_settings',
+        'dine_currency_settings', 'currencySettings', 'dineTerminalOperator',
+        'pendingAddItems', 'billingWebViewResult',
+      ]);
+    } catch (_) {}
     // Clear all AsyncStorage cache entries (cache_floors_*, cache_* etc.)
     try {
       const allKeys = await AsyncStorage.getAllKeys();

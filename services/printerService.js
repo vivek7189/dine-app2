@@ -1119,6 +1119,9 @@ export const generateBillText = (invoiceData) => {
   if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`, W));
   if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`, W));
   if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`, W));
+  if (invoiceData.couponDiscount > 0) {
+    lines.push(leftRight(invoiceData.couponCode ? `Coupon (${invoiceData.couponCode})` : 'Coupon', `-${RS}${fmt(invoiceData.couponDiscount)}`, W));
+  }
   if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`, W));
   if (bl.showTaxBreakdown !== false) {
     const showIncl = invoiceData.showInclusiveTaxOnBill !== false;
@@ -1139,12 +1142,35 @@ export const generateBillText = (invoiceData) => {
   }
   lines.push(_LINE);
   lines.push(`<M>${leftRight('Total', `${RS}${fmt(invoiceData.grandTotal)}`, W)}</M>`);
+  // Wallet redeemed on this bill (web prints it); what remains is the amount actually paid.
+  const walletUsed = Number(invoiceData.walletRedeemAmount) || 0;
+  if (walletUsed > 0) {
+    lines.push(leftRight('Wallet Used', `-${RS}${fmt(walletUsed)}`, W));
+    lines.push(leftRight('Amount to Pay', `${RS}${fmt(Math.max(0, (Number(invoiceData.grandTotal) || 0) - walletUsed))}`, W));
+  }
   lines.push(_DLINE);
 
   // ── Payment ──
-  if (bl.showPayment !== false && invoiceData.cashReceived > 0) {
-    lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`, W));
-    if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`, W));
+  if (bl.showPayment !== false) {
+    // Split tender: one line per method
+    if (Array.isArray(invoiceData.splitPayments) && invoiceData.splitPayments.length > 1) {
+      invoiceData.splitPayments.forEach(sp => {
+        const m = String(sp?.method || sp?.paymentMethod || 'Other');
+        const PAY_LABEL = { upi: 'UPI', card: 'Card', cash: 'Cash', wallet: 'Wallet', due: 'Due', credit: 'Credit' };
+        const label = PAY_LABEL[m.toLowerCase()] || (m.charAt(0).toUpperCase() + m.slice(1));
+        lines.push(leftRight(label, `${RS}${fmt(Number(sp?.amount) || 0)}`, W));
+      });
+    }
+    if (invoiceData.cashReceived > 0) {
+      lines.push(leftRight('Cash Received', `${RS}${fmt(invoiceData.cashReceived)}`, W));
+      if (invoiceData.changeReturned > 0) lines.push(leftRight('Change', `${RS}${fmt(invoiceData.changeReturned)}`, W));
+    }
+    // Part-paid / credit (Full Due) bill: show what was paid and what is still owed
+    const due = Number(invoiceData.outstandingAmount) || 0;
+    if (due > 0) {
+      lines.push(leftRight('Paid', `${RS}${fmt(Number(invoiceData.paidAmount) || 0)}`, W));
+      lines.push(`<B>${leftRight('Balance Due', `${RS}${fmt(due)}`, W)}</B>`);
+    }
   }
 
   // ── Footer ──
