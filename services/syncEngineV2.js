@@ -117,7 +117,9 @@ export async function syncAll(apiClient) {
         authFailures = 0; // Reset on success
 
       } catch (err) {
-        const statusCode = err.response?.status || err.statusCode;
+        // apiClient.request() now attaches .status (it used to throw a bare Error, so every 4xx was
+        // retried 5x and the 401/403 stop below never ran).
+        const statusCode = err.response?.status || err.statusCode || err.status;
 
         if (statusCode === 403 || statusCode === 401) {
           // Auth failure — mark failed and count

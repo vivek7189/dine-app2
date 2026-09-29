@@ -41,6 +41,7 @@ import { canPerform } from '../utils/permissions';
 import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
+import { orderItemsSignature } from '../utils/orderSignature';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
@@ -1020,6 +1021,9 @@ export default function TablesScreen() {
         orderId: order.id,
         dailyOrderId: order.dailyOrderId || order.orderNumber || null,
         cartItems,
+        // Fingerprint of the items as loaded — sent with the update so the server can refuse (409)
+        // if another device changed this order meanwhile, instead of overwriting its items.
+        baseItemsSignature: orderItemsSignature(order.items),
         timestamp: Date.now(),
       }));
     } catch (e) {

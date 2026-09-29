@@ -518,7 +518,13 @@ class ApiClient {
           }
         }
 
-        throw new Error(error.response.data?.error || error.response.data?.message || 'Request failed');
+        // Keep the HTTP status / error code so callers can tell a server "no" (400/403/409…) from a
+        // network failure (message-only callers are unaffected).
+        const httpErr = new Error(error.response.data?.error || error.response.data?.message || 'Request failed');
+        httpErr.status = error.response.status;
+        httpErr.code = error.response.data?.code;
+        httpErr.data = error.response.data;
+        throw httpErr;
       } else if (error.request) {
         throw new Error('Network error. Please check your connection.');
       } else {
@@ -608,11 +614,20 @@ class ApiClient {
 
     // When online, make a direct API call to get real server response
     // This ensures callers get actual data (order IDs, etc.) instead of mock responses
+    // Order creates get ONE idempotency key up front, sent on the direct attempt AND reused if the
+    // write has to be queued — so a request the server already committed (response lost / timed out)
+    // can never be replayed as a second order.
+    const { generateIdempotencyKey: genKey } = require('./syncQueueV2');
+    const sharedKey = idempotencyKey
+      || (entityType === 'order' && operation === 'create' && data && typeof data === 'object' ? genKey() : null);
+    const directData = sharedKey && data && typeof data === 'object' && !data.idempotencyKey
+      ? { ...data, idempotencyKey: sharedKey } : data;
+
     if (!this.isEffectivelyOffline()) {
       try {
         const result = await this.request(endpoint, {
           method,
-          data,
+          data: directData,
         });
         // Call onSuccess callback with server response
         if (onSuccess) {
@@ -620,14 +635,17 @@ class ApiClient {
         }
         return result;
       } catch (e) {
-        // If direct call fails, fall through to offline queue
-        console.warn('offlineWrite direct call failed, queuing offline:', e.message);
+        // The server ANSWERED (400 table occupied / item unavailable, 403, 409 order changed, 429…):
+        // that is a real "no" — surface it. Queuing it would show "Saved locally" and later replay
+        // it with syncSource 'offline', bypassing those checks. Only network failures fall through.
+        if (e && e.status) throw e;
+        console.warn('offlineWrite direct call failed (network), queuing offline:', e.message);
       }
     }
 
     // Offline path: queue for background sync
     const { enqueue, generateIdempotencyKey } = require('./syncQueueV2');
-    const key = idempotencyKey || generateIdempotencyKey();
+    const key = sharedKey || generateIdempotencyKey();
 
     // Add idempotency key to payload
     const payload = { ...data, idempotencyKey: key, syncSource: 'offline' };

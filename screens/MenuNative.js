@@ -51,6 +51,8 @@ import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
 import { computeTaxBreakdown } from '../hooks/useBillingCalculation';
 import useTimedMenu from '../hooks/useTimedMenu';
+import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
+import { orderLinesToCart } from '../utils/orderLines';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -617,6 +619,7 @@ export default function MenuScreen() {
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
+              baseItemsSigRef.current = data.baseItemsSignature || null;
               if (data.dailyOrderId) setExistingDailyOrderId(data.dailyOrderId);
               if (data.cartItems) {
                 setCart(data.cartItems);
@@ -1531,6 +1534,57 @@ export default function MenuScreen() {
     }
   };
 
+  // ── Stale-order protection ──────────────────────────────────────────────────────────────────
+  // Fingerprint of the order's items as loaded (set when "Add Items" opens an existing order).
+  // Sent as baseItemsSignature with item updates; the server answers 409 ORDER_CHANGED if another
+  // device (POS / another waiter) changed the order meanwhile, instead of overwriting its items.
+  const baseItemsSigRef = useRef(null);
+  useEffect(() => { if (!existingOrderId) baseItemsSigRef.current = null; }, [existingOrderId]);
+  const baseSigField = () => (existingOrderId && baseItemsSigRef.current ? { baseItemsSignature: baseItemsSigRef.current } : {});
+  // After a successful update the order holds exactly the items just sent (the PATCH response
+  // doesn't echo them), so the next edit's fingerprint is taken from the sent list.
+  const noteSavedItems = (resp, sentItems) => {
+    const its = Array.isArray(resp?.order?.items) ? resp.order.items : sentItems;
+    baseItemsSigRef.current = Array.isArray(its) ? orderItemsSignature(its) : null;
+  };
+  // On 409: load the order's latest items and keep this waiter's additions (new lines and
+  // quantity increases); nothing is sent until they review and tap send again.
+  const recoverFromOrderChanged = async (error) => {
+    if (!isOrderChangedError(error) || !existingOrderId) return false;
+    try {
+      let fresh = error?.data?.order?.items;
+      if (!Array.isArray(fresh)) {
+        const r = await apiClient.getOrderById(restaurantId, existingOrderId);
+        fresh = r?.order?.items || [];
+      }
+      const { items: deltaItems } = buildUpdateDelta();
+      const freshCart = orderLinesToCart(fresh);
+      const merged = [...freshCart];
+      cart.forEach((line, i) => {
+        const d = deltaItems[i] || {};
+        const addQty = d.isNew ? (line.quantity || 1) : (d.isUpdated && d.quantityDelta > 0 ? d.quantityDelta : 0);
+        if (!addQty) return;
+        const hasCust = Array.isArray(line.selectedCustomizations) && line.selectedCustomizations.length > 0;
+        const same = !hasCust && merged.find(m => (m.menuItemId || m.id) === (line.menuItemId || line.id)
+          && (m.selectedVariant?.name || '') === (line.selectedVariant?.name || '')
+          && !(Array.isArray(m.selectedCustomizations) && m.selectedCustomizations.length));
+        if (same) same.quantity = (same.quantity || 0) + addQty;
+        else merged.push({ ...line, quantity: addQty });
+      });
+      setCart(merged);
+      setExistingOrderItems(freshCart.map(i => ({ menuItemId: i.menuItemId || i.id, name: i.name, quantity: i.quantity })));
+      baseItemsSigRef.current = orderItemsSignature(fresh);
+      Alert.alert(
+        'Order updated on another device',
+        'The latest items for this table were loaded and your new items were kept. Please review and send again.'
+      );
+      return true;
+    } catch (e) {
+      console.warn('recoverFromOrderChanged failed:', e?.message);
+      return false;
+    }
+  };
+
   const handleSendToKitchen = async (customerPhone = '', specialInstructions = null, discountData = {}, tableNumberFromModal = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before sending to kitchen.');
@@ -1554,7 +1608,8 @@ export default function MenuScreen() {
           status: 'confirmed', // Send directly to kitchen
         };
 
-        response = await apiClient.updateOrder(existingOrderId, orderData);
+        response = await apiClient.updateOrder(existingOrderId, { ...orderData, ...baseSigField() });
+        noteSavedItems(response, orderData.items);
         orderId = existingOrderId;
       } else {
         // Create new order — include full billing data from WaiterCartModal
@@ -1722,6 +1777,7 @@ export default function MenuScreen() {
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
       afterModalClose(() => setShowKOTModal(true));
     } catch (error) {
+      if (await recoverFromOrderChanged(error)) return;
       console.error('Error sending order:', error);
       toast.error(error.message || 'Failed to send order to kitchen. Please try again.');
     } finally {
@@ -1802,6 +1858,7 @@ export default function MenuScreen() {
         // Settle existing bar tab — update to completed
         await apiClient.updateOrder(existingOrderId, {
           items,
+          ...baseSigField(),
           status: 'completed',
           paymentStatus: partialFields.paymentStatus || 'paid',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
@@ -1883,7 +1940,8 @@ export default function MenuScreen() {
           ...partialFields,
         };
 
-        const updateResponse = await apiClient.updateOrder(existingOrderId, updateData);
+        const updateResponse = await apiClient.updateOrder(existingOrderId, { ...updateData, ...baseSigField() });
+        noteSavedItems(updateResponse, updateData.items);
 
         // Auto-print KOT for newly added/changed items (fire and forget)
         if (printSettings?.autoPrintOnKOT !== false) {
@@ -2133,6 +2191,7 @@ export default function MenuScreen() {
         }
       }
     } catch (error) {
+      if (await recoverFromOrderChanged(error)) return;
       console.error('Error placing order:', error);
       toast.error(error.message || 'Failed to place order. Please try again.');
     } finally {
@@ -2468,6 +2527,7 @@ export default function MenuScreen() {
         // Update existing order to completed (billing an occupied table's order)
         response = await apiClient.updateOrder(existingOrderId, {
           ...orderData,
+          ...baseSigField(),
           tableNumber: undefined, // Don't send tableNumber to avoid validation
         });
         completedOrderId = existingOrderId;
@@ -2593,6 +2653,7 @@ export default function MenuScreen() {
       tableParamsStampRef.current = null;
       lastAppliedStampRef.current = null;
     } catch (error) {
+      if (await recoverFromOrderChanged(error)) return;
       console.error('Error completing bill:', error);
       toast.error(error.message || 'Failed to complete bill. Please try again.');
     } finally {
@@ -2753,12 +2814,10 @@ export default function MenuScreen() {
       if (existingOrderId) {
         // Update existing tab
         await apiClient.updateOrder(existingOrderId, {
-          items: cart.map(item => ({
-            menuItemId: item.menuItemId || item.id,
-            name: item.name,
-            price: item.price,
-            quantity: item.quantity,
-          })),
+          // full line payload (variant / add-ons / seat) — the bare {id,name,price,qty} re-priced
+          // customised lines to the menu base
+          items: cart.map(buildItemPayload),
+          ...baseSigField(),
           totalAmount: subtotal,
           taxAmount: taxAmount,
           finalAmount: grandTotal,
@@ -2796,6 +2855,7 @@ export default function MenuScreen() {
       // Navigate back to bar billing
       afterModalClose(() => router.back());
     } catch (error) {
+      if (await recoverFromOrderChanged(error)) return;
       console.error('Error saving tab:', error);
       toast.error(error.message || 'Failed to save tab.');
     } finally {

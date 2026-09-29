@@ -21,6 +21,7 @@ import KOTModal from './KOTModal';
 import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
 import useTimedMenu from '../hooks/useTimedMenu';
+import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 
 // ─── Multi-tier pricing helpers (mirror screens/MenuNative.js) ───
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
@@ -70,6 +71,8 @@ export default function WaiterOrderModal({
   onOrderSent,
   posSettings,
 }) {
+  // Fingerprint of the order's items as loaded — see utils/orderSignature.js (stale-order guard)
+  const baseItemsSigRef = useRef(null);
   const { fs, r, isTablet } = useResponsive();
   const { toast, ToastView } = useToast();
   const insets = useSafeAreaInsets();
@@ -236,6 +239,7 @@ export default function WaiterOrderModal({
             const orderRes = await apiClient.getOrders(rid, { orderId: existingOrderId });
             const order = orderRes?.orders?.[0] || orderRes?.order;
             if (order?.items && !cancelled) {
+              baseItemsSigRef.current = orderItemsSignature(order.items);
               const cartItems = order.items.map((item, idx) => ({
                 ...item,
                 cartId: `existing-${item.menuItemId || item.id || 'item'}-${idx}-${Date.now()}`,
@@ -616,7 +620,12 @@ export default function WaiterOrderModal({
           ...(customerPhone && { customerPhone }),
           ...(customerData?.id && { customerId: customerData.id }),
         };
-        response = await apiClient.updateOrder(existingOrderId, orderData);
+        response = await apiClient.updateOrder(existingOrderId, {
+          ...orderData,
+          ...(baseItemsSigRef.current ? { baseItemsSignature: baseItemsSigRef.current } : {}),
+        });
+        // Order now holds exactly the items just sent (PATCH doesn't echo them) → next edit's fingerprint
+        baseItemsSigRef.current = orderItemsSignature(Array.isArray(response?.order?.items) ? response.order.items : orderData.items);
         orderId = existingOrderId;
       } else {
         const orderData = {
@@ -776,6 +785,31 @@ export default function WaiterOrderModal({
       setShowKOTModal(true);
       if (vibrationEnabled) Vibration.vibrate(200);
     } catch (error) {
+      if (isOrderChangedError(error) && existingOrderId) {
+        // Another device changed this order: load its latest items, keep the lines this waiter
+        // just added, and let them review before sending again (nothing was saved).
+        const fresh = Array.isArray(error?.data?.order?.items) ? error.data.order.items : null;
+        if (fresh) {
+          const stamp = Date.now();
+          const freshCart = fresh.map((item, idx) => ({
+            ...item,
+            cartId: `existing-${item.menuItemId || item.id || 'item'}-${idx}-${stamp}`,
+            menuItemId: item.menuItemId || item.id,
+          }));
+          const added = cart.filter(l => !String(l.cartId || '').startsWith('existing-'));
+          setCart([...freshCart, ...added]);
+          setExistingOrderItems(freshCart.map(i => ({
+            menuItemId: i.menuItemId || i.id,
+            name: i.name,
+            quantity: i.quantity,
+            selectedVariant: i.selectedVariant || null,
+            seat: sanitizeSeat(i.seat),
+          })));
+          baseItemsSigRef.current = orderItemsSignature(fresh);
+        }
+        Alert.alert('Order updated on another device', error.message || 'Please review the latest items and send again.');
+        return;
+      }
       console.error('Send to kitchen error:', error);
       Alert.alert('Error', error.message || 'Failed to send order. Please try again.');
     } finally {
