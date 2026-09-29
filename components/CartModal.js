@@ -35,6 +35,7 @@ import UpiQrModal from './UpiQrModal';
 import apiClient from '../services/api';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { doEcrPurchase, ECR_APPROVED } from '../services/ecrService';
+import { buildSplitBillPayload } from '../utils/splitBill';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -580,7 +581,25 @@ export default function CartModal({
     serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
     deliveryStaffId: selectedDeliveryStaff?.id || null,
     deliveryStaffName: selectedDeliveryStaff?.name || null,
-    splitBill: (splitConfig && Array.isArray(splitConfig.guests) && splitConfig.guests.length > 1) ? splitConfig : null,
+    // Full split payload (same shape the web sends) built from the LIVE totals at submit time, so
+    // a cart change after "Apply Split" is reflected. Previously the raw UI config was passed and
+    // never saved.
+    splitBill: (splitConfig && Array.isArray(splitConfig.guests) && splitConfig.guests.length > 1)
+      ? buildSplitBillPayload(
+        {
+          mode: splitConfig.mode,
+          guestCount: splitConfig.guests.length,
+          amounts: splitConfig.guests.map(g => g.amount),
+          lineGuest: cart.map((it, idx) => splitItemGuest[splitItemKey(it, idx)] ?? 0),
+        },
+        {
+          cart, subtotal, lineTotal: splitLineTotal,
+          totalDiscount: billing.totalDiscount, serviceChargeAmount: billing.serviceChargeAmount,
+          taxBreakdown: billing.taxBreakdown, totalTax: billing.totalTax, tipAmount,
+          roundOffAmount: billing.roundOffAmount, grandTotal: billing.grandTotal,
+        }
+      )
+      : null,
     taxBreakdown: billing.taxBreakdown.length > 0 ? billing.taxBreakdown : null,
     totalTax: billing.totalTax || null,
     roundOffAmount: billing.roundOffAmount || null,
@@ -595,7 +614,8 @@ export default function CartModal({
     tipPercentage: tipPercentage || null,
     cashReceived: cashReceived ? parseFloat(cashReceived) : null,
     changeReturned: changeAmount > 0 ? changeAmount : null,
-    splitPayments: splitPayments.length > 0 ? splitPayments : null,
+    // a split BILL and split PAYMENTS can't be combined (backend returns 400)
+    splitPayments: (splitPayments.length > 0 && !(splitConfig && splitConfig.guests?.length > 1)) ? splitPayments : null,
     paymentMethod: splitPayments.length > 0 ? 'split' : paymentMethod,
     partialPayAmount: partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null,
     // Explicit payment status tracking (matches dine-frontend)

@@ -53,6 +53,7 @@ import { computeTaxBreakdown } from '../hooks/useBillingCalculation';
 import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 import { orderLinesToCart } from '../utils/orderLines';
+import { buildGuestInvoice } from '../utils/splitBill';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -1847,6 +1848,13 @@ export default function MenuScreen() {
       // Build billing fields object
       const billingFields = {};
       Object.assign(billingFields, extractPassthroughBilling(discountData));
+      // Split bill (per-guest): stored on the order like the web ('split-bill'); never together with
+      // split payments (backend 400).
+      if (Array.isArray(discountData.splitBill?.splits) && discountData.splitBill.splits.length >= 2) {
+        billingFields.splitBill = discountData.splitBill;
+        billingFields.paymentMethod = 'split-bill';
+        delete billingFields.splitPayments;
+      }
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2260,6 +2268,13 @@ export default function MenuScreen() {
       // Build billing fields
       const billingFields = {};
       Object.assign(billingFields, extractPassthroughBilling(discountData));
+      // Split bill (per-guest): stored on the order like the web ('split-bill'); never together with
+      // split payments (backend 400).
+      if (Array.isArray(discountData.splitBill?.splits) && discountData.splitBill.splits.length >= 2) {
+        billingFields.splitBill = discountData.splitBill;
+        billingFields.paymentMethod = 'split-bill';
+        delete billingFields.splitPayments;
+      }
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2403,11 +2418,13 @@ export default function MenuScreen() {
 
       // Auto-print bill silently — per-guest receipts if the bill was split.
       if (printSettings?.autoPrintOnBilling !== false) {
-        const guests = discountData.splitBill?.guests;
-        if (Array.isArray(guests) && guests.length > 1) {
-          guests.forEach((g, i) => {
-            const guestInvoice = { ...invoiceData, grandTotal: g.amount, splitLabel: `Split ${i + 1} of ${guests.length}${g.name ? ` — ${g.name}` : ''}`, customerName: g.name || invoiceData.customerName };
-            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), imageHtml: printerService.generateBillHTML(guestInvoice, printSettings || {}), silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` }).catch(() => {});
+        const sb = discountData.splitBill;
+        if (Array.isArray(sb?.splits) && sb.splits.length > 1) {
+          // one receipt per guest with that guest's own items / tax / total (was: every guest got all
+          // items and the full tax, only the total changed)
+          sb.splits.forEach((_, i) => {
+            const guestInvoice = buildGuestInvoice(invoiceData, sb, i);
+            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), imageHtml: printerService.generateBillHTML(guestInvoice, printSettings || {}), silentOnly: true, label: `Bill (split ${i + 1}/${sb.splits.length})` }).catch(() => {});
           });
         } else {
           const billText = printerService.generateBillText(invoiceData);
@@ -2481,6 +2498,13 @@ export default function MenuScreen() {
       // Build billing fields
       const billingFields = {};
       Object.assign(billingFields, extractPassthroughBilling(discountData));
+      // Split bill (per-guest): stored on the order like the web ('split-bill'); never together with
+      // split payments (backend 400).
+      if (Array.isArray(discountData.splitBill?.splits) && discountData.splitBill.splits.length >= 2) {
+        billingFields.splitBill = discountData.splitBill;
+        billingFields.paymentMethod = 'split-bill';
+        delete billingFields.splitPayments;
+      }
       if (discountData.serviceChargeRate) billingFields.serviceChargeRate = discountData.serviceChargeRate;
       if (serviceCharge) billingFields.serviceChargeAmount = serviceCharge;
       if (discountData.tipAmount) billingFields.tipAmount = discountData.tipAmount;
@@ -2647,17 +2671,11 @@ export default function MenuScreen() {
       // Auto-print bill silently. If the bill was split among guests, print one
       // receipt per guest (same generateBillText, grandTotal = that guest's share).
       if (printSettings?.autoPrintOnBilling !== false) {
-        const guests = discountData.splitBill?.guests;
-        if (Array.isArray(guests) && guests.length > 1) {
-          guests.forEach((g, i) => {
-            const guestInvoice = {
-              ...invoiceData,
-              grandTotal: g.amount,
-              splitLabel: `Split ${i + 1} of ${guests.length}${g.name ? ` — ${g.name}` : ''}`,
-              customerName: g.name || invoiceData.customerName,
-            };
-            const gt = printerService.generateBillText(guestInvoice);
-            printerService.printWithFeedback({ text: gt, silentOnly: true, label: `Bill (split ${i + 1}/${guests.length})` })
+        const sb = discountData.splitBill;
+        if (Array.isArray(sb?.splits) && sb.splits.length > 1) {
+          sb.splits.forEach((_, i) => {
+            const guestInvoice = buildGuestInvoice(invoiceData, sb, i);
+            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), silentOnly: true, label: `Bill (split ${i + 1}/${sb.splits.length})` })
               .catch(() => {});
           });
         } else {
@@ -2669,7 +2687,7 @@ export default function MenuScreen() {
       }
 
       // Auto-open cash drawer for cash payments
-      if ((billingFields.paymentMethod || paymentMethod) === 'cash' && user?.restaurant?.posSettings?.enableCashDrawer) {
+      if ((billingFields.paymentMethod === 'split-bill' ? paymentMethod : (billingFields.paymentMethod || paymentMethod)) === 'cash' && user?.restaurant?.posSettings?.enableCashDrawer) {
         printerService.openCashDrawer().catch(() => {});
       }
 
