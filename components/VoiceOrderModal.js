@@ -99,11 +99,7 @@ export default function VoiceOrderModal({ visible, onClose, onItemsAdded, restau
       if (response.items && response.items.length > 0) {
         // Add items to cart
         onItemsAdded(response.items);
-        
-        // Speak confirmation
-        Speech.speak(`Added ${response.items.length} item(s) to cart`, {
-          language: 'en',
-        });
+        // (spoken confirmation removed — expo-speech is not installed, the call threw after adding)
       } else {
         setError('No items found. Please try again with clearer pronunciation.');
       }

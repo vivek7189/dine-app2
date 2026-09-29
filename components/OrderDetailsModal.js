@@ -389,6 +389,12 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                       <Text style={styles.totalValue}>{getCurrencySymbol()}{num(order.serviceChargeAmount).toFixed(2)}</Text>
                     </View>
                   )}
+                  {(Array.isArray(order.additionalCharges) ? order.additionalCharges : []).map((c, i) => (
+                    <View key={`ac-${i}`} style={styles.totalRow}>
+                      <Text style={styles.totalLabel}>{c.name || 'Charge'}</Text>
+                      <Text style={styles.totalValue}>{getCurrencySymbol()}{num(c.amount).toFixed(2)}</Text>
+                    </View>
+                  ))}
                   {num(order.taxAmount) > 0 && (
                     <View style={styles.totalRow}>
                       <Text style={styles.totalLabel}>{Array.isArray(order.taxBreakdown) && order.taxBreakdown.length > 0 ? order.taxBreakdown.map(t => `${t.name || 'Tax'}${t.rate ? ` ${t.rate}%` : ''}`).join(', ') : 'Tax'}</Text>

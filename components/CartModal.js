@@ -579,6 +579,9 @@ export default function CartModal({
     serviceChargeRate: effectiveBillingSettings.serviceChargeEnabled ? (billing.serviceChargeRate ?? effectiveBillingSettings.serviceChargeRate) : null,
     serviceChargeAmount: billing.serviceChargeAmount || null,
     serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
+    // Display/print snapshot only — the backend recomputes the charges itself from taxSettings.
+    additionalCharges: billing.additionalCharges.length > 0 ? billing.additionalCharges : null,
+    additionalChargesTotal: billing.additionalChargesTotal || null,
     deliveryStaffId: selectedDeliveryStaff?.id || null,
     deliveryStaffName: selectedDeliveryStaff?.name || null,
     // Full split payload (same shape the web sends) built from the LIVE totals at submit time, so
@@ -595,6 +598,7 @@ export default function CartModal({
         {
           cart, subtotal, lineTotal: splitLineTotal,
           totalDiscount: billing.totalDiscount, serviceChargeAmount: billing.serviceChargeAmount,
+          additionalChargesTotal: billing.additionalChargesTotal,
           taxBreakdown: billing.taxBreakdown, totalTax: billing.totalTax, tipAmount,
           roundOffAmount: billing.roundOffAmount, grandTotal: billing.grandTotal,
         }
@@ -933,6 +937,8 @@ export default function CartModal({
       serviceChargeRate: billingSettings.serviceChargeEnabled ? billingSettings.serviceChargeRate : null,
       serviceChargeAmount: billing.serviceChargeAmount || null,
       serviceChargeLabel: billingSettings.serviceChargeLabel || 'Service Charge',
+      additionalCharges: billing.additionalCharges.length > 0 ? billing.additionalCharges : null,
+      additionalChargesTotal: billing.additionalChargesTotal || null,
       taxBreakdown: billing.taxBreakdown.length > 0 ? billing.taxBreakdown : null,
       totalTax: billing.totalTax || null,
       roundOffAmount: billing.roundOffAmount || null,
@@ -1370,6 +1376,11 @@ export default function CartModal({
                         <Text style={styles.breakdownChipText}>SC {getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>
                       </View>
                     )}
+                    {billing.additionalCharges.map((c) => (
+                      <View key={`ac-${c.id}`} style={styles.breakdownChip}>
+                        <Text style={styles.breakdownChipText}>{c.name} {getCurrencySymbol()}{fmtAmt(c.amount)}</Text>
+                      </View>
+                    ))}
                     {billing.totalTax > 0 && (
                       <View style={styles.breakdownChip}>
                         <Text style={styles.breakdownChipText}>Tax {getCurrencySymbol()}{fmtAmt(billing.totalTax)}</Text>
@@ -1399,6 +1410,7 @@ export default function CartModal({
                         <Text style={styles.totalCardLabel}>Sub: {getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                         {billing.totalDiscount > 0 && <Text style={[styles.totalCardLabel, { color: '#fca5a5' }]}>Disc: -{getCurrencySymbol()}{fmtAmt(billing.totalDiscount)}</Text>}
                         {billing.serviceChargeAmount > 0 && isRoleAllowed(billingSettings.serviceChargeRoles) && <Text style={styles.totalCardLabel}>SC: {getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>}
+                        {billing.additionalCharges.map((c) => <Text key={`ac-${c.id}`} style={styles.totalCardLabel}>{c.name}: {getCurrencySymbol()}{fmtAmt(c.amount)}</Text>)}
                         {billing.totalTax > 0 && <Text style={styles.totalCardLabel}>Tax: {getCurrencySymbol()}{fmtAmt(billing.totalTax)}{billing.taxBreakdown?.some(t => t.inclusive) ? ' (incl.)' : ''}</Text>}
                         {tipAmount > 0 && isRoleAllowed(billingSettings.tipsRoles) && <Text style={styles.totalCardLabel}>Tip: {getCurrencySymbol()}{fmtAmt(tipAmount)}</Text>}
                       </View>
@@ -2218,6 +2230,12 @@ export default function CartModal({
                     <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{getCurrencySymbol()}{fmtAmt(billing.serviceChargeAmount)}</Text>
                   </View>
                 )}
+                {billing.additionalCharges.map((c) => (
+                  <View key={`ac-${c.id}`} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>{c.name}{c.type === 'percent' ? ` (${c.value}%)` : ''}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b' }}>{getCurrencySymbol()}{fmtAmt(c.amount)}</Text>
+                  </View>
+                ))}
                 {billing.totalTax > 0 && billing.taxBreakdown.map((tax, i) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>{tax.name} ({tax.rate}%){tax.inclusive ? ' (incl.)' : ''}</Text>
@@ -2294,6 +2312,12 @@ export default function CartModal({
                     <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{billing.serviceChargeAmount.toFixed(2)}</Text>
                   </View>
                 )}
+                {billing.additionalCharges.map((c) => (
+                  <View key={`ac-${c.id}`} style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>{c.name}{c.type === 'percent' ? ` ${c.value}%` : ''}</Text>
+                    <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{c.amount.toFixed(2)}</Text>
+                  </View>
+                ))}
                 {billing.taxBreakdown.map((tax, i) => (
                   <View key={`tax-${i}`} style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>{tax.name}{tax.rate ? ` ${tax.rate}%` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>

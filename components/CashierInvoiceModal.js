@@ -125,7 +125,8 @@ Offer Discount:  -${getCurrencySymbol()}${invoiceData.offerDiscount.toFixed(2)}`
 Manual Discount: -${getCurrencySymbol()}${invoiceData.manualDiscount.toFixed(2)}` : ''}${invoiceData.loyaltyDiscount > 0 ? `
 Loyalty Points:  -${getCurrencySymbol()}${invoiceData.loyaltyDiscount.toFixed(2)}` : ''}${invoiceData.couponDiscount > 0 ? `
 Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-${getCurrencySymbol()}${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
-Service Charge:  ${getCurrencySymbol()}${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
+Service Charge:  ${getCurrencySymbol()}${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${(Array.isArray(invoiceData.additionalCharges) ? invoiceData.additionalCharges : []).map(c => `
+${c.name || 'Charge'}:${' '.repeat(Math.max(1, 16 - String(c.name || 'Charge').length))}${getCurrencySymbol()}${(Number(c.amount) || 0).toFixed(2)}`).join('')}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
 ? invoiceData.taxBreakdown.map(tax => `
 ${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${tax.inclusive ? ' (incl.)' : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '') + (tax.inclusive ? ' (incl.)' : '')).length))}${getCurrencySymbol()}${tax.amount.toFixed(2)}`).join('')
 : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
@@ -170,6 +171,8 @@ Thank you for your order!
       couponCode: invoiceData.couponCode,
       serviceChargeAmount: invoiceData.serviceChargeAmount || 0,
       serviceChargeRate: invoiceData.serviceChargeRate,
+      additionalCharges: invoiceData.additionalCharges || null,
+      additionalChargesTotal: invoiceData.additionalChargesTotal || 0,
       tipAmount: invoiceData.tipAmount || 0,
       roundOffAmount: invoiceData.roundOffAmount,
       grandTotal: invoiceData.grandTotal || 0,
@@ -554,6 +557,12 @@ Thank you for your order!
                     <Text style={[styles.totalValue, { color: '#7c3aed' }]}>{getCurrencySymbol()}{invoiceData.serviceChargeAmount.toFixed(2)}</Text>
                   </View>
                 )}
+                {(Array.isArray(invoiceData.additionalCharges) ? invoiceData.additionalCharges : []).map((c, i) => (
+                  <View key={`ac-${i}`} style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>{c.name || 'Charge'}{c.type === 'percent' && c.value ? ` (${c.value}%)` : ''}</Text>
+                    <Text style={styles.totalValue}>{getCurrencySymbol()}{(Number(c.amount) || 0).toFixed(2)}</Text>
+                  </View>
+                ))}
                 {invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0 ? (
                   invoiceData.taxBreakdown.map((tax, i) => (
                     <View key={`tax-${i}`} style={styles.totalRow}>

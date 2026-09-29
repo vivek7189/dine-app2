@@ -18,7 +18,7 @@ const MODE = { equal: 'equal', item: 'by-item', amount: 'by-amount' };
 /**
  * @param {object} cfg    { mode: 'equal'|'item'|'amount', guestCount, amounts?: number[],
  *                          lineGuest?: number[] (by-item: guest index per cart line, same order as cart) }
- * @param {object} bill   { cart, subtotal, totalDiscount, serviceChargeAmount, taxBreakdown, totalTax,
+ * @param {object} bill   { cart, subtotal, totalDiscount, serviceChargeAmount, additionalChargesTotal, taxBreakdown, totalTax,
  *                          tipAmount, roundOffAmount, grandTotal, lineTotal(line) }
  */
 export function buildSplitBillPayload(cfg, bill) {
@@ -66,6 +66,7 @@ export function buildSplitBillPayload(cfg, bill) {
     const sub = r2(subtotal * p);
     const disc = r2((Number(bill.totalDiscount) || 0) * p);
     const sc = r2((Number(bill.serviceChargeAmount) || 0) * p);
+    const addl = r2((Number(bill.additionalChargesTotal) || 0) * p);
     const tip = r2((Number(bill.tipAmount) || 0) * p);
     const taxBreakdown = (bill.taxBreakdown || []).map(t => ({ ...t, amount: r2((Number(t.amount) || 0) * p) }));
     const taxAmount = r2((Number(bill.totalTax) || 0) * p);
@@ -80,10 +81,11 @@ export function buildSplitBillPayload(cfg, bill) {
       taxAmount,
       taxBreakdown,
       serviceChargeAmount: sc,
+      additionalChargesTotal: addl,
       tipAmount: tip,
       discountAmount: disc,
       // makes each guest receipt add up exactly to its total after share rounding
-      roundOffAmount: r2(totalAmount - (sub - disc + sc + exclTax + tip)),
+      roundOffAmount: r2(totalAmount - (sub - disc + sc + addl + exclTax + tip)),
       totalAmount,
       paymentMethod: null,
       paid: false,
@@ -108,6 +110,10 @@ export function buildGuestInvoice(invoiceData, splitBill, i) {
     loyaltyDiscount: r2((Number(invoiceData.loyaltyDiscount) || 0) * p),
     couponDiscount: r2((Number(invoiceData.couponDiscount) || 0) * p),
     serviceChargeAmount: s.serviceChargeAmount,
+    additionalCharges: Array.isArray(invoiceData.additionalCharges)
+      ? invoiceData.additionalCharges.map(c => ({ ...c, amount: r2((Number(c.amount) || 0) * p) }))
+      : invoiceData.additionalCharges,
+    additionalChargesTotal: s.additionalChargesTotal || 0,
     tipAmount: s.tipAmount,
     roundOffAmount: s.roundOffAmount,
     grandTotal: s.totalAmount,

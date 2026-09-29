@@ -50,6 +50,7 @@ import { sanitizeSeat } from '../utils/seatOrdering';
 import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
 import { computeTaxBreakdown } from '../hooks/useBillingCalculation';
+import { resolveAdditionalCharges } from '../utils/additionalCharges';
 import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 import { orderLinesToCart } from '../utils/orderLines';
@@ -378,6 +379,7 @@ export default function MenuScreen() {
               taxGroups: cachedSettings.taxGroups || [],
               taxInclusivePricing: cachedSettings.taxInclusivePricing || false,
               defaultTaxRate: cachedSettings.defaultTaxRate || 0,
+              additionalCharges: Array.isArray(cachedSettings.additionalCharges) ? cachedSettings.additionalCharges : [],
             });
             // Load real categories if tax groups exist
             if (cachedSettings.taxGroups?.length > 0) {
@@ -405,6 +407,7 @@ export default function MenuScreen() {
               taxGroups: settings.taxGroups || [],
               taxInclusivePricing: settings.taxInclusivePricing || false,
               defaultTaxRate: settings.defaultTaxRate || 0,
+              additionalCharges: Array.isArray(settings.additionalCharges) ? settings.additionalCharges : [],
             });
 
             // Load real categories if tax groups exist
@@ -858,6 +861,7 @@ export default function MenuScreen() {
           taxGroups: cachedSettings.taxGroups || [],
           taxInclusivePricing: cachedSettings.taxInclusivePricing || false,
           defaultTaxRate: cachedSettings.defaultTaxRate || 0,
+          additionalCharges: Array.isArray(cachedSettings.additionalCharges) ? cachedSettings.additionalCharges : [],
         });
         if (cachedSettings.taxGroups?.length > 0) {
           apiClient.getCategories(rid).then(res => {
@@ -889,6 +893,7 @@ export default function MenuScreen() {
           taxGroups: settings.taxGroups || [],
           taxInclusivePricing: settings.taxInclusivePricing || false,
           defaultTaxRate: settings.defaultTaxRate || 0,
+          additionalCharges: Array.isArray(settings.additionalCharges) ? settings.additionalCharges : [],
         });
 
         // Load real categories if tax groups exist
@@ -1416,7 +1421,12 @@ export default function MenuScreen() {
   // so this fallback path (flows that bypass the CartModal billing panel) agrees with the panel:
   // honours tax GROUPS, per-item inclusive/exclusive, and only ENABLED taxes. `taxableAmount`
   // is the already-discounted (+SC) base; we pass it as discountedSubtotal for the flat path.
-  const calculateTax = (taxableAmount) => {
+  // Order type of the native cart when no explicit one is passed (same rule ensureOrderExists uses).
+  const defaultCartOrderType = () => (selectedTable || params.tableNumber ? 'dine-in' : (isCashier ? 'counter' : 'dine-in'));
+
+  // `ot` = the order being billed's type. It used to read an undeclared `orderType` here, which
+  // threw "orderType is not defined" on every call while tax was enabled (v2.98.18–20).
+  const calculateTax = (taxableAmount, ot = defaultCartOrderType()) => {
     if (!taxSettings.enabled) return { taxAmount: 0, taxRate: 0, taxLabel: '' };
     // Normalize the cart so each line carries its full effective unit price (base + extras),
     // matching getCartTotal, so per-item group tax lines up with the subtotal.
@@ -1431,7 +1441,7 @@ export default function MenuScreen() {
       // Pass the selected order type so order-type-gated taxes are filtered here too, matching the
       // CartModal panel and the backend recompute (index.js:11972). Without it a tax restricted to
       // e.g. Dine-In would wrongly show on a Takeaway quick-total.
-      orderType,
+      orderType: ot,
       defaultTaxName: user?.restaurant?.currencySettings?.taxLabel || 'Tax',
     });
     const taxRate = taxBreakdown.reduce((s, t) => s + (t.rate || 0), 0);
@@ -1442,8 +1452,10 @@ export default function MenuScreen() {
 
   const getGrandTotal = () => {
     const subtotal = getCartTotal();
-    const { taxAmount } = calculateTax(subtotal);
-    return subtotal + taxAmount;
+    const ot = defaultCartOrderType();
+    const addl = resolveAdditionalCharges(taxSettings, ot, subtotal);
+    const { taxAmount } = calculateTax(subtotal + addl.foldTaxableTotal, ot);
+    return subtotal + addl.total + taxAmount + addl.ownTaxTotal;
   };
 
   // --- WebView Billing ---
@@ -1826,15 +1838,17 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
+      // packaging etc. — same resolver as CartModal/backend (used when no CartModal totals were passed)
+      const addlLocal = resolveAdditionalCharges(taxSettings, orderType, discountedSubtotal);
       // Prefer CartModal's per-item tax; fall back to flat tax
-      const flatTaxPlaceOrder = calculateTax(taxableAmount);
-      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxPlaceOrder.taxAmount;
+      const flatTaxPlaceOrder = calculateTax(taxableAmount + addlLocal.foldTaxableTotal, orderType);
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxPlaceOrder.taxAmount + addlLocal.ownTaxTotal;
       // Prefer CartModal's grand total (computed with per-item tax)
       let grandTotal;
       if (discountData.grandTotal != null) {
         grandTotal = discountData.grandTotal;
       } else {
-        const afterTax = taxableAmount + taxAmount;
+        const afterTax = taxableAmount + addlLocal.total + taxAmount;
         const withTip = afterTax + (discountData.tipAmount || 0);
         let localRoundOff = 0;
         if (billingSettings.roundOffEnabled) {
@@ -2244,9 +2258,11 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
+      // packaging etc. — same resolver as CartModal/backend (used when no CartModal totals were passed)
+      const addlLocal = resolveAdditionalCharges(taxSettings, orderType, discountedSubtotal);
       // Prefer CartModal's per-item tax calculation; fall back to flat tax
-      const flatTax = calculateTax(taxableAmount);
-      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTax.taxAmount;
+      const flatTax = calculateTax(taxableAmount + addlLocal.foldTaxableTotal, orderType);
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTax.taxAmount + addlLocal.ownTaxTotal;
       const taxRate = flatTax.taxRate;
       const taxLabel = flatTax.taxLabel;
       // Prefer CartModal's grand total (computed with per-item tax) over local flat recalculation
@@ -2254,7 +2270,7 @@ export default function MenuScreen() {
       if (discountData.grandTotal != null) {
         grandTotal = discountData.grandTotal;
       } else {
-        const afterTax = taxableAmount + taxAmount;
+        const afterTax = taxableAmount + addlLocal.total + taxAmount;
         const withTip = afterTax + (discountData.tipAmount || 0);
         let localRoundOff = 0;
         if (billingSettings.roundOffEnabled) {
@@ -2403,6 +2419,8 @@ export default function MenuScreen() {
         couponCode: discountData.couponCode || null,
         // Billing fields for invoice
         serviceChargeAmount: serviceCharge || 0,
+        additionalCharges: discountData.additionalCharges || (addlLocal.charges.length ? addlLocal.charges : null),
+        additionalChargesTotal: discountData.additionalChargesTotal || addlLocal.total || 0,
         serviceChargeRate: discountData.serviceChargeRate || 0,
         tipAmount: discountData.tipAmount || 0,
         roundOffAmount: discountData.roundOffAmount || 0,
@@ -2474,17 +2492,19 @@ export default function MenuScreen() {
       const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
       const serviceCharge = discountData.serviceChargeAmount || 0;
       const taxableAmount = discountedSubtotal + serviceCharge;
+      // packaging etc. — same resolver as CartModal/backend (used when no CartModal totals were passed)
+      const addlLocal = resolveAdditionalCharges(taxSettings, orderType, discountedSubtotal);
       // Prefer CartModal's per-item tax; fall back to flat tax
-      const flatTaxResult = calculateTax(taxableAmount);
+      const flatTaxResult = calculateTax(taxableAmount + addlLocal.foldTaxableTotal, orderType);
       const taxRate = flatTaxResult.taxRate;
       const taxLabel = flatTaxResult.taxLabel;
-      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount;
+      const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount + addlLocal.ownTaxTotal;
       // Prefer CartModal's grand total (computed with per-item tax)
       let grandTotal;
       if (discountData.grandTotal != null) {
         grandTotal = discountData.grandTotal;
       } else {
-        const afterTax = taxableAmount + taxAmount;
+        const afterTax = taxableAmount + addlLocal.total + taxAmount;
         const withTip = afterTax + (discountData.tipAmount || 0);
         let localRoundOff = 0;
         if (billingSettings.roundOffEnabled) {
@@ -2655,6 +2675,8 @@ export default function MenuScreen() {
         couponDiscount: discountData.couponDiscount || 0,
         couponCode: discountData.couponCode || null,
         serviceChargeAmount: serviceCharge || 0,
+        additionalCharges: discountData.additionalCharges || (addlLocal.charges.length ? addlLocal.charges : null),
+        additionalChargesTotal: discountData.additionalChargesTotal || addlLocal.total || 0,
         serviceChargeRate: discountData.serviceChargeRate || null,
         roundOffAmount: discountData.roundOffAmount || 0,
         tipAmount: discountData.tipAmount || 0,
@@ -2739,15 +2761,17 @@ export default function MenuScreen() {
     const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
     const serviceCharge = discountData.serviceChargeAmount || 0;
     const taxableAmount = discountedSubtotal + serviceCharge;
-    const flatTaxResult = calculateTax(taxableAmount);
+      // packaging etc. — same resolver as CartModal/backend (used when no CartModal totals were passed)
+      const addlLocal = resolveAdditionalCharges(taxSettings, orderType, discountedSubtotal);
+    const flatTaxResult = calculateTax(taxableAmount + addlLocal.foldTaxableTotal, orderType);
     const taxRate = flatTaxResult.taxRate;
     const taxLabel = flatTaxResult.taxLabel;
-    const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount;
+    const taxAmount = discountData.totalTax != null ? discountData.totalTax : flatTaxResult.taxAmount + addlLocal.ownTaxTotal;
     let grandTotal;
     if (discountData.grandTotal != null) {
       grandTotal = discountData.grandTotal;
     } else {
-      const afterTax = taxableAmount + taxAmount;
+      const afterTax = taxableAmount + addlLocal.total + taxAmount;
       const withTip = afterTax + (discountData.tipAmount || 0);
       let localRoundOff = 0;
       if (billingSettings.roundOffEnabled) {
@@ -2789,6 +2813,8 @@ export default function MenuScreen() {
       couponDiscount: discountData.couponDiscount || 0,
       couponCode: discountData.couponCode || null,
       serviceChargeAmount: serviceCharge || 0,
+      additionalCharges: discountData.additionalCharges || (addlLocal.charges.length ? addlLocal.charges : null),
+      additionalChargesTotal: discountData.additionalChargesTotal || addlLocal.total || 0,
       serviceChargeRate: discountData.serviceChargeRate || null,
       roundOffAmount: discountData.roundOffAmount || 0,
       tipAmount: discountData.tipAmount || 0,

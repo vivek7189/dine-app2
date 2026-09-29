@@ -428,6 +428,8 @@ export default function OrderHistoryScreen() {
           outstandingAmount: order.outstandingAmount ?? null,
           serviceChargeAmount: Number(order.serviceChargeAmount || 0),
           serviceChargeRate: Number(order.serviceChargeRate || 0),
+          additionalCharges: Array.isArray(order.additionalCharges) ? order.additionalCharges : null,
+          additionalChargesTotal: Number(order.additionalChargesTotal || 0),
           tipAmount: Number(order.tipAmount || 0),
           roundOffAmount: Number(order.roundOffAmount || 0),
           cashReceived: order.cashReceived ?? null,
@@ -852,6 +854,12 @@ export default function OrderHistoryScreen() {
                     <Text style={styles.detailValue}>{formatCurrency(selectedOrder.serviceChargeAmount)}</Text>
                   </View>
                 )}
+                {(Array.isArray(selectedOrder.additionalCharges) ? selectedOrder.additionalCharges : []).map((c, i) => (
+                  <View key={`ac-${i}`} style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>{c.name || 'Charge'}</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(c.amount)}</Text>
+                  </View>
+                ))}
                 {selectedOrder.taxBreakdown && selectedOrder.taxBreakdown.length > 0 ? (
                   selectedOrder.taxBreakdown.map((tax, idx) => (
                     <View key={idx} style={styles.detailItem}>

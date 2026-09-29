@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { resolveAdditionalCharges } from '../utils/additionalCharges';
 
 // Order-type tax gating (mirrors dine-frontend OrderSummary + dine-backend). A tax
 // with NO `orderTypes` (absent/empty) applies to ALL order types — today's
@@ -159,7 +160,7 @@ export function computeTaxBreakdown({
 /**
  * Shared billing calculation hook — matches web OrderSummary.js logic.
  *
- * Flow: Subtotal → Discount → Service Charge → Tax → Tips → Round-off → Grand Total
+ * Flow: Subtotal → Discount → Service Charge → Additional charges → Tax → Tips → Round-off → Grand Total
  *
  * When taxGroups exist, tax is calculated per-item (each item may have different tax rates).
  * Otherwise falls back to flat tax on the entire taxable amount.
@@ -201,14 +202,24 @@ export default function useBillingCalculation({
       ? Math.round(discountedSubtotal * serviceChargeRate / 100 * 100) / 100
       : 0;
 
+    // Step 3b: Additional charges (packaging etc., per order type) — same as the backend POS path:
+    // % base = discounted subtotal; taxable charges WITHOUT their own rate fold into the item tax
+    // base (like service charge); charges WITH a rate are taxed on top as their own lines. All
+    // zero when the restaurant configured none → bill identical to before.
+    const addl = resolveAdditionalCharges(taxSettings, orderType, discountedSubtotal);
+
     // Step 4: Tax (shared with MenuNative via computeTaxBreakdown)
-    const { taxBreakdown, totalTax, exclusiveTaxTotal } = computeTaxBreakdown({
-      cart, taxSettings, categories, totalDiscount, discountedSubtotal, serviceChargeAmount, defaultTaxName, orderType,
+    const itemTax = computeTaxBreakdown({
+      cart, taxSettings, categories, totalDiscount, discountedSubtotal,
+      serviceChargeAmount: serviceChargeAmount + addl.foldTaxableTotal, defaultTaxName, orderType,
     });
+    const taxBreakdown = addl.taxLines.length ? [...itemTax.taxBreakdown, ...addl.taxLines] : itemTax.taxBreakdown;
+    const totalTax = Math.round((itemTax.totalTax + addl.ownTaxTotal) * 100) / 100;
+    const exclusiveTaxTotal = itemTax.exclusiveTaxTotal + addl.ownTaxTotal;
 
     // Step 5: After tax + tips — only add exclusive tax (inclusive is already in subtotal)
     const taxableAmount = discountedSubtotal + serviceChargeAmount;
-    const afterTax = taxableAmount + Math.round(exclusiveTaxTotal * 100) / 100;
+    const afterTax = taxableAmount + addl.total + Math.round(exclusiveTaxTotal * 100) / 100;
     const withTips = afterTax + tipAmount;
 
     // Step 6: Round-off
@@ -228,6 +239,8 @@ export default function useBillingCalculation({
       serviceChargeAmount,
       serviceChargeRate,
       taxableAmount,
+      additionalCharges: addl.charges,
+      additionalChargesTotal: addl.total,
       taxBreakdown,
       totalTax,
       roundOffAmount,

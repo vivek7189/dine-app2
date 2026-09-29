@@ -1123,6 +1123,10 @@ export const generateBillText = (invoiceData) => {
     lines.push(leftRight(invoiceData.couponCode ? `Coupon (${invoiceData.couponCode})` : 'Coupon', `-${RS}${fmt(invoiceData.couponDiscount)}`, W));
   }
   if (invoiceData.serviceChargeAmount > 0) lines.push(leftRight('Service Charge', `${RS}${fmt(invoiceData.serviceChargeAmount)}`, W));
+  // Additional charges (packaging etc.) — snapshot from the bill / saved order
+  (Array.isArray(invoiceData.additionalCharges) ? invoiceData.additionalCharges : []).forEach((c) => {
+    if (Number(c?.amount) > 0) lines.push(leftRight(`${c.name || 'Charge'}${c.type === 'percent' && c.value ? ` (${c.value}%)` : ''}`, `${RS}${fmt(c.amount)}`, W));
+  });
   if (bl.showTaxBreakdown !== false) {
     const showIncl = invoiceData.showInclusiveTaxOnBill !== false;
     if (invoiceData.taxBreakdown?.length > 0) {
