@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import usePrinterStatus from '../../hooks/usePrinterStatus';
 import { getPrintNotificationsEnabled, setPrintNotificationsEnabled, getRemotePrintEnabled, setRemotePrintEnabled, getDisconnectAlertEnabled, setDisconnectAlertEnabled, discoverNetworkPrinters, scanSubnetForPrinters, printToStationPrinter } from '../../services/printerService';
 import { getLocalKotPrintingEnabled, setLocalKotPrintingEnabled, getStationPrinters, saveStationPrinter, removeStationPrinter, hydrateFromServer } from '../../services/multiPrinterService';
+import { getLocalPrintReplacesDesktop, setLocalPrintReplacesDesktop } from '../../services/localPrintClaim';
 
 const APP_VERSION = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
 
@@ -54,6 +55,7 @@ export default function PrinterSettingsScreen() {
 
   // Multi-station local printing
   const [localKotPrinting, setLocalKotPrinting] = useState(false);
+  const [replacesDesktop, setReplacesDesktop] = useState(false);
   const [stationPrinterMap, setStationPrinterMap] = useState({}); // { stationId: { type, host, port } }
   const [syncing, setSyncing] = useState(false); // fetching shared printer config from server
   const printerHealth = usePrinterStatus(); // live connection status (probed, auto-heals)
@@ -95,6 +97,7 @@ export default function PrinterSettingsScreen() {
         setDisconnectAlertOn(disconnectAlertPref);
         const localKotPref = await getLocalKotPrintingEnabled();
         setLocalKotPrinting(localKotPref);
+        setReplacesDesktop(await getLocalPrintReplacesDesktop());
         const savedStationPrinters = await getStationPrinters();
         setStationPrinterMap(savedStationPrinters);
       } catch (e) {
@@ -648,6 +651,27 @@ export default function PrinterSettingsScreen() {
                   />
                 </View>
               </View>
+              {!remotePrintOn && (
+                <View style={[styles.notifRow, { marginTop: 10 }]}>
+                  <View style={[styles.notifIconWrap, { backgroundColor: '#dbeafe' }]}>
+                    <Ionicons name="copy-outline" size={18} color="#2563eb" />
+                  </View>
+                  <View style={styles.notifInfo}>
+                    <Text style={styles.notifLabel}>Don't print again on the desktop</Text>
+                    <Text style={styles.notifHint}>
+                      {replacesDesktop
+                        ? "Tickets this phone prints are skipped by the desktop. If this phone's print fails, the desktop prints it."
+                        : 'Turn on if orders from this phone print twice (here and on the desktop). Keep off if the desktop printer is the kitchen printer.'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={replacesDesktop}
+                    onValueChange={(val) => { setReplacesDesktop(val); setLocalPrintReplacesDesktop(val); }}
+                    trackColor={{ false: '#e5e7eb', true: '#2563eb40' }}
+                    thumbColor={replacesDesktop ? '#2563eb' : '#d1d5db'}
+                  />
+                </View>
+              )}
               {remotePrintOn && (
                 <View style={styles.remotePrintInfo}>
                   <Ionicons name="checkmark-circle" size={16} color="#16a34a" />

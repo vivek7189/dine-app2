@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import * as printerService from '../services/printerService';
 import { getPrintStationConfig, printKOTsByStation, getLocalKotPrintingEnabled } from '../services/multiPrinterService';
+import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 import { logPrintDiag } from '../services/printDiagnostics';
 import { formatCurrency } from '../utils/formatCurrency';
 import { getItemSubline } from '../utils/itemSubline';
@@ -580,6 +581,8 @@ export default function WaiterOrderModal({
       // save the order without generating or printing any KOT.
       const seatOnlyUpdate = !!(existingOrderId && orderChanges && !orderChanges.hasAnyChange && orderChanges.seatChanged);
 
+      // opt-in "this phone's prints replace the desktop's" — claim only a KOT this phone prints below
+      const printClaims = seatOnlyUpdate ? {} : await getPrintClaims({ kot: true, printSettings: printSettingsRef.current || {}, printStationCount: printStationCountRef.current, localKotPrintingOn: localKotPrintingRef.current });
       if (existingOrderId) {
         // Annotate the updated item list with per-line delta markers (isNew / isUpdated +
         // quantityDelta) and surface removedItems, so the backend's KOT-update event carries
@@ -615,6 +618,7 @@ export default function WaiterOrderModal({
           status: 'confirmed',
           pricingRuleId: activePricingRuleId || null,
           ...(seatOnlyUpdate ? { skipKOT: true } : {}),
+          ...printClaims,
           ...(specialInstructions && { specialInstructions }),
           ...(hasCustomer && { customerInfo }),
           ...(customerPhone && { customerPhone }),
@@ -648,6 +652,7 @@ export default function WaiterOrderModal({
           ...(hasCustomer && { customerInfo }),
           ...(customerPhone && { customerPhone }),
           ...(customerData?.id && { customerId: customerData.id }),
+          ...printClaims,
         };
         response = await apiClient.createOrder(orderData);
         orderId = response.order?.id;
@@ -764,9 +769,12 @@ export default function WaiterOrderModal({
         if (stationCount >= 2 && localKot) {
           getPrintStationConfig(restaurantId).then(({ stations, mode, categories: cats }) => {
             printKOTsByStation(kotData, stations, cats, mode, ps)
-              .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
-              .catch(() => {});
-          }).catch(() => {});
+              .then(r => {
+                if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations');
+                if (printClaims.kotPrintedBy && r.printed < r.total) handBackToDesktop(orderId, 'kot');
+              })
+              .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
+          }).catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
         } else {
           const kotText = printerService.generateKOTText(kotData);
           const kotHtml = printerService.wrapKOTTextInHTML(kotText);
@@ -775,8 +783,9 @@ export default function WaiterOrderModal({
             .then(r => {
               logPrintDiag(restaurantId, { phase: r.success ? 'printed' : 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: !!r.success, reason: r.success ? undefined : 'no-printer-connected', error: r.success ? undefined : r.error });
               if (!r.success && r.notify !== false) toast.error(r.error);
+              if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(_oid, 'kot');
             })
-            .catch((e) => { logPrintDiag(restaurantId, { phase: 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: false, reason: 'print-exception', error: e?.message || String(e) }); });
+            .catch((e) => { if (printClaims.kotPrintedBy) handBackToDesktop(_oid, 'kot'); logPrintDiag(restaurantId, { phase: 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: false, reason: 'print-exception', error: e?.message || String(e) }); });
         }
       }
 

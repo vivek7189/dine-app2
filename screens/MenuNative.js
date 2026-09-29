@@ -55,6 +55,7 @@ import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 import { orderLinesToCart } from '../utils/orderLines';
 import { buildGuestInvoice } from '../utils/splitBill';
+import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -123,6 +124,8 @@ export default function MenuScreen() {
   const placedOkRef = useRef(false);
   const placedOrderNoRef = useRef('');
   const kotBillBusyRef = useRef(false);
+  // KOT+Bill: { orderId, printed: Promise<boolean> } for the bill this phone printed before settling
+  const kotBillPrintRef = useRef(null);
   const kotBillModeRef = useRef(false);
   const [kotBillSettle, setKotBillSettle] = useState(null); // { orderId, amount, wasTable, tableParams } | null
   const [kotBillSettling, setKotBillSettling] = useState(false);
@@ -1625,6 +1628,8 @@ export default function MenuScreen() {
     setSendingOrder(true);
 
     try {
+      // opt-in "this phone's prints replace the desktop's": claim only a KOT this phone will print
+      const printClaims = await getPrintClaims({ kot: true, printSettings, printStationCount, localKotPrintingOn });
       const tableId = selectedTable?.id || null;
       const tableNumber = selectedTable?.name || tableNumberFromModal || '';
       let response;
@@ -1636,6 +1641,7 @@ export default function MenuScreen() {
         const orderData = {
           items: deltaItems,
           ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
+          ...printClaims,
           status: 'confirmed', // Send directly to kitchen
         };
 
@@ -1681,6 +1687,7 @@ export default function MenuScreen() {
           ...(discountData.grandTotal && { finalAmount: discountData.grandTotal }),
           ...(specialInstructions && { specialInstructions }),
           pricingRuleId: activePricingRuleId || null,
+          ...printClaims,
         };
 
         response = await apiClient.createOrder(orderData);
@@ -1781,9 +1788,12 @@ export default function MenuScreen() {
           // Multi-station: route KOTs to station printers from this device
           getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
             printKOTsByStation(kotData, stations, categories, mode, printSettings)
-              .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
-              .catch(() => {});
-          }).catch(() => {});
+              .then(r => {
+                if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations');
+                if (printClaims.kotPrintedBy && r.printed < r.total) handBackToDesktop(orderId, 'kot');
+              })
+              .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
+          }).catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
         } else {
           // Single station, or multi-station routing disabled on this device: use the saved
           // default printer. printWithFeedback itself skips locally when Desktop Print is on.
@@ -1792,8 +1802,11 @@ export default function MenuScreen() {
           // imageHtml = rich designed KOT, used only by the opt-in image-print path (else ignored).
           const kotImageHtml = printerService.generateKOTHTML(kotData, printSettings || {});
           printerService.printWithFeedback({ html: kotHtml, text: kotText, imageHtml: kotImageHtml, silentOnly: true, label: 'KOT' })
-            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-            .catch(() => {});
+            .then(r => {
+              if (!r.success && r.notify !== false) toast.error(r.error);
+              if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(orderId, 'kot');
+            })
+            .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
         }
       }
 
@@ -1893,6 +1906,8 @@ export default function MenuScreen() {
       }
 
       const items = cart.map(buildItemPayload);
+      // opt-in "this phone's prints replace the desktop's" — only for the KOT this phone prints below
+      const printClaims = isBarTabMode ? {} : await getPrintClaims({ kot: true, printSettings, printStationCount, localKotPrintingOn });
 
       if (existingOrderId && isBarTabMode) {
         // Settle existing bar tab — update to completed
@@ -1959,6 +1974,7 @@ export default function MenuScreen() {
         const updateData = {
           items: deltaItems,
           ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
+          ...printClaims,
           status: 'confirmed',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
@@ -2063,15 +2079,21 @@ export default function MenuScreen() {
               // Multi-station: route KOTs to station printers from this device
               getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
                 printKOTsByStation(kotData, stations, categories, mode, printSettings)
-                  .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
-                  .catch(() => {});
-              }).catch(() => {});
+                  .then(r => {
+                    if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations');
+                    if (printClaims.kotPrintedBy && r.printed < r.total) handBackToDesktop(existingOrderId, 'kot');
+                  })
+                  .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(existingOrderId, 'kot'); });
+              }).catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(existingOrderId, 'kot'); });
             } else {
               // Use the saved default printer when local station routing is disabled.
               const kotText = printerService.generateKOTText(kotData);
               printerService.printWithFeedback({ text: kotText, silentOnly: true, label: 'KOT' })
-                .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-                .catch(() => {});
+                .then(r => {
+                  if (!r.success && r.notify !== false) toast.error(r.error);
+                  if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(existingOrderId, 'kot');
+                })
+                .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(existingOrderId, 'kot'); });
             }
           }
         }
@@ -2111,6 +2133,7 @@ export default function MenuScreen() {
           orderType: isBarTabMode ? 'dine-in' : orderType,
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           status: isBarTabMode ? 'completed' : 'confirmed',
+          ...printClaims,
           staffInfo: {
             waiterId: user?.id,
             waiterName: user?.name || 'Manager',
@@ -2172,17 +2195,23 @@ export default function MenuScreen() {
             // Multi-station: route KOTs to station printers from this device
             getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
               printKOTsByStation(kotData, stations, categories, mode, printSettings)
-                .then(r => { if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations'); })
-                .catch(() => {});
-            }).catch(() => {});
+                .then(r => {
+                  if (r.printed === 0 && r.total > 0) toast.error('KOT print failed for all stations');
+                  if (printClaims.kotPrintedBy && r.printed < r.total) handBackToDesktop(response.order?.id, 'kot');
+                })
+                .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(response.order?.id, 'kot'); });
+            }).catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(response.order?.id, 'kot'); });
           } else {
             // Use the saved default printer when local station routing is disabled.
             const kotText = printerService.generateKOTText(kotData);
             const kotHtml = printerService.wrapKOTTextInHTML(kotText);
             const kotImageHtml = printerService.generateKOTHTML(kotData, printSettings || {});
             printerService.printWithFeedback({ html: kotHtml, text: kotText, imageHtml: kotImageHtml, silentOnly: true, label: 'KOT' })
-              .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-              .catch(() => {});
+              .then(r => {
+                if (!r.success && r.notify !== false) toast.error(r.error);
+                if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(response.order?.id, 'kot');
+              })
+              .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(response.order?.id, 'kot'); });
           }
         }
 
@@ -2313,6 +2342,8 @@ export default function MenuScreen() {
         };
       }
 
+      // opt-in "this phone's prints replace the desktop's" — this phone prints the bill below
+      const billClaims = await getPrintClaims({ bill: true, printSettings });
       const orderData = {
         restaurantId,
         ...(tableNumberFromModal ? { tableNumber: tableNumberFromModal } : {}),
@@ -2351,6 +2382,7 @@ export default function MenuScreen() {
         pricingRuleId: activePricingRuleId || null,
         ...billingFields,
         ...partialFields,
+        ...billClaims,
       };
 
       let response;
@@ -2442,15 +2474,20 @@ export default function MenuScreen() {
           // items and the full tax, only the total changed)
           sb.splits.forEach((_, i) => {
             const guestInvoice = buildGuestInvoice(invoiceData, sb, i);
-            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), imageHtml: printerService.generateBillHTML(guestInvoice, printSettings || {}), silentOnly: true, label: `Bill (split ${i + 1}/${sb.splits.length})` }).catch(() => {});
+            printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), imageHtml: printerService.generateBillHTML(guestInvoice, printSettings || {}), silentOnly: true, label: `Bill (split ${i + 1}/${sb.splits.length})` })
+              .then(r => { if (billClaims.billPrintedBy && !r.success) handBackToDesktop(response?.order?.id, 'bill'); })
+              .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(response?.order?.id, 'bill'); });
           });
         } else {
           const billText = printerService.generateBillText(invoiceData);
           // imageHtml = rich designed bill, used only by the opt-in image-print path (else ignored).
           const billImageHtml = printerService.generateBillHTML(invoiceData, printSettings || {});
           printerService.printWithFeedback({ text: billText, imageHtml: billImageHtml, silentOnly: true, label: 'Bill' })
-            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-            .catch(() => {});
+            .then(r => {
+              if (!r.success && r.notify !== false) toast.error(r.error);
+              if (billClaims.billPrintedBy && !r.success) handBackToDesktop(response?.order?.id, 'bill');
+            })
+            .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(response?.order?.id, 'bill'); });
         }
       }
 
@@ -2548,6 +2585,8 @@ export default function MenuScreen() {
       }
 
       const tableNum = selectedTable?.name || params.tableNumber;
+      // opt-in "this phone's prints replace the desktop's" — this phone prints the bill below
+      const billClaims = await getPrintClaims({ bill: true, printSettings });
       const orderData = {
         restaurantId,
         ...(tableNum && { tableNumber: tableNum }),
@@ -2591,6 +2630,7 @@ export default function MenuScreen() {
         ...(discountData.couponId && { couponId: discountData.couponId }),
         ...billingFields,
         ...partialFields,
+        ...billClaims,
       };
 
       let response;
@@ -2698,13 +2738,17 @@ export default function MenuScreen() {
           sb.splits.forEach((_, i) => {
             const guestInvoice = buildGuestInvoice(invoiceData, sb, i);
             printerService.printWithFeedback({ text: printerService.generateBillText(guestInvoice), silentOnly: true, label: `Bill (split ${i + 1}/${sb.splits.length})` })
-              .catch(() => {});
+              .then(r => { if (billClaims.billPrintedBy && !r.success) handBackToDesktop(completedOrderId, 'bill'); })
+              .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(completedOrderId, 'bill'); });
           });
         } else {
           const billText = printerService.generateBillText(invoiceData);
           printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
-            .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-            .catch(() => {});
+            .then(r => {
+              if (!r.success && r.notify !== false) toast.error(r.error);
+              if (billClaims.billPrintedBy && !r.success) handBackToDesktop(completedOrderId, 'bill');
+            })
+            .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(completedOrderId, 'bill'); });
         }
       }
 
@@ -2848,9 +2892,10 @@ export default function MenuScreen() {
     // Then print the bill (enqueued after the KOT so KOT prints first). Order stays unpaid.
     try {
       const billText = printerService.generateBillText(billInvoice);
-      printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
-        .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); })
-        .catch(() => {});
+      const printed = printerService.printWithFeedback({ text: billText, silentOnly: true, label: 'Bill' })
+        .then(r => { if (!r.success && r.notify !== false) toast.error(r.error); return !!r.success; })
+        .catch(() => false);
+      kotBillPrintRef.current = { orderId: placedOrderIdRef.current, printed };
     } catch { /* bill print best-effort */ }
 
     // Prompt to settle (record how the payment was tendered). If the order id is missing
@@ -2877,10 +2922,20 @@ export default function MenuScreen() {
     setKotBillSettling(true);
     const { orderId: oid, amount } = kotBillSettle;
     try {
+      // This phone already printed the bill (KOT+Bill) → with the opt-in on, the desktop shouldn't
+      // print it again when the order completes. Only when that print actually succeeded.
+      let billClaims = {};
+      const kb = kotBillPrintRef.current;
+      if (kb && kb.orderId === oid) {
+        const ok = await Promise.race([kb.printed, new Promise(r => setTimeout(() => r(false), 5000))]);
+        if (ok) billClaims = await getPrintClaims({ bill: true, printSettings });
+      }
       await apiClient.updateOrder(oid, {
         status: 'completed', paymentStatus: 'paid', paymentMethod: method,
         finalAmount: amount, completedAt: new Date().toISOString(),
+        ...billClaims,
       });
+      kotBillPrintRef.current = null;
       try { await apiClient.verifyPayment({ orderId: oid, paymentMethod: method, amount, userId: user?.id, restaurantId, paymentStatus: 'completed' }); } catch (_) {}
       toast.success('Payment settled');
     } catch (e) {
