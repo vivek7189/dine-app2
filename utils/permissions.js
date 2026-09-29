@@ -90,14 +90,13 @@ function hasFeatureAccess(user, feature, bypassRoles = []) {
   return false;
 }
 
-module.exports = { FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform, hasFeatureAccess };
 
 // Floor / waiter-app roles: a plain `menu: true` means "use the menu"; what they may change comes from
 // Admin → Waiter App → Menu permissions (restaurant.posSettings.waiterAppConfig). Same rule as the backend.
 // Admin → Waiter App settings (tabs, More-menu items, table buttons) apply to waiters, and to any
 // other role the owner ticked under "Apply these settings to" (waiterAppConfig.applyToRoles).
 // Owner / admin / co-owner / manager are never limited by them.
-export function followsWaiterAppConfig(role, waiterAppConfig) {
+function followsWaiterAppConfig(role, waiterAppConfig) {
   const r = String(role || '').toLowerCase();
   if (!r) return false;
   if (r === 'waiter') return true;
@@ -106,9 +105,9 @@ export function followsWaiterAppConfig(role, waiterAppConfig) {
   return list.some(x => String(x).toLowerCase() === r);
 }
 
-export const WAITER_APP_MENU_ROLES = ['waiter', 'captain', 'employee', 'chef', 'cook', 'kitchen', 'parcel', 'delivery', 'steward', 'runner', 'helper'];
+const WAITER_APP_MENU_ROLES = ['waiter', 'captain', 'employee', 'chef', 'cook', 'kitchen', 'parcel', 'delivery', 'steward', 'runner', 'helper'];
 
-export function canDoMenu(user, operation, waiterAppConfig) {
+function canDoMenu(user, operation, waiterAppConfig) {
   const role = String(user?.role || '').toLowerCase();
   if (['owner', 'admin'].includes(role)) return true;
   const pa = user?.pageAccess;
@@ -125,3 +124,10 @@ export function canDoMenu(user, operation, waiterAppConfig) {
   if (['manager', 'cashier'].includes(role) && !pa?.menu) return true; // screen was always open to them
   return !!resolveFeaturePermissions(pa, 'menu')[operation];
 }
+
+// One CommonJS export for everything. (Mixing `module.exports = {…}` with ES `export` made Babel drop
+// the `export`ed functions — canDoMenu / followsWaiterAppConfig came out undefined at runtime.)
+module.exports = {
+  FEATURE_OPS, ADMIN_TAB_OPS, ADMIN_TAB_LABELS, resolveFeaturePermissions, canPerform, hasFeatureAccess,
+  WAITER_APP_MENU_ROLES, canDoMenu, followsWaiterAppConfig,
+};

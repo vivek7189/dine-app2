@@ -5,7 +5,7 @@
 // offers Clock in / Manager PIN / My shifts / Log out. It also keeps the latest rules on apiClient
 // (apiClient.getStaffAccess()) for the waiter screens.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, AppState, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, AppState, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useSegments } from 'expo-router';
 import apiClient from '../services/api';
@@ -88,7 +88,7 @@ export default function StaffAccessGateNative() {
   };
 
   return (
-    <View style={styles.backdrop} pointerEvents="auto">
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.backdrop} pointerEvents="auto">
       <View style={styles.card}>
         <View style={[styles.iconWrap, { backgroundColor: `${t.color}1A` }]}>
           <Ionicons name={t.icon} size={28} color={t.color} />
@@ -126,7 +126,7 @@ export default function StaffAccessGateNative() {
         </TouchableOpacity>
         {!!msg && <Text style={styles.err}>{msg}</Text>}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

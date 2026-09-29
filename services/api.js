@@ -601,6 +601,9 @@ class ApiClient {
         }
         return data;
       } catch (err) {
+        // A Staff Access "no" from the server (not your order / clock in first) must not be
+        // papered over with locally cached data.
+        if ((err?.status === 403 || err?.status === 423) && String(err?.code || '').startsWith('STAFF_ACCESS_')) throw err;
         console.warn(`offlineGet network failed for ${endpoint}:`, err.message);
         // If offline support is not enabled, don't fall back to SQLite — just propagate error
         if (!offlineSupported) throw err;

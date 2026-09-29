@@ -88,6 +88,7 @@ export default function TablesScreen() {
   const [transferTable, setTransferTable] = useState(null);
   const [transferWaiters, setTransferWaiters] = useState([]);
   const [transferBusy, setTransferBusy] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
   // Booking state
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [bookingTable, setBookingTable] = useState(null);
@@ -1602,6 +1603,7 @@ export default function TablesScreen() {
   const openTransfer = async (table) => {
     setTransferTable(table);
     setTransferWaiters([]);
+    setTransferLoading(true);
     try {
       const rid = restaurantIdRef.current || selectedRestaurant?.id;
       const res = await apiClient.getWaiters(rid);
@@ -1609,6 +1611,8 @@ export default function TablesScreen() {
     } catch (e) {
       setTransferTable(null);
       Alert.alert('Transfer', e.message || 'Could not load staff');
+    } finally {
+      setTransferLoading(false);
     }
   };
   const doTransfer = async (waiter) => {
@@ -2752,8 +2756,11 @@ export default function TablesScreen() {
               <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Table {transferTable?.name} · the running order and the table move to them</Text>
             </View>
             <ScrollView style={{ maxHeight: 420 }}>
-              {transferWaiters.length === 0 && (
+              {transferLoading && (
                 <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator color="#7c3aed" /></View>
+              )}
+              {!transferLoading && transferWaiters.length === 0 && (
+                <Text style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>No other staff to transfer to.</Text>
               )}
               {transferWaiters.map(w => (
                 <TouchableOpacity key={w.id} disabled={transferBusy} onPress={() => doTransfer(w)}
