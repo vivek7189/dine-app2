@@ -1829,6 +1829,15 @@ class ApiClient {
     return result;
   }
 
+  // Deleted / hidden menu items (getMenu returns active ones only) + restore
+  async getHiddenMenuItems(restaurantId) {
+    return this.request(`/api/menus/${restaurantId}/hidden`, { method: 'GET' });
+  }
+
+  async restoreMenuItem(itemId, restaurantId) {
+    return this.updateMenuItem(itemId, { status: 'active' }, restaurantId);
+  }
+
   // Delete the WHOLE menu (owner / admin only; reason required — the server keeps a full copy).
   async bulkDeleteMenuItems(restaurantId, reason) {
     const result = await this.request(`/api/menus/${restaurantId}/bulk-delete`, {

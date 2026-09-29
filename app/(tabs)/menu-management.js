@@ -68,6 +68,12 @@ export default function MenuManagementScreen() {
   const [userRole, setUserRole] = useState('');
   // Delete whole menu (owner / admin only)
   const [showDeleteAll, setShowDeleteAll] = useState(false);
+  // Deleted items → view + restore
+  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenItems, setHiddenItems] = useState([]);
+  const [hiddenLoading, setHiddenLoading] = useState(false);
+  const [hiddenError, setHiddenError] = useState('');
+  const [restoringId, setRestoringId] = useState(null);
   const [deleteAllReason, setDeleteAllReason] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
   // Menu rights on this screen (buttons hidden when not allowed; the backend enforces the same rules)
@@ -213,6 +219,36 @@ export default function MenuManagementScreen() {
       Alert.alert('Error', 'Failed to load menu. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openHiddenItems = async () => {
+    if (!restaurantId) return;
+    setShowHidden(true);
+    setHiddenLoading(true);
+    setHiddenError('');
+    try {
+      const res = await apiClient.getHiddenMenuItems(restaurantId);
+      setHiddenItems(Array.isArray(res?.items) ? res.items : []);
+    } catch (e) {
+      setHiddenError(e?.status === 403 ? 'You need menu edit permission to see deleted items.' : (e?.message || 'Could not load deleted items.'));
+    } finally {
+      setHiddenLoading(false);
+    }
+  };
+
+  const restoreHiddenItem = async (item) => {
+    setRestoringId(item.id);
+    setHiddenError('');
+    try {
+      await apiClient.restoreMenuItem(item.id, restaurantId);
+      setHiddenItems(prev => prev.filter(x => x.id !== item.id));
+      apiClient.invalidateCache(`/api/menus/${restaurantId}`);
+      loadMenu(restaurantId).catch(() => {});
+    } catch (e) {
+      setHiddenError(e?.message || 'Could not restore the item.');
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -1118,6 +1154,11 @@ export default function MenuManagementScreen() {
             <Ionicons name="cloud-upload-outline" size={20} color="#f59e0b" />
           </TouchableOpacity>
           )}
+          {menuPerms.edit && (
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#f1f5f9' }]} onPress={openHiddenItems} accessibilityLabel="Deleted items">
+            <Ionicons name="arrow-undo-outline" size={20} color="#475569" />
+          </TouchableOpacity>
+          )}
           {canDeleteWholeMenu && menuItems.some(i => i.status !== 'deleted') && (
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => { setDeleteAllReason(''); setShowDeleteAll(true); }}>
             <Ionicons name="trash-outline" size={20} color="#dc2626" />
@@ -1159,6 +1200,49 @@ export default function MenuManagementScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Deleted items — restore puts an item back on the menu */}
+      <Modal visible={showHidden} transparent animationType="fade" onRequestClose={() => setShowHidden(false)}>
+        <View style={styles.delAllOverlay}>
+          <View style={[styles.delAllCard, { maxHeight: '80%', paddingBottom: 12 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <Text style={[styles.delAllTitle, { flex: 1, textAlign: 'left', marginBottom: 0 }]}>Deleted items</Text>
+              <TouchableOpacity onPress={() => setShowHidden(false)} style={{ padding: 6 }} accessibilityLabel="Close">
+                <Ionicons name="close" size={22} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.delAllText, { textAlign: 'left', marginBottom: 10 }]}>Restore puts the item back on the menu with its old price and details.</Text>
+            {hiddenError ? <Text style={styles.inlineError}>{hiddenError}</Text> : null}
+            {hiddenLoading ? (
+              <ActivityIndicator color="#6366f1" style={{ marginVertical: 24 }} />
+            ) : hiddenItems.length === 0 && !hiddenError ? (
+              <Text style={[styles.delAllText, { marginVertical: 20 }]}>No deleted items.</Text>
+            ) : (
+              <ScrollView style={{ flexGrow: 0 }}>
+                {hiddenItems.map(it => (
+                  <View key={it.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' }}>
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827' }} numberOfLines={1}>{it.name || 'Unnamed item'}</Text>
+                      <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }} numberOfLines={1}>
+                        {[it.category, it.price != null ? `${getCurrencySymbol()}${it.price}` : null, it.status === 'deleted' ? 'Deleted' : it.status === 'inactive' ? 'Inactive' : 'Hidden',
+                          it.deletedAt ? new Date(it.deletedAt).toLocaleDateString() : null].filter(Boolean).join(' · ')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => restoreHiddenItem(it)}
+                      disabled={restoringId === it.id}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0', backgroundColor: '#f0fdf4', opacity: restoringId === it.id ? 0.6 : 1 }}
+                    >
+                      {restoringId === it.id ? <ActivityIndicator size="small" color="#15803d" /> : <Ionicons name="arrow-undo" size={14} color="#15803d" />}
+                      <Text style={{ color: '#15803d', fontWeight: '600', fontSize: 13 }}>Restore</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {uploadError ? <Text style={styles.inlineError}>{uploadError}</Text> : null}
