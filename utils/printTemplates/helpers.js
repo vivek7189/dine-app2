@@ -259,15 +259,24 @@ export function buildDiscountHtml(invoice, L, cs) {
 export function buildChargesHtml(invoice, L, cs) {
   const serviceChargeHtml = (invoice.serviceChargeAmount > 0)
     ? `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${L.serviceCharge}${invoice.serviceChargeRate ? ` (${invoice.serviceChargeRate}%)` : ''}:</span><span>${cs}${invoice.serviceChargeAmount.toFixed(2)}</span></div>` : '';
+  // Additional charges (packaging, etc.) — same as the web template: one line per charge.
+  const additionalChargesHtml = (Array.isArray(invoice.additionalCharges) ? invoice.additionalCharges : [])
+    .filter((c) => c && Number(c.amount) > 0)
+    .map((c) => `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${esc(c.name || 'Charge')}:</span><span>${cs}${Number(c.amount).toFixed(2)}</span></div>`)
+    .join('');
   const tipHtml = (invoice.tipAmount > 0)
     ? `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${L.tip}${invoice.tipPercentage ? ` (${invoice.tipPercentage}%)` : ''}:</span><span>${cs}${invoice.tipAmount.toFixed(2)}</span></div>` : '';
   const roundOffHtml = (invoice.roundOffAmount != null && invoice.roundOffAmount !== 0)
     ? `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${L.roundOff}:</span><span>${invoice.roundOffAmount > 0 ? '+' : ''}${cs}${invoice.roundOffAmount.toFixed(2)}</span></div>` : '';
-  return serviceChargeHtml + tipHtml + roundOffHtml;
+  return serviceChargeHtml + additionalChargesHtml + tipHtml + roundOffHtml;
 }
 
 // Build payment details HTML (split, cash, partial, wallet)
 export function buildPaymentHtml(invoice, L, cs) {
+  // Split bill — this receipt is one guest's share
+  const si = invoice.splitInfo;
+  const splitGuestHtml = si && si.guestLabel
+    ? `<div style="border-top:1px dashed #000;padding-top:4px;margin-top:4px;text-align:center;font-weight:bold;">${esc(si.guestName || si.guestLabel)}${si.guestCount ? ` of ${si.guestCount}` : ''} · Split bill</div>` : '';
   const splitPaymentHtml = (invoice.splitPayments?.length >= 2)
     ? `<div style="border-top:1px dashed #000;padding-top:4px;margin-top:4px;"><div style="font-weight:bold;margin-bottom:2px;">${L.splitPayment}:</div>${invoice.splitPayments.map(sp => `<div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${(sp.method || 'Cash').toUpperCase()}:</span><span>${cs}${(sp.amount || 0).toFixed(2)}</span></div>`).join('')}</div>` : '';
   const cashReceivedHtml = (invoice.cashReceived > 0)
@@ -276,7 +285,7 @@ export function buildPaymentHtml(invoice, L, cs) {
     ? `<div style="border-top:1px dashed #000;padding-top:4px;margin-top:4px;"><div style="font-weight:bold;margin-bottom:2px;">${L.partialPayment}:</div><div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${L.paid}:</span><span>${cs}${invoice.paidAmount.toFixed(2)}</span></div><div style="display:flex;justify-content:space-between;margin:2px 0;color:#dc2626;"><span>${L.outstanding}:</span><span>${cs}${invoice.outstandingAmount.toFixed(2)}</span></div></div>` : '';
   const walletPayHtml = (invoice.walletRedeemAmount || 0) > 0
     ? `<div style="border-top:1px dashed #000;padding-top:4px;margin-top:4px;"><div style="display:flex;justify-content:space-between;margin:2px 0;"><span>${L.walletApplied}:</span><span>-${cs}${invoice.walletRedeemAmount.toFixed(2)}</span></div><div style="display:flex;justify-content:space-between;margin:2px 0;font-weight:bold;"><span>${L.amountToPay}:</span><span>${cs}${Math.max(0, (invoice.grandTotal || 0) - invoice.walletRedeemAmount).toFixed(2)}</span></div></div>` : '';
-  return splitPaymentHtml + cashReceivedHtml + partialPayHtml + walletPayHtml;
+  return splitGuestHtml + splitPaymentHtml + cashReceivedHtml + partialPayHtml + walletPayHtml;
 }
 
 // Build delivery address + driver info HTML for receipt (flag-based: only shows for delivery orders)
@@ -299,7 +308,7 @@ export function calcGrandTotal(invoice) {
   return invoice.grandTotal || (
     (invoice.subtotal || 0) - totalDiscount +
     exclusiveTax +
-    (invoice.serviceChargeAmount || 0) + (invoice.tipAmount || 0) + (invoice.roundOffAmount || 0)
+    (invoice.serviceChargeAmount || 0) + (invoice.additionalChargesTotal || 0) + (invoice.tipAmount || 0) + (invoice.roundOffAmount || 0)
   );
 }
 

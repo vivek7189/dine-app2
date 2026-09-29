@@ -265,7 +265,9 @@ export default function MoreScreen() {
     if (item.roles.includes(role)) return true;
     // For roles not in the list, check pageAccess (supports custom roles, employee, etc.)
     if (item.feature && user?.pageAccess) {
-      const val = user.pageAccess[item.feature];
+      let val = user.pageAccess[item.feature];
+      // billing permission is also stored nested (pageAccess.orders.completeBill — current format)
+      if (item.feature === 'completeBill' && val == null) val = user.pageAccess.orders?.completeBill;
       if (val === true) return true;
       if (typeof val === 'object' && val !== null) return Object.values(val).some(Boolean);
     }

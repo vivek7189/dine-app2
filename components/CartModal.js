@@ -2602,6 +2602,15 @@ export default function CartModal({
                 <TouchableOpacity
                   style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#16a34a', alignItems: 'center' }}
                   onPress={() => {
+                    if (splitMode === 'amount') {
+                      // amounts must add up to the bill — otherwise a guest receipt would carry the gap
+                      const typed = Array.from({ length: splitWays }).reduce((s, _, i) => s + (parseFloat(splitAmounts[i]) || 0), 0);
+                      const gap = Math.round((billing.grandTotal - typed) * 100) / 100;
+                      if (Math.abs(gap) >= 0.01) {
+                        Alert.alert('Amounts don\'t match', `The guests' amounts must add up to ${getCurrencySymbol()}${fmtAmt(billing.grandTotal)} (${gap > 0 ? 'remaining' : 'over'} ${getCurrencySymbol()}${fmtAmt(Math.abs(gap))}).`);
+                        return;
+                      }
+                    }
                     const guests = splitMode === 'equal'
                       ? computeSplitGuests(billing.grandTotal, splitWays)
                       : splitMode === 'item'

@@ -43,10 +43,13 @@ export function sessionResetJS(userId) {
   const uid = JSON.stringify(String(userId || ''));
   return `if (window.__DINEOPEN_TRUSTED__) { try {
     var __uid = ${uid};
-    if (__uid && localStorage.getItem('__dineAppUid') !== __uid) {
+    var __prev = localStorage.getItem('__dineAppUid');
+    // Wipe only when a DIFFERENT user was here before. First run after the update (no marker yet)
+    // just records the user — clearing then would reset this device's terminal id / print switches.
+    if (__uid && __prev && __prev !== __uid) {
       localStorage.clear(); sessionStorage.clear();
-      localStorage.setItem('__dineAppUid', __uid);
     }
+    if (__uid && __prev !== __uid) localStorage.setItem('__dineAppUid', __uid);
   } catch (e) {} }`;
 }
 
@@ -58,10 +61,22 @@ export function downloadBridgeJS() {
   (function(){
     function send(name, mime, b64){ window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'DINE_DOWNLOAD', filename: name, mime: mime, base64: b64 })); }
     function fromBlob(blob, name){ var r = new FileReader(); r.onload = function(){ var s = String(r.result || ''); send(name, blob.type || '', s.slice(s.indexOf(',') + 1)); }; r.readAsDataURL(blob); }
+    // Pages revoke the blob URL right after a.click() (CSV exports) — keep the Blob itself so the
+    // download still works after the URL is revoked.
+    var blobs = {};
+    try {
+      var _create = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = function(obj){ var u = _create(obj); try { if (obj instanceof Blob) blobs[u] = obj; } catch (e) {} return u; };
+    } catch (e) {}
     function handle(href, name){
       try {
         if (/^data:/i.test(href)) { var i = href.indexOf(','); var mime = href.slice(5, href.indexOf(';')); send(name, mime, href.slice(i + 1)); return true; }
-        if (/^blob:/i.test(href)) { fetch(href).then(function(r){ return r.blob(); }).then(function(b){ fromBlob(b, name); }); return true; }
+        if (/^blob:/i.test(href)) {
+          if (blobs[href]) { fromBlob(blobs[href], name); return true; }
+          fetch(href).then(function(r){ return r.blob(); }).then(function(b){ fromBlob(b, name); })
+            .catch(function(){ window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'DINE_DOWNLOAD_ERROR', filename: name })); });
+          return true;
+        }
       } catch (e) {}
       return false;
     }

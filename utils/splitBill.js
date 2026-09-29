@@ -59,8 +59,10 @@ export function buildSplitBillPayload(cfg, bill) {
   let accTotal = 0;
   const splits = shares.map((p, i) => {
     const last = i === n - 1;
+    // by-amount: typed amounts; the last guest takes any remainder (e.g. the cart changed after
+    // "Apply Split") so the guests always add up to the bill
     const totalAmount = method === 'by-amount'
-      ? r2(cfg.amounts?.[i])
+      ? (last ? r2(grand - accTotal) : r2(cfg.amounts?.[i]))
       : (last ? r2(grand - accTotal) : r2(grand * p));
     accTotal = r2(accTotal + totalAmount);
     const sub = r2(subtotal * p);

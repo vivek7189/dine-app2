@@ -41,16 +41,33 @@ async function deviceTag() {
  *   branch uses (station routing from this phone only when >= 2 stations AND local routing on)
  * @returns {Promise<{kotPrintedBy?: string, billPrintedBy?: string}>}
  */
-export async function getPrintClaims({ kot = false, bill = false, printSettings = {}, printStationCount = 0, localKotPrintingOn = false } = {}) {
+export async function getPrintClaims({ kot = false, bill = false, printSettings = {}, printStationCount = 0, localKotPrintingOn = false, restaurantId = null } = {}) {
   try {
     if (!kot && !bill) return {};
     if (!(await getLocalPrintReplacesDesktop())) return {};
     if (await printerService.getRemotePrintEnabled()) return {}; // desktop prints everything
+    // Offline: the save is queued and a failed print could not be handed back → let the desktop print
+    if (typeof apiClient.isEffectivelyOffline === 'function' && apiClient.isEffectivelyOffline()) return {};
     const saved = await printerService.getSavedPrinter();
     const out = {};
     if (kot && printSettings?.autoPrintOnKOT !== false) {
+      // The station setup must be KNOWN and match the branch the caller will print with — if the
+      // stations failed to load (caller thinks 0/1 station) the phone would print one combined KOT
+      // while the desktop skipped every station's ticket. Unknown / mismatch → no claim.
+      let stationsOk = false;
+      if (restaurantId) {
+        try {
+          const res = await apiClient.getPrintStations(restaurantId);
+          if (res?.success) {
+            const fresh = (res.printStations || []).filter(st => st && st.enabled !== false).length;
+            stationsOk = (fresh >= 2) === (printStationCount >= 2);
+          }
+        } catch { stationsOk = false; }
+      }
       let canPrint;
-      if (printStationCount >= 2) {
+      if (!stationsOk) {
+        canPrint = false;
+      } else if (printStationCount >= 2) {
         // multi-station tickets only replace the desktop's when THIS phone does station routing
         const stationPrinters = localKotPrintingOn ? await getStationPrinters() : {};
         canPrint = localKotPrintingOn && (!!saved || Object.keys(stationPrinters || {}).length > 0);

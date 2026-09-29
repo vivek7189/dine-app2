@@ -435,7 +435,13 @@ export default function WaiterOrderModal({
       }
       return item.selectedVariant.price;
     }
-    if (isExisting || item?.priceEdited || item?.isCustomItem) return item?.price ?? 0;
+    if (isExisting) {
+      // A saved line's price already includes its add-ons, which cartExtras() adds back on top —
+      // take them out here so they aren't counted twice (Burger 150 + Cheese 30 showed 210).
+      const saved = (item?.selectedCustomizations || []).reduce((t, c) => t + (Number(c?.price) || 0), 0);
+      return Math.max(0, Math.round(((Number(item?.price) || 0) - saved) * 100) / 100);
+    }
+    if (item?.priceEdited || item?.isCustomItem) return item?.price ?? 0;
     const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
     if (multiPricingEnabled && activePricingRuleId && menuItem) return resolveTierPrice(menuItem);
     return item?.price ?? 0;
@@ -589,7 +595,8 @@ export default function WaiterOrderModal({
       const seatOnlyUpdate = !!(existingOrderId && orderChanges && !orderChanges.hasAnyChange && orderChanges.seatChanged);
 
       // opt-in "this phone's prints replace the desktop's" — claim only a KOT this phone prints below
-      const printClaims = seatOnlyUpdate ? {} : await getPrintClaims({ kot: true, printSettings: printSettingsRef.current || {}, printStationCount: printStationCountRef.current, localKotPrintingOn: localKotPrintingRef.current });
+      // KOT claim only for a NEW order (a failed add-items print would come back as a full reprint)
+      const printClaims = (seatOnlyUpdate || existingOrderId) ? {} : await getPrintClaims({ kot: true, printSettings: printSettingsRef.current || {}, printStationCount: printStationCountRef.current, localKotPrintingOn: localKotPrintingRef.current, restaurantId });
       if (existingOrderId) {
         // Annotate the updated item list with per-line delta markers (isNew / isUpdated +
         // quantityDelta) and surface removedItems, so the backend's KOT-update event carries
@@ -816,6 +823,18 @@ export default function WaiterOrderModal({
             menuItemId: item.menuItemId || item.id,
           }));
           const added = cart.filter(l => !String(l.cartId || '').startsWith('existing-'));
+          // Extra quantity the waiter put on an EXISTING line (e.g. +1 Coke) is an addition too —
+          // keep it as its own line (was silently dropped on this recovery path).
+          (cart || []).forEach(l => {
+            const m = String(l.cartId || '').match(/^existing-.*-(\d+)-(\d+)$/);
+            if (!m) return;
+            const before = existingOrderItems?.[Number(m[1])];
+            const extra = (Number(l.quantity) || 0) - (Number(before?.quantity) || 0);
+            if (before && extra > 0) {
+              const savedAddons = (l.selectedCustomizations || []).reduce((t, c) => t + (Number(c?.price) || 0), 0);
+              added.push({ ...l, quantity: extra, price: Math.max(0, (Number(l.price) || 0) - savedAddons), cartId: `re-add-${l.menuItemId || l.id}-${m[1]}-${stamp}` });
+            }
+          });
           setCart([...freshCart, ...added]);
           setExistingOrderItems(freshCart.map(i => ({
             menuItemId: i.menuItemId || i.id,

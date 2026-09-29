@@ -686,8 +686,12 @@ export default function TablesScreen() {
     legacyTablePress(table);
   };
 
+  const chairSheetReqRef = useRef(0);
+  const chairSheetRef = useRef(null); // latest sheet state, readable from async callbacks
+  useEffect(() => { chairSheetRef.current = chairSheet; }, [chairSheet]);
   const openChairSheet = async (table) => {
     const rid = restaurantIdRef.current || selectedRestaurant?.id;
+    const req = ++chairSheetReqRef.current;
     setChairSheet({ table, loading: true, orders: [] });
     try {
       const res = await apiClient.getOpenOrders(rid, 2);
@@ -700,7 +704,10 @@ export default function TablesScreen() {
       orders.sort((a, b) => String(a.chairNumber || '').localeCompare(String(b.chairNumber || '')));
       setChairSheet(prev => (prev && prev.table?.id === table.id ? { table, loading: false, orders } : prev));
     } catch (e) {
-      // Couldn't load the chairs → same behaviour as before chair mode
+      // Couldn't load the chairs → same behaviour as before chair mode — but only if the waiter is
+      // still waiting on THIS table's sheet (not closed it / tapped another table meanwhile)
+      if (req !== chairSheetReqRef.current) return;
+      if (chairSheetRef.current?.table?.id !== table.id) return; // sheet closed meanwhile
       setChairSheet(null);
       legacyTablePress(table);
     }

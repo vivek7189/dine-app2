@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as printerService from './printerService';
 import apiClient from './api';
 import { logPrintDiag } from './printDiagnostics';
+import { withSeatLabel } from '../utils/seatOrdering';
 
 const STATION_PRINTERS_KEY = 'dine_station_printers';
 const LOCAL_KOT_KEY = 'dine_local_kot_printing';
@@ -208,7 +209,7 @@ function buildKotRenderData(orderData, group) {
     restaurantPhone: orderData.restaurantPhone || '',
     orderId: orderData.orderId,
     dailyOrderId: orderData.orderNumber || orderData.dailyOrderId,
-    tableNumber: orderData.tableNumber || '',
+    tableNumber: (withSeatLabel(orderData) || orderData).tableNumber || '', // per-chair: "7 · Seat B"
     roomNumber: orderData.roomNumber || '',
     floorName: orderData.floorName || '',
     customerName: orderData.customerName || '',

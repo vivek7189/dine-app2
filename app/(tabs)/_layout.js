@@ -210,7 +210,10 @@ function TabsNavigator() {
             if (businessType === 'bar') return null;
             // owner/admin/waiter/manager/cashier always see menu tab
             if (!roleLower) return undefined;
-            if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && waiterPageAllowed(pageAccess, 'menu')) ? undefined : null;
+            // The waiter's Menu tab is the ORDERING screen (web: the POS 'dashboard' page) — not menu
+            // management (web 'menu' key). Gating it on 'menu' removed ordering from waiters whose owner
+            // had switched menu editing off.
+            if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && waiterPageAllowed(pageAccess, 'dashboard')) ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {

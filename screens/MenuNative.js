@@ -1075,6 +1075,8 @@ export default function MenuScreen() {
       // those prices are set by the cashier and must stick across rule changes.
       if (item.priceEdited === true || item.isCustomItem === true) return item;
       const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
+      // A line from a saved order whose menu item is gone: keep its saved price (no base to re-price from)
+      if (!menuItem && item.fromOrder) return item;
       // Variant lines: re-resolve the VARIANT's own tier price for the active zone
       // (per-variant pricingRules → Dine-In inherit → variant base). Keeps the cart line,
       // total and payload consistent when switching DINE IN/TAKEAWAY/DELIVERY. Falls back to
@@ -1129,7 +1131,8 @@ export default function MenuScreen() {
           }
         }
       }
-      return { ...item, price: newPrice, originalPrice: basePrice, appliedPricingRuleId: activePricingRuleId || null };
+      // customised lines total from basePrice (+ add-ons) — keep it in step with the new zone price
+      return { ...item, price: newPrice, originalPrice: basePrice, ...(item.cartId ? { basePrice: newPrice } : {}), appliedPricingRuleId: activePricingRuleId || null };
     }));
     // menuItems + pricingRules are in the deps so the cart re-prices as soon as the
     // menu/pricing data (which loads asynchronously on focus) arrives — otherwise a
@@ -1342,7 +1345,10 @@ export default function MenuScreen() {
   const getEffectiveItemPrice = (item) => {
     let base;
     const hasCustomizations = Array.isArray(item?.selectedCustomizations) && item.selectedCustomizations.length > 0;
-    if (item?.selectedVariant?.price != null) {
+    if (item?.priceEdited === true && typeof item?.price === 'number') {
+      // manually edited base price wins (also over a variant's price); add-ons are added below
+      base = item.price;
+    } else if (item?.selectedVariant?.price != null) {
       base = item.selectedVariant.price;
     } else if (item?.cartId && hasCustomizations && item.priceEdited !== true && typeof item.basePrice === 'number') {
       // Lines from the customization modal store price = base + add-ons (finalPrice). The add-ons
@@ -1629,7 +1635,9 @@ export default function MenuScreen() {
 
     try {
       // opt-in "this phone's prints replace the desktop's": claim only a KOT this phone will print
-      const printClaims = await getPrintClaims({ kot: true, printSettings, printStationCount, localKotPrintingOn });
+      // KOT claim only for a NEW order — an add-items update that fails locally would be handed back as
+      // a full-order reprint, so updates always print on the desktop as before
+      const printClaims = await getPrintClaims({ kot: !existingOrderId, printSettings, printStationCount, localKotPrintingOn, restaurantId });
       const tableId = selectedTable?.id || null;
       const tableNumber = selectedTable?.name || tableNumberFromModal || '';
       let response;
@@ -1891,7 +1899,8 @@ export default function MenuScreen() {
       if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
       if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
       if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
-      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      // a split BILL and split PAYMENTS can't be combined (server 400) — the split bill wins
+      if (discountData.splitPayments && !billingFields.splitBill) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
       if (discountData.roundOffAmount != null && discountData.roundOffAmount !== 0) billingFields.roundOffAmount = discountData.roundOffAmount;
@@ -1910,7 +1919,7 @@ export default function MenuScreen() {
 
       const items = cart.map(buildItemPayload);
       // opt-in "this phone's prints replace the desktop's" — only for the KOT this phone prints below
-      const printClaims = isBarTabMode ? {} : await getPrintClaims({ kot: true, printSettings, printStationCount, localKotPrintingOn });
+      const printClaims = isBarTabMode ? {} : await getPrintClaims({ kot: !existingOrderId, printSettings, printStationCount, localKotPrintingOn, restaurantId });
 
       if (existingOrderId && isBarTabMode) {
         // Settle existing bar tab — update to completed
@@ -2333,7 +2342,8 @@ export default function MenuScreen() {
       if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
       if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
       if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
-      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      // a split BILL and split PAYMENTS can't be combined (server 400) — the split bill wins
+      if (discountData.splitPayments && !billingFields.splitBill) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
       if (discountData.roundOffAmount != null && discountData.roundOffAmount !== 0) billingFields.roundOffAmount = discountData.roundOffAmount;
@@ -2350,7 +2360,7 @@ export default function MenuScreen() {
       }
 
       // opt-in "this phone's prints replace the desktop's" — this phone prints the bill below
-      const billClaims = await getPrintClaims({ bill: true, printSettings });
+      const billClaims = await getPrintClaims({ bill: true, printSettings, restaurantId });
       const orderData = {
         restaurantId,
         ...(tableNumberFromModal ? { tableNumber: tableNumberFromModal } : {}),
@@ -2575,7 +2585,8 @@ export default function MenuScreen() {
       if (discountData.tipPercentage) billingFields.tipPercentage = discountData.tipPercentage;
       if (discountData.cashReceived) billingFields.cashReceived = discountData.cashReceived;
       if (discountData.changeReturned) billingFields.changeReturned = discountData.changeReturned;
-      if (discountData.splitPayments) billingFields.splitPayments = discountData.splitPayments;
+      // a split BILL and split PAYMENTS can't be combined (server 400) — the split bill wins
+      if (discountData.splitPayments && !billingFields.splitBill) billingFields.splitPayments = discountData.splitPayments;
       if (discountData.compItems) billingFields.compItems = discountData.compItems;
       if (discountData.voidItems) billingFields.voidItems = discountData.voidItems;
       if (discountData.roundOffAmount != null && discountData.roundOffAmount !== 0) billingFields.roundOffAmount = discountData.roundOffAmount;
@@ -2593,7 +2604,7 @@ export default function MenuScreen() {
 
       const tableNum = selectedTable?.name || params.tableNumber;
       // opt-in "this phone's prints replace the desktop's" — this phone prints the bill below
-      const billClaims = await getPrintClaims({ bill: true, printSettings });
+      const billClaims = await getPrintClaims({ bill: true, printSettings, restaurantId });
       const orderData = {
         restaurantId,
         ...(tableNum && { tableNumber: tableNum }),
@@ -2937,7 +2948,7 @@ export default function MenuScreen() {
       const kb = kotBillPrintRef.current;
       if (kb && kb.orderId === oid) {
         const ok = await Promise.race([kb.printed, new Promise(r => setTimeout(() => r(false), 5000))]);
-        if (ok) billClaims = await getPrintClaims({ bill: true, printSettings });
+        if (ok) billClaims = await getPrintClaims({ bill: true, printSettings, restaurantId });
       }
       await apiClient.updateOrder(oid, {
         status: 'completed', paymentStatus: 'paid', paymentMethod: method,

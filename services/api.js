@@ -651,7 +651,10 @@ class ApiClient {
         // The server ANSWERED (400 table occupied / item unavailable, 403, 409 order changed, 429…):
         // that is a real "no" — surface it. Queuing it would show "Saved locally" and later replay
         // it with syncSource 'offline', bypassing those checks. Only network failures fall through.
-        if (e && e.status) throw e;
+        // Gateway / timeout answers (502/503/504/408) may come AFTER the server committed the write —
+        // those are queued with the SAME idempotency key (replay can't duplicate), never surfaced as
+        // a failure that invites a second tap (= second order with a new key).
+        if (e && e.status && ![408, 502, 503, 504].includes(Number(e.status))) throw e;
         console.warn('offlineWrite direct call failed (network), queuing offline:', e.message);
       }
     }

@@ -11,14 +11,18 @@ export function orderLinesToCart(items) {
     const base = item.selectedVariant && item.selectedVariant.price != null
       ? Number(item.selectedVariant.price) || 0
       : Math.max(0, Math.round((unit - custSum) * 100) / 100);
+    const edited = item.priceEdited === true;
     return {
       id: item.menuItemId || item.id,
       menuItemId: item.menuItemId || item.id,
       ...(custs.length ? { cartId: `existing_${idx}_${item.menuItemId || item.id}` } : {}),
       name: item.name,
-      price: unit,
+      // price-edited line: the edited base (add-ons are added back on top, like a local edit)
+      price: edited ? Math.max(0, Math.round((unit - custSum) * 100) / 100) : unit,
       basePrice: base,
-      originalPrice: base,
+      // no originalPrice: the saved price already has the zone/tier price in it — re-pricing must
+      // start from the MENU base (else a +10% markup was applied twice: 110 → 121)
+      fromOrder: true,
       quantity: item.quantity || 1,
       description: item.description,
       notes: item.notes || '',

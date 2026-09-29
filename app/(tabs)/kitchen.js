@@ -313,6 +313,8 @@ export default function KitchenScreen() {
         await apiClient.completeOrder(orderId);
       } catch (e) {
         if (e?.status === 403) await apiClient.updateOrderStatus(orderId, 'served', restaurantId);
+        // already billed / closed at the POS → nothing left to do in the kitchen: treat as done
+        else if (e?.status === 409 || e?.code === 'ORDER_FINALIZED' || e?.data?.code === 'ORDER_FINALIZED') { /* done */ }
         else throw e;
       }
       if (mountedRef.current) setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 1000);
