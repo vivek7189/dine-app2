@@ -780,6 +780,7 @@ export default function WaiterOrderModal({
 
       // ─── Auto-print KOT ───
       if (ps?.autoPrintOnKOT !== false) {
+        try {
         const stationCount = printStationCountRef.current;
         const localKot = localKotPrintingRef.current;
 
@@ -803,6 +804,11 @@ export default function WaiterOrderModal({
               if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(_oid, 'kot');
             })
             .catch((e) => { if (printClaims.kotPrintedBy) handBackToDesktop(_oid, 'kot'); logPrintDiag(restaurantId, { phase: 'failed', kind: 'kot', via: 'local-single', orderId: _oid, success: false, reason: 'print-exception', error: e?.message || String(e) }); });
+        }
+        } catch (_printErr) {
+          // a print step crashed on this phone → the ticket it claimed must print on the desktop
+          console.warn('print step failed:', _printErr?.message);
+          if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot');
         }
       }
 

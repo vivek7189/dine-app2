@@ -1795,6 +1795,7 @@ export default function MenuScreen() {
 
       // Auto-print KOT silently — show toast if print fails so waiter knows
       if (printSettings?.autoPrintOnKOT !== false) {
+        try {
         if (printStationCount >= 2 && localKotPrintingOn) {
           // Multi-station: route KOTs to station printers from this device
           getPrintStationConfig(restaurantId).then(({ stations, mode, categories }) => {
@@ -1818,6 +1819,11 @@ export default function MenuScreen() {
               if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(orderId, 'kot');
             })
             .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot'); });
+        }
+        } catch (_printErr) {
+          // a print step crashed on this phone → the ticket it claimed must print on the desktop
+          console.warn('print step failed:', _printErr?.message);
+          if (printClaims.kotPrintedBy) handBackToDesktop(orderId, 'kot');
         }
       }
 
@@ -2187,6 +2193,7 @@ export default function MenuScreen() {
 
         // Auto-print KOT silently for confirmed orders (fire and forget)
         if (!isBarTabMode && orderData.status === 'confirmed' && printSettings?.autoPrintOnKOT !== false) {
+          try {
           const kotData = {
             orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || '',
             orderId: response.order?.id,
@@ -2228,6 +2235,11 @@ export default function MenuScreen() {
                 if (printClaims.kotPrintedBy && !r.success) handBackToDesktop(response.order?.id, 'kot');
               })
               .catch(() => { if (printClaims.kotPrintedBy) handBackToDesktop(response.order?.id, 'kot'); });
+          }
+          } catch (_printErr) {
+            // a print step crashed on this phone → the ticket it claimed must print on the desktop
+            console.warn('print step failed:', _printErr?.message);
+            if (printClaims.kotPrintedBy) handBackToDesktop(response.order?.id, 'kot');
           }
         }
 
@@ -2485,6 +2497,7 @@ export default function MenuScreen() {
 
       // Auto-print bill silently — per-guest receipts if the bill was split.
       if (printSettings?.autoPrintOnBilling !== false) {
+        try {
         const sb = discountData.splitBill;
         if (Array.isArray(sb?.splits) && sb.splits.length > 1) {
           // one receipt per guest with that guest's own items / tax / total (was: every guest got all
@@ -2505,6 +2518,11 @@ export default function MenuScreen() {
               if (billClaims.billPrintedBy && !r.success) handBackToDesktop(response?.order?.id, 'bill');
             })
             .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(response?.order?.id, 'bill'); });
+        }
+        } catch (_printErr) {
+          // a print step crashed on this phone → the ticket it claimed must print on the desktop
+          console.warn('print step failed:', _printErr?.message);
+          if (billClaims.billPrintedBy) handBackToDesktop(response?.order?.id, 'bill');
         }
       }
 
@@ -2753,6 +2771,7 @@ export default function MenuScreen() {
       // Auto-print bill silently. If the bill was split among guests, print one
       // receipt per guest (same generateBillText, grandTotal = that guest's share).
       if (printSettings?.autoPrintOnBilling !== false) {
+        try {
         const sb = discountData.splitBill;
         if (Array.isArray(sb?.splits) && sb.splits.length > 1) {
           sb.splits.forEach((_, i) => {
@@ -2769,6 +2788,11 @@ export default function MenuScreen() {
               if (billClaims.billPrintedBy && !r.success) handBackToDesktop(completedOrderId, 'bill');
             })
             .catch(() => { if (billClaims.billPrintedBy) handBackToDesktop(completedOrderId, 'bill'); });
+        }
+        } catch (_printErr) {
+          // a print step crashed on this phone → the ticket it claimed must print on the desktop
+          console.warn('print step failed:', _printErr?.message);
+          if (billClaims.billPrintedBy) handBackToDesktop(completedOrderId, 'bill');
         }
       }
 
