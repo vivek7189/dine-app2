@@ -145,11 +145,12 @@ export default function MoreScreen() {
         { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu', color: '#f59e0b', iconBg: '#fef3c7' },
         { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers', color: '#ec4899', iconBg: '#fdf2f8' },
         { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', color: '#8b5cf6', iconBg: '#f5f3ff' },
-        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee'], feature: 'kot', color: '#ef4444', iconBg: '#fef2f2' },
+        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee', 'kitchen', 'chef', 'cook'], feature: 'kot', color: '#ef4444', iconBg: '#fef2f2' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], color: '#eab308', iconBg: '#fefce8' },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'My Shifts', icon: 'calendar-outline', route: '/(tabs)/my-shifts', roles: null, color: '#ef4444', iconBg: '#fef2f2' },
-        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: null, color: '#3b82f6', iconBg: '#eff6ff' },
+        // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
+        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', color: '#3b82f6', iconBg: '#eff6ff' },
         { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, color: '#64748b', iconBg: '#f1f5f9' },
         { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],
@@ -171,7 +172,7 @@ export default function MoreScreen() {
     ...(isHotelType ? [{
       title: 'Hotel',
       items: [
-        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: null, color: '#a855f7', iconBg: '#faf5ff' },
+        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: ['owner', 'co-owner', 'admin', 'manager'], feature: 'hotel', color: '#a855f7', iconBg: '#faf5ff' },
       ],
     }] : []),
     ...(restaurant?.parkingEnabled ? [{

@@ -116,6 +116,11 @@ export default function MenuScreen() {
   // KOT+Bill settle-after prompt (flag-gated flow only). placedOrderIdRef records the just-placed
   // order id; kotBillModeRef tells handlePlaceOrder to SKIP navigation so we can prompt to settle.
   const placedOrderIdRef = useRef(null);
+  // KOT+Bill: set only when handlePlaceOrder actually saved the order (new, update, or queued offline),
+  // plus its number for the printed bill; guards against double taps.
+  const placedOkRef = useRef(false);
+  const placedOrderNoRef = useRef('');
+  const kotBillBusyRef = useRef(false);
   const kotBillModeRef = useRef(false);
   const [kotBillSettle, setKotBillSettle] = useState(null); // { orderId, amount, wasTable, tableParams } | null
   const [kotBillSettling, setKotBillSettling] = useState(false);
@@ -1955,6 +1960,8 @@ export default function MenuScreen() {
 
         const updateResponse = await apiClient.updateOrder(existingOrderId, { ...updateData, ...baseSigField() });
         noteSavedItems(updateResponse, updateData.items);
+        placedOkRef.current = true;
+        placedOrderNoRef.current = existingDailyOrderId || updateResponse?.order?.dailyOrderId || '';
 
         // Auto-print KOT for newly added/changed items (fire and forget)
         if (printSettings?.autoPrintOnKOT !== false) {
@@ -2110,6 +2117,8 @@ export default function MenuScreen() {
         let response;
         response = await apiClient.createOrder(orderData);
         placedOrderIdRef.current = response.order?.id || null; // for the KOT+Bill settle prompt
+        placedOkRef.current = !!(response?.order?.id || response?.offline);
+        placedOrderNoRef.current = response?.order?.dailyOrderId || response?.order?.orderNumber || '';
 
         // Redeem coupon after successful order (fire-and-forget)
         if (discountData.couponId && response.order?.id) {
@@ -2334,7 +2343,10 @@ export default function MenuScreen() {
       }
 
       // Fetch latest user data to get current business settings (showGstOnInvoice toggle)
-      const latestUserData = await apiClient.getUser();
+      // The bill is already saved at this point — a failing local read must not surface as an error
+      // (the cashier would retry and create a second, duplicate bill). Fall back to cached info.
+      let latestUserData = null;
+      try { latestUserData = await apiClient.getUser(); } catch (_) { /* use cached */ }
       const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
 
       // Prepare invoice data for display
@@ -2573,7 +2585,10 @@ export default function MenuScreen() {
       }
 
       // Fetch latest user data for invoice settings
-      const latestUserData = await apiClient.getUser();
+      // The bill is already saved at this point — a failing local read must not surface as an error
+      // (the cashier would retry and create a second, duplicate bill). Fall back to cached info.
+      let latestUserData = null;
+      try { latestUserData = await apiClient.getUser(); } catch (_) { /* use cached */ }
       const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
 
       // Prepare invoice data
@@ -2679,7 +2694,14 @@ export default function MenuScreen() {
   // Complete Bill. Reuses handlePlaceOrder for order-create + KOT + navigation (so behaviour
   // stays identical to Place Order), then prints the bill from a snapshot taken before the
   // cart clears. Additive — does not change any existing handler.
-  const handleKotAndBill = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
+  // Double-tap guard: a second tap while the first KOT+Bill is running used to place a second order.
+  const handleKotAndBill = async (...args) => {
+    if (kotBillBusyRef.current) return;
+    kotBillBusyRef.current = true;
+    try { return await handleKotAndBillInner(...args); } finally { kotBillBusyRef.current = false; }
+  };
+
+  const handleKotAndBillInner = async (orderType = 'dine-in', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -2758,12 +2780,18 @@ export default function MenuScreen() {
     // Place order (UNPAID) + print KOT + clear cart. kotBillModeRef suppresses navigation so the
     // settle prompt can show on this screen.
     placedOrderIdRef.current = null;
+    placedOkRef.current = false;
+    placedOrderNoRef.current = '';
     kotBillModeRef.current = true;
     try {
       await handlePlaceOrder(orderType, paymentMethod, customerName, customerMobile, discountData, tableNumberFromModal);
     } finally {
       kotBillModeRef.current = false;
     }
+
+    // handlePlaceOrder reports its own errors; if the order was NOT saved, don't print a bill for it.
+    if (!placedOkRef.current) return;
+    billInvoice.orderNumber = placedOrderNoRef.current || billInvoice.orderNumber;
 
     // Then print the bill (enqueued after the KOT so KOT prints first). Order stays unpaid.
     try {

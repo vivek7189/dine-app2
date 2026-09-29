@@ -1043,7 +1043,13 @@ export const generateBillText = (invoiceData) => {
   lines.push(_LINE);
 
   // ── Invoice info ──
-  if (r.showGstOnInvoice) lines.push(`<CM>Bill of Supply</CM>`);
+  // GST-registered restaurant: a bill that charges tax is a "Tax Invoice"; "Bill of Supply" is only
+  // for a bill with no tax (it was printed on every bill when showGstOnInvoice was on).
+  if (r.showGstOnInvoice) {
+    const charged = invoiceData.taxEnabled !== false && (Number(invoiceData.tax) > 0
+      || (Array.isArray(invoiceData.taxBreakdown) && invoiceData.taxBreakdown.some(t => Number(t?.amount) > 0)));
+    lines.push(`<CM>${charged ? 'Tax Invoice' : 'Bill of Supply'}</CM>`);
+  }
   const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
   lines.push(leftRight(payMethod + ' Sale', '', W));
   const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || '-';
