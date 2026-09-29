@@ -53,7 +53,8 @@ function TabsNavigator() {
       if (userData) {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
-        if (userData.isDeliveryPartner) setIsDeliveryPartner(true);
+        // Flag from staff login, or a delivery-type role (older logins never sent the flag)
+        if (userData.isDeliveryPartner || /deliver|rider|driver/i.test(String(userData.role || ''))) setIsDeliveryPartner(true);
         if (userData.restaurant?.posSettings?.waiterAppConfig) {
           setWaiterAppConfig(userData.restaurant.posSettings.waiterAppConfig);
         }

@@ -734,9 +734,22 @@ export default function MenuScreen() {
 
       setUser(userData);
       const userRole = userData.role?.toLowerCase();
-      setIsWaiter(userRole === 'waiter' || userRole === 'employee');
-      setIsCashier(userRole === 'cashier' || userRole === 'sales');
-      setCanCompleteBill(canPerform(userData, userData.pageAccess, 'orders', 'completeBill'));
+      // Same rule as the backend (checkFeaturePermission): an explicit completeBill setting wins,
+      // otherwise the ROLE default (manager / captain / cashier may bill; waiter / employee / sales /
+      // custom roles may not).
+      const pa = userData.pageAccess || {};
+      const explicitBill = pa.completeBill !== undefined
+        || (pa.orders && typeof pa.orders === 'object' && pa.orders.completeBill !== undefined);
+      const billOk = canPerform(userData, userData.pageAccess, 'orders', 'completeBill')
+        || (!explicitBill && ['manager', 'captain', 'cashier'].includes(userRole));
+      const privilegedRole = ['owner', 'co-owner', 'admin', 'manager'].includes(userRole);
+      const cashierRole = userRole === 'cashier' || userRole === 'sales';
+      // Captain / chef / parcel / other custom roles WITHOUT billing permission get the waiter cart
+      // (send to kitchen). They used to get the owner cart (settle, discounts, payment) and then hit
+      // 403s from the server. Custom roles that CAN bill keep the full cart.
+      setIsWaiter(userRole === 'waiter' || userRole === 'employee' || (!privilegedRole && !cashierRole && !billOk));
+      setIsCashier(cashierRole);
+      setCanCompleteBill(billOk);
       setCanResetTable(canPerform(userData, userData.pageAccess, 'tables', 'reset'));
 
       const rid = userData.restaurantId || userData.restaurant?.id;

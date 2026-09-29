@@ -441,7 +441,19 @@ export default function OrderHistoryScreen() {
     Alert.alert('Cancel Order', `Cancel order #${order.dailyOrderId || order.orderNumber || ''}?\nThis reverses stats and inventory.`, [
       { text: 'No', style: 'cancel' },
       { text: 'Cancel Order', style: 'destructive', onPress: async () => {
-        try { setActionBusy(true); await apiClient.updateOrderStatus(order.id || order._id, 'cancelled', restaurantId); reloadAfterAction(); }
+        try {
+          setActionBusy(true);
+          const oid = order.id || order._id;
+          if (order.status === 'completed') {
+            // settled bill: unchanged path (the /cancel endpoint refuses completed orders → refund)
+            await apiClient.updateOrderStatus(oid, 'cancelled', restaurantId);
+          } else {
+            // active order: /cancel also frees the table and reverses side effects (web parity);
+            // the plain status change left the table occupied
+            await apiClient.cancelKotOrder(oid, 'Cancelled from order history');
+          }
+          reloadAfterAction();
+        }
         catch (e) { Alert.alert('Error', e.message || 'Cancel failed'); } finally { setActionBusy(false); }
       } },
     ]);

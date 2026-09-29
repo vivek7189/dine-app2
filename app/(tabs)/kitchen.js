@@ -20,7 +20,7 @@ const TABS = [
   { key: 'new', label: 'New', statuses: ['pending', 'confirmed'] },
   { key: 'cooking', label: 'Cooking', statuses: ['preparing'] },
   { key: 'ready', label: 'Ready', statuses: ['ready'] },
-  { key: 'done', label: 'Done', statuses: ['completed'] },
+  { key: 'done', label: 'Done', statuses: ['completed', 'served'] },
 ];
 
 const DATE_FILTERS = [
@@ -59,7 +59,10 @@ export default function KitchenScreen() {
   const [isLive, setIsLive] = useState(false);
   const [timers, setTimers] = useState({});
 
-  const undoTimeoutRef = useRef(null);
+  const undoTimeoutRef = useRef(null); // timer of the order shown in the undo toast
+  // Every "Done" gets its OWN pending save (orderId → { timer, run }). One shared timer meant a second
+  // Done within 5s, or leaving the screen, silently dropped the first order's save.
+  const pendingDoneRef = useRef({});
   const loadDataRef = useRef(null);
   const mountedRef = useRef(true);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -208,7 +211,9 @@ export default function KitchenScreen() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+      // Leaving the screen: SEND pending Done saves now instead of dropping them.
+      Object.values(pendingDoneRef.current).forEach(p => { clearTimeout(p.timer); p.run(); });
+      pendingDoneRef.current = {};
     };
   }, []);
 
@@ -299,6 +304,26 @@ export default function KitchenScreen() {
     }
   };
 
+  // Kitchen "Done". Staff who may complete bills keep the existing behaviour (order completed); for
+  // kitchen / waiter / custom roles without that permission the server refuses (403), so the order
+  // is marked "served" instead — it leaves the kitchen queue without billing it.
+  const saveDone = async (kotId, orderId) => {
+    try {
+      try {
+        await apiClient.completeOrder(orderId);
+      } catch (e) {
+        if (e?.status === 403) await apiClient.updateOrderStatus(orderId, 'served', restaurantId);
+        else throw e;
+      }
+      if (mountedRef.current) setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 1000);
+    } catch (e) {
+      if (mountedRef.current) {
+        setKotOrders(orders => orders.map(o => o.kotId === kotId ? { ...o, status: 'ready' } : o));
+        Alert.alert('Error', 'Failed to complete order');
+      }
+    }
+  };
+
   const markDone = (kotId, orderId) => {
     setTransitioning(prev => ({ ...prev, [orderId]: { label: 'Done', targetTab: 'done' } }));
     setTimeout(() => {
@@ -306,28 +331,24 @@ export default function KitchenScreen() {
       setTransitioning(prev => { const n = { ...prev }; delete n[orderId]; return n; });
     }, 1500);
 
-    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     const kotOrder = kotOrders.find(o => o.kotId === kotId);
     setUndoToast({ orderId, kotId, dailyOrderId: kotOrder?.dailyOrderId });
 
-    undoTimeoutRef.current = setTimeout(async () => {
-      try {
-        await apiClient.completeOrder(orderId);
-        if (mountedRef.current) setTimeout(() => { if (mountedRef.current) loadKotData(false); }, 1000);
-      } catch (e) {
-        if (mountedRef.current) {
-          setKotOrders(orders => orders.map(o => o.kotId === kotId ? { ...o, status: 'ready' } : o));
-          Alert.alert('Error', 'Failed to complete order');
-        }
-      }
-      if (mountedRef.current) setUndoToast(null);
-      undoTimeoutRef.current = null;
+    if (pendingDoneRef.current[orderId]) clearTimeout(pendingDoneRef.current[orderId].timer);
+    const run = () => { delete pendingDoneRef.current[orderId]; saveDone(kotId, orderId); };
+    const timer = setTimeout(() => {
+      run();
+      if (mountedRef.current) setUndoToast(t => (t && t.orderId === orderId ? null : t));
+      if (undoTimeoutRef.current === timer) undoTimeoutRef.current = null;
     }, 5000);
+    pendingDoneRef.current[orderId] = { timer, run };
+    undoTimeoutRef.current = timer;
   };
 
   const undoMarkDone = () => {
     if (!undoToast) return;
-    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+    const p = pendingDoneRef.current[undoToast.orderId];
+    if (p) { clearTimeout(p.timer); delete pendingDoneRef.current[undoToast.orderId]; }
     setKotOrders(orders => orders.map(o => o.kotId === undoToast.kotId ? { ...o, status: 'ready' } : o));
     setUndoToast(null);
     undoTimeoutRef.current = null;
