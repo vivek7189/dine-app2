@@ -714,6 +714,9 @@ export default function WaiterOrderModal({
         isIncremental,
         items: filterKotExcludedItems(kotItems, ps).map(item => ({
           name: item.name,
+          // category lets the station splitter route each line to its kitchen/bar printer
+          category: item.category || null,
+          categoryId: item.categoryId || null,
           quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
           notes: item.notes || '',
           seat: item.seat ?? null,

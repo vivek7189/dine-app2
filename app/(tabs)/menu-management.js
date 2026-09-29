@@ -411,6 +411,8 @@ export default function MenuManagementScreen() {
       images: item.images || [],
       variants: item.variants || [],
       customizations: item.customizations || [],
+      // Load existing modifier groups so the form's "Modifier Groups" editor edits the real data
+      modifierGroups: Array.isArray(item.modifierGroups) ? item.modifierGroups : [],
       spiritCategory: item.spiritCategory || '',
       abv: item.abv?.toString() || '',
       servingUnit: item.servingUnit || '',
@@ -504,7 +506,7 @@ export default function MenuManagementScreen() {
     try {
       setActionLoading(item.id);
       const newAvailability = item.isAvailable === false ? true : false;
-      await apiClient.toggleMenuItemAvailability(item.id, newAvailability);
+      await apiClient.toggleMenuItemAvailability(item.id, newAvailability, restaurantId);
       setMenuItems(items =>
         items.map(i => i.id === item.id ? { ...i, isAvailable: newAvailability } : i)
       );
@@ -630,6 +632,20 @@ export default function MenuManagementScreen() {
             price: c.price ? parseFloat(c.price) : 0,
             ...(c.description?.trim() ? { description: c.description.trim() } : {}),
           }));
+      }
+      // Modifier groups (edited in MenuItemForm) were never saved from the app. Send them when the
+      // form has some, or when editing an item that had some (so removing the last group clears it).
+      const hadGroups = Array.isArray(editingItem?.modifierGroups) && editingItem.modifierGroups.length > 0;
+      if (Array.isArray(formData.modifierGroups) && (formData.modifierGroups.length > 0 || hadGroups)) {
+        itemData.modifierGroups = formData.modifierGroups;
+      }
+      // Editing: removing the last size / add-on must actually clear it on the server (the
+      // length > 0 guards above never sent an empty list, so they could not be removed).
+      if (editingItem) {
+        if (!itemData.variants && (editingItem.variants || []).length > 0) itemData.variants = [];
+        if (!itemData.customizations && !itemData.modifierGroups?.length && (editingItem.customizations || []).length > 0) {
+          itemData.customizations = [];
+        }
       }
 
       // Sold by weight

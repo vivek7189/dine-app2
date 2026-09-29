@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform, BackHandler } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { tokenGuardJS } from '../../utils/trustedWebUrl';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -70,8 +71,10 @@ export default function BillingWebViewScreen() {
       const token = u.searchParams.get('token');
       const rid = u.searchParams.get('restaurantId');
       const parts = [];
-      if (token) parts.push(`localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
-      if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
+      // Runs on every page this WebView loads — only hand the login token to DineOpen pages.
+      parts.push(tokenGuardJS());
+      if (token) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
+      if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
       parts.push(`window.__DINEOPEN_BILLING_MODE__ = true;`);
@@ -85,7 +88,7 @@ export default function BillingWebViewScreen() {
           if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }
           meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
           window.alert = function() {};
-          window.confirm = function() { return true; };
+          // window.confirm not overridden: the WebView shows the native confirm dialog (was auto-'yes').
         })();
       `);
       return parts.join('\n') + '\ntrue;';
@@ -113,7 +116,8 @@ export default function BillingWebViewScreen() {
     if (billingData) {
       try {
         const parsed = typeof billingData === 'string' ? JSON.parse(billingData) : billingData;
-        orderIdRef.current = parsed?.payload?.orderId || null;
+        // Only an order created just for this billing screen may be auto-cancelled on back.
+        orderIdRef.current = parsed?.payload?.createdForBilling === true ? (parsed?.payload?.orderId || null) : null;
       } catch {}
     }
   }, [billingData]);

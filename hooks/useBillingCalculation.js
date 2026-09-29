@@ -90,7 +90,12 @@ export function computeTaxBreakdown({
   if (!taxSettings?.enabled) return { taxBreakdown, totalTax, exclusiveTaxTotal };
 
   const hasTaxGroups = taxSettings?.taxGroups && taxSettings.taxGroups.length > 0;
-  if (hasTaxGroups && cart.length > 0) {
+  // An item whose own taxInclusive flag differs from the restaurant setting must be taxed per
+  // item (as the backend always does) — the flat path below only knows the global flag, so a
+  // tax-inclusive ₹30 water on an exclusive-5% restaurant showed/printed ₹31.50 while ₹30 saved.
+  const globalInclusive = taxSettings?.taxInclusivePricing === true;
+  const hasPerItemInclusiveOverride = cart.some(it => typeof it?.taxInclusive === 'boolean' && it.taxInclusive !== globalInclusive);
+  if ((hasTaxGroups || hasPerItemInclusiveOverride) && cart.length > 0) {
     const discountableSubtotal = cart.reduce((sum, cartItem) => {
       if (cartItem.discountApplicable === false) return sum;
       return sum + (cartItem.price || 0) * (cartItem.quantity || 1);

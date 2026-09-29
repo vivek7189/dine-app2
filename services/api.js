@@ -1960,8 +1960,11 @@ class ApiClient {
   }
 
   // Toggle menu item availability (out of stock)
-  async toggleMenuItemAvailability(itemId, isAvailable) {
-    return this.offlineWrite(`/api/menus/item/${itemId}`, {
+  async toggleMenuItemAvailability(itemId, isAvailable, restaurantId) {
+    // The backend finds the item via restaurantId (no collection scan); without it older builds
+    // always got 404 (and offline mode queued a write that could never succeed).
+    const q = restaurantId ? `?restaurantId=${encodeURIComponent(restaurantId)}` : '';
+    return this.offlineWrite(`/api/menus/item/${itemId}${q}`, {
       method: 'PATCH',
       data: { isAvailable },
       entityType: 'menu_availability',

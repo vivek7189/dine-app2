@@ -1311,8 +1311,14 @@ export default function MenuScreen() {
   // per-item order/print payload all read the same item.price.
   const getEffectiveItemPrice = (item) => {
     let base;
+    const hasCustomizations = Array.isArray(item?.selectedCustomizations) && item.selectedCustomizations.length > 0;
     if (item?.selectedVariant?.price != null) {
       base = item.selectedVariant.price;
+    } else if (item?.cartId && hasCustomizations && item.priceEdited !== true && typeof item.basePrice === 'number') {
+      // Lines from the customization modal store price = base + add-ons (finalPrice). The add-ons
+      // are added back below, so start from the stored base — otherwise add-ons were counted
+      // twice (Pizza ₹200 + Cheese ₹30 showed ₹260 while the backend saved ₹230).
+      base = item.basePrice;
     } else if (typeof item?.price === 'number') {
       base = item.price;
     } else if (multiPricingEnabled && activePricingRuleId) {
@@ -1455,6 +1461,9 @@ export default function MenuScreen() {
       type: 'BILLING_DATA',
       payload: {
         orderId,
+        // true only when ensureOrderExists just created this order for billing — the billing
+        // screen may cancel it on back. An existing table order must never be cancelled that way.
+        createdForBilling: !!orderId && orderId !== existingOrderId,
         restaurantId,
         cart: cart.map(item => ({
           ...buildItemPayload(item),
@@ -1648,6 +1657,9 @@ export default function MenuScreen() {
         isIncremental,
         items: filterKotExcludedItems(kotItems, printSettings).map(item => ({
           name: item.name,
+          // category lets the station splitter route each line to its kitchen/bar printer
+          category: item.category || null,
+          categoryId: item.categoryId || null,
           quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
           notes: item.notes || '',
           selectedVariant: item.selectedVariant || null,
@@ -1923,6 +1935,9 @@ export default function MenuScreen() {
               isIncremental,
               items: filterKotExcludedItems(kotItems, printSettings).map(item => ({
                 name: item.name,
+                // category lets the station splitter route each line to its kitchen/bar printer
+                category: item.category || null,
+                categoryId: item.categoryId || null,
                 quantity: item.isUpdated && item.quantityDelta > 0 ? item.quantityDelta : item.quantity,
                 notes: item.notes || '',
                 selectedVariant: item.selectedVariant || null,
@@ -2038,7 +2053,7 @@ export default function MenuScreen() {
             tableNumber: orderData.tableNumber || '',
             floorName: selectedTable?.floor || '',
             roomNumber: response.order?.roomNumber || null,
-            items: filterKotExcludedItems(cart, printSettings).map(item => ({ name: item.name, quantity: item.quantity, notes: item.notes || '', selectedVariant: item.selectedVariant || null, selectedCustomizations: item.selectedCustomizations || [] })),
+            items: filterKotExcludedItems(cart, printSettings).map(item => ({ name: item.name, category: item.category || null, categoryId: item.categoryId || null, quantity: item.quantity, notes: item.notes || '', selectedVariant: item.selectedVariant || null, selectedCustomizations: item.selectedCustomizations || [] })),
             waiterName: user?.name || 'Manager',
             waiterId: user?.id,
             timestamp: new Date(),
@@ -2404,12 +2419,13 @@ export default function MenuScreen() {
       const orderData = {
         restaurantId,
         ...(tableNum && { tableNumber: tableNum }),
-        items: cart.map(item => ({
-          menuItemId: item.menuItemId || item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-        })),
+        // Full line payload (variant, add-ons, seat, base price, edited price) — the old
+        // {id,name,price,qty} made the backend re-price variant/add-on lines to the menu base
+        // and, on an occupied table, re-KOT unchanged lines as removed + new.
+        ...(existingOrderId ? (() => {
+          const { items: deltaItems, removedItems: deltaRemoved } = buildUpdateDelta();
+          return { items: deltaItems, ...(deltaRemoved?.length ? { removedItems: deltaRemoved } : {}) };
+        })() : { items: cart.map(buildItemPayload) }),
         orderType,
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         status: 'completed',
@@ -2438,6 +2454,9 @@ export default function MenuScreen() {
         discountAmount: totalDiscount,
         loyaltyDiscount: discountData.loyaltyDiscount || 0,
         pricingRuleId: activePricingRuleId || null,
+        ...(discountData.couponDiscount > 0 && { couponDiscount: discountData.couponDiscount }),
+        ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+        ...(discountData.couponId && { couponId: discountData.couponId }),
         ...billingFields,
         ...partialFields,
       };
@@ -2455,6 +2474,12 @@ export default function MenuScreen() {
       } else {
         response = await apiClient.createOrder(orderData);
         completedOrderId = response.order?.id;
+      }
+
+      // Coupon was applied to this bill — record the redemption (same as the cashier path) so
+      // it can't be reused past its limit.
+      if (discountData.couponId && completedOrderId) {
+        apiClient.redeemCoupon(restaurantId, discountData.couponId, completedOrderId).catch(err => console.warn('Coupon redeem:', err));
       }
 
       // Verify payment

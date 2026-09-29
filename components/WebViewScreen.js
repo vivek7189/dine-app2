@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { tokenGuardJS } from '../utils/trustedWebUrl';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../services/api';
@@ -95,8 +96,10 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       const token = u.searchParams.get('token');
       const rid = u.searchParams.get('restaurantId');
       const parts = [];
-      if (token) parts.push(`localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
-      if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
+      // Runs on every page this WebView loads — only hand the login token to DineOpen pages.
+      parts.push(tokenGuardJS());
+      if (token) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
+      if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
       if (useDesktopLayout) {
@@ -109,7 +112,8 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
           if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }
           meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
           window.alert = function() {};
-          window.confirm = function() { return true; };
+          // window.confirm is NOT overridden any more: auto-answering "yes" silently ran every
+          // delete / void / cancel prompt. The WebView shows the native confirm dialog instead.
           var style = document.createElement('style');
           style.textContent = 'input,select,textarea{font-size:16px;max-width:100%;box-sizing:border-box;}input:focus,select:focus,textarea:focus{font-size:16px!important;}html{touch-action:manipulation;}#sidebar-hamburger{display:none!important;}' +
             '@media (max-width:768px){.billing-modal-panel{height:var(--app-height,100vh)!important;max-height:var(--app-height,100vh)!important;}.max-h-\\[92vh\\]{max-height:calc(var(--app-height,92vh) - 8px)!important;}.max-h-\\[90vh\\]{max-height:calc(var(--app-height,90vh) - 8px)!important;}}';

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { isTrustedWebUrl, tokenGuardJS } from '../../utils/trustedWebUrl';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
@@ -18,6 +19,7 @@ export default function WebViewScreen() {
   const [userData, setUserData] = useState(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     buildAuthUrl();
@@ -25,6 +27,12 @@ export default function WebViewScreen() {
 
   const buildAuthUrl = async () => {
     try {
+      // Only DineOpen's own pages may receive the login token (blocks crafted deep links).
+      if (!isTrustedWebUrl(url)) {
+        console.warn('Blocked untrusted WebView url');
+        setBlocked(true);
+        return;
+      }
       const token = await apiClient.getToken();
       const ud = await apiClient.getUser();
       setUserData(ud);
@@ -53,8 +61,10 @@ export default function WebViewScreen() {
       const token = u.searchParams.get('token');
       const rid = u.searchParams.get('restaurantId');
       const parts = [];
-      if (token) parts.push(`localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
-      if (userData) parts.push(`localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
+      // The script runs on EVERY page this WebView loads — only hand the token to DineOpen pages.
+      parts.push(tokenGuardJS());
+      if (token) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('authToken','${token.replace(/'/g, "\\'")}');`);
+      if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
       if (useDesktopLayout) {
@@ -77,6 +87,22 @@ export default function WebViewScreen() {
       router.replace('/(tabs)/more');
     }
   };
+
+  if (blocked) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <Ionicons name="shield-checkmark-outline" size={40} color="#9ca3af" />
+          <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '600', color: '#374151', textAlign: 'center', paddingHorizontal: 24 }}>
+            This link can&apos;t be opened inside DineOpen.
+          </Text>
+          <TouchableOpacity onPress={() => router.replace('/(tabs)/more')} style={{ marginTop: 16, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10, backgroundColor: '#111827' }}>
+            <Text style={{ color: 'white', fontWeight: '600' }}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!authUrl) {
     return (
