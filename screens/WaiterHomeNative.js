@@ -67,6 +67,7 @@ export default function WaiterHomeNative() {
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
+  const [mySales, setMySales] = useState(null); // "Your sales today" — only this waiter's billed orders
   const [isLive, setIsLive] = useState(false);
 
   const loadDataRef = useRef(null);
@@ -131,6 +132,13 @@ export default function WaiterHomeNative() {
   loadDataRef.current = loadData;
 
   useEffect(() => { loadData(true); }, []);
+  // Your sales today (server-side: only orders this waiter took) — refreshed with the screen
+  const loadMySales = useCallback(async (rid) => {
+    if (!rid) return;
+    try { const r = await apiClient.getMySales(rid, 'today'); if (r && r.success) setMySales(r); } catch (_) { /* optional card */ }
+  }, []);
+  useEffect(() => { if (restaurantId) loadMySales(restaurantId); }, [restaurantId, loadMySales]);
+  useFocusEffect(useCallback(() => { if (restaurantId) loadMySales(restaurantId); }, [restaurantId, loadMySales]));
   // Owner changed the Waiter App settings in web Admin → show/hide home buttons without a re-login
   useEffect(() => {
     const unsub = restaurantEvents.on('settings', ({ restaurantId, posSettings } = {}) => {
@@ -299,6 +307,23 @@ export default function WaiterHomeNative() {
             )}
           </View>
         </View>
+
+        {/* Your sales today — this waiter's own billed orders (server checkout figures) */}
+        {mySales && (
+          <View style={{ paddingHorizontal: Spacing.md, marginTop: 12 }}>
+            <View style={{ backgroundColor: '#eef2ff', borderColor: '#e0e7ff', borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#4338ca', letterSpacing: 0.5 }}>YOUR SALES TODAY</Text>
+                <Text style={{ fontSize: 20, fontWeight: '800', color: '#1e1b4b', marginTop: 2 }}>{formatCurrency(mySales.sales || 0)}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 12, color: '#4c1d95' }}><Text style={{ fontWeight: '800' }}>{mySales.orders || 0}</Text> billed</Text>
+                {mySales.openOrders > 0 && <Text style={{ fontSize: 12, color: '#4c1d95' }}><Text style={{ fontWeight: '800' }}>{mySales.openOrders}</Text> open · {formatCurrency(mySales.openAmount || 0)}</Text>}
+                {mySales.tips > 0 && <Text style={{ fontSize: 12, color: '#4c1d95' }}>Tips {formatCurrency(mySales.tips)}</Text>}
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Primary CTA */}
         {(restaurant?.posSettings?.waiterAppConfig?.showStartOrder !== false) && (

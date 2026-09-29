@@ -84,6 +84,10 @@ export default function TablesScreen() {
   // Table action sheet state
   const [showTableActions, setShowTableActions] = useState(false);
   const [actionTable, setActionTable] = useState(null);
+  // Staff Access: transfer a running order (and table) to another server
+  const [transferTable, setTransferTable] = useState(null);
+  const [transferWaiters, setTransferWaiters] = useState([]);
+  const [transferBusy, setTransferBusy] = useState(false);
   // Booking state
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [bookingTable, setBookingTable] = useState(null);
@@ -682,6 +686,12 @@ export default function TablesScreen() {
   const chairModeOn = () => isChairModeEnabled(selectedRestaurantRef.current?.posSettings || selectedRestaurant?.posSettings);
 
   const handleTablePress = (table) => {
+    // Staff Access Rules: another server's table (the server marks it for this login)
+    if (table?.accessLocked) {
+      const who = table.accessOwnerName ? ` (${table.accessOwnerName})` : '';
+      Alert.alert('Not your table', `${table.accessLockedReason === 'occupied' ? 'Another server is serving this table' : 'This table is assigned to another server'}${who}. Ask a manager to transfer it.`);
+      return;
+    }
     const st = table?.status || 'available';
     if (chairModeOn() && !table?.isPartyTable && ['available', 'occupied', 'serving', 'cleaning'].includes(st)) {
       openChairSheet(table);
@@ -1163,6 +1173,7 @@ export default function TablesScreen() {
           isReserved && styles.tableCardReserved,
           isCleaning && styles.tableCardCleaning,
           isOutOfService && styles.tableCardOutOfService,
+          table.accessLocked && styles.tableCardLocked,
         ]}
         onPress={() => {
           if (!isOutOfService) {
@@ -1172,6 +1183,11 @@ export default function TablesScreen() {
         onLongPress={() => showTableActionSheet(table)}
         activeOpacity={isOutOfService ? 1 : 0.8}
       >
+        {table.accessLocked && (
+          <View style={styles.lockedTag} pointerEvents="none">
+            <Text style={styles.lockedTagText} numberOfLines={1}>🔒 {table.accessOwnerName || 'Other server'}</Text>
+          </View>
+        )}
         {/* Options button — opens the clean actions sheet (discoverable; not only long-press).
             Solid white pill + gear icon so it's clearly visible on any card colour. */}
         <TouchableOpacity
@@ -1583,7 +1599,36 @@ export default function TablesScreen() {
   };
 
   // Show table action sheet
+  const openTransfer = async (table) => {
+    setTransferTable(table);
+    setTransferWaiters([]);
+    try {
+      const rid = restaurantIdRef.current || selectedRestaurant?.id;
+      const res = await apiClient.getWaiters(rid);
+      setTransferWaiters((res?.waiters || []).filter(w => w && w.id && w.id !== table.waiterId));
+    } catch (e) {
+      setTransferTable(null);
+      Alert.alert('Transfer', e.message || 'Could not load staff');
+    }
+  };
+  const doTransfer = async (waiter) => {
+    if (!transferTable?.currentOrderId || !waiter?.id) return;
+    setTransferBusy(true);
+    try {
+      await apiClient.transferOrder(transferTable.currentOrderId, waiter.id);
+      setTransferTable(null);
+      Alert.alert('Transferred', `Table ${transferTable.name} is now with ${waiter.name}.`);
+      const rid = restaurantIdRef.current || selectedRestaurant?.id;
+      if (rid) refreshInBackground(rid);
+    } catch (e) {
+      Alert.alert('Transfer', e.message || 'Could not transfer');
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
   const showTableActionSheet = (table) => {
+    if (table?.accessLocked) { handleTablePress(table); return; } // another server's table — explain, no menu
     setActionTable(table);
     const status = table.status || 'available';
     const canHostParties = !chairModeOn() && !table.isSubTable && !table.isPartyTable && !table.isSplit && !table.mergeGroupId && !table.mergedInto;
@@ -1615,6 +1660,8 @@ export default function TablesScreen() {
       if (status === 'occupied' && table.currentOrderId) {
         options.push('View Order');
         actions.push(() => handleViewOrder(table));
+        options.push('Transfer to another server');
+        actions.push(() => openTransfer(table));
       }
       if (posSettings.moveOrderEnabled && status === 'occupied' && table.currentOrderId) {
         const tableFloor = getFloorForTable(table);
@@ -2695,6 +2742,36 @@ export default function TablesScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Staff Access: transfer the running order (and table) to another server */}
+      <Modal visible={!!transferTable} transparent animationType="fade" onRequestClose={() => !transferBusy && setTransferTable(null)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => !transferBusy && setTransferTable(null)}
+          style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'center', padding: 20 }}>
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: '#fff', borderRadius: 16, maxHeight: '75%', overflow: 'hidden' }}>
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a' }}>Transfer to…</Text>
+              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Table {transferTable?.name} · the running order and the table move to them</Text>
+            </View>
+            <ScrollView style={{ maxHeight: 420 }}>
+              {transferWaiters.length === 0 && (
+                <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator color="#7c3aed" /></View>
+              )}
+              {transferWaiters.map(w => (
+                <TouchableOpacity key={w.id} disabled={transferBusy} onPress={() => doTransfer(w)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f8fafc' }}>
+                  <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontWeight: '800', color: '#6d28d9' }}>{(w.name || '?').charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>{w.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#94a3b8', textTransform: 'capitalize' }}>{w.role || 'staff'}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Android Table Actions Modal */}
       {Platform.OS !== 'ios' && (
         <Modal
@@ -2754,6 +2831,12 @@ export default function TablesScreen() {
                 <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); handleViewOrder(actionTable); }}>
                   <Ionicons name="eye" size={20} color="#3b82f6" />
                   <Text style={styles.actionSheetBtnText}>View Order</Text>
+                </TouchableOpacity>
+              )}
+              {actionTable?.status === 'occupied' && actionTable?.currentOrderId && (
+                <TouchableOpacity style={styles.actionSheetBtn} onPress={() => { setShowTableActions(false); openTransfer(actionTable); }}>
+                  <Ionicons name="swap-horizontal" size={20} color="#7c3aed" />
+                  <Text style={styles.actionSheetBtnText}>Transfer to another server</Text>
                 </TouchableOpacity>
               )}
 
@@ -3164,6 +3247,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f9ff',
     borderColor: '#bae6fd',
   },
+  tableCardLocked: { opacity: 0.45 },
+  lockedTag: { position: 'absolute', bottom: 4, left: 4, right: 4, alignItems: 'center', zIndex: 3 },
+  lockedTagText: { fontSize: 10, fontWeight: '700', color: '#475569', backgroundColor: '#e2e8f0', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
   tableCardOutOfService: {
     backgroundColor: '#f9fafb',
     borderColor: '#e5e7eb',

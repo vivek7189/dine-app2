@@ -36,6 +36,7 @@ import apiClient from '../services/api';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { doEcrPurchase, ECR_APPROVED } from '../services/ecrService';
 import { buildSplitBillPayload } from '../utils/splitBill';
+import { filterAllowedOrderTypes } from '../utils/staffAccessClient';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -217,7 +218,7 @@ export default function CartModal({
         list = [{ id: 'counter', label: 'Counter', builtIn: true }, ...list];
       }
     }
-    return list;
+    return filterAllowedOrderTypes(list); // Staff Access: e.g. waiters dine-in only
   }, [posSettings.orderTypes, isCashierMode]);
 
   // When table came from tables page navigation, lock order type to dine-in and hide tabs

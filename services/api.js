@@ -552,6 +552,11 @@ class ApiClient {
 
         // Keep the HTTP status / error code so callers can tell a server "no" (400/403/409…) from a
         // network failure (message-only callers are unaffected).
+        // Staff Access Rules: not clocked in / on leave / shift over → the tabs layout shows the
+        // clock-in screen (StaffAccessGateNative listens). The request still fails as before.
+        if (error.response.status === 423 && String(error.response.data?.code || '').startsWith('STAFF_ACCESS_')) {
+          try { require('./restaurantEvents').default.emit('staffAccessBlocked', error.response.data); } catch (_) { /* ignore */ }
+        }
         const httpErr = new Error(error.response.data?.error || error.response.data?.message || 'Request failed');
         httpErr.status = error.response.status;
         httpErr.code = error.response.data?.code;
@@ -3228,6 +3233,26 @@ class ApiClient {
       data: { staffId, staffName, location },
     });
   }
+
+  // ── Staff Access Rules (Admin → Staff Access) ──
+  async getStaffAccessMe(restaurantId, { fresh = false } = {}) {
+    return this.request(`/api/staff-access/${restaurantId}/me${fresh ? '?fresh=1' : ''}`);
+  }
+  async staffAccessOverride(restaurantId, { staffId, pin, minutes } = {}) {
+    return this.request(`/api/staff-access/${restaurantId}/override`, { method: 'POST', data: { staffId, pin, minutes } });
+  }
+  async getMySales(restaurantId, period = 'today') {
+    return this.request(`/api/staff-access/${restaurantId}/my-sales?period=${encodeURIComponent(period)}`);
+  }
+  async transferOrder(orderId, toStaffId) {
+    return this.request(`/api/orders/${orderId}/transfer`, { method: 'POST', data: { toStaffId } });
+  }
+  async getWaiters(restaurantId) {
+    return this.request(`/api/waiters/${restaurantId}`);
+  }
+  // Latest rules for this staff member (kept by StaffAccessGateNative; null = none)
+  setStaffAccess(v) { this._staffAccess = v || null; }
+  getStaffAccess() { return this._staffAccess || null; }
 
   async clockOut(restaurantId, { staffId, location }) {
     return this.request(`/api/attendance/${restaurantId}/clock-out`, {
