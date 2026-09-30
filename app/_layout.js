@@ -9,6 +9,7 @@ import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineProvider, useOffline } from '../hooks/useOffline';
 import ImagePrintHost from '../components/ImagePrintHost';
+import ManagerPinPromptHost from '../components/ManagerPinPromptHost';
 import { hasPin, isUnlocked, lockSession } from '../services/pinLock';
 import { loadCurrencyConfig } from '../utils/formatCurrency';
 import apiClient from '../services/api';
@@ -160,6 +161,8 @@ export default function RootLayout() {
         </OfflineProvider>
         {/* Hidden host for opt-in image (HTML) receipt printing. Passive until used. */}
         <ImagePrintHost />
+        {/* Manager PIN box (Roles "Needs manager PIN"): the API client asks, then retries. */}
+        <ManagerPinPromptHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

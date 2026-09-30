@@ -488,6 +488,20 @@ class ApiClient {
       const response = await axios(url, config);
       return response.data;
     } catch (error) {
+      // Roles "Needs manager PIN": ask for the PIN and retry; a wrong PIN asks again; cancel → error.
+      const pinCode = error.response?.data?.code;
+      if (pinCode === 'MANAGER_PIN_REQUIRED' || pinCode === 'MANAGER_PIN_INVALID') {
+        const { askManagerPin } = require('./managerPinPrompt');
+        const pin = await askManagerPin({ message: error.response.data?.error, wrong: pinCode === 'MANAGER_PIN_INVALID' });
+        if (pin) {
+          return this.request(endpoint, { ...options, headers: { ...(options.headers || {}), 'X-Manager-Pin': String(pin) } }, isRetry);
+        }
+        const cancelled = new Error('Cancelled — a manager PIN is needed for this.');
+        cancelled.code = 'MANAGER_PIN_CANCELLED';
+        // A real answer from the server (not a network failure) — offlineWrite must NOT queue it.
+        cancelled.status = error.response.status || 409;
+        throw cancelled;
+      }
       if (error.response) {
         // Staff/employee deactivated: show friendly notice, clear auth, then redirect to login
         if (error.response.status === 401 && error.response.data?.inactive === true) {
