@@ -28,7 +28,7 @@ import MenuItemForm from '../../components/MenuItemForm';
 import BulkMenuUploadModal from '../../components/BulkMenuUploadModal';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
-import { hasFeatureAccess, canDoMenu } from '../../utils/permissions';
+import { hasFeatureAccess, canDoMenu, roleCan } from '../../utils/permissions';
 import { getCurrencySymbol } from '../../utils/formatCurrency';
 import { describeSchedule, isScheduleOpen } from '../../utils/menuSchedule';
 
@@ -153,7 +153,10 @@ export default function MenuManagementScreen() {
         add: canDoMenu(userData, 'add', wac), edit: canDoMenu(userData, 'update', wac),
         del: canDoMenu(userData, 'delete', wac), hide: canDoMenu(userData, 'markOutOfStock', wac),
       });
-      if (!['owner', 'admin', 'manager', 'cashier'].includes(role) && !hasFeatureAccess(userData, 'menu')) {
+      // Roles on: allowed when the role can change anything on the menu
+      const byRole = ['menu.add', 'menu.edit', 'menu.delete', 'menu.outOfStock'].map(k => roleCan(userData, k));
+      const roleDenied = byRole[0] !== null && !byRole.some(Boolean);
+      if (roleDenied || (byRole[0] === null && !['owner', 'admin', 'manager', 'cashier'].includes(role) && !hasFeatureAccess(userData, 'menu'))) {
         Alert.alert(
           'Access Denied',
           'You do not have permission to manage the menu.',

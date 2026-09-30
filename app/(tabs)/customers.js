@@ -23,7 +23,7 @@ import apiClient from '../../services/api';
 import restaurantEvents from '../../services/restaurantEvents';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
-import { hasFeatureAccess } from '../../utils/permissions';
+import { hasFeatureAccess, roleCan } from '../../utils/permissions';
 import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 // ── Tabs ────────────────────────────────────────────
@@ -153,7 +153,8 @@ export default function CustomersScreen() {
 
       // owner/admin always allowed; manager kept for backwards compat; custom roles check pageAccess
       const role = userData.role?.toLowerCase();
-      if (!['owner', 'admin', 'manager'].includes(role) && !hasFeatureAccess(userData, 'customers')) {
+      const byRole = roleCan(userData, 'customers.view'); // roles on → the role decides
+      if (byRole === false || (byRole === null && !['owner', 'admin', 'manager'].includes(role) && !hasFeatureAccess(userData, 'customers'))) {
         Alert.alert('Access Denied', 'You do not have permission to access customers.', [
           { text: 'OK', onPress: () => router.back() },
         ]);

@@ -23,7 +23,7 @@ import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import BusinessSettings from '../../components/BusinessSettings';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
 import lanClient from '../../services/lanClient';
-import { resolveFeaturePermissions, followsWaiterAppConfig } from '../../utils/permissions';
+import { resolveFeaturePermissions, followsWaiterAppConfig, roleCan } from '../../utils/permissions';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 import { useTabModes } from '../../contexts/TabModeContext';
 
@@ -73,7 +73,12 @@ export default function MoreScreen() {
     const unsubSettings = restaurantEvents.on('settings', ({ restaurantId, posSettings } = {}) => {
       setRestaurant(prev => (prev && (!restaurantId || !prev.id || prev.id === restaurantId) ? { ...prev, posSettings } : prev));
     });
-    return () => { unsub(); unsubSettings(); };
+    // Role permissions refreshed (roles-on restaurant) → re-read the user
+    const unsubAccess = restaurantEvents.on('access', async () => {
+      const u = await apiClient.getUser();
+      if (u) setUser(u);
+    });
+    return () => { unsub(); unsubSettings(); unsubAccess(); };
   }, []);
 
   const loadUserData = async () => {
@@ -163,43 +168,43 @@ export default function MoreScreen() {
       title: 'Management',
       items: [
         { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'], color: '#6366f1', iconBg: '#eef2ff' },
-        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu', color: '#f59e0b', iconBg: '#fef3c7' },
-        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers', color: '#ec4899', iconBg: '#fdf2f8' },
-        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', color: '#8b5cf6', iconBg: '#f5f3ff' },
-        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee', 'kitchen', 'chef', 'cook'], feature: 'kot', color: '#ef4444', iconBg: '#fef2f2' },
-        { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], color: '#eab308', iconBg: '#fefce8' },
+        { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu', perm: ['menu.add', 'menu.edit', 'menu.delete', 'menu.outOfStock'], color: '#f59e0b', iconBg: '#fef3c7' },
+        { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers', perm: 'customers.view', color: '#ec4899', iconBg: '#fdf2f8' },
+        { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', perm: 'inventory.view', color: '#8b5cf6', iconBg: '#f5f3ff' },
+        { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee', 'kitchen', 'chef', 'cook'], feature: 'kot', perm: 'page.kot', color: '#ef4444', iconBg: '#fef2f2' },
+        { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], perm: 'settings.googleReviews', color: '#eab308', iconBg: '#fefce8' },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'My Shifts', icon: 'calendar-outline', route: '/(tabs)/my-shifts', roles: null, color: '#ef4444', iconBg: '#fef2f2' },
         // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
-        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', color: '#3b82f6', iconBg: '#eff6ff' },
-        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, color: '#64748b', iconBg: '#f1f5f9' },
+        { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
+        { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, perm: 'page.printer', color: '#64748b', iconBg: '#f1f5f9' },
         { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],
     },
     {
       title: 'Finance',
       items: [
-        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin', color: '#10b981', iconBg: '#ecfdf5' },
-        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice', color: '#f97316', iconBg: '#fff7ed' },
+        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin', perm: 'page.books', color: '#10b981', iconBg: '#ecfdf5' },
+        { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice', perm: 'page.invoice', color: '#f97316', iconBg: '#fff7ed' },
       ],
     },
     {
       title: 'History',
       items: [
-        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history', color: '#8b5cf6', iconBg: '#f5f3ff' },
-        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'], color: '#06b6d4', iconBg: '#ecfeff' },
+        { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history', perm: 'page.history', color: '#8b5cf6', iconBg: '#f5f3ff' },
+        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'], perm: 'page.analytics', color: '#06b6d4', iconBg: '#ecfeff' },
       ],
     },
     ...(isHotelType ? [{
       title: 'Hotel',
       items: [
-        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: ['owner', 'co-owner', 'admin', 'manager'], feature: 'hotel', color: '#a855f7', iconBg: '#faf5ff' },
+        { title: 'Hotel Management', icon: 'bed-outline', route: '/(tabs)/hotel', roles: ['owner', 'co-owner', 'admin', 'manager'], feature: 'hotel', perm: 'page.hotel', color: '#a855f7', iconBg: '#faf5ff' },
       ],
     }] : []),
     ...(restaurant?.parkingEnabled ? [{
       title: 'Parking',
       items: [
-        { title: 'Parking Management', icon: 'car-outline', route: '/(tabs)/parking', roles: ['owner', 'admin', 'manager'], color: '#0ea5e9', iconBg: '#f0f9ff' },
+        { title: 'Parking Management', icon: 'car-outline', route: '/(tabs)/parking', roles: ['owner', 'admin', 'manager'], perm: 'parking.view', color: '#0ea5e9', iconBg: '#f0f9ff' },
       ],
     }] : []),
   ];
@@ -230,6 +235,10 @@ export default function MoreScreen() {
 
   const filteredAdminTabs = (() => {
     if (role === 'owner' || role === 'admin') return adminTabs;
+    // Roles on: each settings tab follows the role
+    if (roleCan(user, 'settings.settings') !== null) {
+      return adminTabs.filter(tab => { const k = TAB_ID_TO_PERM_KEY[tab.tabId]; return k ? roleCan(user, `settings.${k}`) === true : true; });
+    }
     const adminPerms = resolveFeaturePermissions(user?.pageAccess || {}, 'admin');
     return adminTabs.filter(tab => {
       const permKey = TAB_ID_TO_PERM_KEY[tab.tabId];
@@ -237,11 +246,13 @@ export default function MoreScreen() {
     });
   })();
 
-  const hasAnyAdminAccess = role === 'owner' || role === 'admin' || (() => {
+  const hasAnyAdminAccess = role === 'owner' || role === 'admin' || (roleCan(user, 'settings.settings') !== null
+    ? Object.values(TAB_ID_TO_PERM_KEY).some(k => roleCan(user, `settings.${k}`) === true)
+    : (() => {
     const pa = user?.pageAccess?.admin;
     if (typeof pa === 'object' && pa !== null) return Object.values(pa).some(Boolean);
     return !!pa;
-  })();
+  })());
 
   const waiterAppConfig = restaurant?.posSettings?.waiterAppConfig || {};
 
@@ -257,6 +268,13 @@ export default function MoreScreen() {
       };
       const configKey = waiterConfigMap[item.title];
       if (configKey && waiterAppConfig[configKey] === false) return false;
+    }
+
+    // Roles on: items with a permission follow the person's role (owner / co-owner always true)
+    if (item.perm) {
+      const keys = Array.isArray(item.perm) ? item.perm : [item.perm];
+      const answers = keys.map(k => roleCan(user, k));
+      if (answers[0] !== null) return answers.some(Boolean);
     }
 
     // For items with no role restriction, show by default — but allow owner to disable via pageAccess

@@ -24,6 +24,7 @@ import * as printerService from '../../services/printerService';
 import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { roleCan } from '../../utils/permissions';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -334,6 +335,11 @@ export default function OrderHistoryScreen() {
     return typeof o.outstandingAmount === 'number' && o.outstandingAmount > 0.01;
   };
   const canManage = ['owner', 'manager', 'cashier'].includes((userRole || '').toLowerCase());
+  // Roles on: each action follows the person's role (null = roles off → today's rule above)
+  const rc = (k) => roleCan(currentUser, k);
+  const canSettle = rc('orders.completeBill') !== null ? (rc('orders.completeBill') && rc('orders.settleButton')) : canManage;
+  const canRefund = rc('orders.refund') !== null ? (rc('orders.refund') && rc('orders.refundButton')) : canManage;
+  const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel') : canManage;
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
 
   // Same gate as web order history (Admin → Billing Settings → reprintKotRoles / reprintBillRoles):
@@ -925,17 +931,17 @@ export default function OrderHistoryScreen() {
                 <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleReprint(selectedOrder, 'kot')} activeOpacity={0.8}>
                   <Ionicons name="print-outline" size={16} color="#f59e0b" /><Text style={[styles.actBtnText, { color: '#f59e0b' }]}>Print KOT</Text>
                 </TouchableOpacity>
-                {canManage && needsSettle(selectedOrder) && (
+                {canSettle && needsSettle(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openSettle(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
                   </TouchableOpacity>
                 )}
-                {canManage && selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'refunded' && (
+                {canRefund && selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'refunded' && (
                   <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => openRefund(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="arrow-undo-outline" size={16} color="#7c3aed" /><Text style={[styles.actBtnText, { color: '#7c3aed' }]}>Refund</Text>
                   </TouchableOpacity>
                 )}
-                {canManage && selectedOrder.status !== 'cancelled' && (
+                {canCancel && selectedOrder.status !== 'cancelled' && (
                   <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleCancelOrder(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="close-circle-outline" size={16} color="#ef4444" /><Text style={[styles.actBtnText, { color: '#ef4444' }]}>Cancel Order</Text>
                   </TouchableOpacity>

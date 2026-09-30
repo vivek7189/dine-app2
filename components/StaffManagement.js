@@ -76,6 +76,17 @@ export default function StaffManagement({ restaurantId }) {
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
+  const [rolesOn, setRolesOn] = useState(false); // restaurant has roles switched on
+
+  // Roles on → access is set per role (web Admin → Roles); edits here become personal exceptions.
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedRestaurantId) return undefined;
+    apiClient.request(`/api/user/page-access?restaurantId=${encodeURIComponent(selectedRestaurantId)}`)
+      .then(res => { if (!cancelled) setRolesOn(res?.rolesV2 === true); })
+      .catch(() => { if (!cancelled) setRolesOn(false); });
+    return () => { cancelled = true; };
+  }, [selectedRestaurantId]);
   const [filterRole, setFilterRole] = useState('all');
 
   // Form fields
@@ -565,6 +576,13 @@ export default function StaffManagement({ restaurantId }) {
               )}
 
               <Text style={[styles.inputLabel, { marginTop: 18 }]}>Page Access Permissions</Text>
+              {rolesOn && (
+                <View style={{ backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 12.5, color: '#3730a3', lineHeight: 18 }}>
+                    Roles are on for this restaurant: this person gets their role's access, set in web Admin → Roles. Changes here are saved as personal exceptions for this person only.
+                  </Text>
+                </View>
+              )}
               <Text style={styles.permissionHint}>Select which pages this staff member can access</Text>
               <View style={styles.permissionsGrid}>
                 {PAGE_ACCESS_OPTIONS.map((perm) => {

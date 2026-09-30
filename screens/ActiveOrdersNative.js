@@ -19,6 +19,7 @@ import { Colors, Spacing, Shadows } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 import { formatCurrency } from '../utils/formatCurrency';
+import { roleCan } from '../utils/permissions';
 
 const FILTER_TABS = [
   { key: 'all', label: 'All' },
@@ -533,9 +534,12 @@ export default function ActiveOrdersNative() {
           </TouchableOpacity>
           {isActive && (
             <>
+              {roleCan(user, 'orders.cancel') !== false && (
               <TouchableOpacity style={s.iconAction} onPress={() => cancelOrder(order.id)} disabled={isUpdating}>
                 <Ionicons name="close-circle-outline" size={20} color="#ef4444" />
               </TouchableOpacity>
+              )}
+              {roleCan(user, 'orders.take') !== false && (
               <TouchableOpacity style={s.iconAction} onPress={() => {
                 setEditOrderContext({
                   existingOrderId: order.id,
@@ -547,6 +551,7 @@ export default function ActiveOrdersNative() {
               }} disabled={isUpdating}>
                 <Ionicons name="create-outline" size={20} color="#6b7280" />
               </TouchableOpacity>
+              )}
             </>
           )}
         </View>

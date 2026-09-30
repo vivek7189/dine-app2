@@ -14,6 +14,7 @@ import lanClient from '../../services/lanClient';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
+import { roleCan } from '../../utils/permissions';
 
 // ─── Tab Definitions ───
 const TABS = [
@@ -56,6 +57,7 @@ export default function KitchenScreen() {
   const [selectedKot, setSelectedKot] = useState(null);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [userRole, setUserRole] = useState(null);
+  const [canCancelKot, setCanCancelKot] = useState(true); // roles on: needs "Cancel orders"
   const [isLive, setIsLive] = useState(false);
   const [timers, setTimers] = useState({});
 
@@ -94,6 +96,7 @@ export default function KitchenScreen() {
       const userData = await apiClient.getUser();
       if (!userData) return;
       setUserRole(userData.role);
+      setCanCancelKot(roleCan(userData, 'orders.cancel') !== false);
 
       let resId = userData.restaurantId;
       if (!resId && (userData.role === 'owner' || userData.role === 'admin')) {
@@ -548,7 +551,7 @@ export default function KitchenScreen() {
               <Ionicons name="eye-outline" size={16} color="#374151" />
               <Text style={s.menuItemText}>View Details</Text>
             </TouchableOpacity>
-            {kot.status !== 'completed' && kot.status !== 'cancelled' && (
+            {kot.status !== 'completed' && kot.status !== 'cancelled' && canCancelKot && (
               <TouchableOpacity style={s.menuItem} onPress={() => { cancelOrder(kot.kotId, kot.id); setOpenMenuId(null); }}>
                 <Ionicons name="close-circle-outline" size={16} color="#f59e0b" />
                 <Text style={[s.menuItemText, { color: '#f59e0b' }]}>Cancel</Text>

@@ -18,8 +18,8 @@ import PrinterNotificationOverlay from '../../components/PrinterNotificationOver
 import OrderReadyNotificationOverlay from '../../components/OrderReadyNotificationOverlay';
 import StaffAccessGateNative from '../../components/StaffAccessGateNative';
 import restaurantEvents from '../../services/restaurantEvents';
-import { startRestaurantSettingsRefresh } from '../../services/restaurantSettingsRefresh';
-import { followsWaiterAppConfig } from '../../utils/permissions';
+import { startRestaurantSettingsRefresh, refreshSettingsThenAccess } from '../../services/restaurantSettingsRefresh';
+import { followsWaiterAppConfig, roleCan } from '../../utils/permissions';
 
 function AnimatedTabBar(props) {
   const { translateY } = useTabBar();
@@ -43,6 +43,7 @@ function TabsNavigator() {
   const [isDeliveryPartner, setIsDeliveryPartner] = useState(false);
   const [tabsKey, setTabsKey] = useState(0); // bumped on restaurant switch → remount all tabs
   const [waiterAppConfig, setWaiterAppConfig] = useState({});
+  const [roleUser, setRoleUser] = useState(null); // user incl. rolePermissions (roles-on restaurants)
 
   useEffect(() => {
     // Check authentication on mount
@@ -58,6 +59,7 @@ function TabsNavigator() {
       if (userData) {
         setUserRole(userData.role);
         setPageAccess(userData.pageAccess || null);
+        setRoleUser(userData);
         // Flag from staff login, or a delivery-type role (older logins never sent the flag)
         if (userData.isDeliveryPartner || /deliver|rider|driver/i.test(String(userData.role || ''))) setIsDeliveryPartner(true);
         if (userData.restaurant?.posSettings?.waiterAppConfig) {
@@ -100,8 +102,17 @@ function TabsNavigator() {
     const unsub = restaurantEvents.on('switch', () => {
       checkAuth();
       setTabsKey(k => k + 1);
+      refreshSettingsThenAccess({ force: true }); // this outlet's settings, then its role permissions
     });
-    return () => { if (typeof unsub === 'function') unsub(); };
+    // Role permissions / page access refreshed from the server → re-read without a re-login.
+    const unsubAccess = restaurantEvents.on('access', async () => {
+      const u = await apiClient.getUser();
+      if (u) { setPageAccess(u.pageAccess || null); setRoleUser(u); }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+      if (typeof unsubAccess === 'function') unsubAccess();
+    };
   }, []);
 
   // Owner changed settings in web Admin → pick them up on app start / back to foreground
@@ -185,9 +196,12 @@ function TabsNavigator() {
           // owner/admin/waiter/manager always see tables; other roles need pageAccess.tables
           href: (() => {
             if (!roleLower) return undefined;
-            if (roleLower === 'waiter') return (waiterAppConfig.showTablesTab !== false && waiterPageAllowed(pageAccess, 'tables')) ? undefined : null;
+            if (roleLower === 'waiter') return (waiterAppConfig.showTablesTab !== false && (roleCan(roleUser, 'tables.view') ?? waiterPageAllowed(pageAccess, 'tables'))) ? undefined : null;
             // other roles the owner applied the Waiter App settings to
             if (followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showTablesTab === false) return null;
+            // Roles on: the role decides (Waiter App show/hide above still applies)
+            const byRoleT = roleCan(roleUser, 'tables.view');
+            if (byRoleT !== null) return byRoleT ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager'].includes(roleLower)) return undefined;
             // For cashier, sales, employee, and custom roles — check pageAccess
             if (pageAccess) {
@@ -228,8 +242,10 @@ function TabsNavigator() {
             // The waiter's Menu tab is the ORDERING screen (web: the POS 'dashboard' page) — not menu
             // management (web 'menu' key). Gating it on 'menu' removed ordering from waiters whose owner
             // had switched menu editing off.
-            if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && waiterPageAllowed(pageAccess, 'dashboard')) ? undefined : null;
+            if (roleLower === 'waiter') return (waiterAppConfig.showMenuTab !== false && (roleCan(roleUser, 'page.dashboard') ?? waiterPageAllowed(pageAccess, 'dashboard'))) ? undefined : null;
             if (followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showMenuTab === false) return null;
+            const byRoleM = roleCan(roleUser, 'page.dashboard');
+            if (byRoleM !== null) return byRoleM ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
             // Other roles need pageAccess.menu
             if (pageAccess) {
@@ -271,7 +287,7 @@ function TabsNavigator() {
             />
           ),
           headerShown: false,
-          href: followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showOrdersTab === false ? null : undefined,
+          href: (followsWaiterAppConfig(roleLower, waiterAppConfig) && waiterAppConfig.showOrdersTab === false) || roleCan(roleUser, 'orders.view') === false ? null : undefined,
         }}
       />
 

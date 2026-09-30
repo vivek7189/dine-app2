@@ -37,7 +37,7 @@ import TableFloorPlanNative from '../components/TableFloorPlanNative';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
-import { canPerform, followsWaiterAppConfig } from '../utils/permissions';
+import { canPerform, followsWaiterAppConfig, roleCan } from '../utils/permissions';
 import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
@@ -1342,7 +1342,11 @@ export default function TablesScreen() {
 
   const userRole = user?.role?.toLowerCase() || '';
   const isOwnerOrAdmin = ['owner', 'admin'].includes(userRole);
-  const canResetTables = canPerform(user, user?.pageAccess, 'tables', 'reset');
+  // Roles on: table/floor layout actions follow the person's role; roles off: owner / admin only.
+  const canAddTables = roleCan(user, 'tables.add') ?? isOwnerOrAdmin;
+  const canDeleteTables = roleCan(user, 'tables.delete') ?? isOwnerOrAdmin;
+  const canManageFloors = roleCan(user, 'tables.manage') ?? isOwnerOrAdmin;
+  const canResetTables = roleCan(user, 'tables.reset') ?? canPerform(user, user?.pageAccess, 'tables', 'reset');
   const posSettings = selectedRestaurant?.posSettings || {};
   const waiterAppConfig = posSettings.waiterAppConfig || {};
 
@@ -1683,7 +1687,7 @@ export default function TablesScreen() {
         options.push('Mark Cleaning');
         actions.push(() => handleChangeStatus(table, 'cleaning'));
       }
-      if (isOwnerOrAdmin) {
+      if (canDeleteTables) {
         options.push('Delete Table');
         actions.push(() => handleDeleteTable(table));
       }
@@ -1693,7 +1697,7 @@ export default function TablesScreen() {
         {
           options,
           cancelButtonIndex: options.length - 1,
-          destructiveButtonIndex: isOwnerOrAdmin ? options.length - 2 : undefined,
+          destructiveButtonIndex: canDeleteTables ? options.length - 2 : undefined,
           title: `Table ${table.name}`,
           message: `Status: ${status} | ${table.capacity || 4} seats`,
         },
@@ -1828,7 +1832,7 @@ export default function TablesScreen() {
       <TouchableOpacity
         style={[styles.floorChip, isSelected && styles.floorChipSelected]}
         onPress={() => setSelectedFloor(floor)}
-        onLongPress={() => isOwnerOrAdmin && openEditFloor(floor)}
+        onLongPress={() => canManageFloors && openEditFloor(floor)}
       >
         <Ionicons
           name="layers-outline"
@@ -2019,7 +2023,7 @@ export default function TablesScreen() {
               <Ionicons name="refresh-circle-outline" size={16} color="#ef4444" />
             </TouchableOpacity>
           )}
-          {isOwnerOrAdmin && (
+          {canAddTables && (
             <TouchableOpacity onPress={openAddTable} style={[styles.headerActionBtn, { backgroundColor: '#eff6ff' }]}>
               <Ionicons name="add" size={16} color="#3b82f6" />
             </TouchableOpacity>
@@ -2063,7 +2067,7 @@ export default function TablesScreen() {
       </Animated.View>
 
       {/* Floor Selector */}
-      {(floors.length > 0 || isOwnerOrAdmin) && (
+      {(floors.length > 0 || canManageFloors) && (
         <View style={styles.floorSelector}>
           <FlatList
             horizontal
@@ -2073,7 +2077,7 @@ export default function TablesScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.floorChipsContainer}
             ListHeaderComponent={floors.length > 1 ? renderAllChip : null}
-            ListFooterComponent={isOwnerOrAdmin ? (
+            ListFooterComponent={canManageFloors ? (
               <TouchableOpacity style={styles.addFloorChip} onPress={openAddFloor}>
                 <Ionicons name="add" size={16} color="#9ca3af" />
               </TouchableOpacity>
@@ -2119,9 +2123,9 @@ export default function TablesScreen() {
             <Ionicons name="restaurant-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyText}>No tables found</Text>
             <Text style={styles.emptySubtext}>
-              {isOwnerOrAdmin ? 'Tap + to add tables' : 'Pull down to refresh'}
+              {canAddTables ? 'Tap + to add tables' : 'Pull down to refresh'}
             </Text>
-            {isOwnerOrAdmin && (
+            {canAddTables && (
               <TouchableOpacity style={styles.emptyAddBtn} onPress={openAddTable}>
                 <Ionicons name="add" size={18} color="#fff" />
                 <Text style={styles.emptyAddBtnText}>Add Tables</Text>
@@ -2875,7 +2879,7 @@ export default function TablesScreen() {
                 </TouchableOpacity>
               )}
 
-              {isOwnerOrAdmin && (
+              {canDeleteTables && (
                 <TouchableOpacity style={[styles.actionSheetBtn, { borderTopWidth: 1, borderTopColor: '#fee2e2' }]} onPress={() => { setShowTableActions(false); handleDeleteTable(actionTable); }}>
                   <Ionicons name="trash" size={20} color="#dc2626" />
                   <Text style={[styles.actionSheetBtnText, { color: '#dc2626' }]}>Delete Table</Text>

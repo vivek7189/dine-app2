@@ -4,6 +4,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { getLocalServerUrl, setLocalServerUrl, initLocalServer } from './localServer';
 
+// Sent on every request so the server can tell app versions apart (roles: old versions' staff edits).
+let APP_CLIENT_HEADER = 'dine-app';
+try {
+  const C = require('expo-constants');
+  const v = (C.default || C)?.expoConfig?.version;
+  if (v) APP_CLIENT_HEADER = `dine-app@${v}`;
+} catch (_) { /* keep the plain name */ }
+
 // Get API URL from environment or use deployed backend
 // GCP backend the whole fleet now runs on — the app's DEFAULT backend. Remote-config
 // (backend.json → REMOTE_DEFAULT_KEY) can still switch EVERY device to ANY url — including
@@ -471,6 +479,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),
+        'X-Client': APP_CLIENT_HEADER,
         ...options.headers,
       },
     };
