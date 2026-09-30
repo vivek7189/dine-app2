@@ -61,6 +61,7 @@ export default function MenuItemForm({
   multiPricingEnabled = false,
   activePricingRules = [],
   isOwnerOrAdmin = false,
+  showCost = false, // owner / admin / co-owner / manager: "cost to make" (gross-margin reports)
 }) {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSpiritPicker, setShowSpiritPicker] = useState(false);
@@ -330,7 +331,29 @@ export default function MenuItemForm({
             onChangeText={(text) => setFormData({ ...formData, price: text })}
           />
         </View>
-        <View style={[styles.inputGroup, { flex: 1, marginLeft: Spacing.sm }]}>
+        {showCost && (
+          <View style={[styles.inputGroup, { flex: 1, marginLeft: Spacing.sm }]}>
+            <Text style={styles.label}>Cost to make</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="optional"
+              placeholderTextColor={Colors.textLight}
+              keyboardType="decimal-pad"
+              value={formData.costPrice ?? ''}
+              onChangeText={(text) => setFormData({ ...formData, costPrice: text })}
+            />
+            {(() => {
+              const cost = parseFloat(formData.costPrice);
+              const price = parseFloat(formData.price);
+              if (!(cost >= 0) || !(price > 0) || formData.costPrice === '' || formData.costPrice == null) return null;
+              const m = price - cost;
+              return <Text style={{ fontSize: 11, marginTop: 2, fontWeight: '600', color: m >= 0 ? '#047857' : '#b91c1c' }}>Margin {m.toFixed(2)} ({((m / price) * 100).toFixed(0)}%)</Text>;
+            })()}
+          </View>
+        )}
+      </View>
+      <View style={styles.row}>
+        <View style={[styles.inputGroup, { flex: 1 }]}>
           <Text style={styles.label}>Category *</Text>
           <TouchableOpacity
             style={styles.pickerButton}
@@ -673,6 +696,16 @@ export default function MenuItemForm({
                 value={variant.price?.toString() || ''}
                 onChangeText={(text) => updateVariant(index, 'price', text)}
               />
+              {showCost && (
+                <TextInput
+                  style={[styles.input, { flex: 1, marginLeft: Spacing.xs, borderStyle: 'dashed' }]}
+                  placeholder="Cost"
+                  placeholderTextColor={Colors.textLight}
+                  keyboardType="decimal-pad"
+                  value={variant.costPrice != null ? String(variant.costPrice) : ''}
+                  onChangeText={(text) => updateVariant(index, 'costPrice', text)}
+                />
+              )}
               <TouchableOpacity
                 style={styles.removeRowButton}
                 onPress={() => removeVariant(index)}

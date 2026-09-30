@@ -439,6 +439,9 @@ export default function MenuManagementScreen() {
       name: item.name || '',
       description: item.description || '',
       price: item.price?.toString() || '',
+      // Cost to make — only present for owner/manager (server strips it for others). undefined =
+      // not loaded → not sent → the stored cost is kept.
+      costPrice: item.costPrice != null ? String(item.costPrice) : undefined,
       category: item.category || '',
       shortCode: item.shortCode || '',
       isVeg: item.isVeg !== false,
@@ -636,6 +639,8 @@ export default function MenuManagementScreen() {
         isVeg: formData.isVeg,
         spiceLevel: formData.spiceLevel,
         status: formData.status,
+        // Cost to make: sent only when the form has it (loaded or typed; '' = cleared).
+        ...(formData.costPrice !== undefined ? { costPrice: formData.costPrice } : {}),
       };
 
       // Variants & customizations
@@ -657,6 +662,10 @@ export default function MenuManagementScreen() {
               price: v.price ? parseFloat(v.price) : 0,
               ...(v.description?.trim() ? { description: v.description.trim() } : {}),
               ...(cleanedPR ? { pricingRules: cleanedPR } : {}),
+              // Keep the recipe multiplier (Half = 0.5) set on the web — it used to reset to 1.
+              ...(Number(v.recipeMultiplier) > 0 ? { recipeMultiplier: Number(v.recipeMultiplier) } : {}),
+              // Cost to make: only when loaded/typed ('' = cleared); absent = server keeps the stored one.
+              ...(v.costPrice !== undefined && v.costPrice !== null ? { costPrice: v.costPrice } : {}),
             };
           });
       }
@@ -1111,6 +1120,7 @@ export default function MenuManagementScreen() {
                 multiPricingEnabled={multiPricingEnabled}
                 activePricingRules={activePricingRules}
                 isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
+                showCost={['owner', 'admin', 'co-owner', 'manager'].includes(userRole)}
               />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
@@ -1405,6 +1415,7 @@ export default function MenuManagementScreen() {
               multiPricingEnabled={multiPricingEnabled}
               activePricingRules={activePricingRules}
               isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
+                showCost={['owner', 'admin', 'co-owner', 'manager'].includes(userRole)}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
