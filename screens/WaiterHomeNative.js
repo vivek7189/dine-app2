@@ -242,7 +242,7 @@ export default function WaiterHomeNative() {
   const _orderStatusRoles = restaurant?.billingSettings?.orderStatusRoles;
   const canAdvanceStatus = _role === 'owner' || _role === 'admin'
     || !Array.isArray(_orderStatusRoles) || _orderStatusRoles.length === 0
-    || _orderStatusRoles.includes(_role);
+    || _orderStatusRoles.some(r => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase() === _role.trim().replace(/\s+/g, ' '));
 
   const dateStr = new Date().toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' });
   const waiterName = user?.name || user?.staffName || 'Captain';

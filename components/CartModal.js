@@ -167,7 +167,8 @@ export default function CartModal({
   const isRoleAllowed = (rolesArray) => {
     if (!rolesArray || rolesArray.length === 0) return true;
     const role = (userRole || mode || 'waiter').toLowerCase();
-    return rolesArray.includes(role);
+    const key = (r) => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase(); // case / space-insensitive (custom roles as typed)
+    return rolesArray.some(r => key(r) === key(role));
   };
   // Price-edit & custom-item capabilities (web parity): never in waiter mode,
   // require the POS master toggle (on unless explicitly disabled) AND the role.

@@ -350,7 +350,8 @@ export default function OrderHistoryScreen() {
     if (!Array.isArray(roles) || roles.length === 0) return true;
     const role = String(userRole || '').toLowerCase();
     if (role === 'owner' || role === 'admin') return true;
-    return roles.map(r => String(r).toLowerCase()).includes(role);
+    const key = (r) => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return roles.some(r => key(r) === key(role));
   };
 
   const handleReprint = async (order, type) => {
