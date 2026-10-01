@@ -65,6 +65,11 @@
 	<string>DineOpen uses Bluetooth to connect to thermal receipt printers.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>DineOpen uses your camera to scan QR codes for table orders, capture menu item photos, and scan supplier invoices for inventory management.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_pdl-datastream._tcp</string>
+		<string>_ipp._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>DineOpen connects to your restaurant's local server on this Wi-Fi so the app keeps working (orders, tables, KOT printing) with no internet.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

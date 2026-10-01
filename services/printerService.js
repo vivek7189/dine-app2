@@ -1849,6 +1849,19 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
           type: 'fallback',
           message: 'Silent print failed. Printer may be disconnected. Opening print dialog as fallback.',
         });
+      } else if (Platform.OS === 'ios' && !_noPrinterHintShown) {
+        // iPhone with no printer set up in DineOpen: the system screen below can only reach AirPrint
+        // printers, never a Bluetooth/WiFi receipt printer ("No AirPrint Printers Found"). Say where to
+        // set one up — once per app session, so stores that really print via AirPrint aren't nagged.
+        let anySaved = null;
+        try { anySaved = await getSavedPrinter(); } catch (_) {}
+        if (!anySaved) {
+          _noPrinterHintShown = true;
+          emitPrinterEvent({
+            type: 'fallback',
+            message: 'No receipt printer set up in DineOpen. For a Bluetooth or WiFi receipt printer, open Printer Settings and tap Scan. Opening the iPhone print screen (AirPrint only).',
+          });
+        }
       }
       await Print.printAsync({ html: _ensureThermalPageSize(html) });
       return { method: 'dialog' };
