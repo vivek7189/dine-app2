@@ -509,9 +509,13 @@ export default function AttendanceScreen() {
     });
   };
 
-  const availableLeaveTypes = leaveConfig?.leaveTypes
-    ? Object.entries(leaveConfig.leaveTypes).map(([key, val]) => ({ key, label: val.name || key }))
-    : DEFAULT_LEAVE_TYPES;
+  // leaveTypes is an array from the server ({ id, name, shortName }); reading it as an object sent
+  // '0' / '1' as the type. Send the configured id (the server also maps older values).
+  const availableLeaveTypes = Array.isArray(leaveConfig?.leaveTypes) && leaveConfig.leaveTypes.length
+    ? leaveConfig.leaveTypes.map((val) => ({ key: val.id || val.shortName, label: val.name || val.shortName || val.id }))
+    : leaveConfig?.leaveTypes && !Array.isArray(leaveConfig.leaveTypes)
+      ? Object.entries(leaveConfig.leaveTypes).map(([key, val]) => ({ key, label: val.name || key }))
+      : DEFAULT_LEAVE_TYPES;
 
   // ── Render ──────────────────────────────────────────
 
