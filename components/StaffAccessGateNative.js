@@ -9,6 +9,20 @@ import { View, Text, TouchableOpacity, TextInput, StyleSheet, AppState, Activity
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useSegments } from 'expo-router';
 import apiClient from '../services/api';
+
+// Phone location for clock-in (restaurants with the geo-fence on need it). Optional module; any
+// failure → no location (the server then says why if this restaurant requires it).
+let Location = null;
+try { Location = require('expo-location'); } catch (_) { /* attendance works without GPS */ }
+async function clockInLocation() {
+  if (!Location) return null;
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, timeout: 10000 });
+    return { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy };
+  } catch (_) { return null; }
+}
 import restaurantEvents from '../services/restaurantEvents';
 
 const NEVER_RESTRICTED = ['owner', 'admin', 'co-owner', 'manager', 'super-admin', 'super_admin'];
@@ -67,7 +81,8 @@ export default function StaffAccessGateNative() {
   const clockIn = async () => {
     setBusy(true); setMsg('');
     try {
-      await apiClient.clockIn(rid, { staffId: me.id || me.userId, staffName: me.name || '' });
+      const location = await clockInLocation();
+      await apiClient.clockIn(rid, { staffId: me.id || me.userId, staffName: me.name || '', location });
       await check(true);
     } catch (e) { setMsg(e.message || 'Could not clock in'); }
     finally { setBusy(false); }

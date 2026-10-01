@@ -55,14 +55,21 @@ function formatTimerDisplay(seconds) {
   return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+// YYYY-MM-DD on the phone's own calendar (the phone is at the restaurant). toISOString() gave the
+// UTC date — in India between midnight and 5:30 am that was still yesterday, so today's record and
+// the last 7 days' history were off by a day.
+function ymdLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function getTodayDate() {
-  return new Date().toISOString().split('T')[0];
+  return ymdLocal(new Date());
 }
 
 function getTomorrowDate() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
-  return d.toISOString().split('T')[0];
+  return ymdLocal(d);
 }
 
 // Haversine distance in meters (for geofence UI)
@@ -280,8 +287,8 @@ export default function AttendanceScreen() {
       // Load recent history (last 7 days)
       const now = new Date();
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const endDate = now.toISOString().split('T')[0];
-      const startDate = weekAgo.toISOString().split('T')[0];
+      const endDate = ymdLocal(now);
+      const startDate = ymdLocal(weekAgo);
       const history = await apiClient.getAttendanceHistory(rid, {
         staffId: userData.id,
         startDate,

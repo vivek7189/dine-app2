@@ -399,6 +399,7 @@ export default function ActiveOrdersNative() {
       const userId = user?.id || user?.uid;
       const userName = user?.name || user?.staffName;
       result = result.filter(o =>
+        (o.waiterId && o.waiterId === userId) || // the table's assigned server, whoever typed it
         (o.staffInfo?.waiterId && o.staffInfo.waiterId === userId) ||
         (o.staffInfo?.waiterName && userName && o.staffInfo.waiterName === userName)
       );
@@ -432,6 +433,7 @@ export default function ActiveOrdersNative() {
     return {
       all: orders.length,
       mine: orders.filter(o =>
+        (o.waiterId && o.waiterId === userId) ||
         (o.staffInfo?.waiterId && o.staffInfo.waiterId === userId) ||
         (o.staffInfo?.waiterName && userName && o.staffInfo.waiterName === userName)
       ).length,
