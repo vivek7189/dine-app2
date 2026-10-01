@@ -1485,6 +1485,9 @@ export default function MenuScreen() {
       restaurantId,
       items: cart.map(buildItemPayload),
       orderType: selectedTable || params.tableNumber ? 'dine-in' : (isCashier ? 'counter' : 'dine-in'),
+      // per-chair table: this chair's own order, same as the other create paths (server keeps it
+      // only when the store uses chair mode)
+      ...(selectedTable?.chair ? { chairNumber: selectedTable.chair } : {}),
       paymentMethod: 'cash',
       status: 'pending',
       staffInfo: {
