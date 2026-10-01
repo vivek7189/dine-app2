@@ -33,11 +33,18 @@ export function inclusiveTaxSummary(invoice, { showLines = true } = {}) {
     const discounts = (Number(invoice.discountAmount) || 0) + (Number(invoice.manualDiscount) || 0)
       + (Number(invoice.loyaltyDiscount) || 0) + (Number(invoice.couponDiscount) || 0);
     const gross = (Number(invoice.subtotal) || 0) - discounts + (Number(invoice.serviceChargeAmount) || 0);
-    const value = round2(gross - inclTax);
+    // Taxable additional charges without their own tax rate are taxed with the items (inside the
+    // same inclusive tax) — try the value with them too; still printed only when it explains the tax.
+    const foldCharges = (Array.isArray(invoice.additionalCharges) ? invoice.additionalCharges : [])
+      .filter(c => c && c.taxable !== false && !(Number(c.taxRate) > 0))
+      .reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    const candidates = [round2(gross - inclTax)];
+    if (foldCharges > 0) candidates.push(round2(gross + foldCharges - inclTax));
     // Only print it when one combined rate explains the tax (a single GST slab). Mixed slabs
     // or tax-free items in the bill would make "taxable value" misleading — then omit it.
     const rate = combinedRate(incl);
-    if (value > 0 && rate > 0 && Math.abs(round2(value * rate / 100) - inclTax) <= 0.02 + 0.01 * incl.length) taxableValue = value;
+    const fits = (v) => v > 0 && rate > 0 && Math.abs(round2(v * rate / 100) - inclTax) <= 0.02 + 0.01 * incl.length;
+    taxableValue = candidates.find(fits) ?? null;
   }
   return { heading, label, lines: incl, taxableValue, showLines: showLines !== false && incl.length > 0, mixed };
 }

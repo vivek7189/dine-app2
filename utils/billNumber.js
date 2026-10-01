@@ -6,12 +6,18 @@
 // Returns '' when nothing is known (callers keep their old fallback).
 const last4 = (v) => String(v || '').replace(/[^A-Za-z0-9]/g, '').slice(-4).toUpperCase();
 
+// The app shows plain daily numbers everywhere (lists, KOTs), so the bill does too: a till tag
+// stamped by the server ("T2-45") is dropped, like the web does on a single-till shop.
+const plainNumber = (v) => { const m = String(v).match(/^[A-Za-z][A-Za-z0-9]*-(.+)$/); return m ? m[1] : String(v); };
+
 export function billNumberLabel(order, { offlineKey } = {}) {
   const o = order || {};
-  const daily = o.orderNumberDisplay != null ? o.orderNumberDisplay
-    : (o.dailyOrderId != null && /^\d+$/.test(String(o.dailyOrderId).trim()) ? o.dailyOrderId : null);
+  const daily = (o.dailyOrderId != null && /^\d+$/.test(String(o.dailyOrderId).trim())) ? o.dailyOrderId
+    : (o.orderNumberDisplay != null ? plainNumber(o.orderNumberDisplay) : null);
   if (daily == null) {
-    const key = offlineKey || (/-/.test(String(o.id || o.orderId || '')) ? (o.id || o.orderId) : null);
+    // The idempotency key is what the server keeps as offlineRef when the order syncs.
+    const localId = o.id || o.orderId || '';
+    const key = offlineKey || (/-/.test(String(localId)) ? (o.idempotencyKey || localId) : null);
     return key ? `OFFLINE-${last4(key)}` : '';
   }
   const ref = o.offlineRef || (String(o.syncSource || '').toLowerCase() === 'offline' && o.idempotencyKey ? last4(o.idempotencyKey) : '');

@@ -2726,10 +2726,15 @@ export default function MenuScreen() {
       const latestRestaurantInfo = latestUserData?.restaurant || user?.restaurant || {};
 
       // Prepare invoice data
+      // Billing an order that already has its number: keep it even when the update was saved
+      // offline (the offline response carries no number → the bill printed OFFLINE-xxxx).
+      const billOrder = existingOrderId
+        ? { ...(response?.order || {}), dailyOrderId: response?.order?.dailyOrderId ?? existingDailyOrderId ?? undefined }
+        : response?.order;
       const invoiceData = {
         orderId: completedOrderId,
-        orderNumber: billNumberLabel(response?.order, { offlineKey: response?.offline ? response.idempotencyKey : null })
-          || response?.order?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
+        orderNumber: billNumberLabel(billOrder, { offlineKey: response?.offline ? response.idempotencyKey : null })
+          || billOrder?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
         restaurantName,
         restaurantInfo: latestRestaurantInfo,
         items: cart.map(item => ({
