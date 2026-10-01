@@ -21,6 +21,7 @@ import { buildTokenSlipHTML, buildTokenSlipsDocumentHTML } from '../utils/tokenS
 import * as printerService from '../services/printerService';
 import { renderBill } from '../utils/printTemplates/index';
 import { getCurrencySymbol } from '../utils/formatCurrency';
+import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 
 export default function CashierInvoiceModal({
   visible,
@@ -127,15 +128,24 @@ Loyalty Points:  -${getCurrencySymbol()}${invoiceData.loyaltyDiscount.toFixed(2)
 Coupon${invoiceData.couponCode ? ` (${invoiceData.couponCode})` : ''}:${' '.repeat(Math.max(1, invoiceData.couponCode ? 14 - invoiceData.couponCode.length : 12))}-${getCurrencySymbol()}${invoiceData.couponDiscount.toFixed(2)}` : ''}${invoiceData.serviceChargeAmount > 0 ? `
 Service Charge:  ${getCurrencySymbol()}${invoiceData.serviceChargeAmount.toFixed(2)}` : ''}${(Array.isArray(invoiceData.additionalCharges) ? invoiceData.additionalCharges : []).map(c => `
 ${c.name || 'Charge'}:${' '.repeat(Math.max(1, 16 - String(c.name || 'Charge').length))}${getCurrencySymbol()}${(Number(c.amount) || 0).toFixed(2)}`).join('')}${invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0
-? invoiceData.taxBreakdown.map(tax => `
-${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${tax.inclusive ? ' (incl.)' : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '') + (tax.inclusive ? ' (incl.)' : '')).length))}${getCurrencySymbol()}${tax.amount.toFixed(2)}`).join('')
+? invoiceData.taxBreakdown.filter(tax => tax && !tax.inclusive).map(tax => `
+${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}:${' '.repeat(Math.max(1, 17 - (tax.name + (tax.rate ? ` (${tax.rate}%)` : '')).length))}${getCurrencySymbol()}${tax.amount.toFixed(2)}`).join('')
 : (invoiceData.taxEnabled && invoiceData.tax > 0 ? `
 ${invoiceData.taxLabel || `Tax (${invoiceData.taxRate}%)`}:        ${getCurrencySymbol()}${invoiceData.tax.toFixed(2)}` : '')}${invoiceData.tipAmount > 0 ? `
 Tip:             ${getCurrencySymbol()}${invoiceData.tipAmount.toFixed(2)}` : ''}${invoiceData.roundOffAmount != null && invoiceData.roundOffAmount !== 0 ? `
 Round-off:       ${invoiceData.roundOffAmount > 0 ? '+' : '-'}${getCurrencySymbol()}${Math.abs(invoiceData.roundOffAmount).toFixed(2)}` : ''}
 ================================
 GRAND TOTAL:     ${getCurrencySymbol()}${invoiceData.grandTotal.toFixed(2)}
-================================${invoiceData.cashReceived > 0 ? `
+================================${(() => {
+  // GST already inside the prices — shown under the total (same as the printed bill).
+  const x = inclusiveTaxSummary({ ...invoiceData, discountAmount: invoiceData.discountAmount ?? invoiceData.offerDiscount });
+  if (!x) return '';
+  const cs = getCurrencySymbol();
+  const row = (l, v) => `\n${l}:${' '.repeat(Math.max(1, 17 - l.length))}${cs}${v.toFixed(2)}`;
+  const showLines = invoiceData.showInclusiveTaxOnBill !== false;
+  return `\n${x.heading}` + (showLines && x.taxableValue != null ? row('Taxable value', x.taxableValue) : '')
+    + (showLines ? x.lines.map(t => row(`${t.name}${t.rate ? ` (${t.rate}%)` : ''}`, t.amount)).join('') : '') + '\n--------------------------------';
+})()}${invoiceData.cashReceived > 0 ? `
 Cash Received:   ${getCurrencySymbol()}${invoiceData.cashReceived.toFixed(2)}${invoiceData.changeReturned > 0 ? `
 Change:          ${getCurrencySymbol()}${invoiceData.changeReturned.toFixed(2)}` : ''}` : ''}
 Payment: ${(invoiceData.paymentMethod || 'cash').toUpperCase()}
@@ -564,9 +574,9 @@ Thank you for your order!
                   </View>
                 ))}
                 {invoiceData.taxBreakdown && invoiceData.taxBreakdown.length > 0 ? (
-                  invoiceData.taxBreakdown.map((tax, i) => (
+                  invoiceData.taxBreakdown.filter(tax => tax && !tax.inclusive).map((tax, i) => (
                     <View key={`tax-${i}`} style={styles.totalRow}>
-                      <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}{tax.inclusive ? ' (incl.)' : ''}</Text>
+                      <Text style={styles.totalLabel}>{tax.name}{tax.rate ? ` (${tax.rate}%)` : ''}</Text>
                       <Text style={styles.totalValue}>{getCurrencySymbol()}{tax.amount.toFixed(2)}</Text>
                     </View>
                   ))
@@ -597,6 +607,30 @@ Thank you for your order!
                 <Text style={styles.grandTotalLabel}>TOTAL</Text>
                 <Text style={styles.grandTotalValue}>{getCurrencySymbol()}{invoiceData.grandTotal.toFixed(2)}</Text>
               </View>
+
+              {/* GST already inside the prices — under the total, same as the printed bill */}
+              {(() => {
+                const x = inclusiveTaxSummary({ ...invoiceData, discountAmount: invoiceData.discountAmount ?? invoiceData.offerDiscount });
+                if (!x) return null;
+                const showLines = invoiceData.showInclusiveTaxOnBill !== false && x.lines.length > 0;
+                return (
+                  <View style={{ marginTop: 6 }}>
+                    <Text style={[styles.totalLabel, { textAlign: 'center', fontWeight: '600' }]}>{x.heading}</Text>
+                    {showLines && x.taxableValue != null && (
+                      <View style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>Taxable value</Text>
+                        <Text style={styles.totalValue}>{getCurrencySymbol()}{x.taxableValue.toFixed(2)}</Text>
+                      </View>
+                    )}
+                    {showLines && x.lines.map((t, i) => (
+                      <View key={`incl-${i}`} style={styles.totalRow}>
+                        <Text style={styles.totalLabel}>{t.name}{t.rate ? ` (${t.rate}%)` : ''}</Text>
+                        <Text style={styles.totalValue}>{getCurrencySymbol()}{t.amount.toFixed(2)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
 
               {/* Payment Info */}
               {(invoiceData.paymentMethod || invoiceData.cashReceived || invoiceData.splitPayments) && (

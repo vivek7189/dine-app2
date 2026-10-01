@@ -302,6 +302,11 @@ export default function MenuScreen() {
       if (data && menuEvents.includes(data.type)) {
         debouncedRefresh();
       }
+      // Owner changed tax settings — reload them now so the next bill uses them (not stale ones).
+      if (data && data.type === 'tax-settings-updated') {
+        apiClient.invalidateCache(`/api/admin/tax/${restaurantId}`);
+        fetchTaxSettingsInBackground(restaurantId);
+      }
     };
 
     const ordersHandler = (snapshot) => {

@@ -7,6 +7,7 @@ import {
   buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
   getPrintFontSizes, getPrintFontFamily, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
+  buildInclusiveTaxNote,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -38,18 +39,17 @@ export function render(invoice, printSettings = {}, labels = {}) {
 
   const itemsHtml = buildBillItemRows(items, cs, showAr);
   const taxBreakdown = invoice.taxBreakdown || [];
-  // Compact: single-line tax summary if only one tax type
-  const showIncl = invoice.showInclusiveTaxOnBill !== false;
-  const visibleTaxes = (taxBreakdown || []).filter(tax => !tax.inclusive || showIncl);
+  // Compact: single-line tax summary if only one tax type. Only tax added on top is listed here;
+  // tax already inside the prices is shown under the total (buildInclusiveTaxNote).
+  const visibleTaxes = (taxBreakdown || []).filter(tax => tax && !tax.inclusive);
   let taxHtml;
   if (bl.showTaxBreakdown === false) {
     taxHtml = '';
   } else if (visibleTaxes.length === 1) {
     const tax = visibleTaxes[0];
-    const inclSuffix = tax.inclusive ? ' (incl.)' : '';
-    taxHtml = `<div style="display:flex;justify-content:space-between;margin:1px 0;"><span>${tax.name} (${tax.rate}%)${inclSuffix}:</span><span>${cs}${(tax.amount || 0).toFixed(2)}</span></div>`;
+    taxHtml = `<div style="display:flex;justify-content:space-between;margin:1px 0;"><span>${tax.name} (${tax.rate}%):</span><span>${cs}${(tax.amount || 0).toFixed(2)}</span></div>`;
   } else {
-    taxHtml = visibleTaxes.length > 0 ? `<table style="margin:2px 0;"><tbody>${buildTaxHtml(taxBreakdown, cs, printSettings, { showInclusiveTax: showIncl })}</tbody></table>` : '';
+    taxHtml = visibleTaxes.length > 0 ? `<table style="margin:2px 0;"><tbody>${buildTaxHtml(taxBreakdown, cs, printSettings, {})}</tbody></table>` : '';
   }
   const discountHtml = buildDiscountHtml(invoice, L, cs);
   const chargesHtml = buildChargesHtml(invoice, L, cs);
@@ -82,6 +82,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       (typeof taxHtml === 'string' && taxHtml.startsWith('<div') ? taxHtml : (taxHtml || '')) +
       chargesHtml +
       `<div class="total-row"><span>${dualLabel(L.total, AR.total, showAr)}:</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
+      buildInclusiveTaxNote(invoice, printSettings) +
       (bl.showPayment !== false ? paymentHtml : '') +
     `</div>` +
     `<div class="divider">================================</div>` +

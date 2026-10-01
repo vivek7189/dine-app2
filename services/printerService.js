@@ -38,9 +38,11 @@ import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter, withSeatLabel } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
 import { splitIndiaGst, attachInclusiveSplits } from '../utils/printTemplates/helpers';
+import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
 const PRINTER_MODE_KEY = 'dine_printer_mode'; // 'silent' | 'dialog'
+let _noPrinterHintShown = false; // iOS: 'no printer set up' hint shown at most once per app session
 const PRINT_NOTIF_KEY = 'dine_print_notifications'; // 'true' | 'false'
 const REMOTE_PRINT_KEY = 'dine_remote_print'; // 'true' | 'false' — print from desktop app
 const DISCONNECT_ALERT_KEY = 'dine_printer_disconnect_alert'; // 'true' | 'false' — show disconnect alert when no remote print
@@ -1109,8 +1111,9 @@ export const generateBillText = (invoiceData) => {
     const totalStr = `${RS}${fmt(total)}`;
     const rightPart = `${priceStr}  ${totalStr}`;
     lines.push(leftRight(qtyStr, rightPart, W));
-    // Tax-inclusive per-item split (MRP + tax) — thermal-safe symbol already baked in.
-    if (item.taxSplitLabel) lines.push(`  ${item.taxSplitLabel}`);
+    // Tax-inclusive per-item split (MRP + tax) — thermal-safe symbol already baked in. Opt-in, like the
+    // web bill (billLayout.showItemTaxBreakup): the GST inside the prices is summarised under the total.
+    if (item.taxSplitLabel && bl.showItemTaxBreakup === true) lines.push(`  ${item.taxSplitLabel}`);
   });
 
   lines.push(_LINE);
@@ -1129,11 +1132,10 @@ export const generateBillText = (invoiceData) => {
     if (Number(c?.amount) > 0) lines.push(leftRight(`${c.name || 'Charge'}${c.type === 'percent' && c.value ? ` (${c.value}%)` : ''}`, `${RS}${fmt(c.amount)}`, W));
   });
   if (bl.showTaxBreakdown !== false) {
-    const showIncl = invoiceData.showInclusiveTaxOnBill !== false;
     if (invoiceData.taxBreakdown?.length > 0) {
-      invoiceData.taxBreakdown.filter(tax => !tax.inclusive || showIncl).forEach(tax => {
-        const inclSuffix = tax.inclusive ? ' (incl.)' : '';
-        const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}${inclSuffix}`;
+      // Only tax added on top is part of the sum; tax inside the prices is printed under the total.
+      invoiceData.taxBreakdown.filter(tax => tax && !tax.inclusive).forEach(tax => {
+        const label = `${tax.name}${tax.rate ? ` (${tax.rate}%)` : ''}`;
         lines.push(leftRight(label, `${RS}${fmt(tax.amount)}`, W));
       });
     } else if (invoiceData.taxEnabled && invoiceData.tax > 0) {
@@ -1152,6 +1154,16 @@ export const generateBillText = (invoiceData) => {
   if (walletUsed > 0) {
     lines.push(leftRight('Wallet Used', `-${RS}${fmt(walletUsed)}`, W));
     lines.push(leftRight('Amount to Pay', `${RS}${fmt(Math.max(0, (Number(invoiceData.grandTotal) || 0) - walletUsed))}`, W));
+  }
+  // GST already inside the prices (same block as the web bill): heading + taxable value + lines.
+  const _incl = inclusiveTaxSummary({ ...invoiceData, discountAmount: invoiceData.discountAmount ?? invoiceData.offerDiscount });
+  if (_incl) {
+    lines.push(_LINE);
+    lines.push(`<C>${_incl.heading}</C>`);
+    if (invoiceData.showInclusiveTaxOnBill !== false && bl.showTaxBreakdown !== false && _incl.lines.length) {
+      if (_incl.taxableValue != null) lines.push(leftRight('Taxable value', `${RS}${fmt(_incl.taxableValue)}`, W));
+      _incl.lines.forEach(t => lines.push(leftRight(`${t.name}${t.rate ? ` (${t.rate}%)` : ''}`, `${RS}${fmt(t.amount)}`, W)));
+    }
   }
   lines.push(_DLINE);
 

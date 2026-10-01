@@ -8,6 +8,7 @@ import {
   buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
   getBillPrintCSS, getBillHeaderHTML, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
+  buildInclusiveTaxNote,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -25,7 +26,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const items = invoice.items || [];
 
   const itemsHtml = buildBillItemRows(items, cs, showAr);
-  const taxHtml = buildTaxHtml(invoice.taxBreakdown, cs, printSettings, { showInclusiveTax: invoice.showInclusiveTaxOnBill !== false });
+  const taxHtml = buildTaxHtml(invoice.taxBreakdown, cs, printSettings, {});
   const discountHtml = buildDiscountHtml(invoice, L, cs);
   const chargesHtml = buildChargesHtml(invoice, L, cs);
   const paymentHtml = buildPaymentHtml(invoice, L, cs);
@@ -63,6 +64,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       (taxHtml ? `<table style="margin:4px 0;"><tbody>${taxHtml}</tbody></table>` : '') +
       chargesHtml +
       `<div class="total-row"><span>${dualLabel(L.total, AR.total, showAr)}:</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
+      buildInclusiveTaxNote(invoice, printSettings) +
       (bl.showPayment !== false ? paymentHtml : '') +
     `</div>` +
     `<div class="divider">================================</div>` +
