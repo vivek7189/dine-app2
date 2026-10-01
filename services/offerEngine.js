@@ -39,7 +39,7 @@ const matchesItemList = (list, item) => {
 // Unit price of a line. A priced order line (has total) carries its real price; a raw cart line
 // can still hold the item's BASE price with the chosen variant's price in selectedVariant.
 const getItemUnitPrice = (item) => {
-  if (!item.total && item.selectedVariant && typeof item.selectedVariant === 'object') {
+  if (!item.total && item.priceEdited !== true && item.selectedVariant && typeof item.selectedVariant === 'object') {
     const vp = Number(item.selectedVariant.price);
     if (Number.isFinite(vp) && vp > 0) return vp;
   }
