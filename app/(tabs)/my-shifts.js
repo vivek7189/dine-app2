@@ -49,12 +49,21 @@ export default function MyShiftsScreen() {
     if (!r || !u) return;
     setError('');
     try {
-      const today = new Date();
+      // From yesterday: an overnight shift that is still running after midnight stays listed.
+      const today = new Date(); today.setDate(today.getDate() - 1);
       const end = new Date(); end.setDate(end.getDate() + 27);
       const [res, av] = await Promise.all([
         apiClient.request(`/api/shift-scheduling/my-shifts/${r}?startDate=${ymd(today)}&endDate=${ymd(end)}`),
         apiClient.request(`/api/shift-scheduling/availability/${u.id}`).catch(() => null),
       ]);
+      // Yesterday's shifts are fetched only for an overnight shift still running now — drop the rest.
+      const todayKey = ymd(new Date());
+      const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+      const toM = (t) => { const [h, m] = String(t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+      const stillOn = (sh) => sh.date >= todayKey || (toM(sh.endTime) <= toM(sh.startTime) && nowMin < toM(sh.endTime));
+      if (res && Array.isArray(res.myShifts)) res.myShifts = res.myShifts.filter(stillOn);
+      if (res && Array.isArray(res.openShifts)) res.openShifts = res.openShifts.filter(sh => sh.date >= todayKey);
+      if (res && Array.isArray(res.swapIncoming)) res.swapIncoming = res.swapIncoming.filter(sh => sh.date >= todayKey);
       setData(res);
       const a = av?.availability || {};
       const weekly = {};
