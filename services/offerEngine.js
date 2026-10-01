@@ -21,7 +21,31 @@ const normalizePhone = (phone) => {
 
 const getItemId = (item) => item.menuItemId || item.id;
 const getItemCategory = (item) => (item.category || item.categoryId || '').toString();
-const getItemLineTotal = (item) => item.total || (item.price || 0) * (item.quantity || 1);
+// Variant-level targeting: an offer's targetItems / excludedItems / BOGO lists hold either a menu
+// item id (every variant of it) or `${itemId}::${variantName}` (that one variant only — e.g. a
+// discount on "Jameson - 1 Litter" but not on a Tot of the same item).
+const VARIANT_SEP = '::';
+const getItemVariantName = (item) => {
+  const v = item.selectedVariant || item.variant;
+  return (v && typeof v === 'object' ? v.name : v) || null;
+};
+const matchesItemList = (list, item) => {
+  if (!Array.isArray(list) || list.length === 0) return false;
+  const id = getItemId(item);
+  if (list.includes(id)) return true;
+  const v = getItemVariantName(item);
+  return !!v && list.includes(`${id}${VARIANT_SEP}${v}`);
+};
+// Unit price of a line. A priced order line (has total) carries its real price; a raw cart line
+// can still hold the item's BASE price with the chosen variant's price in selectedVariant.
+const getItemUnitPrice = (item) => {
+  if (!item.total && item.selectedVariant && typeof item.selectedVariant === 'object') {
+    const vp = Number(item.selectedVariant.price);
+    if (Number.isFinite(vp) && vp > 0) return vp;
+  }
+  return item.price || 0;
+};
+const getItemLineTotal = (item) => item.total || getItemUnitPrice(item) * (item.quantity || 1);
 
 // Normalize category names for comparison — "Hot beverages", "Hot-Beverages", "hot_beverages" all match
 const normalizeCategory = (cat) => String(cat || '').toLowerCase().replace(/[-_\s]+/g, '');
@@ -29,7 +53,7 @@ const normalizeCategory = (cat) => String(cat || '').toLowerCase().replace(/[-_\
 // Check if an item is excluded from a specific offer (backend parity: offerEngine.js:34)
 const isItemExcluded = (item, offer) => {
   if (Array.isArray(offer.excludedItems) && offer.excludedItems.length > 0) {
-    if (offer.excludedItems.includes(getItemId(item))) return true;
+    if (matchesItemList(offer.excludedItems, item)) return true;
   }
   if (Array.isArray(offer.excludedCategories) && offer.excludedCategories.length > 0) {
     const normalizedExcluded = offer.excludedCategories.map(normalizeCategory);
@@ -164,7 +188,7 @@ const calculateCrossItemBogo = (offer, cart) => {
     const id = getItemId(item);
     const cat = getItemCategory(item);
     const qty = item.quantity || 0;
-    const matchById = buyItemIds.length > 0 && buyItemIds.includes(id);
+    const matchById = matchesItemList(buyItemIds, item);
     const matchByCat = buyCategoryIds.length > 0 && buyCategoryIds.some(bc => normalizeCategory(bc) === normalizeCategory(cat));
     if (matchById || matchByCat) buyUnits += qty;
   }
@@ -177,9 +201,9 @@ const calculateCrossItemBogo = (offer, cart) => {
     if (item.discountApplicable === false) continue;
     if (isItemExcluded(item, offer)) continue;
     const id = getItemId(item);
-    if (!getItemIds.includes(id)) continue;
+    if (!matchesItemList(getItemIds, item)) continue;
     const qty = item.quantity || 0;
-    const price = item.price || 0;
+    const price = getItemUnitPrice(item);
     for (let i = 0; i < qty; i++) pool.push({ itemId: id, price });
   }
   pool.sort((a, b) => a.price - b.price);
@@ -228,7 +252,7 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
     applicableSubtotal = cart
       .filter(item => item.discountApplicable !== false)
       .filter(item => !isItemExcluded(item, offer))
-      .filter(item => offer.targetItems.includes(getItemId(item)))
+      .filter(item => matchesItemList(offer.targetItems, item))
       .reduce((sum, item) => sum + getItemLineTotal(item), 0);
   } else {
     applicableSubtotal = cart
@@ -256,7 +280,7 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
   if (offer.promotionType === 'bogo' && offer.bogoConfig) {
     let bogoItems = cart.filter(item => item.discountApplicable !== false && !isItemExcluded(item, offer));
     if (offerScope === 'item' && offer.targetItems?.length > 0) {
-      bogoItems = bogoItems.filter(item => offer.targetItems.includes(getItemId(item)));
+      bogoItems = bogoItems.filter(item => matchesItemList(offer.targetItems, item));
     } else if (offerScope === 'category' && offer.targetCategories?.length > 0) {
       const normalizedTargets = offer.targetCategories.map(normalizeCategory);
       bogoItems = bogoItems.filter(item => normalizedTargets.includes(normalizeCategory(getItemCategory(item))));
@@ -267,7 +291,7 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
     const getDiscount = offer.bogoConfig.getDiscount || 100;
     const sets = Math.floor(totalQty / (buyQty + getQty));
     if (sets > 0 && bogoItems.length > 0) {
-      const cheapestPrice = Math.min(...bogoItems.map(item => item.price || 0));
+      const cheapestPrice = Math.min(...bogoItems.map(item => getItemUnitPrice(item)));
       baseDiscount = Math.round(sets * getQty * cheapestPrice * (getDiscount / 100) * 100) / 100;
     }
   } else if (applicableSubtotal > 0) {
@@ -281,13 +305,13 @@ const calculateDiscountForOfferObject = (offer, subtotal, cart = [], context = {
       const applicableItems = cart
         .filter(item => item.discountApplicable !== false && !isItemExcluded(item, offer))
         .filter(item => {
-          if (offerScope === 'item' && offer.targetItems?.length > 0) return offer.targetItems.includes(getItemId(item));
+          if (offerScope === 'item' && offer.targetItems?.length > 0) return matchesItemList(offer.targetItems, item);
           if (offerScope === 'category' && offer.targetCategories?.length > 0) return offer.targetCategories.map(normalizeCategory).includes(normalizeCategory(getItemCategory(item)));
           return true;
         });
       let disc = 0;
       for (const it of applicableItems) {
-        disc += Math.min(effectiveDiscountValue, it.price || 0) * (it.quantity || 1);
+        disc += Math.min(effectiveDiscountValue, getItemUnitPrice(it)) * (it.quantity || 1);
       }
       if (offer.maxDiscount && disc > offer.maxDiscount) disc = offer.maxDiscount;
       baseDiscount = Math.round(disc * 100) / 100;
@@ -326,7 +350,7 @@ const hasScopeMatchingCart = (offer, cart) => {
     return cart.some(item => normalizedTargets.includes(normalizeCategory(getItemCategory(item))));
   }
   if (scope === 'item' && Array.isArray(offer.targetItems) && offer.targetItems.length > 0) {
-    return cart.some(item => offer.targetItems.includes(getItemId(item)));
+    return cart.some(item => matchesItemList(offer.targetItems, item));
   }
   return true;
 };
