@@ -56,6 +56,7 @@ import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignatur
 import { orderLinesToCart } from '../utils/orderLines';
 import { buildGuestInvoice } from '../utils/splitBill';
 import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
+import { billNumberLabel } from '../utils/billNumber';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -2449,7 +2450,9 @@ export default function MenuScreen() {
       // Prepare invoice data for display
       const invoiceData = {
         orderId: response.order?.id,
-        orderNumber: response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
+        // "OFFLINE-xxxx" when saved offline (was blank), "513 (offline xxxx)" once synced.
+        orderNumber: billNumberLabel(response?.order, { offlineKey: response?.offline ? response.idempotencyKey : null })
+          || response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
         restaurantName: restaurantName,
         restaurantInfo: latestRestaurantInfo,
         items: cart.map(item => ({
@@ -2725,7 +2728,8 @@ export default function MenuScreen() {
       // Prepare invoice data
       const invoiceData = {
         orderId: completedOrderId,
-        orderNumber: response?.order?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
+        orderNumber: billNumberLabel(response?.order, { offlineKey: response?.offline ? response.idempotencyKey : null })
+          || response?.order?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
         restaurantName,
         restaurantInfo: latestRestaurantInfo,
         items: cart.map(item => ({

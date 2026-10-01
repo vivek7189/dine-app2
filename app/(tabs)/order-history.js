@@ -25,6 +25,7 @@ import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { roleCan } from '../../utils/permissions';
+import { billNumberLabel } from '../../utils/billNumber';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -396,7 +397,7 @@ export default function OrderHistoryScreen() {
         const subtotal = Number(order.subtotal ?? calculatedSubtotal);
         const invoiceData = {
           orderId: order.id || order._id,
-          orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
+          orderNumber: billNumberLabel(order) || order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
           restaurantName: restaurant?.name || '',
           restaurantInfo: restaurant || {},
           items: (order.items || []).map(item => ({
