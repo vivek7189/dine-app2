@@ -110,7 +110,7 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       setOriginal(ps);
       setIsDirty(false);
       await AsyncStorage.setItem(`${STORAGE_KEY}_${restaurantId}`, JSON.stringify(ps));
-      try { require('../services/printerService').setSavedPrintSettings(ps); } catch (_) {}
+      try { require('../services/printerService').setSavedPrintSettings(ps, restaurantId); } catch (_) {}
     } catch (error) {
       console.error('Error fetching print settings:', error);
     } finally {
@@ -136,7 +136,7 @@ export default function PrintSettings({ restaurantId, onSettingsChange }) {
       setIsDirty(false);
       await AsyncStorage.setItem(`${STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
       // Apply to the running session immediately (image flag, width, logo for WebView bills).
-      try { require('../services/printerService').setSavedPrintSettings(settings); } catch (_) {}
+      try { require('../services/printerService').setSavedPrintSettings(settings, restaurantId); } catch (_) {}
       if (onSettingsChange) onSettingsChange(settings);
       Alert.alert('Saved', 'Print settings updated successfully.');
     } catch (error) {

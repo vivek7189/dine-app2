@@ -170,7 +170,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       // The restaurant's saved print settings (printer width, receipt logo, image receipts) win
       // over what the page sent — the page's copy can miss them (bills printed at 80 mm width on a
       // 58 mm printer, no logo). Loaded once per session; the page's copy fills any gaps.
-      let savedPs = printerService.getSavedPrintSettings();
+      let savedPs = printerService.getSavedPrintSettings(restaurantId);
       if (!savedPs && restaurantId) { try { savedPs = await printerService.loadSavedPrintSettings(restaurantId); } catch (_) {} }
       else if (restaurantId) printerService.loadSavedPrintSettings(restaurantId).catch(() => {}); // pick up web-side changes for next time
       const ps = { ...(data.printSettings || {}), ...(savedPs || {}) };
@@ -327,10 +327,11 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       // Print with feedback — notify WebView of success/failure so it can show toast
       const printLabel = data.type === 'PRINT_KOT' ? 'KOT' : 'Bill';
       // The page sends no bill HTML, so without this a bill from here could never print as an
-      // image or carry the receipt logo. Render it from the same bill data when Image Receipts or
-      // the logo is on (any image failure still falls back to the text bill).
+      // image. Render it from the same bill data ONLY when Image Receipts is on — with just the
+      // logo on, the text bill prints with the logo raster above it (generateBillText adds the
+      // <LOGO:url> marker), same as before; an <img> here would force the whole bill to an image.
       let imageHtml = null;
-      if (data.type === 'PRINT_BILL' && billData && (ps.imagePrintEnabled || (ps.receiptLogo?.enabled && ps.receiptLogo?.url))) {
+      if (data.type === 'PRINT_BILL' && billData && ps.imagePrintEnabled) {
         try { imageHtml = printerService.generateBillHTML(billData, ps); } catch (_) { imageHtml = null; }
       }
       const result = await printerService.printWithFeedback({ html, text, imageHtml, silentOnly: true, label: printLabel });

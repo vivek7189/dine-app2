@@ -83,28 +83,36 @@ export const isImagePrintOn = () => _imagePrintEnabled;
 // `dine_print_settings_<rid>`) then refreshed from the server; applied to the image-print config.
 const PRINT_SETTINGS_KEY = 'dine_print_settings';
 let _savedPrintSettings = null;
-export const setSavedPrintSettings = (ps) => {
+let _savedForRid = null; // whose settings are cached — switching outlet / account reloads them
+export const setSavedPrintSettings = (ps, restaurantId) => {
   if (!ps || typeof ps !== 'object') return;
   _savedPrintSettings = ps;
+  if (restaurantId) _savedForRid = String(restaurantId);
   setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth, autoImageForCurrency: ps.autoImageForCurrency });
 };
-export const getSavedPrintSettings = () => _savedPrintSettings;
+export const getSavedPrintSettings = (restaurantId) =>
+  (!restaurantId || !_savedForRid || _savedForRid === String(restaurantId) ? _savedPrintSettings : null);
 // Load the logged-in restaurant's saved settings once (first print of the session, any screen):
 // AsyncStorage copy first (instant / offline), then the server in the background.
 let _ensuring = null;
 export const ensureSavedPrintSettings = async () => {
-  if (_savedPrintSettings) return _savedPrintSettings;
+  let rid = null;
+  try {
+    const raw = await AsyncStorage.getItem('user');
+    const u = raw ? JSON.parse(raw) : null;
+    rid = u && (u.restaurantId || (u.restaurant && u.restaurant.id));
+  } catch (_) { /* no user → defaults */ }
+  if (!rid) return _savedPrintSettings;
+  if (_savedPrintSettings && _savedForRid === String(rid)) return _savedPrintSettings;
   if (!_ensuring) {
     _ensuring = (async () => {
       try {
-        const raw = await AsyncStorage.getItem('user');
-        const u = raw ? JSON.parse(raw) : null;
-        const rid = u && (u.restaurantId || (u.restaurant && u.restaurant.id));
-        if (!rid) return null;
         const stored = await AsyncStorage.getItem(`${PRINT_SETTINGS_KEY}_${rid}`);
-        if (stored) { setSavedPrintSettings(JSON.parse(stored)); loadSavedPrintSettings(rid).catch(() => {}); }
+        if (stored) { setSavedPrintSettings(JSON.parse(stored), rid); loadSavedPrintSettings(rid).catch(() => {}); }
         else await Promise.race([loadSavedPrintSettings(rid), new Promise(r => setTimeout(r, 3000))]); // never hold a print > 3 s
       } catch (_) { /* print with defaults */ }
+      // Nothing found for THIS restaurant → don't keep another outlet's width / logo / image flag.
+      if (_savedForRid !== String(rid)) { _savedPrintSettings = null; _savedForRid = null; setImagePrintConfig({ enabled: false }); }
       return _savedPrintSettings;
     })().finally(() => { _ensuring = null; });
   }
@@ -114,13 +122,13 @@ export const loadSavedPrintSettings = async (restaurantId) => {
   if (!restaurantId) return _savedPrintSettings;
   try {
     const raw = await AsyncStorage.getItem(`${PRINT_SETTINGS_KEY}_${restaurantId}`);
-    if (raw) setSavedPrintSettings(JSON.parse(raw));
+    if (raw) setSavedPrintSettings(JSON.parse(raw), restaurantId);
   } catch (_) { /* fall through to the server */ }
   try {
     const apiClient = require('./api').default;
     const res = await apiClient.getPrintSettings(restaurantId);
     if (res && res.printSettings) {
-      setSavedPrintSettings(res.printSettings);
+      setSavedPrintSettings(res.printSettings, restaurantId);
       AsyncStorage.setItem(`${PRINT_SETTINGS_KEY}_${restaurantId}`, JSON.stringify(res.printSettings)).catch(() => {});
     }
   } catch (_) { /* offline: keep the stored copy */ }
