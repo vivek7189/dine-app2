@@ -90,7 +90,19 @@ const STATUS_CONFIG = {
   half_day: { label: 'Half Day', color: '#f59e0b', bg: '#fef3c7', icon: 'time' },
   leave: { label: 'On Leave', color: '#3b82f6', bg: '#dbeafe', icon: 'umbrella' },
   holiday: { label: 'Holiday', color: '#6b7280', bg: '#f3f4f6', icon: 'sunny' },
+  late: { label: 'Late', color: '#d97706', bg: '#fef3c7', icon: 'alarm' },
 };
+
+// Every spelling the server / older clients store ('half-day', 'on-leave', 'clocked_in' …) —
+// unknown ones showed as "Absent" (a late or half day looked like a missed day).
+function statusConf(status) {
+  const k = String(status || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (STATUS_CONFIG[k]) return STATUS_CONFIG[k];
+  if (k === 'halfday') return STATUS_CONFIG.half_day;
+  if (k === 'on_leave' || k === 'paid_leave') return STATUS_CONFIG.leave;
+  if (k === 'clocked_in' || k === 'clocked_out') return STATUS_CONFIG.present;
+  return STATUS_CONFIG.absent;
+}
 
 const LEAVE_STATUS = {
   pending: { label: 'Pending', color: '#f59e0b', bg: '#fef3c7', icon: 'time-outline' },
@@ -463,7 +475,7 @@ export default function AttendanceScreen() {
 
   const openApplyLeave = (prefillDate) => {
     setLeaveForm({
-      leaveType: 'CL',
+      leaveType: availableLeaveTypes[0]?.key || 'CL',
       startDate: prefillDate || getTomorrowDate(),
       endDate: '',
       isHalfDay: false,
@@ -493,7 +505,7 @@ export default function AttendanceScreen() {
       });
       showToast('Leave request submitted!', 'success');
       setShowApplyLeave(false);
-      setLeaveForm({ leaveType: 'CL', startDate: '', endDate: '', isHalfDay: false, halfDayType: 'first_half', reason: '' });
+      setLeaveForm({ leaveType: availableLeaveTypes[0]?.key || 'CL', startDate: '', endDate: '', isHalfDay: false, halfDayType: 'first_half', reason: '' });
       loadData();
     } catch (err) {
       showToast(err.message || 'Failed to apply leave', 'error');
@@ -788,7 +800,7 @@ export default function AttendanceScreen() {
               <Text style={s.sectionTitle}>Recent History</Text>
               <View style={s.historyList}>
                 {recentHistory.map(record => {
-                  const st = STATUS_CONFIG[record.status] || STATUS_CONFIG.absent;
+                  const st = statusConf(record.status);
                   const isAbsent = record.status === 'absent';
                   const canApplyLeave = isAbsent && record.date && !hasLeaveRequestForDate(record.date);
                   return (
@@ -851,7 +863,7 @@ export default function AttendanceScreen() {
               </View>
 
               {(todayData.attendance || []).map(record => {
-                const st = STATUS_CONFIG[record.status] || STATUS_CONFIG.absent;
+                const st = statusConf(record.status);
                 return (
                   <View key={record.staffId} style={s.teamRow}>
                     <View style={s.teamAvatar}>
