@@ -125,8 +125,8 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   // Save the keys this screen changed so that BOTH backends keep everything else:
   //  • new backend: PUT deep-merges a partial taxSettings into the saved settings;
   //  • old backend: PUT requires `taxes` and REPLACES the whole taxSettings with the body.
-  // So: fetch a FRESH copy (no cache) right before saving, deep-merge the changed keys onto it and
-  // send the FULL merged object (taxInclusivePricing, additionalCharges, OTP approval, … survive).
+  // So: fetch a FRESH copy (no cache) right before saving (no fresh copy → nothing is saved),
+  // deep-merge the changed keys onto it and send the FULL merged object (taxInclusivePricing, additionalCharges, OTP approval, … survive).
   // Whenever `taxes` change, defaultTaxRate = sum of the enabled rates (0 when none) — the server
   // falls back to defaultTaxRate when taxes is an empty array, so deleting the last tax must zero it.
   // Clearing a max-discount limit (null) also clears the legacy key, else readers fell back to it.
@@ -147,19 +147,22 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         change.discountSettings = ds;
       }
 
-      let cached = {};
-      try { cached = JSON.parse(await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`) || '{}') || {}; } catch (_) { cached = {}; }
+      // A fresh server copy is required — merging onto a cached / partial copy could overwrite
+      // newer settings (old backend replaces the whole object). No fresh copy → don't save.
       let fresh = null;
       try {
         const r = await apiClient.getTaxSettingsFresh(restaurantId);
         if (r && isPlainObject(r.taxSettings)) fresh = r.taxSettings;
       } catch (e) {
-        console.warn('Tax settings fresh read failed, merging onto the cached copy:', e?.message);
+        console.warn('Tax settings fresh read failed:', e?.message);
       }
-      const base = fresh || (isPlainObject(cached) ? cached : {});
-      const merged = deepMergeSettings(base, change);
+      if (!fresh) {
+        Alert.alert('Not saved', 'Could not load the latest tax settings from the server. Check your connection and try again.');
+        fetchFromAPI(); // put the screen back to what the server has
+        return;
+      }
+      const merged = deepMergeSettings(fresh, change);
       delete merged.updatedAt; delete merged.updatedBy;
-      if (!Array.isArray(merged.taxes)) merged.taxes = []; // old backend requires `taxes`
 
       const res = await apiClient.updateTaxSettings(restaurantId, merged);
 

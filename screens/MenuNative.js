@@ -637,6 +637,7 @@ export default function MenuScreen() {
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '', chair: data.chairNumber ? String(data.chairNumber) : '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
+              existingOrderOffersRef.current = { orderId: data.orderId || null, ids: Array.isArray(data.orderOfferIds) ? data.orderOfferIds : [] };
               baseItemsSigRef.current = data.baseItemsSignature || null;
               if (data.dailyOrderId) setExistingDailyOrderId(data.dailyOrderId);
               if (data.cartItems) {
@@ -1639,6 +1640,9 @@ export default function MenuScreen() {
   // Sent as baseItemsSignature with item updates; the server answers 409 ORDER_CHANGED if another
   // device (POS / another waiter) changed the order meanwhile, instead of overwriting its items.
   const baseItemsSigRef = useRef(null);
+  // Offers already on the order being added to (from Tables → Add Items) — CartModal doesn't count
+  // them as a cashier discount change.
+  const existingOrderOffersRef = useRef({ orderId: null, ids: [] });
   useEffect(() => { if (!existingOrderId) baseItemsSigRef.current = null; }, [existingOrderId]);
   const baseSigField = () => (existingOrderId && baseItemsSigRef.current ? { baseItemsSignature: baseItemsSigRef.current } : {});
   // After a successful update the order holds exactly the items just sent (the PATCH response
@@ -1750,6 +1754,8 @@ export default function MenuScreen() {
             serviceChargeLabel: discountData.serviceChargeLabel,
           }),
           ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
+          // charges the cart billed (packaging …) — the server then vets the tax including them
+          ...(discountData.taxBreakdown && { additionalCharges: discountData.additionalCharges || [], additionalChargesTotal: discountData.additionalChargesTotal || 0 }),
           ...(discountData.totalTax > 0 && { taxAmount: discountData.totalTax }),
           ...(discountData.deliveryStaffId && { deliveryStaffId: discountData.deliveryStaffId, deliveryStaffName: discountData.deliveryStaffName, deliveryPartnerId: discountData.deliveryStaffId, deliveryPartnerName: discountData.deliveryStaffName }),
           ...(discountData.tipAmount && { tipAmount: discountData.tipAmount }),
@@ -2008,6 +2014,8 @@ export default function MenuScreen() {
           customerId: discountData.customerId || null,
           pricingRuleId: activePricingRuleId || null,
           ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
+          // charges the cart billed (packaging …) — the server then vets the tax including them
+          ...(discountData.taxBreakdown && { additionalCharges: discountData.additionalCharges || [], additionalChargesTotal: discountData.additionalChargesTotal || 0 }),
           ...(discountData.couponCode && { couponCode: discountData.couponCode }),
           ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
@@ -2048,6 +2056,17 @@ export default function MenuScreen() {
         // already-sent items.
         const { items: deltaItems, removedItems: deltaRemoved } = buildUpdateDelta();
         const sendDiscounts = discountData.discountsChanged !== false;
+        // Keeping the order's own discounts: every money figure this cart computed (round-off,
+        // service charge amount, paid / balance) is on the NO-discount total — the server
+        // re-totals with the order's discounts, so send none of them (service charge as a rate only).
+        if (!sendDiscounts && discountData.partialPayAmount != null) {
+          Alert.alert('Take payment when settling', 'This order already has discounts, so a part payment can\'t be recorded while adding items. Add the items, then record the payment when you settle the bill.');
+          return;
+        }
+        const billingForUpdate = sendDiscounts ? billingFields : (() => {
+          const { roundOffAmount: _ro, serviceChargeAmount: _sc, paidAmount: _pa, outstandingAmount: _oa, paymentStatus: _ps, cashReceived: _cr, changeReturned: _ch, ...rest } = billingFields;
+          return rest;
+        })();
         const updateData = {
           items: deltaItems,
           ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
@@ -2072,8 +2091,8 @@ export default function MenuScreen() {
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           ...((sendDiscounts || discountData.customerId) ? { customerId: discountData.customerId || null } : {}),
-          ...billingFields,
-          ...partialFields,
+          ...billingForUpdate,
+          ...(sendDiscounts ? partialFields : {}),
         };
 
         const updateResponse = await apiClient.updateOrder(existingOrderId, { ...updateData, ...baseSigField() });
@@ -2455,6 +2474,8 @@ export default function MenuScreen() {
         tax: taxAmount,
         taxRate: taxRate,
         ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
+        // charges the cart billed (packaging …) — the server then vets the tax including them
+        ...(discountData.taxBreakdown && { additionalCharges: discountData.additionalCharges || [], additionalChargesTotal: discountData.additionalChargesTotal || 0 }),
         total: grandTotal,
         finalAmount: grandTotal,
         // Discount/loyalty data
@@ -2715,6 +2736,8 @@ export default function MenuScreen() {
         tax: taxAmount,
         taxRate,
         ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
+        // charges the cart billed (packaging …) — the server then vets the tax including them
+        ...(discountData.taxBreakdown && { additionalCharges: discountData.additionalCharges || [], additionalChargesTotal: discountData.additionalChargesTotal || 0 }),
         total: grandTotal,
         finalAmount: grandTotal,
         completedAt: new Date().toISOString(),
@@ -4022,6 +4045,7 @@ export default function MenuScreen() {
         setActivePricingRuleId={setActivePricingRuleId}
         autoSelectedRule={autoSelectedRule}
         isUpdateOrder={!!existingOrderId}
+        existingOrderOfferIds={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.ids : []}
         existingOrderItems={existingOrderItems}
         floors={floors}
         onTableSelect={handleCashierTableSelect}

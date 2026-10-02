@@ -61,6 +61,16 @@ const BACKEND_CONFIG_URL =
   process.env.EXPO_PUBLIC_BACKEND_CONFIG_URL ||
   'https://storage.googleapis.com/dineopen-public-config/backend.json';
 
+// Offline manager-PIN check: SHA-256 of the PIN per restaurant (`manager_pin_hash:<restaurantId>`,
+// value { hash, userId }), cleared on logout / when a different user logs in.
+const MANAGER_PIN_META_PREFIX = 'manager_pin_hash:';
+function clearManagerPinHashes() {
+  try {
+    const { getDb } = require('./db');
+    getDb().runSync("DELETE FROM _meta WHERE key = 'manager_pin_hash' OR key LIKE 'manager_pin_hash:%'");
+  } catch (_) { /* no local DB on this device — nothing cached */ }
+}
+
 class ApiClient {
   constructor() {
     this.baseURL = API_BASE_URL;
@@ -380,6 +390,11 @@ class ApiClient {
   // Set user data in storage
   async setUser(userData) {
     try {
+      // A different person logging in on this phone: drop offline manager-PIN hashes.
+      const prev = await this.getUser();
+      const prevId = prev?.id || prev?._id || prev?.userId || null;
+      const nextId = userData?.id || userData?._id || userData?.userId || null;
+      if (prevId && prevId !== nextId) clearManagerPinHashes();
       await AsyncStorage.setItem('user', JSON.stringify(userData));
     } catch (error) {
       console.error('Error setting user:', error);
@@ -402,6 +417,7 @@ class ApiClient {
   async logout() {
     // Stop shift notifications for this person on this phone (shared devices).
     try { require('./staffPush').resetStaffPush(); } catch (_) {}
+    clearManagerPinHashes(); // offline manager-PIN hashes belong to the person logging out
     // Clear in-memory API cache
     this.clearAllCache();
     // Clear auth tokens
@@ -747,7 +763,7 @@ class ApiClient {
     const seed = async (label, fetcher, saver) => {
       try {
         const data = await fetcher();
-        saver(data);
+        await saver(data);
       } catch (e) {
         console.warn(`Seed ${label} failed:`, e.message);
         errors.push(label);
@@ -789,19 +805,24 @@ class ApiClient {
     });
 
     // Manager PIN hash (for offline validation)
-    await seed('managerPin', () => this.request(`/api/restaurants/${restaurantId}/billing-settings`), (data) => {
+    await seed('managerPin', () => this.request(`/api/restaurants/${restaurantId}/billing-settings`), async (data) => {
       // GET replies { settings }. The server sends the plaintext managerPin only to people who
       // manage billing settings (owner/manager) — everyone else gets hasManagerPin instead, so
       // offline PIN checks work only on a manager's/owner's device; nothing to cache otherwise.
+      // Stored per restaurant, tagged with the user it was fetched for (cleared on logout / user
+      // change) — a shared phone never checks one restaurant's or person's PIN against another's.
       const bs = data?.settings || data?.billingSettings || data;
+      const pinKey = `${MANAGER_PIN_META_PREFIX}${restaurantId}`;
       if (bs && typeof bs.managerPin === 'string' && bs.managerPin) {
         const Crypto = require('expo-crypto');
+        const me = await this.getUser().catch(() => null);
+        const userId = me?.id || me?._id || me?.userId || null;
         Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, String(bs.managerPin))
-          .then(hash => setMeta('manager_pin_hash', hash))
+          .then(hash => setMeta(pinKey, JSON.stringify({ hash, userId })))
           .catch(() => {});
-      } else if (bs && (bs.hasManagerPin === false || bs.managerPin === '')) {
-        // The restaurant has no PIN any more — drop a hash cached earlier on this device.
-        try { setMeta('manager_pin_hash', ''); } catch (_) {}
+      } else if (bs) {
+        // No PIN, or this user isn't sent it (non-managers) — no offline PIN for this restaurant.
+        try { setMeta(pinKey, ''); } catch (_) {}
       }
     });
 
@@ -3151,7 +3172,15 @@ class ApiClient {
     // If offline, validate against locally stored hash
     if (this.isEffectivelyOffline()) {
       const { getMeta } = require('./db');
-      const storedHash = getMeta('manager_pin_hash');
+      let storedHash = null;
+      try {
+        const raw = getMeta(`${MANAGER_PIN_META_PREFIX}${restaurantId}`);
+        const rec = raw ? JSON.parse(raw) : null;
+        const me = await this.getUser();
+        const myId = me?.id || me?._id || me?.userId || null;
+        // Only the user it was cached for (a different login on this phone must sync first).
+        if (rec && rec.hash && (!rec.userId || rec.userId === myId)) storedHash = rec.hash;
+      } catch (_) { storedHash = null; }
       if (!storedHash) {
         throw new Error('Manager PIN not available offline. Please sync data first.');
       }

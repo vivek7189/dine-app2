@@ -1102,6 +1102,9 @@ export default function TablesScreen() {
         orderId: order.id,
         dailyOrderId: order.dailyOrderId || order.orderNumber || null,
         chairNumber: order.chairNumber || null,
+        // offers already on the order — re-selected in the cart they are not a cashier change
+        orderOfferIds: Array.isArray(order.offerIds) && order.offerIds.length ? order.offerIds
+          : (Array.isArray(order.appliedOffers) ? order.appliedOffers.map(o => o && o.id).filter(Boolean) : []),
         cartItems,
         // Fingerprint of the items as loaded — sent with the update so the server can refuse (409)
         // if another device changed this order meanwhile, instead of overwriting its items.
@@ -2220,6 +2223,11 @@ export default function TablesScreen() {
               ...((sd.finalAmount != null || order.finalAmount) && { finalAmount: settleFinal }),
               ...(order.taxAmount && { taxAmount: order.taxAmount }),
               ...(order.taxBreakdown && { taxBreakdown: order.taxBreakdown }),
+              // the order's stored charges, so the server vets this tax including their tax
+              ...(order.taxBreakdown && {
+                additionalCharges: Array.isArray(order.additionalCharges) ? order.additionalCharges : [],
+                additionalChargesTotal: Number(order.additionalChargesTotal) || 0,
+              }),
               // Customer data — critical for customer stats update
               customerId: order.customerId || null,
               customerInfo: {

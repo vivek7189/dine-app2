@@ -87,6 +87,7 @@ export default function CartModal({
   autoSelectedRule = false,
   isUpdateOrder = false,
   existingOrderItems = [],
+  existingOrderOfferIds = [], // offers already on the order being added to (not a cashier change)
   floors = [],
   onTableSelect,
   selectedTable,
@@ -585,10 +586,18 @@ export default function CartModal({
   // starts with NO discounts (the order's own aren't reloaded here), so an add-items PATCH must
   // not send zeros for them unless the cashier set discounts now — the server then keeps the
   // order's own offer / manual / loyalty / coupon discounts.
+  // Only the cashier's own input counts: manual / coupon / loyalty, and offers picked BY HAND —
+  // an offer the engine auto-applied ('auto-apply best offer') or one already on the order is not
+  // a change (counting them sent zeros for manual / coupon / loyalty and wiped the order's own).
   // (A function: it reads values declared further down, evaluated when an order is submitted.)
-  const discountsChanged = () => offerDiscount > 0 || manualDiscountAmount > 0 || loyaltyDiscount > 0
-    || couponDiscountAmount > 0 || (redeemPoints || 0) > 0 || !!appliedCoupon
-    || selectedOfferIds.length > 0 || !!selectedOfferId;
+  const discountsChanged = () => {
+    if (manualDiscountAmount > 0 || loyaltyDiscount > 0 || (redeemPoints || 0) > 0
+      || couponDiscountAmount > 0 || !!appliedCoupon) return true;
+    if (autoApplied) return false;
+    const onOrder = new Set((existingOrderOfferIds || []).map(String));
+    const picked = [...new Set([...(selectedOfferIds || []), ...(selectedOfferId ? [selectedOfferId] : [])])];
+    return picked.some(id => !onOrder.has(String(id)));
+  };
 
   const buildDiscountData = () => ({
     discountsChanged: discountsChanged(),

@@ -82,7 +82,7 @@ export default function BillingSettings({ restaurantId }) {
     }
   };
 
-  // Send only what changed, merged onto a FRESH server copy, as a full object: the new backend
+  // Send only what changed, merged onto a FRESH server copy (required), as a full object: the new backend
   // merges partial bodies, an old one replaces billingSettings with the body — both keep the rest.
   // (Defaults shown on screen are never pushed over real settings.)
   const saveSettings = async (updated) => {
@@ -91,11 +91,18 @@ export default function BillingSettings({ restaurantId }) {
     if (Object.keys(change).length === 0) return;
     setSaving(true);
     try {
+      // A fresh server copy is required (an old backend replaces billingSettings with the body,
+      // so changed keys alone would wipe the rest). No fresh copy → don't save.
       let fresh = null;
       try { fresh = settingsFrom(await apiClient.getBillingSettingsFresh(restaurantId)); } catch (e) {
-        console.warn('Billing settings fresh read failed, sending only the changed keys:', e?.message);
+        console.warn('Billing settings fresh read failed:', e?.message);
       }
-      const body = fresh ? deepMergeSettings(fresh, change) : change;
+      if (!fresh) {
+        Alert.alert('Not saved', 'Could not load the latest billing settings from the server. Check your connection and try again.');
+        loadSettings();
+        return;
+      }
+      const body = deepMergeSettings(fresh, change);
       // Reply-only / audit fields never go back to the server.
       delete body.hasManagerPin; delete body.updatedAt;
       const res = await apiClient.updateBillingSettings(restaurantId, body);
