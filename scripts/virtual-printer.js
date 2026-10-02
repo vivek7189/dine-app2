@@ -152,6 +152,8 @@ const server = net.createServer((sock) => {
   const finish = () => {
     if (!chunks.length) return;
     const buf = Buffer.concat(chunks); chunks = [];
+    // The app checks "is a printer there?" with a quick HTTP request — not a print job.
+    if (/^(HEAD|GET|POST|OPTIONS) \S+ HTTP\//.test(buf.slice(0, 32).toString('latin1'))) { console.log(`   (connection check from ${from} — ignored)`); return; }
     const { blocks, notes } = parse(buf);
     const time = new Date().toLocaleTimeString();
     const file = path.join(OUT_DIR, `print-${Date.now()}-${++jobNo}.html`);
