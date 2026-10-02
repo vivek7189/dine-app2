@@ -7,7 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl,
-  Alert, Modal, TextInput, Switch, Platform,
+  Alert, Modal, Switch, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -118,6 +118,14 @@ export default function MyShiftsScreen() {
       Alert.alert('Not saved', e?.message || 'Please try again');
     } finally { setBusy(null); }
   };
+
+  // Times are picked on a clock (typing "9.00" / "900" by hand went wrong). Android: the system clock
+  // dialog; iOS: a spinner in a small sheet with Done.
+  const [timePick, setTimePick] = useState(null); // { day, field, value: Date }
+  const toDate = (hhmm) => { const [h, m] = String(hhmm || '09:00').split(':').map(Number); const d = new Date(); d.setHours(Number.isFinite(h) ? h : 9, Number.isFinite(m) ? m : 0, 0, 0); return d; };
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const openTime = (day, field) => setTimePick({ day, field, value: toDate(avail?.weekly?.[day]?.[field]) });
+  const applyTime = (day, field, date) => { if (date) setDay(day, { [field]: hhmm(date) }); };
 
   const setDay = (k, patch) => {
     setAvail(a => ({ ...a, weekly: { ...a.weekly, [k]: { ...a.weekly[k], ...patch } } }));
@@ -263,9 +271,9 @@ export default function MyShiftsScreen() {
                   <Switch value={d.available !== false} onValueChange={v => setDay(k, { available: v })} trackColor={{ true: '#86efac' }} thumbColor={d.available !== false ? '#16a34a' : '#f4f4f5'} />
                   {d.available !== false ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-                      <TextInput style={styles.time} value={d.startTime} onChangeText={v => setDay(k, { startTime: v })} placeholder="09:00" maxLength={5} keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'} />
+                      <TouchableOpacity style={styles.time} onPress={() => openTime(k, 'startTime')}><Text style={styles.timeText}>{d.startTime || '09:00'}</Text></TouchableOpacity>
                       <Text style={styles.muted}>to</Text>
-                      <TextInput style={styles.time} value={d.endTime} onChangeText={v => setDay(k, { endTime: v })} placeholder="22:00" maxLength={5} keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'} />
+                      <TouchableOpacity style={styles.time} onPress={() => openTime(k, 'endTime')}><Text style={styles.timeText}>{d.endTime || '22:00'}</Text></TouchableOpacity>
                     </View>
                   ) : <Text style={[styles.muted, { marginLeft: 8 }]}>Can&apos;t work</Text>}
                 </View>
@@ -282,6 +290,24 @@ export default function MyShiftsScreen() {
                 <Text style={[styles.chipText, { color: '#374151' }]}>+ Add date</Text>
               </TouchableOpacity>
             </View>
+            {timePick && Platform.OS !== 'ios' && (
+              <DateTimePicker value={timePick.value} mode="time" is24Hour
+                onChange={(e, d) => { const tp = timePick; setTimePick(null); if (e?.type === 'set' && d) applyTime(tp.day, tp.field, d); }} />
+            )}
+            {timePick && Platform.OS === 'ios' && (
+              <Modal transparent animationType="fade" onRequestClose={() => setTimePick(null)}>
+                <View style={styles.timeSheetBackdrop}>
+                  <View style={styles.timeSheet}>
+                    <DateTimePicker value={timePick.value} mode="time" display="spinner" is24Hour locale="en-GB"
+                      onChange={(e, d) => { if (d) setTimePick(tp => (tp ? { ...tp, value: d } : tp)); }} />
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
+                      <TouchableOpacity onPress={() => setTimePick(null)} style={[styles.btn, { backgroundColor: '#f3f4f6' }]}><Text style={[styles.btnText, { color: '#374151' }]}>Cancel</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => { const tp = timePick; setTimePick(null); applyTime(tp.day, tp.field, tp.value); }} style={[styles.btn, styles.btnRed]}><Text style={styles.btnText}>Done</Text></TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
             {showPicker && (
               <DateTimePicker value={new Date()} mode="date" minimumDate={new Date()}
                 onChange={(e, d) => {
@@ -349,7 +375,10 @@ const styles = StyleSheet.create({
   btnGrey: { backgroundColor: '#f3f4f6' },
   btnOutline: { borderWidth: 1, borderColor: '#ddd6fe', backgroundColor: 'white' },
   availRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
-  time: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, width: 62, textAlign: 'center', color: '#111827' },
+  time: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, width: 66, alignItems: 'center' },
+  timeText: { color: '#111827', fontWeight: '600', fontVariant: ['tabular-nums'] },
+  timeSheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
+  timeSheet: { backgroundColor: 'white', padding: 16, paddingBottom: 28, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: '#fee2e2' },
   chipText: { fontSize: 12.5, fontWeight: '600', color: '#991b1b' },
   sheetWrap: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
