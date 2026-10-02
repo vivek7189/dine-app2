@@ -49,7 +49,10 @@ export function attachInclusiveSplits(invoice, cs) {
     // Split only lines that are actually tax-inclusive: an explicit per-item flag, or (unflagged
     // line) a bill whose taxes are ALL inclusive. A mixed cart (one inclusive item among
     // exclusive ones) used to split every line — exclusive items printed "MRP 95.24 + Tax 5% 4.76".
-    const isIncl = it.taxInclusive === true || (it.taxInclusive == null && allInclusive);
+    // An unflagged line follows the restaurant's setting when the invoice carries it (mixed
+    // bills lost the split on unflagged inclusive items); else the all-inclusive guess above.
+    const unflaggedInclusive = typeof invoice.taxInclusivePricing === 'boolean' ? invoice.taxInclusivePricing : allInclusive;
+    const isIncl = it.taxInclusive === true || (it.taxInclusive == null && unflaggedInclusive);
     if (!isIncl || inclusiveRate <= 0) return it;
     const line = _incLineTotal(it);
     const tax = _incR2(line * inclusiveRate / (100 + inclusiveRate));

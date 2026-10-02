@@ -483,27 +483,41 @@ export default function CartModal({
       : (billingSettings.manualDiscountEnabled !== false);
     const roles = ds.manualDiscountRoles ?? billingSettings.manualDiscountRoles;
     // (maxPercentDiscount / maxFlatDiscount = names older app builds wrote from Tax Settings)
-    const maxPct = Number(ds.maxDiscountPercent ?? ds.maxPercentDiscount ?? billingSettings.maxDiscountPercent) || 0;
-    const maxAmt = Number(ds.maxDiscountAmount ?? ds.maxFlatDiscount ?? billingSettings.maxDiscountAmount) || 0;
+    // A key saved as null means "limit cleared" — fall back to an older key only when the newer
+    // one was never written (=== undefined), else a cleared limit came back from the legacy key.
+    const firstDefined = (...vals) => vals.find(v => v !== undefined);
+    const maxPct = Number(firstDefined(ds.maxDiscountPercent, ds.maxPercentDiscount, billingSettings.maxDiscountPercent)) || 0;
+    const maxAmt = Number(firstDefined(ds.maxDiscountAmount, ds.maxFlatDiscount, billingSettings.maxDiscountAmount)) || 0;
     return { enabled, roles, maxPct, maxAmt };
   })();
 
   // Calculate manual discount amount, clamped to admin caps (web parity):
   // maxDiscountPercent (on percentage) + maxDiscountAmount (absolute).
-  const manualDiscountAmount = (() => {
-    let val = parseFloat(manualDiscount) || 0;
+  // `manualDiscountApplied` is the discount AFTER the caps, as the server should store it: the
+  // server recomputes a percentage manual discount on later item adds (subtotal × value%), so it
+  // must get the capped percent — and when the max-amount cap clipped a percentage, a flat amount
+  // (the server treats any manualDiscountType not starting with 'perc' as a fixed amount).
+  const manualDiscountApplied = (() => {
+    const val = parseFloat(manualDiscount) || 0;
     const maxPct = discountConfig.maxPct;
     const maxAmt = discountConfig.maxAmt;
     let amt;
+    let type = manualDiscountType;
+    let value;
     if (manualDiscountType === 'percentage') {
-      const pct = maxPct > 0 ? Math.min(val, maxPct) : val;
+      const pct = Math.max(0, maxPct > 0 ? Math.min(val, maxPct) : val);
       amt = Math.round((subtotal * pct / 100) * 100) / 100;
+      value = pct;
+      if (maxAmt > 0 && amt > maxAmt) { amt = maxAmt; type = 'flat'; value = maxAmt; }
     } else {
       amt = Math.min(val, subtotal);
+      if (maxAmt > 0) amt = Math.min(amt, maxAmt);
+      amt = Math.max(0, amt);
+      value = amt;
     }
-    if (maxAmt > 0) amt = Math.min(amt, maxAmt);
-    return Math.max(0, amt);
+    return { amount: Math.max(0, amt), type, value };
   })();
+  const manualDiscountAmount = manualDiscountApplied.amount;
 
   // Comp/void amounts — reported to the backend as audit metadata (compItems/voidItems).
   // Web parity: neither reduces the payable total here (web + backend charge full price and
@@ -567,11 +581,21 @@ export default function CartModal({
       .catch(() => setCustomerCoupons([]));
   }, [couponsEnabled, customerMobile, customerData, restaurantId]);
 
+  // True when the cashier applied any discount in this cart. A cart restored from a saved order
+  // starts with NO discounts (the order's own aren't reloaded here), so an add-items PATCH must
+  // not send zeros for them unless the cashier set discounts now — the server then keeps the
+  // order's own offer / manual / loyalty / coupon discounts.
+  // (A function: it reads values declared further down, evaluated when an order is submitted.)
+  const discountsChanged = () => offerDiscount > 0 || manualDiscountAmount > 0 || loyaltyDiscount > 0
+    || couponDiscountAmount > 0 || (redeemPoints || 0) > 0 || !!appliedCoupon
+    || selectedOfferIds.length > 0 || !!selectedOfferId;
+
   const buildDiscountData = () => ({
+    discountsChanged: discountsChanged(),
     offerDiscount,
     manualDiscountAmount,
-    manualDiscountType: manualDiscountAmount > 0 ? manualDiscountType : null,
-    manualDiscountValue: manualDiscountAmount > 0 ? (parseFloat(manualDiscount) || 0) : null,
+    manualDiscountType: manualDiscountAmount > 0 ? manualDiscountApplied.type : null,
+    manualDiscountValue: manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
     loyaltyDiscount,
     totalDiscount: billing.totalDiscount,
     redeemLoyaltyPoints: redeemPoints,
@@ -928,10 +952,13 @@ export default function CartModal({
 
   const proceedSendToKitchen = () => {
     const discountData = {
+      discountsChanged: discountsChanged(),
+      couponCode: appliedCoupon?.code || null,
+      couponId: appliedCoupon?.id || null,
       offerDiscount,
       manualDiscountAmount,
-      manualDiscountType: manualDiscountAmount > 0 ? manualDiscountType : null,
-      manualDiscountValue: manualDiscountAmount > 0 ? (parseFloat(manualDiscount) || 0) : null,
+      manualDiscountType: manualDiscountAmount > 0 ? manualDiscountApplied.type : null,
+      manualDiscountValue: manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
       loyaltyDiscount,
       totalDiscount: billing.totalDiscount,
       couponDiscount: couponDiscountAmount > 0 ? couponDiscountAmount : null,

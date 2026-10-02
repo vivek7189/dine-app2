@@ -1739,10 +1739,11 @@ export default function MenuScreen() {
           ...(discountData.selectedOfferIds?.length > 0 && { offerIds: discountData.selectedOfferIds }),
           ...(discountData.selectedOfferNames?.length > 0 && { selectedOfferName: discountData.selectedOfferNames.join(', ') }),
           ...(discountData.appliedOffers?.length > 0 && { appliedOffers: discountData.appliedOffers }),
-          ...(discountData.offerDiscount > 0 && { discountAmount: discountData.offerDiscount }),
-          ...(discountData.totalDiscount > 0 && { totalDiscount: discountData.totalDiscount }),
+          // offer / manual / loyalty / coupon / totalDiscountAmount — same contract as every other save
+          ...buildDiscountFields(discountData),
+          ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+          ...(discountData.couponId && { couponId: discountData.couponId }),
           ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
-          ...(discountData.loyaltyDiscount > 0 && { loyaltyDiscount: discountData.loyaltyDiscount }),
           ...(discountData.serviceChargeAmount > 0 && {
             serviceChargeAmount: discountData.serviceChargeAmount,
             serviceChargeRate: discountData.serviceChargeRate,
@@ -2046,6 +2047,7 @@ export default function MenuScreen() {
         // fires ONLY new/changed lines to the kitchen (remote / electron auto-print), never re-firing
         // already-sent items.
         const { items: deltaItems, removedItems: deltaRemoved } = buildUpdateDelta();
+        const sendDiscounts = discountData.discountsChanged !== false;
         const updateData = {
           items: deltaItems,
           ...(deltaRemoved.length ? { removedItems: deltaRemoved } : {}),
@@ -2053,17 +2055,23 @@ export default function MenuScreen() {
           status: 'confirmed',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
-          ...buildDiscountFields(discountData),
-          taxAmount: taxAmount,
+          // The restored cart doesn't carry the order's own discounts, so sending its (zero)
+          // discount fields wiped the order's manual / coupon / loyalty / offer discounts. Only
+          // send them when the cashier set discounts in the cart now; otherwise the server keeps
+          // the order's own and re-totals (finalAmount here would be the no-discount figure).
+          ...(sendDiscounts ? {
+            ...buildDiscountFields(discountData),
+            taxAmount: taxAmount,
+            offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
+            selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
+            redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
+            finalAmount: grandTotal,
+            ...(discountData.couponCode && { couponCode: discountData.couponCode }),
+            ...(discountData.couponId && { couponId: discountData.couponId }),
+          } : {}),
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
-          offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
-          selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-          redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
-          customerId: discountData.customerId || null,
-          finalAmount: grandTotal,
-          ...(discountData.couponCode && { couponCode: discountData.couponCode }),
-          ...(discountData.couponId && { couponId: discountData.couponId }),
+          ...((sendDiscounts || discountData.customerId) ? { customerId: discountData.customerId || null } : {}),
           ...billingFields,
           ...partialFields,
         };
@@ -2494,6 +2502,8 @@ export default function MenuScreen() {
       // Prepare invoice data for display
       const invoiceData = {
         orderId: response.order?.id,
+        // cart lines without their own tax flag follow the restaurant's setting (bill MRP + tax split)
+        taxInclusivePricing: taxSettings?.taxInclusivePricing === true,
         // "OFFLINE-xxxx" when saved offline (was blank), "513 (offline xxxx)" once synced.
         orderNumber: billNumberLabel(response?.order, { offlineKey: response?.offline ? response.idempotencyKey : null })
           || response.order?.dailyOrderId || response.order?.orderNumber || response.order?.id?.slice(-6),
@@ -2775,6 +2785,8 @@ export default function MenuScreen() {
         : response?.order;
       const invoiceData = {
         orderId: completedOrderId,
+        // cart lines without their own tax flag follow the restaurant's setting (bill MRP + tax split)
+        taxInclusivePricing: taxSettings?.taxInclusivePricing === true,
         orderNumber: billNumberLabel(billOrder, { offlineKey: response?.offline ? response.idempotencyKey : null })
           || billOrder?.dailyOrderId || response?.order?.orderNumber || completedOrderId?.slice(-6),
         restaurantName,
@@ -2930,6 +2942,8 @@ export default function MenuScreen() {
     try { const lu = await apiClient.getUser(); latestRestaurantInfo = lu?.restaurant || latestRestaurantInfo; } catch { /* use cached */ }
     const billInvoice = {
       orderNumber: '',
+      // cart lines without their own tax flag follow the restaurant's setting (bill MRP + tax split)
+      taxInclusivePricing: taxSettings?.taxInclusivePricing === true,
       restaurantName,
       restaurantInfo: latestRestaurantInfo,
       items: cart.map(item => ({

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
+import { deepMergeSettings, changedKeys, isPlainObject } from '../utils/settingsMerge';
 import { Colors, Spacing } from '../constants/Theme';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 
@@ -52,14 +53,27 @@ export default function BillingSettings({ restaurantId }) {
     loadSettings();
   }, [restaurantId]);
 
+  // What the server last showed (with defaults filled in) — a save sends only the keys that
+  // differ from it.
+  const baselineRef = useRef(DEFAULT_SETTINGS);
+  const settingsFrom = (response) => {
+    if (!response || typeof response !== 'object') return null;
+    // GET/PUT reply { settings }; very old servers used { billingSettings } or the bare object.
+    const raw = isPlainObject(response.settings) ? response.settings
+      : isPlainObject(response.billingSettings) ? response.billingSettings
+      : (response.settings === undefined && response.billingSettings === undefined ? response : null);
+    return isPlainObject(raw) ? raw : null;
+  };
+
   const loadSettings = async () => {
     if (!restaurantId) return;
     try {
       const response = await apiClient.getBillingSettings(restaurantId);
-      if (response && response.billingSettings) {
-        setSettings({ ...DEFAULT_SETTINGS, ...response.billingSettings });
-      } else if (response && !response.billingSettings) {
-        setSettings({ ...DEFAULT_SETTINGS, ...response });
+      const loaded = settingsFrom(response);
+      if (loaded) {
+        const next = { ...DEFAULT_SETTINGS, ...loaded };
+        baselineRef.current = next;
+        setSettings(next);
       }
     } catch (error) {
       console.error('Error loading billing settings:', error);
@@ -68,11 +82,25 @@ export default function BillingSettings({ restaurantId }) {
     }
   };
 
+  // Send only what changed, merged onto a FRESH server copy, as a full object: the new backend
+  // merges partial bodies, an old one replaces billingSettings with the body — both keep the rest.
+  // (Defaults shown on screen are never pushed over real settings.)
   const saveSettings = async (updated) => {
     if (!restaurantId) return;
+    const change = changedKeys(baselineRef.current, updated);
+    if (Object.keys(change).length === 0) return;
     setSaving(true);
     try {
-      await apiClient.updateBillingSettings(restaurantId, updated);
+      let fresh = null;
+      try { fresh = settingsFrom(await apiClient.getBillingSettingsFresh(restaurantId)); } catch (e) {
+        console.warn('Billing settings fresh read failed, sending only the changed keys:', e?.message);
+      }
+      const body = fresh ? deepMergeSettings(fresh, change) : change;
+      // Reply-only / audit fields never go back to the server.
+      delete body.hasManagerPin; delete body.updatedAt;
+      const res = await apiClient.updateBillingSettings(restaurantId, body);
+      const saved = settingsFrom(res);
+      baselineRef.current = { ...DEFAULT_SETTINGS, ...(saved && Object.keys(saved).length > 1 ? saved : { ...baselineRef.current, ...body }) };
     } catch (error) {
       console.error('Error saving billing settings:', error);
       Alert.alert('Error', 'Failed to save billing settings');

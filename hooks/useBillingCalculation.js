@@ -96,7 +96,17 @@ export function computeTaxBreakdown({
   // tax-inclusive ₹30 water on an exclusive-5% restaurant showed/printed ₹31.50 while ₹30 saved.
   const globalInclusive = taxSettings?.taxInclusivePricing === true;
   const hasPerItemInclusiveOverride = cart.some(it => typeof it?.taxInclusive === 'boolean' && it.taxInclusive !== globalInclusive);
-  if ((hasTaxGroups || hasPerItemInclusiveOverride) && cart.length > 0) {
+  // A non-discountable item keeps its full price as tax base (the backend spreads the discount only
+  // over discountable items, each capped at its own price) — the flat path below would tax the
+  // whole cart on subtotal − discount, so such carts must go per item.
+  const hasNonDiscountable = cart.some(it => it?.discountApplicable === false);
+  if ((hasTaxGroups || hasPerItemInclusiveOverride || hasNonDiscountable) && cart.length > 0) {
+    // Mirrors backend calculatePerItemTax exactly: the discount is shared only among discountable
+    // items, each item's taxable amount floors at 0 (a discount larger than the discountable items
+    // is NOT moved onto the others — the excess only lowers the bill total, not the tax base), and
+    // service charge is spread by each item's taxable amount over (cart subtotal − full discount).
+    const cartSubtotal = cart.reduce((sum, cartItem) => sum + (cartItem.price || 0) * (cartItem.quantity || 1), 0);
+    const postDiscountSubtotal = Math.max(0, cartSubtotal - totalDiscount);
     const discountableSubtotal = cart.reduce((sum, cartItem) => {
       if (cartItem.discountApplicable === false) return sum;
       return sum + (cartItem.price || 0) * (cartItem.quantity || 1);
@@ -110,7 +120,9 @@ export function computeTaxBreakdown({
         ? (itemTotal / discountableSubtotal) * totalDiscount
         : 0;
       const itemTaxable = Math.max(0, itemTotal - itemDiscShare);
-      const itemSCShare = discountedSubtotal > 0 ? (Math.max(0, itemTotal - itemDiscShare) / discountedSubtotal) * serviceChargeAmount : 0;
+      const itemSCShare = postDiscountSubtotal > 0
+        ? (itemTaxable / postDiscountSubtotal) * (serviceChargeAmount || 0)
+        : (cartSubtotal > 0 ? (itemTotal / cartSubtotal) * (serviceChargeAmount || 0) : 0);
       const itemTaxableWithSC = itemTaxable + itemSCShare;
       const itemTaxes = resolveTaxesForItem(cartItem, taxSettings, categories)
         .filter(tax => taxAppliesToOrderType(tax, orderType));

@@ -2206,7 +2206,16 @@ export default function TablesScreen() {
               ...(sd.partialPayAmount != null ? { partialPayAmount: sd.partialPayAmount } : {}),
               ...(sd.paidAmount != null ? { paidAmount: sd.paidAmount } : {}),
               ...(sd.outstandingAmount != null ? { outstandingAmount: sd.outstandingAmount } : {}),
-              // Preserve existing amounts (tip may raise finalAmount)
+              // Preserve existing amounts (tip may raise finalAmount). The server reads
+              // `subtotal || totalAmount` as the PRE-discount subtotal when vetting this bill —
+              // totalAmount is post-discount, so send the order's subtotal (else its items' sum).
+              ...(() => {
+                const sub = Number(order.subtotal) > 0 ? Number(order.subtotal)
+                  : (Array.isArray(order.items) && order.items.length
+                    ? Math.round(order.items.reduce((s, i) => s + (typeof i?.total === 'number' ? i.total : (Number(i?.price) || 0) * (Number(i?.quantity) || 1)), 0) * 100) / 100
+                    : 0);
+                return sub > 0 ? { subtotal: sub } : {};
+              })(),
               ...(order.totalAmount && { totalAmount: order.totalAmount }),
               ...((sd.finalAmount != null || order.finalAmount) && { finalAmount: settleFinal }),
               ...(order.taxAmount && { taxAmount: order.taxAmount }),

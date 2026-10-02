@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
+import { deepMergeSettings, isPlainObject } from '../utils/settingsMerge';
 import { Colors, Spacing, BorderRadius } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 
@@ -55,8 +56,9 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     setDiscountsEnabled(ds.enabled || false);
     setAllowManualDiscount(ds.allowManualDiscount !== false);
     setDiscountRoles(Array.isArray(ds.manualDiscountRoles) && ds.manualDiscountRoles.length ? ds.manualDiscountRoles : ['owner']);
-    const pct = ds.maxDiscountPercent ?? ds.maxPercentDiscount;
-    const amt = ds.maxDiscountAmount ?? ds.maxFlatDiscount;
+    // null = limit cleared; the legacy key is read only when the new one was never written.
+    const pct = ds.maxDiscountPercent !== undefined ? ds.maxDiscountPercent : ds.maxPercentDiscount;
+    const amt = ds.maxDiscountAmount !== undefined ? ds.maxDiscountAmount : ds.maxFlatDiscount;
     setMaxPercentDiscount(pct != null ? String(pct) : '');
     setMaxFlatDiscount(amt != null ? String(amt) : '');
   };
@@ -120,28 +122,49 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     }
   };
 
-  // Save ONLY the keys this screen changed — the server merges a partial taxSettings body into
-  // the saved settings (discountSettings key by key). Sending the whole local object wiped what
-  // this screen doesn't manage (taxInclusivePricing, additionalCharges, OTP approval, …).
-  // defaultTaxRate is not written here (it used to be overwritten with the SUM of all rates).
+  // Save the keys this screen changed so that BOTH backends keep everything else:
+  //  • new backend: PUT deep-merges a partial taxSettings into the saved settings;
+  //  • old backend: PUT requires `taxes` and REPLACES the whole taxSettings with the body.
+  // So: fetch a FRESH copy (no cache) right before saving, deep-merge the changed keys onto it and
+  // send the FULL merged object (taxInclusivePricing, additionalCharges, OTP approval, … survive).
+  // Whenever `taxes` change, defaultTaxRate = sum of the enabled rates (0 when none) — the server
+  // falls back to defaultTaxRate when taxes is an empty array, so deleting the last tax must zero it.
+  // Clearing a max-discount limit (null) also clears the legacy key, else readers fell back to it.
   const savePatch = async (patch, { successMessage = 'Tax settings saved successfully', errorMessage = 'Failed to save tax settings' } = {}) => {
     if (!restaurantId) return;
 
     setSaving(true);
     try {
-      const res = await apiClient.updateTaxSettings(restaurantId, patch);
-
-      // The server answers with the merged settings; fall back to merging onto the cached copy.
-      let full = res && res.taxSettings && typeof res.taxSettings === 'object' ? res.taxSettings : null;
-      if (!full) {
-        let cached = {};
-        try { cached = JSON.parse(await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`) || '{}') || {}; } catch (_) { cached = {}; }
-        full = {
-          ...cached,
-          ...patch,
-          ...(patch.discountSettings ? { discountSettings: { ...(cached.discountSettings || {}), ...patch.discountSettings } } : {}),
-        };
+      const change = { ...patch };
+      if (Array.isArray(change.taxes)) {
+        const sum = change.taxes.filter(t => t && t.enabled !== false).reduce((s, t) => s + (Number(t.rate) || 0), 0);
+        change.defaultTaxRate = Math.round(sum * 10000) / 10000;
       }
+      if (change.discountSettings && typeof change.discountSettings === 'object') {
+        const ds = { ...change.discountSettings };
+        if (ds.maxDiscountPercent === null) ds.maxPercentDiscount = null;
+        if (ds.maxDiscountAmount === null) ds.maxFlatDiscount = null;
+        change.discountSettings = ds;
+      }
+
+      let cached = {};
+      try { cached = JSON.parse(await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`) || '{}') || {}; } catch (_) { cached = {}; }
+      let fresh = null;
+      try {
+        const r = await apiClient.getTaxSettingsFresh(restaurantId);
+        if (r && isPlainObject(r.taxSettings)) fresh = r.taxSettings;
+      } catch (e) {
+        console.warn('Tax settings fresh read failed, merging onto the cached copy:', e?.message);
+      }
+      const base = fresh || (isPlainObject(cached) ? cached : {});
+      const merged = deepMergeSettings(base, change);
+      delete merged.updatedAt; delete merged.updatedBy;
+      if (!Array.isArray(merged.taxes)) merged.taxes = []; // old backend requires `taxes`
+
+      const res = await apiClient.updateTaxSettings(restaurantId, merged);
+
+      // New backend answers with the full merged settings; else keep what we sent.
+      const full = res && isPlainObject(res.taxSettings) && Array.isArray(res.taxSettings.taxes) ? res.taxSettings : merged;
 
       await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(full));
       if (onTaxSettingsChange) onTaxSettingsChange(full);

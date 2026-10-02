@@ -790,12 +790,18 @@ class ApiClient {
 
     // Manager PIN hash (for offline validation)
     await seed('managerPin', () => this.request(`/api/restaurants/${restaurantId}/billing-settings`), (data) => {
-      const bs = data?.billingSettings || data;
-      if (bs?.managerPin) {
+      // GET replies { settings }. The server sends the plaintext managerPin only to people who
+      // manage billing settings (owner/manager) — everyone else gets hasManagerPin instead, so
+      // offline PIN checks work only on a manager's/owner's device; nothing to cache otherwise.
+      const bs = data?.settings || data?.billingSettings || data;
+      if (bs && typeof bs.managerPin === 'string' && bs.managerPin) {
         const Crypto = require('expo-crypto');
         Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, String(bs.managerPin))
           .then(hash => setMeta('manager_pin_hash', hash))
           .catch(() => {});
+      } else if (bs && (bs.hasManagerPin === false || bs.managerPin === '')) {
+        // The restaurant has no PIN any more — drop a hash cached earlier on this device.
+        try { setMeta('manager_pin_hash', ''); } catch (_) {}
       }
     });
 
@@ -2415,6 +2421,12 @@ class ApiClient {
     });
   }
 
+  // Uncached read straight from the server — used right before a save, which merges the
+  // changed keys onto it (an old backend replaces the whole taxSettings with the PUT body).
+  async getTaxSettingsFresh(restaurantId) {
+    return this.request(`/api/admin/tax/${restaurantId}`, { method: 'GET' });
+  }
+
   // Update tax settings for a restaurant
   async updateTaxSettings(restaurantId, taxSettings) {
     const result = await this.request(`/api/admin/tax/${restaurantId}`, {
@@ -3119,6 +3131,11 @@ class ApiClient {
       localRead: () => offlineStore.getBillingSettings(restaurantId),
       onFetched: (data) => offlineStore.saveBillingSettings(restaurantId, data),
     });
+  }
+
+  // Uncached read (GET replies { settings }) — used right before a save, see getTaxSettingsFresh.
+  async getBillingSettingsFresh(restaurantId) {
+    return this.request(`/api/restaurants/${restaurantId}/billing-settings`, { method: 'GET' });
   }
 
   async updateBillingSettings(restaurantId, settings) {
