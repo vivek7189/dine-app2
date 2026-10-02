@@ -11,7 +11,8 @@ const isZoneRule = (rule) => !CHANNEL_NAMES.includes((rule?.name || '').toLowerC
 const findDineInRule = (rules) => (rules || []).find(r => r.isActive && DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
 
 // Resolve a variant's unit price for the active pricing rule:
-//   per-variant tier price → (zone rule) inherit variant Dine-In price → variant base price.
+//   per-variant tier price → (zone rule) inherit variant Dine-In price → rule default markup →
+//   variant base price.
 // Returns null only when `variant` is falsy; otherwise always a number (falls back to base).
 export function resolveVariantTierPrice(variant, activeRuleId, rules) {
   if (!variant) return null;
@@ -23,6 +24,13 @@ export function resolveVariantTierPrice(variant, activeRuleId, rules) {
   if (rule && isZoneRule(rule)) {
     const di = findDineInRule(rules);
     if (di && typeof variant.pricingRules?.[di.id] === 'number') return variant.pricingRules[di.id];
+  }
+  // Rule default markup off the variant's base price (backend resolveItemPriceForRule, variant branch)
+  if (rule?.defaultMarkupType === 'percentage' && rule.defaultMarkupValue) {
+    return Math.round(base * (1 + rule.defaultMarkupValue / 100) * 100) / 100;
+  }
+  if (rule?.defaultMarkupType === 'flat' && rule.defaultMarkupValue) {
+    return Math.round((base + rule.defaultMarkupValue) * 100) / 100;
   }
   return base;
 }

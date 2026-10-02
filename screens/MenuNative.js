@@ -809,8 +809,10 @@ export default function MenuScreen() {
         (async () => {
           try {
             const bRes = await apiClient.getBillingSettings(rid);
-            if (bRes) setBillingSettings(bRes.billingSettings || bRes || {});
-          } catch { /* ignore */ }
+            // GET returns { settings } (legacy { billingSettings } / bare object kept as fallback);
+            // an error body must not replace the settings already loaded.
+            if (bRes && !bRes.error) setBillingSettings(bRes.settings || bRes.billingSettings || bRes || {});
+          } catch { /* 403 (role can't read billing settings) / offline — keep current settings */ }
         })(),
         loadMenu(rid),
         (async () => {
@@ -1088,9 +1090,15 @@ export default function MenuScreen() {
       // total and payload consistent when switching DINE IN/TAKEAWAY/DELIVERY. Falls back to
       // the stored variant price when the variant has no per-tier prices.
       if (item.selectedVariant && item.selectedVariant.price != null) {
-        const freshVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name) || item.selectedVariant;
+        const menuVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name);
+        const freshVariant = menuVariant || item.selectedVariant;
         const vBase = typeof freshVariant?.price === 'number' ? freshVariant.price : item.selectedVariant.price;
-        const vPrice = resolveVariantTierPrice(freshVariant, activePricingRuleId, pricingRules);
+        // Only re-resolve from the MENU variant (its base price). The stored line variant already
+        // holds a tier-resolved price — resolving that again would stack the rule's default markup
+        // on every re-run of this effect.
+        const vPrice = menuVariant
+          ? resolveVariantTierPrice(menuVariant, activePricingRuleId, pricingRules)
+          : item.selectedVariant.price;
         // Cart line price (item.price) is a per-unit total incl. customization extras — mirror how
         // addToCart stores finalPrice — so CartModal's displayed price matches getEffectiveItemPrice
         // (which reads selectedVariant.price + extras).
@@ -1137,8 +1145,11 @@ export default function MenuScreen() {
           }
         }
       }
-      // customised lines total from basePrice (+ add-ons) — keep it in step with the new zone price
-      return { ...item, price: newPrice, originalPrice: basePrice, ...(item.cartId ? { basePrice: newPrice } : {}), appliedPricingRuleId: activePricingRuleId || null };
+      // customised lines total from basePrice (+ add-ons) — keep it in step with the new zone price;
+      // the line price keeps its add-ons (like addToCart's finalPrice) so the cart row matches
+      // getEffectiveItemPrice / the saved line instead of dropping to the bare tier price.
+      const lineExtras = item.cartId ? (resolveCustomizationExtras(item.selectedCustomizations, menuItem) || 0) : 0;
+      return { ...item, price: newPrice + lineExtras, originalPrice: basePrice, ...(item.cartId ? { basePrice: newPrice } : {}), appliedPricingRuleId: activePricingRuleId || null };
     }));
     // menuItems + pricingRules are in the deps so the cart re-prices as soon as the
     // menu/pricing data (which loads asynchronously on focus) arrives — otherwise a
@@ -1184,6 +1195,9 @@ export default function MenuScreen() {
         // dashboard/page.js:3077). Without it an item-level-inclusive item on a global-EXCLUSIVE
         // restaurant would show tax added on top while the backend saves it inclusive.
         ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+        // per-item discount exclusion + HSN (tax split / bill) — same fields the web cart carries
+        ...(item.discountApplicable === false ? { discountApplicable: false } : {}),
+        ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
         pricingRules: item.pricingRules || null,
         isStockManaged: item.isStockManaged || false,
         stockQuantity: item.stockQuantity,
@@ -1213,6 +1227,8 @@ export default function MenuScreen() {
           categoryId: item.categoryId || item.category || null,
           taxGroupId: item.taxGroupId || null,
           ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+          ...(item.discountApplicable === false ? { discountApplicable: false } : {}),
+          ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
           pricingRules: item.pricingRules || null,
           isStockManaged: item.isStockManaged || false,
           stockQuantity: item.stockQuantity,
@@ -1240,6 +1256,9 @@ export default function MenuScreen() {
         categoryId: item.categoryId || item.category || null,
         taxGroupId: item.taxGroupId || null,
         ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+        // per-item discount exclusion + HSN (tax split / bill) — same fields the web cart carries
+        ...(item.discountApplicable === false ? { discountApplicable: false } : {}),
+        ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
         pricingRules: item.pricingRules || null,
         isStockManaged: item.isStockManaged || false,
         stockQuantity: item.stockQuantity,
@@ -1348,7 +1367,7 @@ export default function MenuScreen() {
   // a partial chain is what caused the cart line (₹60 tier) and the total/tax (₹50 base)
   // to diverge — so we deliberately DON'T re-resolve; the line, subtotal, tax and the
   // per-item order/print payload all read the same item.price.
-  const getEffectiveItemPrice = (item) => {
+  const getEffectiveItemPrice = useCallback((item) => {
     let base;
     const hasCustomizations = Array.isArray(item?.selectedCustomizations) && item.selectedCustomizations.length > 0;
     if (item?.priceEdited === true && typeof item?.price === 'number') {
@@ -1374,7 +1393,7 @@ export default function MenuScreen() {
     const freshMenuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
     const extras = resolveCustomizationExtras(item?.selectedCustomizations, freshMenuItem);
     return (base || 0) + (extras || 0);
-  };
+  }, [menuItems, multiPricingEnabled, activePricingRuleId, getItemDisplayPrice]);
 
   // Builds a standardized item payload for all API calls (POST/PATCH)
   const buildItemPayload = (item) => {
@@ -1392,6 +1411,7 @@ export default function MenuScreen() {
       // Carry per-item tax fields onto the order (bill/reports) — mirrors web
       ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
       ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
+      ...(item.discountApplicable === false ? { discountApplicable: false } : {}),
       selectedVariant: item.selectedVariant || null,
       selectedCustomizations: Array.isArray(item.selectedCustomizations) ? item.selectedCustomizations : [],
       basePrice: typeof item.originalPrice === 'number' ? item.originalPrice : item.price,
@@ -1400,6 +1420,37 @@ export default function MenuScreen() {
       ...(item.priceEdited === true ? { priceEdited: true } : {}),
       ...(item.isCustomItem ? { isCustomItem: true } : {}),
       ...(item.isStockManaged ? { isStockManaged: true, stockQuantity: item.stockQuantity } : {}),
+    };
+  };
+
+  // Printed bill line: the EFFECTIVE unit price (tier/variant + add-ons) — the same number the
+  // server saves — plus the per-item tax flag and HSN for the inclusive split / HSN line.
+  const invoiceLinePrice = (item) => {
+    const unit = getEffectiveItemPrice(item);
+    return {
+      price: unit,
+      total: Math.round(unit * (item.quantity || 1) * 100) / 100,
+      ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+      ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
+    };
+  };
+
+  // Discount fields for an order save — same contract as the web dashboard: discountAmount /
+  // offerDiscount = OFFER part only, totalDiscountAmount = offer + manual + loyalty + coupon, the
+  // other parts as their own numbers. (Sending the whole discount as discountAmount next to
+  // manual/loyalty/coupon made the server count those twice.)
+  const buildDiscountFields = (dd = {}) => {
+    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+    const offer = r2(dd.offerDiscount);
+    return {
+      discountAmount: offer,
+      offerDiscount: offer,
+      totalDiscountAmount: r2(dd.totalDiscount),
+      manualDiscount: r2(dd.manualDiscountAmount),
+      ...(dd.manualDiscountType ? { manualDiscountType: dd.manualDiscountType } : {}),
+      ...(dd.manualDiscountValue != null ? { manualDiscountValue: dd.manualDiscountValue } : {}),
+      loyaltyDiscount: r2(dd.loyaltyDiscount),
+      couponDiscount: r2(dd.couponDiscount),
     };
   };
 
@@ -1945,20 +1996,17 @@ export default function MenuScreen() {
           paymentStatus: partialFields.paymentStatus || 'paid',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
-          discountAmount: totalDiscount,
-          loyaltyDiscount: discountData.loyaltyDiscount || 0,
+          ...buildDiscountFields(discountData),
           taxAmount: discountData.totalTax || taxAmount,
           finalAmount: discountData.grandTotal || grandTotal,
           completedAt: new Date().toISOString(),
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-          manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
           pricingRuleId: activePricingRuleId || null,
           ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
-          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
           ...(discountData.couponCode && { couponCode: discountData.couponCode }),
           ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
@@ -2005,18 +2053,15 @@ export default function MenuScreen() {
           status: 'confirmed',
           paymentMethod: billingFields.paymentMethod || paymentMethod,
           totalAmount: subtotal,
-          discountAmount: totalDiscount,
-          loyaltyDiscount: discountData.loyaltyDiscount || 0,
+          ...buildDiscountFields(discountData),
           taxAmount: taxAmount,
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-          manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
           finalAmount: grandTotal,
-          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
           ...(discountData.couponCode && { couponCode: discountData.couponCode }),
           ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
@@ -2169,20 +2214,17 @@ export default function MenuScreen() {
             waiterName: user?.name || 'Manager',
           },
           totalAmount: subtotal,
-          discountAmount: totalDiscount,
-          loyaltyDiscount: discountData.loyaltyDiscount || 0,
+          ...buildDiscountFields(discountData),
           taxAmount: taxAmount,
           ...(customerName && { customerInfo: { name: customerName, phone: customerMobile, floorName: selectedTable?.floor || '' } }),
           ...(customerMobile && { customerPhone: customerMobile }),
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-          manualDiscount: discountData.manualDiscountAmount || 0,
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
           customerId: discountData.customerId || null,
           pricingRuleId: activePricingRuleId || null,
           finalAmount: grandTotal,
           // Coupon fields
-          ...(discountData.couponDiscount && { couponDiscount: discountData.couponDiscount }),
           ...(discountData.couponCode && { couponCode: discountData.couponCode }),
           ...(discountData.couponId && { couponId: discountData.couponId }),
           ...billingFields,
@@ -2400,6 +2442,8 @@ export default function MenuScreen() {
           phone: customerMobile || '',
         },
         subtotal: subtotal,
+        // the server's subtotal sanity check reads totalAmount (pre-discount items total)
+        totalAmount: subtotal,
         tax: taxAmount,
         taxRate: taxRate,
         ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
@@ -2408,13 +2452,10 @@ export default function MenuScreen() {
         // Discount/loyalty data
         ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
         selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-        ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         ...(customerMobile && { customerPhone: customerMobile }),
         customerId: discountData.customerId || null,
-        discountAmount: totalDiscount,
-        loyaltyDiscount: discountData.loyaltyDiscount || 0,
-        ...(discountData.couponDiscount > 0 && { couponDiscount: discountData.couponDiscount }),
+        ...buildDiscountFields(discountData),
         ...(discountData.couponCode && { couponCode: discountData.couponCode }),
         ...(discountData.couponId && { couponId: discountData.couponId }),
         pricingRuleId: activePricingRuleId || null,
@@ -2461,8 +2502,7 @@ export default function MenuScreen() {
         items: cart.map(item => ({
           name: item.name,
           quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity,
+          ...invoiceLinePrice(item),
           selectedVariant: item.selectedVariant || null,
           selectedCustomizations: item.selectedCustomizations || [],
           notes: item.notes || '',
@@ -2660,6 +2700,8 @@ export default function MenuScreen() {
         },
         ...(customerMobile && { customerPhone: customerMobile }),
         subtotal,
+        // the server's subtotal sanity check reads totalAmount (pre-discount items total)
+        totalAmount: subtotal,
         tax: taxAmount,
         taxRate,
         ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
@@ -2668,13 +2710,10 @@ export default function MenuScreen() {
         completedAt: new Date().toISOString(),
         ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
         selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
-        ...(discountData.manualDiscountAmount > 0 && { manualDiscount: discountData.manualDiscountAmount }),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
         customerId: discountData.customerId || null,
-        discountAmount: totalDiscount,
-        loyaltyDiscount: discountData.loyaltyDiscount || 0,
+        ...buildDiscountFields(discountData),
         pricingRuleId: activePricingRuleId || null,
-        ...(discountData.couponDiscount > 0 && { couponDiscount: discountData.couponDiscount }),
         ...(discountData.couponCode && { couponCode: discountData.couponCode }),
         ...(discountData.couponId && { couponId: discountData.couponId }),
         ...billingFields,
@@ -2743,8 +2782,7 @@ export default function MenuScreen() {
         items: cart.map(item => ({
           name: item.name,
           quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity,
+          ...invoiceLinePrice(item),
           selectedVariant: item.selectedVariant || null,
           selectedCustomizations: item.selectedCustomizations || [],
           notes: item.notes || '',
@@ -2895,8 +2933,8 @@ export default function MenuScreen() {
       restaurantName,
       restaurantInfo: latestRestaurantInfo,
       items: cart.map(item => ({
-        name: item.name, quantity: item.quantity, price: item.price,
-        total: item.price * item.quantity,
+        name: item.name, quantity: item.quantity,
+        ...invoiceLinePrice(item),
         selectedVariant: item.selectedVariant || null,
         selectedCustomizations: item.selectedCustomizations || [],
         notes: item.notes || '',
@@ -2963,7 +3001,15 @@ export default function MenuScreen() {
     // (e.g. offline / failed), fall back to the normal navigation so nothing gets stuck.
     const oid = placedOrderIdRef.current;
     if (oid) {
-      setKotBillSettle({ orderId: oid, amount: grandTotal, wasTable, tableParams });
+      // the order's discounts travel with the settle PATCH (a completion PATCH without them left
+      // the server to guess — older servers dropped them from the completed order)
+      const offerIds = discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []);
+      const discountFields = {
+        offerIds,
+        ...buildDiscountFields(discountData),
+        ...(discountData.redeemLoyaltyPoints > 0 ? { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints } : {}),
+      };
+      setKotBillSettle({ orderId: oid, amount: grandTotal, wasTable, tableParams, discountFields });
     } else {
       if (wasTable) afterModalClose(() => router.replace({ pathname: '/(tabs)/tables', params: { ...tableParams, orderId: oid || '' } }));
       else afterModalClose(() => router.push('/(tabs)/orders'));
@@ -2981,7 +3027,7 @@ export default function MenuScreen() {
   const handleKotBillSettleConfirm = async (method) => {
     if (!kotBillSettle?.orderId || kotBillSettling) return;
     setKotBillSettling(true);
-    const { orderId: oid, amount } = kotBillSettle;
+    const { orderId: oid, amount, discountFields } = kotBillSettle;
     try {
       // This phone already printed the bill (KOT+Bill) → with the opt-in on, the desktop shouldn't
       // print it again when the order completes. Only when that print actually succeeded.
@@ -2994,6 +3040,7 @@ export default function MenuScreen() {
       await apiClient.updateOrder(oid, {
         status: 'completed', paymentStatus: 'paid', paymentMethod: method,
         finalAmount: amount, completedAt: new Date().toISOString(),
+        ...(discountFields || {}),
         ...billClaims,
       });
       kotBillPrintRef.current = null;
@@ -3017,8 +3064,11 @@ export default function MenuScreen() {
     setSendingOrder(true);
     try {
       const subtotal = getCartTotal();
-      const { taxAmount } = calculateTax(subtotal);
-      const grandTotal = subtotal + taxAmount;
+      // packaging etc. for a dine-in tab — same resolver as the bill / backend
+      const addlTab = resolveAdditionalCharges(taxSettings, 'dine-in', subtotal);
+      const { taxAmount: itemTax } = calculateTax(subtotal + addlTab.foldTaxableTotal, 'dine-in');
+      const taxAmount = Math.round((itemTax + addlTab.ownTaxTotal) * 100) / 100;
+      const grandTotal = Math.round((subtotal + addlTab.total + taxAmount) * 100) / 100;
 
       if (existingOrderId) {
         // Update existing tab
@@ -3031,21 +3081,19 @@ export default function MenuScreen() {
           taxAmount: taxAmount,
           finalAmount: grandTotal,
           status: 'saved',
+          pricingRuleId: activePricingRuleId || null,
         });
       } else {
         // Create new tab
         await apiClient.createOrder({
           restaurantId,
           tableNumber: selectedTable?.name || 'Tab',
-          items: cart.map(item => ({
-            menuItemId: item.menuItemId || item.id,
-            name: item.name,
-            price: item.price,
-            quantity: item.quantity,
-          })),
+          // same full line payload as every other flow (variant / add-ons / base price / tax flags)
+          items: cart.map(buildItemPayload),
           orderType: 'dine-in',
           paymentMethod: 'cash',
           status: 'saved',
+          pricingRuleId: activePricingRuleId || null,
           totalAmount: subtotal,
           taxAmount: taxAmount,
           finalAmount: grandTotal,
@@ -3930,6 +3978,7 @@ export default function MenuScreen() {
         visible={showCart}
         onClose={() => setShowCart(false)}
         cart={cart}
+        getItemPrice={getEffectiveItemPrice}
         onUpdateQuantity={updateCartQuantity}
         onRemoveItem={removeFromCart}
         onEditItemPrice={editCartItemPrice}
@@ -4054,6 +4103,7 @@ export default function MenuScreen() {
         multiPricingEnabled={multiPricingEnabled}
         activePricingRuleId={activePricingRuleId}
         pricingRules={pricingRules}
+        resolveItemPrice={getItemDisplayPrice}
       />
 
       {/* Floating Category FAB - bottom right, above checkout bar */}

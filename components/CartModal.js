@@ -61,6 +61,7 @@ export default function CartModal({
   visible,
   onClose,
   cart,
+  getItemPrice,           // parent's effective unit price resolver (tier/variant + add-ons)
   onUpdateQuantity,
   onRemoveItem,
   onPlaceOrder,
@@ -458,6 +459,15 @@ export default function CartModal({
   }, [visible]);
 
   const subtotal = total;
+  // Cart lines priced exactly like the subtotal (tier/variant price + add-ons) for the tax and
+  // offer calculations — a raw line can still hold the base menu price (no add-ons), so per-item
+  // tax / item-targeted offers drifted from the subtotal and from what the server saves.
+  const pricedCart = useMemo(() => (typeof getItemPrice === 'function'
+    ? cart.map(it => {
+      const unit = Number(getItemPrice(it)) || 0;
+      return { ...it, price: unit, total: Math.round(unit * (it.quantity || 1) * 100) / 100 };
+    })
+    : cart), [cart, getItemPrice]);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   // Manual-discount config — web is the source of truth: it reads
@@ -472,8 +482,9 @@ export default function CartModal({
       ? (ds.enabled !== false && ds.allowManualDiscount !== false)
       : (billingSettings.manualDiscountEnabled !== false);
     const roles = ds.manualDiscountRoles ?? billingSettings.manualDiscountRoles;
-    const maxPct = Number(ds.maxDiscountPercent ?? billingSettings.maxDiscountPercent) || 0;
-    const maxAmt = Number(ds.maxDiscountAmount ?? billingSettings.maxDiscountAmount) || 0;
+    // (maxPercentDiscount / maxFlatDiscount = names older app builds wrote from Tax Settings)
+    const maxPct = Number(ds.maxDiscountPercent ?? ds.maxPercentDiscount ?? billingSettings.maxDiscountPercent) || 0;
+    const maxAmt = Number(ds.maxDiscountAmount ?? ds.maxFlatDiscount ?? billingSettings.maxDiscountAmount) || 0;
     return { enabled, roles, maxPct, maxAmt };
   })();
 
@@ -559,6 +570,8 @@ export default function CartModal({
   const buildDiscountData = () => ({
     offerDiscount,
     manualDiscountAmount,
+    manualDiscountType: manualDiscountAmount > 0 ? manualDiscountType : null,
+    manualDiscountValue: manualDiscountAmount > 0 ? (parseFloat(manualDiscount) || 0) : null,
     loyaltyDiscount,
     totalDiscount: billing.totalDiscount,
     redeemLoyaltyPoints: redeemPoints,
@@ -570,7 +583,7 @@ export default function CartModal({
       ? selectedOffers.map(offer => ({
           id: offer.id || offer._id,
           name: offer.name,
-          discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
+          discountApplied: calculateOfferResult(offer, subtotal, pricedCart, {})?.discount || 0,
         }))
       : (selectedOffer && offerDiscount > 0
           ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]
@@ -686,7 +699,7 @@ export default function CartModal({
     resetOffers,
   } = useOfferEngine({
     restaurantId,
-    cart,
+    cart: pricedCart,
     subtotal,
     customerContext,
     options: {},
@@ -738,7 +751,7 @@ export default function CartModal({
     taxSettings,
     billingSettings: effectiveBillingSettings,
     tipAmount,
-    cart,
+    cart: pricedCart,
     categories,
     defaultTaxName,
     orderType,
@@ -917,8 +930,11 @@ export default function CartModal({
     const discountData = {
       offerDiscount,
       manualDiscountAmount,
+      manualDiscountType: manualDiscountAmount > 0 ? manualDiscountType : null,
+      manualDiscountValue: manualDiscountAmount > 0 ? (parseFloat(manualDiscount) || 0) : null,
       loyaltyDiscount,
       totalDiscount: billing.totalDiscount,
+      couponDiscount: couponDiscountAmount > 0 ? couponDiscountAmount : null,
       redeemLoyaltyPoints: redeemPoints,
       selectedOfferId,
       selectedOfferIds: selectedOfferIds.length > 0 ? selectedOfferIds : (selectedOfferId ? [selectedOfferId] : []),
@@ -928,7 +944,7 @@ export default function CartModal({
         ? selectedOffers.map(offer => ({
             id: offer.id || offer._id,
             name: offer.name,
-            discountApplied: calculateOfferResult(offer, subtotal, cart, {})?.discount || 0,
+            discountApplied: calculateOfferResult(offer, subtotal, pricedCart, {})?.discount || 0,
           }))
         : (selectedOffer && offerDiscount > 0
             ? [{ id: selectedOfferId, name: selectedOffer.name, discountApplied: offerDiscount }]

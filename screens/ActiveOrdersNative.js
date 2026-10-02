@@ -20,6 +20,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 import { formatCurrency } from '../utils/formatCurrency';
 import { roleCan } from '../utils/permissions';
+import { savedOrderPrintItems, savedOrderPrintExtras } from '../utils/savedOrderInvoice';
 
 const FILTER_TABS = [
   { key: 'all', label: 'All' },
@@ -292,13 +293,7 @@ export default function ActiveOrdersNative() {
       orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
       restaurantName: restaurant?.name || '',
       restaurantInfo: restaurant || {},
-      items: (order.items || []).map(i => ({
-        name: i.name, quantity: i.quantity || 1, price: i.price || 0,
-        total: (i.price || 0) * (i.quantity || 1),
-        selectedVariant: i.selectedVariant || null,
-        selectedCustomizations: i.selectedCustomizations || [],
-        notes: i.notes || '',
-      })),
+      items: savedOrderPrintItems(order),
       subtotal,
       tax: order.taxAmount || 0,
       taxRate: order.taxRate || 0,
@@ -326,6 +321,7 @@ export default function ActiveOrdersNative() {
       cashReceived: order.cashReceived || null,
       changeReturned: order.changeReturned || null,
       splitPayments: order.splitPayments || null,
+      ...savedOrderPrintExtras(order, { withBalance: !isPreBill }),
       printSettings: printSettingsRef.current || {},
       isPreBill,
     };

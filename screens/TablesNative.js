@@ -43,6 +43,8 @@ import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
 import { orderItemsSignature } from '../utils/orderSignature';
 import { isChairModeEnabled } from '../utils/seatOrdering';
+import { storedOrderDiscountFields } from '../utils/orderDiscountFields';
+import { savedOrderPrintItems, savedOrderPrintExtras } from '../utils/savedOrderInvoice';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
 // const PUSHER_CLUSTER = 'ap2';
@@ -852,13 +854,7 @@ export default function TablesScreen() {
         orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
         restaurantName: selectedRestaurant?.name || '',
         restaurantInfo: selectedRestaurant || {},
-        items: (order.items || []).map(i => ({
-          name: i.name, quantity: i.quantity || 1, price: i.price || 0,
-          total: (i.price || 0) * (i.quantity || 1),
-          selectedVariant: i.selectedVariant || null,
-          selectedCustomizations: i.selectedCustomizations || [],
-          notes: i.notes || '',
-        })),
+        items: savedOrderPrintItems(order),
         subtotal,
         tax: order.taxAmount || 0,
         taxRate: order.taxRate || 0,
@@ -883,6 +879,7 @@ export default function TablesScreen() {
         cashReceived: order.cashReceived || null,
         changeReturned: order.changeReturned || null,
         splitPayments: order.splitPayments || null,
+        ...savedOrderPrintExtras(order),
       };
       const billText = printerService.generateBillText(invoiceData);
       let billImageHtml; try { billImageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings || printSettingsRef.current || {}); } catch (_) {}
@@ -941,13 +938,7 @@ export default function TablesScreen() {
         orderNumber: order.dailyOrderId || order.orderNumber || order.id?.slice(-6),
         restaurantName: selectedRestaurant?.name || '',
         restaurantInfo: selectedRestaurant || {},
-        items: (order.items || []).map(i => ({
-          name: i.name, quantity: i.quantity || 1, price: i.price || 0,
-          total: (i.price || 0) * (i.quantity || 1),
-          selectedVariant: i.selectedVariant || null,
-          selectedCustomizations: i.selectedCustomizations || [],
-          notes: i.notes || '',
-        })),
+        items: savedOrderPrintItems(order),
         subtotal,
         tax: order.taxAmount || 0,
         taxRate: order.taxRate || 0,
@@ -972,6 +963,7 @@ export default function TablesScreen() {
         serviceChargeRate: order.serviceChargeRate || 0,
         tipAmount: order.tipAmount || 0,
         roundOffAmount: order.roundOffAmount || 0,
+        ...savedOrderPrintExtras(order, { withBalance: false }),
         printSettings: printSettingsRef.current || {},
         isPreBill: true,
       };
@@ -1021,9 +1013,9 @@ export default function TablesScreen() {
           tableNumber: order?.tableNumber || table.name || null,
         },
         ...(order?.customerPhone && { customerPhone: order.customerPhone }),
-        ...(order?.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: order.redeemLoyaltyPoints }),
-        ...(order?.loyaltyDiscount > 0 && { loyaltyDiscount: order.loyaltyDiscount }),
-        ...(order?.discountAmount > 0 && { discountAmount: order.discountAmount }),
+        // the order's own discounts (offer / manual / loyalty / coupon + total) — a completion
+        // PATCH without them could drop them from the completed bill
+        ...(order ? storedOrderDiscountFields(order) : {}),
         lastUpdatedBy: {
           name: user?.name || 'Staff',
           id: user?.id,
@@ -1034,7 +1026,8 @@ export default function TablesScreen() {
       await apiClient.updateOrder(table.currentOrderId, updateData);
 
       // Auto-print bill silently (fire and forget)
-      if (order) autoPrintBill({ ...order, id: table.currentOrderId, completedAt: new Date().toISOString() });
+      // print with the settled payment state (a stale 'due' status would print a Balance Due)
+      if (order) autoPrintBill({ ...order, id: table.currentOrderId, completedAt: new Date().toISOString(), paymentStatus: updateData.paymentStatus });
 
       // Verify payment
       try {
@@ -2226,14 +2219,8 @@ export default function TablesScreen() {
                 tableNumber: order.tableNumber || tableForOrder?.name || null,
               },
               ...(order.customerPhone && { customerPhone: order.customerPhone }),
-              // Loyalty data
-              ...(order.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: order.redeemLoyaltyPoints }),
-              ...(order.loyaltyDiscount > 0 && { loyaltyDiscount: order.loyaltyDiscount }),
-              // Discount/offer data
-              ...(order.discountAmount > 0 && { discountAmount: order.discountAmount }),
-              ...(order.manualDiscount > 0 && { manualDiscount: order.manualDiscount }),
-              ...(order.offerIds?.length > 0 && { offerIds: order.offerIds }),
-              ...(order.selectedOfferName && { selectedOfferName: order.selectedOfferName }),
+              // Loyalty + discount/offer data (offer part, manual, loyalty, coupon, total)
+              ...storedOrderDiscountFields(order),
               // Billing fields (tip handled above from settlementData)
               ...(order.serviceChargeAmount > 0 && { serviceChargeAmount: order.serviceChargeAmount, serviceChargeRate: order.serviceChargeRate }),
               ...(sd.tipAmount == null && order.tipAmount > 0 && { tipAmount: order.tipAmount }),
@@ -2249,7 +2236,14 @@ export default function TablesScreen() {
             await apiClient.updateOrder(order.id, updateData);
 
             // Auto-print bill silently (fire and forget)
-            autoPrintBill({ ...order, completedAt: new Date().toISOString() });
+            // print with the settled payment state (paid / part-paid + balance), not the stale order's
+            autoPrintBill({
+              ...order, completedAt: new Date().toISOString(),
+              paymentStatus: updateData.paymentStatus,
+              ...(updateData.paidAmount != null ? { paidAmount: updateData.paidAmount } : {}),
+              ...(updateData.outstandingAmount != null ? { outstandingAmount: updateData.outstandingAmount } : {}),
+              ...(updateData.finalAmount != null ? { finalAmount: updateData.finalAmount } : {}),
+            });
 
             // Verify payment (same as web flow)
             try {

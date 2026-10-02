@@ -430,7 +430,10 @@ export default function WaiterOrderModal({
       // Otherwise re-resolve the VARIANT's own tier price for the active zone.
       if (multiPricingEnabled && activePricingRuleId) {
         const menuItem = menuItems.find(m => m.id === item.id || m.id === item.menuItemId);
-        const freshVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name) || item.selectedVariant;
+        const freshVariant = menuItem?.variants?.find(v => v.name === item.selectedVariant.name);
+        // no menu variant to resolve from → keep the stored (already tier-resolved) price;
+        // re-resolving it would apply the rule's default markup a second time
+        if (!freshVariant) return item.selectedVariant.price;
         return resolveVariantTierPrice(freshVariant, activePricingRuleId, pricingRules);
       }
       return item.selectedVariant.price;
@@ -1510,6 +1513,7 @@ export default function WaiterOrderModal({
         multiPricingEnabled={multiPricingEnabled}
         activePricingRuleId={activePricingRuleId}
         pricingRules={pricingRules}
+        resolveItemPrice={resolveTierPrice}
       />
 
       <KOTModal

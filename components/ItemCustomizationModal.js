@@ -33,6 +33,9 @@ const ItemCustomizationModal = ({
   multiPricingEnabled = false,
   activePricingRuleId = null,
   pricingRules = [],
+  // Parent's tier resolver for a NON-variant item (per-item tier → zone inherit → rule markup →
+  // base) — so an item with add-ons is billed at the order-type price, not the base menu price.
+  resolveItemPrice = null,
 }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [selectedCustomizations, setSelectedCustomizations] = useState([]);
@@ -87,6 +90,10 @@ const ItemCustomizationModal = ({
   const getBasePrice = () => {
     if (hasVariants && selectedVariant) {
       return variantDisplayPrice(selectedVariant);
+    }
+    if (multiPricingEnabled && activePricingRuleId && typeof resolveItemPrice === 'function') {
+      const tier = Number(resolveItemPrice(item));
+      if (Number.isFinite(tier) && tier >= 0) return tier;
     }
     return item.price || 0;
   };

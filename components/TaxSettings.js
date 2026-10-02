@@ -39,29 +39,27 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
 
   // Discount settings state
   const [discountsEnabled, setDiscountsEnabled] = useState(false);
-  const [allowManualDiscount, setAllowManualDiscount] = useState(false);
-  const [discountRoles, setDiscountRoles] = useState(['owner', 'manager']);
+  // Defaults match the web admin Tax tab (allowManualDiscount on unless set false; roles ['owner'])
+  const [allowManualDiscount, setAllowManualDiscount] = useState(true);
+  const [discountRoles, setDiscountRoles] = useState(['owner']);
   const [maxPercentDiscount, setMaxPercentDiscount] = useState('');
   const [maxFlatDiscount, setMaxFlatDiscount] = useState('');
 
   const DISCOUNT_ROLE_OPTIONS = ['owner', 'manager', 'admin', 'cashier', 'waiter'];
 
+  // Field names are the ones the POS reads (web + app CartModal): maxDiscountPercent /
+  // maxDiscountAmount. The legacy maxPercentDiscount / maxFlatDiscount this screen used to write
+  // are still read as a fallback.
   const applyDiscountSettings = (ds) => {
     if (!ds) return;
     setDiscountsEnabled(ds.enabled || false);
-    setAllowManualDiscount(ds.allowManualDiscount || false);
-    setDiscountRoles(ds.manualDiscountRoles || ['owner', 'manager']);
-    setMaxPercentDiscount(ds.maxPercentDiscount != null ? String(ds.maxPercentDiscount) : '');
-    setMaxFlatDiscount(ds.maxFlatDiscount != null ? String(ds.maxFlatDiscount) : '');
+    setAllowManualDiscount(ds.allowManualDiscount !== false);
+    setDiscountRoles(Array.isArray(ds.manualDiscountRoles) && ds.manualDiscountRoles.length ? ds.manualDiscountRoles : ['owner']);
+    const pct = ds.maxDiscountPercent ?? ds.maxPercentDiscount;
+    const amt = ds.maxDiscountAmount ?? ds.maxFlatDiscount;
+    setMaxPercentDiscount(pct != null ? String(pct) : '');
+    setMaxFlatDiscount(amt != null ? String(amt) : '');
   };
-
-  const getDiscountSettings = () => ({
-    enabled: discountsEnabled,
-    allowManualDiscount,
-    manualDiscountRoles: discountRoles,
-    maxPercentDiscount: maxPercentDiscount ? Number(maxPercentDiscount) : null,
-    maxFlatDiscount: maxFlatDiscount ? Number(maxFlatDiscount) : null,
-  });
 
   // Load tax settings - first from cache, then fetch from API in background
   useEffect(() => {
@@ -122,36 +120,36 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     }
   };
 
-  const saveTaxSettings = async (enabled, taxList, discountOverride) => {
+  // Save ONLY the keys this screen changed — the server merges a partial taxSettings body into
+  // the saved settings (discountSettings key by key). Sending the whole local object wiped what
+  // this screen doesn't manage (taxInclusivePricing, additionalCharges, OTP approval, …).
+  // defaultTaxRate is not written here (it used to be overwritten with the SUM of all rates).
+  const savePatch = async (patch, { successMessage = 'Tax settings saved successfully', errorMessage = 'Failed to save tax settings' } = {}) => {
     if (!restaurantId) return;
 
     setSaving(true);
     try {
-      const settings = {
-        enabled,
-        taxes: taxList,
-        defaultTaxRate: taxList.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
-        taxGroups: taxGroups,
-        discountSettings: discountOverride || getDiscountSettings(),
-      };
+      const res = await apiClient.updateTaxSettings(restaurantId, patch);
 
-      await apiClient.updateTaxSettings(restaurantId, settings);
-
-      // Update local cache
-      await AsyncStorage.setItem(
-        `${TAX_STORAGE_KEY}_${restaurantId}`,
-        JSON.stringify(settings)
-      );
-
-      // Notify parent of settings change
-      if (onTaxSettingsChange) {
-        onTaxSettingsChange(settings);
+      // The server answers with the merged settings; fall back to merging onto the cached copy.
+      let full = res && res.taxSettings && typeof res.taxSettings === 'object' ? res.taxSettings : null;
+      if (!full) {
+        let cached = {};
+        try { cached = JSON.parse(await AsyncStorage.getItem(`${TAX_STORAGE_KEY}_${restaurantId}`) || '{}') || {}; } catch (_) { cached = {}; }
+        full = {
+          ...cached,
+          ...patch,
+          ...(patch.discountSettings ? { discountSettings: { ...(cached.discountSettings || {}), ...patch.discountSettings } } : {}),
+        };
       }
 
-      Alert.alert('Success', 'Tax settings saved successfully');
+      await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(full));
+      if (onTaxSettingsChange) onTaxSettingsChange(full);
+
+      if (successMessage) Alert.alert('Success', successMessage);
     } catch (error) {
       console.error('Error saving tax settings:', error);
-      Alert.alert('Error', error.message || 'Failed to save tax settings');
+      Alert.alert('Error', error.message || errorMessage);
     } finally {
       setSaving(false);
     }
@@ -159,7 +157,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
 
   const handleToggleEnabled = async (value) => {
     setTaxEnabled(value);
-    await saveTaxSettings(value, taxes);
+    await savePatch({ enabled: value });
   };
 
   const handleAddTax = () => {
@@ -210,7 +208,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
 
     setTaxes(updatedTaxes);
     setShowAddModal(false);
-    await saveTaxSettings(taxEnabled, updatedTaxes);
+    await savePatch({ taxes: updatedTaxes });
   };
 
   const handleDeleteTax = (taxId) => {
@@ -225,7 +223,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
           onPress: async () => {
             const updatedTaxes = taxes.filter(t => t.id !== taxId);
             setTaxes(updatedTaxes);
-            await saveTaxSettings(taxEnabled, updatedTaxes);
+            await savePatch({ taxes: updatedTaxes });
           },
         },
       ]
@@ -237,23 +235,12 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
       t.id === taxId ? { ...t, enabled } : t
     );
     setTaxes(updatedTaxes);
-    await saveTaxSettings(taxEnabled, updatedTaxes);
+    await savePatch({ taxes: updatedTaxes });
   };
 
-  // Discount handlers with auto-save
-  const saveDiscountChange = (overrides = {}) => {
-    const ds = {
-      enabled: overrides.enabled !== undefined ? overrides.enabled : discountsEnabled,
-      allowManualDiscount: overrides.allowManualDiscount !== undefined ? overrides.allowManualDiscount : allowManualDiscount,
-      manualDiscountRoles: overrides.manualDiscountRoles || discountRoles,
-      maxPercentDiscount: overrides.maxPercentDiscount !== undefined
-        ? (overrides.maxPercentDiscount ? Number(overrides.maxPercentDiscount) : null)
-        : (maxPercentDiscount ? Number(maxPercentDiscount) : null),
-      maxFlatDiscount: overrides.maxFlatDiscount !== undefined
-        ? (overrides.maxFlatDiscount ? Number(overrides.maxFlatDiscount) : null)
-        : (maxFlatDiscount ? Number(maxFlatDiscount) : null),
-    };
-    saveTaxSettings(taxEnabled, taxes, ds);
+  // Discount handlers with auto-save — only the changed discountSettings key is sent
+  const saveDiscountChange = (changed = {}) => {
+    savePatch({ discountSettings: changed });
   };
 
   // Tax Group handlers
@@ -267,7 +254,8 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   const handleEditGroup = (group) => {
     setEditingGroup(group);
     setNewGroupName(group.name);
-    setNewGroupTaxes(group.taxes.map(t => ({ name: t.name, rate: String(t.rate) })));
+    // keep each entry's own fields (id, type, …) — only name / rate are edited here
+    setNewGroupTaxes((group.taxes || []).map(t => ({ ...t, name: t.name || '', rate: String(t.rate) })));
     setShowAddGroupModal(true);
   };
 
@@ -290,9 +278,17 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     }
 
     const groupData = {
+      // editing keeps every other group field (alsoApplyGlobalTax, …) — they were dropped
+      ...(editingGroup || {}),
       id: editingGroup?.id || `tg_${Date.now()}`,
       name: newGroupName.trim(),
-      taxes: validTaxes.map(t => ({ id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: t.name.trim(), rate: parseFloat(t.rate), type: 'percentage' })),
+      taxes: validTaxes.map(t => ({
+        ...t,
+        id: t.id || `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: t.name.trim(),
+        rate: parseFloat(t.rate),
+        type: t.type || 'percentage',
+      })),
     };
 
     let updatedGroups;
@@ -304,25 +300,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
 
     setTaxGroups(updatedGroups);
     setShowAddGroupModal(false);
-    // Save with updated groups
-    setSaving(true);
-    try {
-      const settings = {
-        enabled: taxEnabled,
-        taxes,
-        defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
-        taxGroups: updatedGroups,
-        discountSettings: getDiscountSettings(),
-      };
-      await apiClient.updateTaxSettings(restaurantId, settings);
-      await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
-      if (onTaxSettingsChange) onTaxSettingsChange(settings);
-      Alert.alert('Success', editingGroup ? 'Tax group updated' : 'Tax group added');
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
+    await savePatch({ taxGroups: updatedGroups }, { successMessage: editingGroup ? 'Tax group updated' : 'Tax group added', errorMessage: 'Failed to save' });
   };
 
   const handleDeleteGroup = (groupId) => {
@@ -333,23 +311,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
         onPress: async () => {
           const updatedGroups = taxGroups.filter(g => g.id !== groupId);
           setTaxGroups(updatedGroups);
-          setSaving(true);
-          try {
-            const settings = {
-              enabled: taxEnabled,
-              taxes,
-              defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
-              taxGroups: updatedGroups,
-              discountSettings: getDiscountSettings(),
-            };
-            await apiClient.updateTaxSettings(restaurantId, settings);
-            await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
-            if (onTaxSettingsChange) onTaxSettingsChange(settings);
-          } catch (error) {
-            Alert.alert('Error', error.message || 'Failed to delete');
-          } finally {
-            setSaving(false);
-          }
+          await savePatch({ taxGroups: updatedGroups }, { successMessage: null, errorMessage: 'Failed to delete' });
         },
       },
     ]);
@@ -363,24 +325,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
     const exemptGroup = { id: `tg_exempt_${Date.now()}`, name: 'Tax Exempt', taxes: [] };
     const updatedGroups = [...taxGroups, exemptGroup];
     setTaxGroups(updatedGroups);
-    setSaving(true);
-    try {
-      const settings = {
-        enabled: taxEnabled,
-        taxes,
-        defaultTaxRate: taxes.reduce((sum, t) => t.enabled ? sum + t.rate : sum, 0),
-        taxGroups: updatedGroups,
-        discountSettings: getDiscountSettings(),
-      };
-      await apiClient.updateTaxSettings(restaurantId, settings);
-      await AsyncStorage.setItem(`${TAX_STORAGE_KEY}_${restaurantId}`, JSON.stringify(settings));
-      if (onTaxSettingsChange) onTaxSettingsChange(settings);
-      Alert.alert('Success', 'Tax Exempt group added');
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
+    await savePatch({ taxGroups: updatedGroups }, { successMessage: 'Tax Exempt group added', errorMessage: 'Failed to save' });
   };
 
   const handleToggleDiscounts = (value) => {
@@ -394,9 +339,10 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   };
 
   const handleToggleDiscountRole = (role) => {
-    const updated = discountRoles.includes(role)
+    let updated = discountRoles.includes(role)
       ? discountRoles.filter(r => r !== role)
       : [...discountRoles, role];
+    if (updated.length === 0) updated = ['owner']; // web: never an empty list
     setDiscountRoles(updated);
     saveDiscountChange({ manualDiscountRoles: updated });
   };
@@ -408,7 +354,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   };
 
   const handleMaxPercentBlur = () => {
-    saveDiscountChange({ maxPercentDiscount: maxPercentDiscount });
+    saveDiscountChange({ maxDiscountPercent: maxPercentDiscount ? Number(maxPercentDiscount) : null });
   };
 
   const handleMaxFlatChange = (value) => {
@@ -417,7 +363,7 @@ export default function TaxSettings({ restaurantId, onTaxSettingsChange }) {
   };
 
   const handleMaxFlatBlur = () => {
-    saveDiscountChange({ maxFlatDiscount: maxFlatDiscount });
+    saveDiscountChange({ maxDiscountAmount: maxFlatDiscount ? Number(maxFlatDiscount) : null });
   };
 
   if (loading) {

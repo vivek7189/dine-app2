@@ -116,9 +116,12 @@ export function computeTaxBreakdown({
         .filter(tax => taxAppliesToOrderType(tax, orderType));
       const totalRate = itemTaxes.reduce((sum, t) => sum + (t.rate || 0), 0);
       for (const tax of itemTaxes) {
+        // Accumulate RAW (unrounded) per-item tax and round once per tax line below — exactly
+        // like the backend's calculatePerItemTax; rounding every item drifted by a few paise per
+        // line and the server rejects a taxBreakdown that differs from its own.
         const amt = isInclusive
-          ? Math.round((itemTaxableWithSC * (tax.rate || 0) / (100 + totalRate)) * 100) / 100
-          : Math.round((itemTaxableWithSC * (tax.rate || 0) / 100) * 100) / 100;
+          ? (itemTaxableWithSC * (tax.rate || 0) / (100 + totalRate))
+          : (itemTaxableWithSC * (tax.rate || 0) / 100);
         const key = `${tax.name || 'Tax'}|${tax.rate || 0}|${isInclusive}`;
         if (!taxTotals[key]) taxTotals[key] = { name: tax.name || 'Tax', rate: tax.rate || 0, amount: 0, inclusive: isInclusive };
         taxTotals[key].amount += amt;

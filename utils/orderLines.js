@@ -32,6 +32,9 @@ export function orderLinesToCart(items) {
       selectedCustomizations: custs,
       ...(item.seat != null && item.seat !== '' ? { seat: item.seat } : {}),
       ...(item.taxInclusive != null ? { taxInclusive: item.taxInclusive } : {}),
+      ...(item.taxGroupId ? { taxGroupId: item.taxGroupId } : {}),
+      ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
+      ...(item.discountApplicable === false ? { discountApplicable: false } : {}),
       ...(item.priceEdited === true ? { priceEdited: true } : {}),
       ...(item.isCustomItem ? { isCustomItem: true } : {}),
     };

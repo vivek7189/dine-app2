@@ -1173,6 +1173,8 @@ export const generateBillText = (invoiceData) => {
     // Tax-inclusive per-item split (MRP + tax) — thermal-safe symbol already baked in. Opt-in, like the
     // web bill (billLayout.showItemTaxBreakup): the GST inside the prices is summarised under the total.
     if (item.taxSplitLabel && bl.showItemTaxBreakup === true) lines.push(`  ${item.taxSplitLabel}`);
+    // HSN/SAC code (India GST invoice) — only when the item carries one (web getSublineHtml parity)
+    if (item.hsnCode) lines.push(`  HSN: ${String(item.hsnCode)}`);
   });
 
   lines.push(_LINE);
