@@ -160,6 +160,23 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
         return;
       }
 
+      // Reports (Shifts & Cash / Register X·Z) — the page sends ready plain text at the paper width
+      // (and HTML). Print it on this phone's printer and post the result back like bills do.
+      if (data.type === 'PRINT_TEXT') {
+        const label = String(data.label || 'Report').slice(0, 60);
+        let result;
+        try {
+          result = typeof data.text === 'string' && data.text.trim()
+            ? await printerService.printWithFeedback({ text: data.text, silentOnly: true, label })
+            : { success: false, error: 'Nothing to print' };
+        } catch (e) { result = { success: false, error: e?.message || 'Print failed' }; }
+        if (webViewRef.current) {
+          const msg = JSON.stringify({ type: 'PRINT_RESULT', success: !!result.success, method: result.method || null, error: result.error || null, label });
+          webViewRef.current.injectJavaScript(`try { window.dispatchEvent(new CustomEvent('nativePrintResult', { detail: ${msg} })); } catch(e) {} true;`);
+        }
+        return;
+      }
+
       if (data.type !== 'PRINT_KOT' && data.type !== 'PRINT_BILL') return;
 
       console.log(`[${screenName}] Print request:`, data.type, data.orderId, data.orderData ? '(embedded data)' : '(no embedded data)');
