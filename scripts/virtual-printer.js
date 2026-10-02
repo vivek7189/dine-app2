@@ -148,12 +148,21 @@ ${wide.length ? `<span style="color:#b91c1c">⚠ ${wide.length} line(s) longer t
 let jobNo = 0;
 const server = net.createServer((sock) => {
   const from = `${sock.remoteAddress}`.replace('::ffff:', '');
+  let total = 0; const opened = Date.now();
+  if (process.env.VP_DEBUG) console.log(`   ↳ connect ${from}:${sock.remotePort}`);
+  sock.on('close', () => { if (process.env.VP_DEBUG) console.log(`   ↳ close ${from}:${sock.remotePort} after ${((Date.now() - opened) / 1000).toFixed(1)}s, ${total} bytes`); });
+  sock.on('data', (d) => { total += d.length; });
   let chunks = [], idle = null;
   const finish = () => {
     if (!chunks.length) return;
     const buf = Buffer.concat(chunks); chunks = [];
     // The app checks "is a printer there?" with a quick HTTP request — not a print job.
-    if (/^(HEAD|GET|POST|OPTIONS) \S+ HTTP\//.test(buf.slice(0, 32).toString('latin1'))) { console.log(`   (connection check from ${from} — ignored)`); return; }
+    if (/^(HEAD|GET|POST|OPTIONS) \S+ HTTP\//.test(buf.slice(0, 32).toString('latin1'))) {
+      const rest = buf.slice(buf.indexOf('\r\n\r\n') + 4); // a print may follow the check on the same connection
+      console.log(`   (connection check from ${from} — ignored${rest.length ? `, ${rest.length} more bytes after it` : ''})`);
+      if (!rest.length || buf.indexOf('\r\n\r\n') < 0) return;
+      chunks = [rest]; return finish();
+    }
     const { blocks, notes } = parse(buf);
     const time = new Date().toLocaleTimeString();
     const file = path.join(OUT_DIR, `print-${Date.now()}-${++jobNo}.html`);

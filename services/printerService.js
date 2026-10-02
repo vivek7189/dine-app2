@@ -89,6 +89,27 @@ export const setSavedPrintSettings = (ps) => {
   setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth, autoImageForCurrency: ps.autoImageForCurrency });
 };
 export const getSavedPrintSettings = () => _savedPrintSettings;
+// Load the logged-in restaurant's saved settings once (first print of the session, any screen):
+// AsyncStorage copy first (instant / offline), then the server in the background.
+let _ensuring = null;
+export const ensureSavedPrintSettings = async () => {
+  if (_savedPrintSettings) return _savedPrintSettings;
+  if (!_ensuring) {
+    _ensuring = (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('user');
+        const u = raw ? JSON.parse(raw) : null;
+        const rid = u && (u.restaurantId || (u.restaurant && u.restaurant.id));
+        if (!rid) return null;
+        const stored = await AsyncStorage.getItem(`${PRINT_SETTINGS_KEY}_${rid}`);
+        if (stored) { setSavedPrintSettings(JSON.parse(stored)); loadSavedPrintSettings(rid).catch(() => {}); }
+        else await Promise.race([loadSavedPrintSettings(rid), new Promise(r => setTimeout(r, 3000))]); // never hold a print > 3 s
+      } catch (_) { /* print with defaults */ }
+      return _savedPrintSettings;
+    })().finally(() => { _ensuring = null; });
+  }
+  return _ensuring;
+};
 export const loadSavedPrintSettings = async (restaurantId) => {
   if (!restaurantId) return _savedPrintSettings;
   try {
@@ -1760,6 +1781,7 @@ const printViaAirPrint = async (html, printerUrl) => {
  * @returns {Promise<{method: string}>}
  */
 export const printContent = async ({ html, text, imageHtml, silentOnly = false }) => {
+  await ensureSavedPrintSettings(); // image flag + paper width apply from the first print after start
   return enqueuePrint(async () => {
     const mode = await getPrinterMode();
     const wantsSilent = mode === 'silent' || silentOnly;
@@ -1920,6 +1942,7 @@ export const openCashDrawer = async () => {
  * Print a test page
  */
 export const printTestPage = async () => {
+  await ensureSavedPrintSettings();
   const TW = getChars(_savedPrintSettings || {}); // 58 mm = 32 chars (was always 48 → wrapped)
   const TLINE = getLine(TW);
   const testText = [
