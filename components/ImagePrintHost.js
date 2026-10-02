@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { registerImagePrintHost, unregisterImagePrintHost } from '../services/imagePrintService';
 
@@ -24,6 +24,10 @@ const CAPTURE_TIMEOUT_MS = 6000;
 
 export default function ImagePrintHost() {
   const webRef = useRef(null);
+  // view-shot needs a real native view. A WebView ref is its control handle (goBack, reload…) —
+  // capturing it failed on iOS with "Argument appears to not be a ReactComponent", so every image
+  // print (receipt logo, Image Receipts) silently fell back to text. Snapshot this wrapper instead.
+  const shotRef = useRef(null);
   const queueRef = useRef([]);
   const jobRef = useRef(null);
   const [job, setJob] = useState(null);        // { html, width, resolve, reject }
@@ -72,7 +76,7 @@ export default function ImagePrintHost() {
       const j = jobRef.current;
       if (!j) return;
       try {
-        const uri = await captureRef(webRef, { format: 'png', quality: 1, result: 'tmpfile', width: j.width, height: h });
+        const uri = await captureRef(shotRef, { format: 'png', quality: 1, result: 'tmpfile', width: j.width, height: h });
         finish(true, uri.startsWith('file') ? (uri.startsWith('file://') ? uri : `file://${uri}`) : `file://${uri}`);
       } catch (err) {
         finish(false, err);
@@ -95,7 +99,15 @@ export default function ImagePrintHost() {
   if (!job) return null;
 
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: -100000, top: 0, width: job.width, height, opacity: 0 }}>
+    // iOS: keep it inside the window (behind the app, ~invisible) — WebKit may not draw a WebView
+    // that is far off-screen, which would snapshot blank. Android keeps the off-screen position.
+    <View
+      pointerEvents="none"
+      style={Platform.OS === 'ios'
+        ? { position: 'absolute', left: 0, top: 0, width: job.width, height, opacity: 0.01, zIndex: -1 }
+        : { position: 'absolute', left: -100000, top: 0, width: job.width, height, opacity: 0 }}
+    >
+      <View ref={shotRef} collapsable={false} style={{ width: job.width, height, backgroundColor: '#fff' }}>
       <WebView
         ref={webRef}
         originWhitelist={['*']}
@@ -107,6 +119,7 @@ export default function ImagePrintHost() {
         javaScriptEnabled
         style={{ width: job.width, height, backgroundColor: '#fff' }}
       />
+      </View>
     </View>
   );
 }
