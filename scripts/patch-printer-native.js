@@ -514,3 +514,69 @@ if (fs.existsSync(IOS_BLE_FILE)) {
     console.log('✅ iOS BLE text alignment already patched');
   }
 }
+
+// --- iOS WiFi/LAN image printing ---
+// The vendor PrinterSDK printImage sent NOTHING over WiFi (seen with a virtual printer: the
+// connection opened, 0 bytes), and an unreadable image file failed silently — both looked like
+// "print success" in the app. Send standard ESC/POS raster (GS v 0) ourselves through sendHex,
+// in 128-row bands at the paper's dot width, and report a real error when the image can't load.
+const IOS_NET_FILE = path.join(
+  __dirname,
+  '../node_modules/react-native-thermal-receipt-printer/ios/RNNetPrinter.m'
+);
+if (fs.existsSync(IOS_NET_FILE)) {
+  let iosNet = fs.readFileSync(IOS_NET_FILE, 'utf8');
+  if (!iosNet.includes('DINEOPEN_IOS_NET_RASTER')) {
+    const before = iosNet;
+    iosNet = iosNet.replace(
+      /if\(imageData != nil\)\{\s*UIImage\* image = \[UIImage imageWithData:imageData\];\s*UIImage\* printImage = \[self getPrintImage:image printerOptions:options\];\s*\[\[PrinterSDK defaultPrinterSDK\] setPrintWidth:printerWidth\];\s*\[\[PrinterSDK defaultPrinterSDK\] printImage:printImage \];\s*\}/,
+      `// DINEOPEN_IOS_NET_RASTER
+        if (imageData == nil) { errorCallback(@[@"Could not load receipt image"]); return; }
+        UIImage* image = [UIImage imageWithData:imageData];
+        if (image == nil || image.CGImage == nil) { errorCallback(@[@"Receipt image unreadable"]); return; }
+        NSInteger w = printerWidth;
+        NSInteger h = (NSInteger)llround(image.size.height * (CGFloat)w / MAX(image.size.width, 1.0));
+        if (h < 1) h = 1;
+        if (h > 8000) h = 8000;
+        NSInteger rowBytes = (w + 7) / 8;
+        CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+        CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, 0, gray, (CGBitmapInfo)kCGImageAlphaNone);
+        CGColorSpaceRelease(gray);
+        if (ctx == NULL) { errorCallback(@[@"Could not rasterize receipt image"]); return; }
+        CGContextSetGrayFillColor(ctx, 1.0, 1.0);
+        CGContextFillRect(ctx, CGRectMake(0, 0, w, h));
+        CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+        CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), image.CGImage);
+        const uint8_t* px = (const uint8_t*)CGBitmapContextGetData(ctx);
+        size_t ctxRow = CGBitmapContextGetBytesPerRow(ctx);
+        const NSInteger BAND = 128;
+        for (NSInteger y0 = 0; y0 < h; y0 += BAND) {
+            NSInteger rows = MIN(BAND, h - y0);
+            NSMutableString* hex = [NSMutableString stringWithCapacity:(NSUInteger)((8 + rowBytes * rows) * 2)];
+            [hex appendFormat:@"1D763000%02X%02X%02X%02X", (unsigned)(rowBytes & 0xFF), (unsigned)((rowBytes >> 8) & 0xFF), (unsigned)(rows & 0xFF), (unsigned)((rows >> 8) & 0xFF)];
+            for (NSInteger y = y0; y < y0 + rows; y++) {
+                const uint8_t* row = px + (size_t)y * ctxRow;
+                for (NSInteger bx = 0; bx < rowBytes; bx++) {
+                    unsigned b = 0;
+                    for (NSInteger bit = 0; bit < 8; bit++) {
+                        NSInteger x = bx * 8 + bit;
+                        if (x < w && row[x] < 128) b |= (0x80u >> bit);
+                    }
+                    [hex appendFormat:@"%02X", b];
+                }
+            }
+            [[PrinterSDK defaultPrinterSDK] sendHex:hex];
+        }
+        CGContextRelease(ctx);
+        errorCallback(@[[NSNull null]]); // handed to the printer connection`
+    );
+    if (iosNet !== before) {
+      fs.writeFileSync(IOS_NET_FILE, iosNet, 'utf8');
+      console.log('✅ Patched iOS WiFi image printing (ESC/POS raster via sendHex)');
+    } else {
+      console.log('⚠️  iOS WiFi printImageData block not found (skipping)');
+    }
+  } else {
+    console.log('✅ iOS WiFi image printing already patched');
+  }
+}
