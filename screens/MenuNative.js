@@ -637,7 +637,11 @@ export default function MenuScreen() {
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '', chair: data.chairNumber ? String(data.chairNumber) : '' });
               setIsFromTablesPage(true);
               if (data.orderId) setExistingOrderId(data.orderId);
-              existingOrderOffersRef.current = { orderId: data.orderId || null, ids: Array.isArray(data.orderOfferIds) ? data.orderOfferIds : [] };
+              existingOrderOffersRef.current = {
+                orderId: data.orderId || null,
+                ids: Array.isArray(data.orderOfferIds) ? data.orderOfferIds : [],
+                discounts: data.orderDiscounts && typeof data.orderDiscounts === 'object' ? data.orderDiscounts : null,
+              };
               baseItemsSigRef.current = data.baseItemsSignature || null;
               if (data.dailyOrderId) setExistingDailyOrderId(data.dailyOrderId);
               if (data.cartItems) {
@@ -1642,7 +1646,7 @@ export default function MenuScreen() {
   const baseItemsSigRef = useRef(null);
   // Offers already on the order being added to (from Tables → Add Items) — CartModal doesn't count
   // them as a cashier discount change.
-  const existingOrderOffersRef = useRef({ orderId: null, ids: [] });
+  const existingOrderOffersRef = useRef({ orderId: null, ids: [], discounts: null });
   useEffect(() => { if (!existingOrderId) baseItemsSigRef.current = null; }, [existingOrderId]);
   const baseSigField = () => (existingOrderId && baseItemsSigRef.current ? { baseItemsSignature: baseItemsSigRef.current } : {});
   // After a successful update the order holds exactly the items just sent (the PATCH response
@@ -2023,7 +2027,7 @@ export default function MenuScreen() {
         });
 
         // Redeem coupon after bar tab settle
-        if (discountData.couponId) {
+        if (discountData.couponId && !discountData.couponAlreadyOnOrder) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, existingOrderId).catch(err => console.warn('Coupon redeem:', err));
         }
 
@@ -2199,7 +2203,7 @@ export default function MenuScreen() {
         }
 
         // Redeem coupon after order update
-        if (discountData.couponId) {
+        if (discountData.couponId && !discountData.couponAlreadyOnOrder) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, existingOrderId).catch(err => console.warn('Coupon redeem:', err));
         }
 
@@ -2265,7 +2269,7 @@ export default function MenuScreen() {
         placedOrderNoRef.current = response?.order?.dailyOrderId || response?.order?.orderNumber || '';
 
         // Redeem coupon after successful order (fire-and-forget)
-        if (discountData.couponId && response.order?.id) {
+        if (discountData.couponId && !discountData.couponAlreadyOnOrder && response.order?.id) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, response.order.id).catch(err => console.warn('Coupon redeem:', err));
         }
 
@@ -2508,7 +2512,7 @@ export default function MenuScreen() {
         }).catch(() => {});
 
         // Redeem coupon after successful order (fire-and-forget)
-        if (discountData.couponId) {
+        if (discountData.couponId && !discountData.couponAlreadyOnOrder) {
           apiClient.redeemCoupon(restaurantId, discountData.couponId, response.order.id).catch(() => {});
         }
       }
@@ -2772,7 +2776,7 @@ export default function MenuScreen() {
 
       // Coupon was applied to this bill — record the redemption (same as the cashier path) so
       // it can't be reused past its limit.
-      if (discountData.couponId && completedOrderId) {
+      if (discountData.couponId && !discountData.couponAlreadyOnOrder && completedOrderId) {
         apiClient.redeemCoupon(restaurantId, discountData.couponId, completedOrderId).catch(err => console.warn('Coupon redeem:', err));
       }
 
@@ -4046,6 +4050,7 @@ export default function MenuScreen() {
         autoSelectedRule={autoSelectedRule}
         isUpdateOrder={!!existingOrderId}
         existingOrderOfferIds={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.ids : []}
+        existingOrderDiscounts={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.discounts : null}
         existingOrderItems={existingOrderItems}
         floors={floors}
         onTableSelect={handleCashierTableSelect}

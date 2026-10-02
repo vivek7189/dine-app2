@@ -1105,6 +1105,22 @@ export default function TablesScreen() {
         // offers already on the order — re-selected in the cart they are not a cashier change
         orderOfferIds: Array.isArray(order.offerIds) && order.offerIds.length ? order.offerIds
           : (Array.isArray(order.appliedOffers) ? order.appliedOffers.map(o => o && o.id).filter(Boolean) : []),
+        // the order's stored discounts — the cart keeps each one unless the cashier changes it there
+        orderDiscounts: {
+          offerDiscount: Number(order.offerDiscount ?? order.discountAmount) || 0,
+          offerIds: Array.isArray(order.offerIds) && order.offerIds.length ? order.offerIds
+            : (Array.isArray(order.appliedOffers) ? order.appliedOffers.map(o => o && o.id).filter(Boolean) : []),
+          appliedOffers: Array.isArray(order.appliedOffers) ? order.appliedOffers : [],
+          selectedOfferName: order.selectedOfferName || null,
+          manualDiscount: Number(order.manualDiscount) || 0,
+          manualDiscountType: order.manualDiscountType || null,
+          manualDiscountValue: order.manualDiscountValue != null ? order.manualDiscountValue : null,
+          couponDiscount: Number(order.couponDiscount) || 0,
+          couponCode: order.couponCode || null,
+          couponId: order.couponId || null,
+          loyaltyDiscount: Number(order.loyaltyDiscount) || 0,
+          redeemLoyaltyPoints: Number(order.redeemLoyaltyPoints) || 0,
+        },
         cartItems,
         // Fingerprint of the items as loaded — sent with the update so the server can refuse (409)
         // if another device changed this order meanwhile, instead of overwriting its items.

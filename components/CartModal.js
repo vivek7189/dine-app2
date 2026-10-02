@@ -88,6 +88,7 @@ export default function CartModal({
   isUpdateOrder = false,
   existingOrderItems = [],
   existingOrderOfferIds = [], // offers already on the order being added to (not a cashier change)
+  existingOrderDiscounts = null, // the order's stored discounts (add items): kept unless changed here
   floors = [],
   onTableSelect,
   selectedTable,
@@ -582,24 +583,57 @@ export default function CartModal({
       .catch(() => setCustomerCoupons([]));
   }, [couponsEnabled, customerMobile, customerData, restaurantId]);
 
-  // True when the cashier applied any discount in this cart. A cart restored from a saved order
-  // starts with NO discounts (the order's own aren't reloaded here), so an add-items PATCH must
-  // not send zeros for them unless the cashier set discounts now — the server then keeps the
-  // order's own offer / manual / loyalty / coupon discounts.
-  // Only the cashier's own input counts: manual / coupon / loyalty, and offers picked BY HAND —
-  // an offer the engine auto-applied ('auto-apply best offer') or one already on the order is not
-  // a change (counting them sent zeros for manual / coupon / loyalty and wiped the order's own).
-  // (A function: it reads values declared further down, evaluated when an order is submitted.)
+  // Which discount parts the cashier set in THIS cart. A cart restored from a saved order starts
+  // with none of the order's own discounts; each part the cashier didn't touch is the order's
+  // stored value (see `keptDiscounts` below), never zero.
+  // (Functions: they read values declared further down, evaluated when an order is submitted.)
+  const changedParts = () => ({
+    manual: manualDiscountAmount > 0,
+    coupon: !!appliedCoupon || couponDiscountAmount > 0,
+    loyalty: loyaltyDiscount > 0 || (redeemPoints || 0) > 0,
+    offer: offerDiscount > 0,
+  });
+  // Flag for an add-items PATCH: send discount fields only when the cashier changed something.
+  // With the order's stored discounts known, only manual / coupon / loyalty count — the server
+  // can't apply an offer on a non-settling update (and zeroes the offer part whenever discount
+  // fields are sent), so an offer change alone keeps the order's own discounts. Without them
+  // (older hand-off): manual / coupon / loyalty input, and offers picked BY HAND — not ones the
+  // engine auto-applied or ones already on the order.
   const discountsChanged = () => {
-    if (manualDiscountAmount > 0 || loyaltyDiscount > 0 || (redeemPoints || 0) > 0
-      || couponDiscountAmount > 0 || !!appliedCoupon) return true;
+    const c = changedParts();
+    if (c.manual || c.coupon || c.loyalty) return true;
+    if (keptDiscounts) return false;
     if (autoApplied) return false;
     const onOrder = new Set((existingOrderOfferIds || []).map(String));
     const picked = [...new Set([...(selectedOfferIds || []), ...(selectedOfferId ? [selectedOfferId] : [])])];
     return picked.some(id => !onOrder.has(String(id)));
   };
 
-  const buildDiscountData = () => ({
+  // Discount fields for the order: each part is the cashier's value when set in this cart, else
+  // the order's stored one (add items to an order that already has discounts).
+  const effectiveDiscountFields = () => {
+    if (!keptDiscounts) return {};
+    const k = keptDiscounts;
+    return {
+      offerDiscount: effOffer,
+      ...(k.offer > 0 ? {
+        selectedOfferIds: k.offerIds,
+        selectedOfferId: k.offerIds[0] || null,
+        selectedOfferName: k.offerName || null,
+        selectedOfferNames: k.offerName ? [k.offerName] : [],
+        appliedOffers: k.appliedOffers,
+      } : {}),
+      manualDiscountAmount: effManual,
+      ...(k.manual > 0 ? { manualDiscountType: k.manualType || 'flat', manualDiscountValue: k.manualType && String(k.manualType).toLowerCase().startsWith('perc') ? k.manualValue : k.manual } : {}),
+      loyaltyDiscount: effLoyalty,
+      ...(k.loyalty > 0 ? { redeemLoyaltyPoints: k.redeemPoints || 0 } : {}),
+      couponDiscount: effCoupon > 0 ? effCoupon : null,
+      ...(k.coupon > 0 ? { couponCode: k.couponCode || null, couponId: k.couponId || null, couponAlreadyOnOrder: true } : {}),
+    };
+  };
+
+  const buildDiscountData = () => ({ ...buildDiscountDataRaw(), ...effectiveDiscountFields() });
+  const buildDiscountDataRaw = () => ({
     discountsChanged: discountsChanged(),
     offerDiscount,
     manualDiscountAmount,
@@ -772,13 +806,55 @@ export default function CartModal({
     return next;
   }, [billingSettings, scCanOverride, scWaived, scRateOverride]);
 
+  // The order's stored discounts still in effect (add items): each part the cashier didn't set in
+  // this cart. A stored percentage manual discount follows the new subtotal (with the caps), like
+  // the server. null = not adding to an order with known discounts.
+  const keptDiscounts = (() => {
+    const ex = isUpdateOrder ? existingOrderDiscounts : null;
+    if (!ex || typeof ex !== 'object') return null;
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const isPct = String(ex.manualDiscountType || '').toLowerCase().startsWith('perc');
+    let manual = r2(ex.manualDiscount);
+    if (isPct && Number(ex.manualDiscountValue) > 0) {
+      const pct = discountConfig.maxPct > 0 ? Math.min(Number(ex.manualDiscountValue), discountConfig.maxPct) : Number(ex.manualDiscountValue);
+      manual = r2(subtotal * pct / 100);
+      if (discountConfig.maxAmt > 0) manual = Math.min(manual, discountConfig.maxAmt);
+    }
+    const k = {
+      offer: offerDiscount > 0 ? 0 : r2(ex.offerDiscount ?? ex.discountAmount),
+      offerIds: Array.isArray(ex.offerIds) ? ex.offerIds : [],
+      offerName: ex.selectedOfferName || null,
+      appliedOffers: Array.isArray(ex.appliedOffers) ? ex.appliedOffers : [],
+      manual: manualDiscountAmount > 0 ? 0 : manual,
+      manualType: ex.manualDiscountType || null,
+      manualValue: ex.manualDiscountValue != null ? Number(ex.manualDiscountValue) : null,
+      coupon: (appliedCoupon || couponDiscountAmount > 0) ? 0 : r2(ex.couponDiscount),
+      couponCode: ex.couponCode || null,
+      couponId: ex.couponId || null,
+      loyalty: (loyaltyDiscount > 0 || (redeemPoints || 0) > 0) ? 0 : r2(ex.loyaltyDiscount),
+      redeemPoints: Number(ex.redeemLoyaltyPoints) || 0,
+    };
+    return (k.offer > 0 || k.manual > 0 || k.coupon > 0 || k.loyalty > 0) ? k : null;
+  })();
+  const effOffer = keptDiscounts && keptDiscounts.offer > 0 ? keptDiscounts.offer : offerDiscount;
+  const effManual = keptDiscounts && keptDiscounts.manual > 0 ? keptDiscounts.manual : manualDiscountAmount;
+  const effCoupon = keptDiscounts && keptDiscounts.coupon > 0 ? keptDiscounts.coupon : couponDiscountAmount;
+  const effLoyalty = keptDiscounts && keptDiscounts.loyalty > 0 ? keptDiscounts.loyalty : loyaltyDiscount;
+  // Read-only lines for the summary: discounts already on the order that stay on it.
+  const keptDiscountRows = keptDiscounts ? [
+    keptDiscounts.offer > 0 && { key: 'offer', label: `Offer on order${keptDiscounts.offerName ? ` (${keptDiscounts.offerName})` : ''}`, amount: keptDiscounts.offer },
+    keptDiscounts.manual > 0 && { key: 'manual', label: 'Discount on order', amount: keptDiscounts.manual },
+    keptDiscounts.coupon > 0 && { key: 'coupon', label: `Coupon on order${keptDiscounts.couponCode ? ` (${keptDiscounts.couponCode})` : ''}`, amount: keptDiscounts.coupon },
+    keptDiscounts.loyalty > 0 && { key: 'loyalty', label: 'Loyalty on order', amount: keptDiscounts.loyalty },
+  ].filter(Boolean) : [];
+
   // Use shared billing calculation hook — MUST be after useOfferEngine so offerDiscount is defined
   const billing = useBillingCalculation({
     subtotal,
-    offerDiscount,
-    manualDiscountAmount,
-    loyaltyDiscount,
-    couponDiscount: couponDiscountAmount,
+    offerDiscount: effOffer,
+    manualDiscountAmount: effManual,
+    loyaltyDiscount: effLoyalty,
+    couponDiscount: effCoupon,
     compAmount,
     voidAmount,
     taxSettings,
@@ -2260,6 +2336,12 @@ export default function CartModal({
                   <Text style={{ fontSize: 12, color: '#64748b' }}>Subtotal</Text>
                   <Text style={{ fontSize: fs(12), fontWeight: '600', color: '#374151' }}>{getCurrencySymbol()}{fmtAmt(subtotal)}</Text>
                 </View>
+                {keptDiscountRows.map((r) => (
+                  <View key={`kept-${r.key}`} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#dc2626' }}>{r.label}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-{getCurrencySymbol()}{fmtAmt(r.amount)}</Text>
+                  </View>
+                ))}
                 {offerDiscount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                     <Text style={{ fontSize: 12, color: '#dc2626' }}>Offers</Text>
@@ -2342,6 +2424,12 @@ export default function CartModal({
                   <Text style={styles.breakdownLabel}>Subtotal</Text>
                   <Text style={styles.breakdownAmount}>{getCurrencySymbol()}{subtotal.toFixed(2)}</Text>
                 </View>
+                {keptDiscountRows.map((r) => (
+                  <View key={`kept-${r.key}`} style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>{r.label}</Text>
+                    <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-{getCurrencySymbol()}{r.amount.toFixed(2)}</Text>
+                  </View>
+                ))}
                 {offerDiscount > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Offers</Text>
