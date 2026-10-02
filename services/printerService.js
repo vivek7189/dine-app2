@@ -75,6 +75,36 @@ export const setImagePrintConfig = ({ enabled, printerWidth, autoImageForCurrenc
   // else keep default 576
 };
 export const isImagePrintOn = () => _imagePrintEnabled;
+
+// ── The restaurant's saved print settings, for prints that arrive without them ──
+// Bills printed from the web pages inside the app (WebView) carry the page's settings, which can
+// miss the printer width / receipt logo / image flag, and the image flag + width were only applied
+// when Printer Settings was opened. Cached here from AsyncStorage (PrintSettings writes
+// `dine_print_settings_<rid>`) then refreshed from the server; applied to the image-print config.
+const PRINT_SETTINGS_KEY = 'dine_print_settings';
+let _savedPrintSettings = null;
+export const setSavedPrintSettings = (ps) => {
+  if (!ps || typeof ps !== 'object') return;
+  _savedPrintSettings = ps;
+  setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth, autoImageForCurrency: ps.autoImageForCurrency });
+};
+export const getSavedPrintSettings = () => _savedPrintSettings;
+export const loadSavedPrintSettings = async (restaurantId) => {
+  if (!restaurantId) return _savedPrintSettings;
+  try {
+    const raw = await AsyncStorage.getItem(`${PRINT_SETTINGS_KEY}_${restaurantId}`);
+    if (raw) setSavedPrintSettings(JSON.parse(raw));
+  } catch (_) { /* fall through to the server */ }
+  try {
+    const apiClient = require('./api').default;
+    const res = await apiClient.getPrintSettings(restaurantId);
+    if (res && res.printSettings) {
+      setSavedPrintSettings(res.printSettings);
+      AsyncStorage.setItem(`${PRINT_SETTINGS_KEY}_${restaurantId}`, JSON.stringify(res.printSettings)).catch(() => {});
+    }
+  } catch (_) { /* offline: keep the stored copy */ }
+  return _savedPrintSettings;
+};
 let activeScanCancelled = false;
 let activeZeroconf = null;
 let _reconnectPromise = null; // shared Promise so concurrent callers wait for reconnect
@@ -1890,25 +1920,27 @@ export const openCashDrawer = async () => {
  * Print a test page
  */
 export const printTestPage = async () => {
+  const TW = getChars(_savedPrintSettings || {}); // 58 mm = 32 chars (was always 48 → wrapped)
+  const TLINE = getLine(TW);
   const testText = [
-    LINE,
-    center('PRINTER TEST'),
-    LINE,
+    TLINE,
+    center('PRINTER TEST', TW),
+    TLINE,
     '',
-    center('DineOpen POS'),
-    center('Printer Connection OK!'),
+    center('DineOpen POS', TW),
+    center('Printer Connection OK!', TW),
     '',
-    LINE,
-    `Date: ${new Date().toLocaleString('en-IN')}`,
+    TLINE,
+    `Date: ${new Date().toLocaleString('en-IN').replace(/[\u202F\u00A0]/g, ' ')}`,
     `Type: ${connectionType || 'system dialog'}`,
     `Printer: ${connectedPrinter ? String(connectedPrinter).substring(0, 30) : 'System default'}`,
     `Platform: ${Platform.OS}`,
-    LINE,
+    TLINE,
     '',
-    center('If you can read this,'),
-    center('your printer is working!'),
+    center('If you can read this,', TW),
+    center('your printer is working!', TW),
     '',
-    LINE,
+    TLINE,
   ].join('\n');
 
   const testHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">

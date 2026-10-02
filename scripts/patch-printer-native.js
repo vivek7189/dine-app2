@@ -491,3 +491,26 @@ if (fs.existsSync(DIST_FILE)) {
     console.log('✅ iOS BLE JS wrapper already patched');
   }
 }
+
+// --- iOS Bluetooth text alignment ---
+// ESC a n: 0 = left, 1 = centre, 2 = right. Upstream sends 1B6101 (CENTRE) for normal text and
+// 1B6102 (RIGHT) for "centre", so every iPhone Bluetooth receipt printed centred: our lines are
+// already space-padded for a left-aligned layout, so they shifted right and wrapped on 58 mm paper.
+if (fs.existsSync(IOS_BLE_FILE)) {
+  let iosAlign = fs.readFileSync(IOS_BLE_FILE, 'utf8');
+  if (!iosAlign.includes('DINEOPEN_IOS_BT_ALIGN')) {
+    const before = iosAlign;
+    iosAlign = iosAlign.replace(
+      /alignCenter \? \[\[PrinterSDK defaultPrinterSDK\] sendHex:@"1B6102"\] : \[\[PrinterSDK defaultPrinterSDK\] sendHex:@"1B6101"\];/,
+      '// DINEOPEN_IOS_BT_ALIGN: ESC a 1 = centre, ESC a 0 = left\n        alignCenter ? [[PrinterSDK defaultPrinterSDK] sendHex:@"1B6101"] : [[PrinterSDK defaultPrinterSDK] sendHex:@"1B6100"];'
+    );
+    if (iosAlign !== before) {
+      fs.writeFileSync(IOS_BLE_FILE, iosAlign, 'utf8');
+      console.log('✅ Patched iOS BLE text alignment (left by default)');
+    } else {
+      console.log('⚠️  iOS BLE alignment line not found (skipping)');
+    }
+  } else {
+    console.log('✅ iOS BLE text alignment already patched');
+  }
+}

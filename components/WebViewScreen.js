@@ -167,7 +167,14 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       let text = null;
       const html = data.html || null;
       const restaurantId = data.restaurantId || userData?.restaurantId || userData?.restaurant?.id;
-      const ps = data.printSettings || {};
+      // The restaurant's saved print settings (printer width, receipt logo, image receipts) win
+      // over what the page sent — the page's copy can miss them (bills printed at 80 mm width on a
+      // 58 mm printer, no logo). Loaded once per session; the page's copy fills any gaps.
+      let savedPs = printerService.getSavedPrintSettings();
+      if (!savedPs && restaurantId) { try { savedPs = await printerService.loadSavedPrintSettings(restaurantId); } catch (_) {} }
+      else if (restaurantId) printerService.loadSavedPrintSettings(restaurantId).catch(() => {}); // pick up web-side changes for next time
+      const ps = { ...(data.printSettings || {}), ...(savedPs || {}) };
+      let billData = null; // bill fields, also used to render the image receipt (logo / Image Receipts)
 
       // ── Priority 1: Use embedded orderData from WebView (no API call needed) ──
       // This is the same approach as test print — data is already available locally
@@ -201,7 +208,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               selectedCustomizations: i.selectedCustomizations || [],
             }));
             const subtotal = od.subtotal || items.reduce((s, i) => s + (i.total || 0), 0);
-            text = printerService.generateBillText({
+            billData = {
               orderId: od.orderId || od.id || data.orderId,
               orderNumber: od.orderNumber || od.dailyOrderId || '' || '',
               restaurantName: od.restaurantName || userData?.restaurant?.name || '',
@@ -226,7 +233,8 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               changeReturned: od.changeReturned || null,
               splitPayments: od.splitPayments || null,
               printSettings: ps,
-            });
+            };
+            text = printerService.generateBillText(billData);
           }
           console.log(`[${screenName}] ESC/POS text generated from embedded data`);
         } catch (embedErr) {
@@ -254,7 +262,7 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
               });
             } else {
               const subtotal = (order.items || []).reduce((s, i) => s + ((i.price || 0) * (i.quantity || 1)), 0);
-              text = printerService.generateBillText({
+              billData = {
                 orderId: order.id,
                 orderNumber: order.dailyOrderId || order.orderNumber || '',
                 restaurantName: order.restaurantName || userData?.restaurant?.name || '',
@@ -284,7 +292,8 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
                 changeReturned: order.changeReturned || null,
                 splitPayments: order.splitPayments || null,
                 printSettings: ps,
-              });
+              };
+              text = printerService.generateBillText(billData);
             }
             console.log(`[${screenName}] ESC/POS text generated from API fetch`);
           }
@@ -317,7 +326,14 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
 
       // Print with feedback — notify WebView of success/failure so it can show toast
       const printLabel = data.type === 'PRINT_KOT' ? 'KOT' : 'Bill';
-      const result = await printerService.printWithFeedback({ html, text, silentOnly: true, label: printLabel });
+      // The page sends no bill HTML, so without this a bill from here could never print as an
+      // image or carry the receipt logo. Render it from the same bill data when Image Receipts or
+      // the logo is on (any image failure still falls back to the text bill).
+      let imageHtml = null;
+      if (data.type === 'PRINT_BILL' && billData && (ps.imagePrintEnabled || (ps.receiptLogo?.enabled && ps.receiptLogo?.url))) {
+        try { imageHtml = printerService.generateBillHTML(billData, ps); } catch (_) { imageHtml = null; }
+      }
+      const result = await printerService.printWithFeedback({ html, text, imageHtml, silentOnly: true, label: printLabel });
 
       // Post print result back to WebView so the frontend can show toast/notification
       if (webViewRef.current) {
