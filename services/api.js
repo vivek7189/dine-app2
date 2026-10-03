@@ -3316,6 +3316,27 @@ class ApiClient {
   async getMySales(restaurantId, period = 'today') {
     return this.request(`/api/staff-access/${restaurantId}/my-sales?period=${encodeURIComponent(period)}`);
   }
+  // ── Event calendar (festivals, public holidays, own events) ──
+  // A 403 means the owner turned staff viewing off (callers hide the calendar).
+  async getCalendar(restaurantId, from, to, lang = 'en') {
+    const q = new URLSearchParams({ from, to, lang }).toString();
+    return this.request(`/api/calendar/${restaurantId}?${q}`);
+  }
+  async getUpcomingEvents(restaurantId, days = 45, lang = 'en') {
+    return this.request(`/api/calendar/${restaurantId}/upcoming?days=${encodeURIComponent(days)}&lang=${encodeURIComponent(lang)}`);
+  }
+  async updateCalendarSettings(restaurantId, patch) {
+    return this.request(`/api/calendar/${restaurantId}/settings`, { method: 'PUT', data: patch || {} });
+  }
+  async createCalendarEvent(restaurantId, event) {
+    return this.request(`/api/calendar/${restaurantId}/events`, { method: 'POST', data: event || {} });
+  }
+  async updateCalendarEvent(restaurantId, eventId, patch) {
+    return this.request(`/api/calendar/${restaurantId}/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', data: patch || {} });
+  }
+  async deleteCalendarEvent(restaurantId, eventId) {
+    return this.request(`/api/calendar/${restaurantId}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' });
+  }
   async transferOrder(orderId, toStaffId) {
     return this.request(`/api/orders/${orderId}/transfer`, { method: 'POST', data: { toStaffId } });
   }

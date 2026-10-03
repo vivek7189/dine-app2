@@ -26,6 +26,7 @@ import lanClient from '../../services/lanClient';
 import { resolveFeaturePermissions, followsWaiterAppConfig, roleCan } from '../../utils/permissions';
 import RestaurantPickerModal from '../../components/RestaurantPickerModal';
 import { useTabModes } from '../../contexts/TabModeContext';
+import { loadUpcoming } from '../../utils/calendarEvents';
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -53,6 +54,8 @@ export default function MoreScreen() {
   const [displayExpanded, setDisplayExpanded] = useState(false);
   const displayChevronAnim = useRef(new Animated.Value(0)).current;
   const { modes: tabModes, setMode: setTabMode } = useTabModes();
+  // Events calendar: shown only when the API lets this person see it (403 = owner turned staff view off)
+  const [calendarAllowed, setCalendarAllowed] = useState(false);
 
   useEffect(() => {
     loadUserData();
@@ -163,6 +166,14 @@ export default function MoreScreen() {
 
   const getRestaurantId = () => user?.restaurantId || user?.restaurant?.id || restaurant?.id;
 
+  const calendarRid = getRestaurantId();
+  useEffect(() => {
+    let alive = true;
+    if (!calendarRid) { setCalendarAllowed(false); return undefined; }
+    loadUpcoming(calendarRid).then(r => { if (alive) setCalendarAllowed(!!r.allowed); });
+    return () => { alive = false; };
+  }, [calendarRid]);
+
   const menuSections = [
     {
       title: 'Management',
@@ -175,6 +186,7 @@ export default function MoreScreen() {
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], perm: 'settings.googleReviews', color: '#eab308', iconBg: '#fefce8' },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'My Shifts', icon: 'calendar-outline', route: '/(tabs)/my-shifts', roles: null, color: '#ef4444', iconBg: '#fef2f2' },
+        { title: 'Events', icon: 'sparkles-outline', route: '/(tabs)/calendar', roles: null, calendar: true, color: '#d97706', iconBg: '#fffbeb' },
         // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
         // My Pay: own payslips / advances / bonuses / appraisals — only when the role has it (roles on)
@@ -259,6 +271,7 @@ export default function MoreScreen() {
   const waiterAppConfig = restaurant?.posSettings?.waiterAppConfig || {};
 
   const shouldShowItem = (item) => {
+    if (item.calendar) return calendarAllowed;
     // Waiter app config overrides — waiters and any role the owner applied it to
     if (followsWaiterAppConfig(role, waiterAppConfig)) {
       const waiterConfigMap = {

@@ -39,6 +39,11 @@ export function getCountryCode() {
   return _currencyConfig.countryCode;
 }
 
+/** Current restaurant locale (e.g. 'en-IN', 'ar-AE') — for dates and numbers. */
+export function getLocale() {
+  return _currencyConfig.locale || 'en-IN';
+}
+
 /**
  * Get the current currency symbol.
  */

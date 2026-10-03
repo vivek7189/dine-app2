@@ -14,6 +14,7 @@ import { Colors, Spacing, Shadows } from '../constants/Theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
 import { formatCurrency } from '../utils/formatCurrency';
+import UpcomingEventsStrip from '../components/UpcomingEventsStrip';
 
 const QUICK_ACTIONS = [
   { key: 'order', label: 'Start Order', icon: 'add-circle', color: '#ef4444', bg: '#fef2f2', tab: 'tables' },
@@ -330,6 +331,9 @@ export default function CaptainHomeNative() {
             ))}
           </View>
         )}
+
+        {/* Coming up: next festivals / holidays / own events (hidden when the owner turned staff view off) */}
+        <UpcomingEventsStrip restaurantId={restaurantId} />
 
         {/* My Waiters */}
         {waiters.length > 0 && (
