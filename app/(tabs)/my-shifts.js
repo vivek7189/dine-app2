@@ -2,12 +2,12 @@
 //  • My shifts (next 4 weeks), ask a colleague to swap
 //  • Open shifts for my role: ask for one → owner / manager approves
 //  • Swap requests for me: accept / decline
-//  • My availability: which days/hours I can work + dates I can't
-//  • Owner / manager: approve open-shift requests and swaps
+//  • My availability: which days/hours I can work (up to 2 time slots a day) + dates I can't
+//  • Owner / manager: approve open-shift requests and swaps, add extra pay to an open shift
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl,
-  Alert, Modal, Switch, Platform,
+  Alert, Modal, Switch, Platform, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +30,20 @@ const t12 = (t) => {
 };
 const cap = (r) => String(r || '').replace(/\b\w/g, c => c.toUpperCase());
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+// A day's time slots (max 2). Days saved before slots existed have one: startTime–endTime.
+const daySlots = (d) => {
+  const ok = (x) => x && TIME_RE.test(x.startTime || '') && TIME_RE.test(x.endTime || '');
+  const list = Array.isArray(d?.slots) && d.slots.filter(ok).length ? d.slots.filter(ok) : [{ startTime: d?.startTime || '09:00', endTime: d?.endTime || '22:00' }];
+  return list.slice(0, 2).map(x => ({ startTime: x.startTime, endTime: x.endTime }));
+};
+const toM = (t) => { const [h, m] = String(t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const slotsOverlap = ([a, b]) => {
+  if (!a || !b) return false;
+  const span = (x) => { const s1 = toM(x.startTime); let e1 = toM(x.endTime); if (e1 <= s1) e1 += 1440; return [s1, e1]; };
+  const [x, y] = [a, b].sort((p, q) => toM(p.startTime) - toM(q.startTime));
+  const [a1, b1] = span(x); const [a2, b2] = span(y);
+  return (a1 < b2 && a2 < b1) || (b2 > 1440 && b2 - 1440 > a1);
+};
 
 export default function MyShiftsScreen() {
   const router = useRouter();
@@ -67,7 +81,10 @@ export default function MyShiftsScreen() {
       setData(res);
       const a = av?.availability || {};
       const weekly = {};
-      DAYS.forEach(([k]) => { weekly[k] = a.availability?.[k] || a.availability?.[FULL[k]] || { available: true, startTime: '09:00', endTime: '22:00' }; });
+      DAYS.forEach(([k]) => {
+        const d = a.availability?.[k] || a.availability?.[FULL[k]] || { available: true, startTime: '09:00', endTime: '22:00' };
+        weekly[k] = { available: d.available !== false, slots: daySlots(d) };
+      });
       setAvail({ weekly, unavailableDates: a.unavailableDates || [] });
       setAvailDirty(false);
     } catch (e) {
@@ -103,14 +120,20 @@ export default function MyShiftsScreen() {
   const saveAvailability = async () => {
     setBusy('avail');
     try {
-      for (const [k] of DAYS) {
+      const weekly = {};
+      for (const [k, label] of DAYS) {
         const d = avail.weekly[k];
-        if (d.available && (!TIME_RE.test(d.startTime || '') || !TIME_RE.test(d.endTime || ''))) {
-          throw new Error(`Enter ${cap(k)} times as HH:MM (e.g. 09:00)`);
+        const slots = (d.slots || []).slice(0, 2);
+        if (d.available !== false) {
+          if (slots.some(x => !TIME_RE.test(x.startTime || '') || !TIME_RE.test(x.endTime || ''))) throw new Error(`${label}: pick the times`);
+          if (slots.some(x => x.startTime === x.endTime)) throw new Error(`${label}: start and end can't be the same`);
+          if (slotsOverlap(slots)) throw new Error(`${label}: the two time slots overlap`);
         }
+        // startTime / endTime = first slot, so older screens still read a sensible range.
+        weekly[k] = { available: d.available !== false, startTime: slots[0]?.startTime || '09:00', endTime: slots[0]?.endTime || '22:00', slots };
       }
       await apiClient.request(`/api/shift-scheduling/availability/${user.id}`, {
-        method: 'POST', data: { availability: avail.weekly, unavailableDates: avail.unavailableDates },
+        method: 'POST', data: { availability: weekly, unavailableDates: avail.unavailableDates },
       });
       setAvailDirty(false);
       Alert.alert('Saved', 'Your manager will see this when planning the rota.');
@@ -121,11 +144,28 @@ export default function MyShiftsScreen() {
 
   // Times are picked on a clock (typing "9.00" / "900" by hand went wrong). Android: the system clock
   // dialog; iOS: a spinner in a small sheet with Done.
-  const [timePick, setTimePick] = useState(null); // { day, field, value: Date }
+  const [timePick, setTimePick] = useState(null); // { day, slot, field, value: Date }
   const toDate = (hhmm) => { const [h, m] = String(hhmm || '09:00').split(':').map(Number); const d = new Date(); d.setHours(Number.isFinite(h) ? h : 9, Number.isFinite(m) ? m : 0, 0, 0); return d; };
   const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  const openTime = (day, field) => setTimePick({ day, field, value: toDate(avail?.weekly?.[day]?.[field]) });
-  const applyTime = (day, field, date) => { if (date) setDay(day, { [field]: hhmm(date) }); };
+  const openTime = (day, slot, field) => setTimePick({ day, slot, field, value: toDate(avail?.weekly?.[day]?.slots?.[slot]?.[field]) });
+  const applyTime = (day, slot, field, date) => {
+    if (!date) return;
+    const slots = (avail.weekly[day].slots || []).map((x, i) => (i === slot ? { ...x, [field]: hhmm(date) } : x));
+    setDay(day, { slots });
+  };
+  const addSlot = (day) => setDay(day, { slots: [...(avail.weekly[day].slots || []).slice(0, 1), { startTime: '17:00', endTime: '22:00' }] });
+  const removeSlot = (day, slot) => setDay(day, { slots: (avail.weekly[day].slots || []).filter((_, i) => i !== slot) });
+
+  // Owner / manager: extra pay on an open shift to attract staff.
+  const [incentiveFor, setIncentiveFor] = useState(null); // { shift, amount, note }
+  const saveIncentive = async () => {
+    const { shift, amount, note } = incentiveFor;
+    const amt = amount === '' ? 0 : Number(amount);
+    if (!(amt >= 0)) { Alert.alert('Check the amount', 'Enter a number, e.g. 200'); return; }
+    setIncentiveFor(null);
+    await act(`inc${shift.id}`, `${shift.id}/incentive`, { amount: amt, note: (note || '').trim() },
+      amt > 0 ? 'Extra pay added — staff who can work this shift were told' : 'Extra pay removed');
+  };
 
   const setDay = (k, patch) => {
     setAvail(a => ({ ...a, weekly: { ...a.weekly, [k]: { ...a.weekly[k], ...patch } } }));
@@ -144,6 +184,8 @@ export default function MyShiftsScreen() {
   const claimCount = (approvals?.claims || []).reduce((n, s) => n + (s.claims || []).filter(c => c.status === 'pending').length, 0);
   const swapCount = (approvals?.swaps || []).length;
   const colleagues = (data?.colleagues || []);
+  const currency = data?.currencySymbol || '';
+  const openUnclaimed = approvals?.openUnclaimed || [];
 
   const shiftRow = (s, right) => (
     <View key={s.id} style={styles.row}>
@@ -151,6 +193,9 @@ export default function MyShiftsScreen() {
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle}>{nice(s.date)} · {t12(s.startTime)}–{t12(s.endTime)}</Text>
         <Text style={styles.muted}>{[s.shiftName, cap(s.role), s.breakMinutes ? `${s.breakMinutes} min break` : null].filter(Boolean).join(' · ')}</Text>
+        {Number(s.incentive?.amount) > 0 ? (
+          <Text style={styles.incentive}>+{currency}{s.incentive.amount} extra{s.incentive.note ? ` · ${s.incentive.note}` : ''}</Text>
+        ) : null}
         {s.notes ? <Text style={styles.note}>{s.notes}</Text> : null}
       </View>
       {right}
@@ -200,6 +245,21 @@ export default function MyShiftsScreen() {
                   <TouchableOpacity disabled={!!busy} style={[styles.btn, styles.btnGrey]} onPress={() => act(`sr${s.id}`, `${s.id}/swap/decide`, { approve: false })}><Text style={[styles.btnText, { color: '#374151' }]}>Reject</Text></TouchableOpacity>
                 </View>
               </View>
+            )))}
+          </View>
+        )}
+
+        {/* Open shifts nobody has asked for (owner / manager): add extra pay to attract staff */}
+        {data?.canApprove && openUnclaimed.length > 0 && (
+          <View style={[styles.card, { borderColor: '#fde68a' }]}>
+            <Text style={styles.section}>Open shifts nobody picked ({openUnclaimed.length})</Text>
+            <Text style={[styles.muted, { marginBottom: 6 }]}>Add extra pay to attract staff — it is paid with their salary once you approve them.</Text>
+            {openUnclaimed.map(s => shiftRow(s, (
+              <TouchableOpacity disabled={!!busy} style={[styles.btn, styles.btnOutline, { borderColor: '#f59e0b' }]}
+                onPress={() => setIncentiveFor({ shift: s, amount: s.incentive?.amount ? String(s.incentive.amount) : '', note: s.incentive?.note || '' })}>
+                {busy === `inc${s.id}` ? <ActivityIndicator color="#b45309" size="small" />
+                  : <Text style={[styles.btnText, { color: '#b45309' }]}>{Number(s.incentive?.amount) > 0 ? 'Change pay' : 'Add extra pay'}</Text>}
+              </TouchableOpacity>
             )))}
           </View>
         )}
@@ -270,10 +330,22 @@ export default function MyShiftsScreen() {
                   <Text style={{ width: 42, fontWeight: '600', color: '#111827' }}>{label}</Text>
                   <Switch value={d.available !== false} onValueChange={v => setDay(k, { available: v })} trackColor={{ true: '#86efac' }} thumbColor={d.available !== false ? '#16a34a' : '#f4f4f5'} />
                   {d.available !== false ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-                      <TouchableOpacity style={styles.time} onPress={() => openTime(k, 'startTime')}><Text style={styles.timeText}>{d.startTime || '09:00'}</Text></TouchableOpacity>
-                      <Text style={styles.muted}>to</Text>
-                      <TouchableOpacity style={styles.time} onPress={() => openTime(k, 'endTime')}><Text style={styles.timeText}>{d.endTime || '22:00'}</Text></TouchableOpacity>
+                    <View style={{ marginLeft: 8, gap: 6 }}>
+                      {(d.slots || []).map((slot, i) => (
+                        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <TouchableOpacity style={styles.time} onPress={() => openTime(k, i, 'startTime')}><Text style={styles.timeText}>{slot.startTime}</Text></TouchableOpacity>
+                          <Text style={styles.muted}>to</Text>
+                          <TouchableOpacity style={styles.time} onPress={() => openTime(k, i, 'endTime')}><Text style={styles.timeText}>{slot.endTime}</Text></TouchableOpacity>
+                          {i > 0 ? (
+                            <TouchableOpacity onPress={() => removeSlot(k, i)} style={{ padding: 4 }} accessibilityLabel={`Remove ${label} second slot`}>
+                              <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      ))}
+                      {(d.slots || []).length < 2 ? (
+                        <TouchableOpacity onPress={() => addSlot(k)}><Text style={styles.addSlot}>+ 2nd slot</Text></TouchableOpacity>
+                      ) : null}
                     </View>
                   ) : <Text style={[styles.muted, { marginLeft: 8 }]}>Can&apos;t work</Text>}
                 </View>
@@ -292,7 +364,7 @@ export default function MyShiftsScreen() {
             </View>
             {timePick && Platform.OS !== 'ios' && (
               <DateTimePicker value={timePick.value} mode="time" is24Hour
-                onChange={(e, d) => { const tp = timePick; setTimePick(null); if (e?.type === 'set' && d) applyTime(tp.day, tp.field, d); }} />
+                onChange={(e, d) => { const tp = timePick; setTimePick(null); if (e?.type === 'set' && d) applyTime(tp.day, tp.slot, tp.field, d); }} />
             )}
             {timePick && Platform.OS === 'ios' && (
               <Modal transparent animationType="fade" onRequestClose={() => setTimePick(null)}>
@@ -302,7 +374,7 @@ export default function MyShiftsScreen() {
                       onChange={(e, d) => { if (d) setTimePick(tp => (tp ? { ...tp, value: d } : tp)); }} />
                     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
                       <TouchableOpacity onPress={() => setTimePick(null)} style={[styles.btn, { backgroundColor: '#f3f4f6' }]}><Text style={[styles.btnText, { color: '#374151' }]}>Cancel</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => { const tp = timePick; setTimePick(null); applyTime(tp.day, tp.field, tp.value); }} style={[styles.btn, styles.btnRed]}><Text style={styles.btnText}>Done</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => { const tp = timePick; setTimePick(null); applyTime(tp.day, tp.slot, tp.field, tp.value); }} style={[styles.btn, styles.btnRed]}><Text style={styles.btnText}>Done</Text></TouchableOpacity>
                     </View>
                   </View>
                 </View>
@@ -348,6 +420,31 @@ export default function MyShiftsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Owner / manager: extra pay on an open shift */}
+      <Modal visible={!!incentiveFor} transparent animationType="slide" onRequestClose={() => setIncentiveFor(null)}>
+        <View style={styles.sheetWrap}>
+          <View style={styles.sheet}>
+            <Text style={styles.section}>Extra pay for this shift</Text>
+            {incentiveFor && <Text style={[styles.muted, { marginBottom: 10 }]}>{nice(incentiveFor.shift.date)} · {t12(incentiveFor.shift.startTime)}–{t12(incentiveFor.shift.endTime)} · {cap(incentiveFor.shift.role)}</Text>}
+            <Text style={styles.label}>AMOUNT{currency ? ` (${currency})` : ''}</Text>
+            <TextInput style={[styles.input, { marginTop: 4, marginBottom: 10 }]} keyboardType="numeric" placeholder="e.g. 200"
+              value={incentiveFor?.amount ?? ''} onChangeText={v => setIncentiveFor(x => (x ? { ...x, amount: v.replace(/[^0-9.]/g, '') } : x))} />
+            <Text style={styles.label}>NOTE (OPTIONAL)</Text>
+            <TextInput style={[styles.input, { marginTop: 4 }]} maxLength={120} placeholder="e.g. Rush hour, festival day"
+              value={incentiveFor?.note ?? ''} onChangeText={v => setIncentiveFor(x => (x ? { ...x, note: v } : x))} />
+            <Text style={[styles.muted, { marginTop: 8 }]}>Staff who can work this shift get a notification. Leave the amount empty to remove it.</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity style={[styles.btn, styles.btnGrey, { flex: 1 }]} onPress={() => setIncentiveFor(null)}>
+                <Text style={[styles.btnText, { color: '#374151', textAlign: 'center' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnRed, { flex: 1 }]} onPress={saveIncentive}>
+                <Text style={[styles.btnText, { textAlign: 'center' }]}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -363,6 +460,9 @@ const styles = StyleSheet.create({
   section: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 8 },
   muted: { fontSize: 12.5, color: '#6b7280' },
   note: { fontSize: 12, color: '#92400e', marginTop: 2 },
+  incentive: { fontSize: 12, fontWeight: '700', color: '#b45309', marginTop: 2 },
+  addSlot: { fontSize: 12.5, fontWeight: '600', color: '#2563eb', paddingVertical: 2 },
+  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: '#111827', backgroundColor: 'white' },
   error: { color: '#b91c1c', marginBottom: 10 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f3f4f6', gap: 10 },
   dot: { width: 8, height: 8, borderRadius: 4 },
