@@ -105,9 +105,9 @@ jobs:
             --title "DineOpen Waiter ${{ github.ref_name }}" \
             --notes "Android APK for ${{ github.ref_name }}." || true
 
-      - name: Upload APK as build artifact (backup)
+      - name: Upload APK as build artifact (1-day backup — the releases above keep it permanently)
         uses: actions/upload-artifact@v4
         with:
           name: DineOpen-Waiter-apk
           path: DineOpen-Waiter.apk
-          retention-days: 30
+          retention-days: 1
