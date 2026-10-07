@@ -17,7 +17,7 @@ try {
 // (backend.json → REMOTE_DEFAULT_KEY) can still switch EVERY device to ANY url — including
 // back to Vercel — centrally, with no rebuild. This is only the baked fallback used until that
 // remote config is cached.
-const PG_API_BASE = process.env.EXPO_PUBLIC_PG_API_URL || 'https://34-93-129-104.sslip.io';
+const PG_API_BASE = process.env.EXPO_PUBLIC_PG_API_URL || 'https://api.dineopen.com';
 // Baked default backend — now GCP (was Vercel). A fresh install with no cached remote-config
 // lands on GCP, never Vercel. EXPO_PUBLIC_API_URL still overrides at build time (e.g. localhost
 // for dev). To route to Vercel again, point backend.json at it — no app rebuild needed.
@@ -32,12 +32,27 @@ const ALLOWED_CLOUD_HOSTS = new Set([
   '34-93-129-104.sslip.io',
   'api.dineopen.com',
 ]);
-function cloudBase(url) {
+// The sslip address and api.dineopen.com are two names for the same backend. A pin on either
+// (incl. a restaurant's pgBackendUrl) follows the remote config's choice between them, so flipping
+// backend.json moves pinned devices too — and flipping it back reverts them.
+const SAME_BOX_HOSTS = new Set(['34-93-129-104.sslip.io', 'api.dineopen.com']);
+let _sameBoxRemote = null; // remote default origin, when it is one of the two names above
+function noteRemoteDefault(url) {
   try {
     const u = new URL(String(url || ''));
-    if (u.protocol === 'https:' && ALLOWED_CLOUD_HOSTS.has(u.hostname.toLowerCase())) return `${u.origin}`;
+    _sameBoxRemote = u.protocol === 'https:' && SAME_BOX_HOSTS.has(u.hostname.toLowerCase()) ? u.origin : null;
+  } catch (_) { /* keep previous */ }
+}
+function cloudBase(url) {
+  let base = PG_API_BASE;
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol === 'https:' && ALLOWED_CLOUD_HOSTS.has(u.hostname.toLowerCase())) base = `${u.origin}`;
   } catch (_) { /* fall through */ }
-  return PG_API_BASE;
+  try {
+    if (_sameBoxRemote && SAME_BOX_HOSTS.has(new URL(base).hostname.toLowerCase())) return _sameBoxRemote;
+  } catch (_) { /* keep base */ }
+  return base;
 }
 
 // True when pointed at a local/dev backend — the remote config must NEVER override
@@ -216,6 +231,7 @@ class ApiClient {
   async initBackendRouting() {
     if (getLocalServerUrl()) return this.baseURL; // local server already routed + wins
     try {
+      noteRemoteDefault(await AsyncStorage.getItem(REMOTE_DEFAULT_KEY));
       const pin = await AsyncStorage.getItem(BACKEND_URL_KEY);
       if (pin) {
         // per-restaurant pgBackendUrl pin wins over the remote default (only our GCP backend)
@@ -253,6 +269,7 @@ class ApiClient {
       const url = cfg && cfg.defaultBackend;
       if (typeof url === 'string' && /^https?:\/\//.test(url)) {
         await AsyncStorage.setItem(REMOTE_DEFAULT_KEY, url.replace(/\/+$/, ''));
+        noteRemoteDefault(url);
       }
     } catch (_) { /* keep last cache or baked default */ }
   }
