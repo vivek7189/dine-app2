@@ -218,17 +218,35 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
       Alert.alert('Split payment', `Split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
       return;
     }
-    setSettling(true);
-    try {
-      // Register must be open to bill (when the restaurant requires it) — utils/registerGate
-      if (await registerBlocksBilling(restaurantId, posSettings)) {
-        Alert.alert('Register not open', 'Open the cash register (More → Register) or start your shift (More → Shifts & Cash) before billing.');
-        return;
+    // Customer details before billing (posSettings.customerDetailsPrompt, off by default — same rule
+    // as the cart / web). This screen has no customer field, so it points to "Add Items".
+    const cdMode = ['remind', 'required'].includes(posSettings?.customerDetailsPrompt) ? posSettings.customerDetailsPrompt : 'off';
+    const nameOnOrder = !!String(ci.name || order?.customerName || '').trim();
+    const settleNow = async () => {
+      setSettling(true);
+      try {
+        // Register must be open to bill (when the restaurant requires it) — utils/registerGate
+        if (await registerBlocksBilling(restaurantId, posSettings)) {
+          Alert.alert('Register not open', 'Open the cash register (More → Register) or start your shift (More → Shifts & Cash) before billing.');
+          return;
+        }
+        onCompleteBill(order, buildSettlementData());
+      } finally {
+        setSettling(false);
       }
-      onCompleteBill(order, buildSettlementData());
-    } finally {
-      setSettling(false);
+    };
+    if (cdMode === 'required' && !(hasCustomer || (posSettings?.hideMobile && nameOnOrder))) {
+      Alert.alert('Customer details needed', `Add the customer's ${posSettings?.hideMobile ? 'name' : 'phone number'} to this order (tap "Add Items") before completing the bill.`);
+      return;
     }
+    if (cdMode === 'remind' && !hasCustomer && !nameOnOrder) {
+      Alert.alert('No customer details', 'This order has no customer details. Add them with "Add Items", or continue without.', [
+        { text: 'Go back', style: 'cancel' },
+        { text: 'Continue without', onPress: () => { settleNow(); } },
+      ]);
+      return;
+    }
+    await settleNow();
   };
 
   // Safely render content — catch any unexpected data shape issues

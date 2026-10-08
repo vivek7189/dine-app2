@@ -402,8 +402,9 @@ export default function CartModal({
 
   // A verified discount code belongs to the current cart only — cleared once the cart is emptied
   // (order placed / billed / cleared) so the next order needs its own code (web parity).
+  const customerPromptContinuedRef = useRef(false); // "Continue without" chosen for this cart
   useEffect(() => {
-    if (!cart || cart.length === 0) setDiscountOtpApprovedKey(null);
+    if (!cart || cart.length === 0) { setDiscountOtpApprovedKey(null); customerPromptContinuedRef.current = false; }
   }, [cart?.length]);
 
   // Coupon state
@@ -966,6 +967,33 @@ export default function CartModal({
     return String(customerMobile || '').replace(/\D/g, '').length < getPhoneMinLength(countryCode);
   };
   const dueNeedsCustomerAlert = () => Alert.alert('Customer needed', 'A due (udhar) bill needs the customer. Enter the customer phone number first.');
+  // Customer details before billing (Admin → POS Settings → "Ask for customer details before
+  // billing", posSettings.customerDetailsPrompt — off by default) — same rule as the web:
+  //   remind   → when no name / phone / customer was entered: "Add details" or "Continue without"
+  //              (not asked again for this cart)
+  //   required → a valid phone or a found customer (the name when the mobile field is hidden)
+  // `proceed` runs the rest of the billing action when the details are fine / the cashier continues.
+  const customerDetailsMode = ['remind', 'required'].includes(posSettings?.customerDetailsPrompt) ? posSettings.customerDetailsPrompt : 'off';
+  const withCustomerDetails = (proceed) => {
+    if (customerDetailsMode === 'off') return proceed();
+    const phoneOk = String(customerMobile || '').replace(/\D/g, '').length >= getPhoneMinLength(countryCode);
+    const found = !!customerData;
+    const nameOk = !!String(customerName || '').trim();
+    if (customerDetailsMode === 'required') {
+      if (found || phoneOk || (posSettings?.hideMobile && nameOk)) return proceed();
+      Alert.alert('Customer details needed', posSettings?.hideMobile
+        ? "Please enter the customer's name before completing the bill."
+        : "Please enter the customer's phone number before completing the bill.");
+      return undefined;
+    }
+    if (found || phoneOk || nameOk || customerPromptContinuedRef.current) return proceed();
+    Alert.alert('No customer details', 'Add the customer\'s details for this bill?', [
+      { text: 'Add details', style: 'cancel' },
+      { text: 'Continue without', onPress: () => { customerPromptContinuedRef.current = true; proceed(); } },
+    ]);
+    return undefined;
+  };
+
   // What split payments must add up to: the part-payment amount when one is being taken now,
   // else the whole bill.
   const splitTarget = () => {
@@ -1020,17 +1048,21 @@ export default function CartModal({
       Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
       return;
     }
-    if (stockWarnings.overStock.length > 0) {
-      Alert.alert('Stock Exceeded',
-        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
-      return;
-    }
-    if (needsDiscountApproval()) {
-      setPendingOrderAction('place');
-      setShowDiscountApproval(true);
-      return;
-    }
-    proceedPlaceOrder();
+    // Cashier 'Place Order' completes the sale → customer-details check; elsewhere it only sends to the kitchen.
+    const go = () => {
+      if (stockWarnings.overStock.length > 0) {
+        Alert.alert('Stock Exceeded',
+          stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+        return;
+      }
+      if (needsDiscountApproval()) {
+        setPendingOrderAction('place');
+        setShowDiscountApproval(true);
+        return;
+      }
+      proceedPlaceOrder();
+    };
+    if (mode === 'cashier') withCustomerDetails(go); else go();
   };
 
   const handleCompleteBill = () => {
@@ -1040,17 +1072,19 @@ export default function CartModal({
       Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
       return;
     }
-    if (stockWarnings.overStock.length > 0) {
-      Alert.alert('Stock Exceeded',
-        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
-      return;
-    }
-    if (needsDiscountApproval()) {
-      setPendingOrderAction('complete');
-      setShowDiscountApproval(true);
-      return;
-    }
-    proceedCompleteBill();
+    withCustomerDetails(() => {
+      if (stockWarnings.overStock.length > 0) {
+        Alert.alert('Stock Exceeded',
+          stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+        return;
+      }
+      if (needsDiscountApproval()) {
+        setPendingOrderAction('complete');
+        setShowDiscountApproval(true);
+        return;
+      }
+      proceedCompleteBill();
+    });
   };
 
   // One-click KOT + Bill (unpaid). No UPI intercept — payment is settled later.
@@ -1061,17 +1095,19 @@ export default function CartModal({
   };
 
   const handleKotAndBill = () => {
-    if (stockWarnings.overStock.length > 0) {
-      Alert.alert('Stock Exceeded',
-        stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
-      return;
-    }
-    if (needsDiscountApproval()) {
-      setPendingOrderAction('kotbill');
-      setShowDiscountApproval(true);
-      return;
-    }
-    proceedKotAndBill();
+    withCustomerDetails(() => {
+      if (stockWarnings.overStock.length > 0) {
+        Alert.alert('Stock Exceeded',
+          stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
+        return;
+      }
+      if (needsDiscountApproval()) {
+        setPendingOrderAction('kotbill');
+        setShowDiscountApproval(true);
+        return;
+      }
+      proceedKotAndBill();
+    });
   };
 
   const handleUpiConfirm = () => {
