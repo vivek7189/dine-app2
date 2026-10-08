@@ -200,6 +200,11 @@ export default function MoreScreen() {
       items: [
         { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin', perm: 'page.books', color: '#10b981', iconBg: '#ecfdf5' },
         { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice', perm: 'page.invoice', color: '#f97316', iconBg: '#fff7ed' },
+        // Open / close a shift and count the cash drawer — the web page in the app (same rule as the web
+        // sidebar / home: only where the restaurant uses Shifts & Cash).
+        ...(restaurant?.posSettings?.enableShiftsCash ? [{ title: 'Shifts & Cash', icon: 'cash-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/shifts-cash`, title: 'Shifts & Cash' } }, roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier'], feature: 'shifts', color: '#4f46e5', iconBg: '#eef2ff' }] : []),
+        // Open / close the cash register (X / Z) — only where billing needs an open register.
+        ...(restaurant?.posSettings?.requireRegisterOpen ? [{ title: 'Register', icon: 'albums-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/register`, title: 'Register' } }, roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier'], feature: 'completeBill', color: '#16a34a', iconBg: '#f0fdf4' }] : []),
       ],
     },
     {
