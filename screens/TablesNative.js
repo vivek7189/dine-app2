@@ -2189,6 +2189,7 @@ export default function TablesScreen() {
         restaurantId={selectedRestaurant?.id}
         userRole={user?.role}
         billingSettings={selectedRestaurant?.billingSettings || {}}
+        posSettings={selectedRestaurant?.posSettings || {}}
         onAddItems={handleAddItemsToOrder}
         onPrintPreBill={handlePrintPreBill}
         onCompleteBill={async (order, settlementData = {}) => {

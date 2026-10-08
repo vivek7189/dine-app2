@@ -494,7 +494,9 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
 
                   {/* Feature toolbar + active panel (Cash / Split / Tip / Khata) */}
                   <BillingToolbar
-                    billingSettings={billingSettings}
+                    /* Comp / Void are recorded at cart billing only — this settle screen doesn't
+                       carry them (and their panel needs the cart's selection lists → crashed here). */
+                    billingSettings={{ ...billingSettings, compVoidEnabled: false }}
                     isRoleAllowed={isRoleAllowed}
                     activeBillingPanel={activeBillingPanel}
                     setActiveBillingPanel={setActiveBillingPanel}
