@@ -19,6 +19,7 @@ import { seatLetter } from '../utils/seatOrdering';
 import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import { orderLinesToCart } from '../utils/orderLines';
+import { resolveSplitPayments } from '../utils/splitPayment';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, billingSettings = {}, posSettings = {} }) {
   const { modalWidth } = useResponsive();
@@ -172,16 +173,23 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const sStyle = statusStyle(order?.status);
   const orderNumberShort = order?.dailyOrderId || order?.orderNumber || '';
 
+  // What split payments must add up to: the part-payment amount when one is taken now, else the total.
+  const splitTarget = () => {
+    const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+    return pp != null && pp > 0 && pp < settleTotal ? pp : settleTotal;
+  };
+
   // Build the settlement payload passed to onCompleteBill(order, settlementData).
   const buildSettlementData = () => {
-    const usingSplit = splitPayments.length > 0;
+    const sp = resolveSplitPayments(splitPayments, splitTarget());
+    const usingSplit = sp.mode === 'split';
     const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
     let paymentStatus = 'paid', paidAmount = settleTotal, outstandingAmount = 0;
     if (pp != null && pp === 0) { paymentStatus = 'due'; paidAmount = 0; outstandingAmount = settleTotal; }
     else if (pp != null && pp > 0 && pp < settleTotal) { paymentStatus = 'partial'; paidAmount = Math.round(pp * 100) / 100; outstandingAmount = Math.round((settleTotal - pp) * 100) / 100; }
     return {
-      paymentMethod: usingSplit ? 'split' : paymentMethod,
-      splitPayments: usingSplit ? splitPayments : null,
+      paymentMethod: usingSplit ? 'split' : (sp.mode === 'single' ? (sp.method || paymentMethod) : paymentMethod),
+      splitPayments: usingSplit ? sp.lines : null,
       cashReceived: cashReceived ? parseFloat(cashReceived) : null,
       changeReturned: changeAmount > 0 ? changeAmount : null,
       tipAmount: tipAmount || null,
@@ -195,12 +203,10 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const handleSettle = () => {
     if (settling) return;
     // Validate split totals if used
-    if (splitPayments.length > 0) {
-      const sum = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      if (Math.abs(sum - settleTotal) > 0.5) {
-        setError(`Split payments (${getCurrencySymbol()}${sum.toFixed(2)}) must equal total ${getCurrencySymbol()}${settleTotal.toFixed(2)}`);
-        return;
-      }
+    const spCheck = resolveSplitPayments(splitPayments, splitTarget());
+    if (spCheck.mode === 'invalid') {
+      setError(`Split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments`);
+      return;
     }
     setSettling(true);
     try {

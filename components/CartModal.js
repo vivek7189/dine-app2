@@ -38,6 +38,7 @@ import { doEcrPurchase, ECR_APPROVED } from '../services/ecrService';
 import { buildSplitBillPayload } from '../utils/splitBill';
 import { filterAllowedOrderTypes } from '../utils/staffAccessClient';
 import { getOrderItemBaseKey } from '../utils/orderItemKey';
+import { resolveSplitPayments } from '../utils/splitPayment';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -701,9 +702,15 @@ export default function CartModal({
     tipPercentage: tipPercentage || null,
     cashReceived: cashReceived ? parseFloat(cashReceived) : null,
     changeReturned: changeAmount > 0 ? changeAmount : null,
-    // a split BILL and split PAYMENTS can't be combined (backend returns 400)
-    splitPayments: (splitPayments.length > 0 && !(splitConfig && splitConfig.guests?.length > 1)) ? splitPayments : null,
-    paymentMethod: splitPayments.length > 0 ? 'split' : paymentMethod,
+    // Split payments only when they really add up (utils/splitPayment); a split BILL and split
+    // PAYMENTS can't be combined (backend returns 400) — then neither is the method 'split'.
+    ...(() => {
+      const sp = resolveSplitPayments(splitPayments, splitTarget());
+      const splitBillOn = !!(splitConfig && splitConfig.guests?.length > 1);
+      if (sp.mode === 'split' && !splitBillOn) return { splitPayments: sp.lines, paymentMethod: 'split' };
+      if (sp.mode === 'single') return { splitPayments: null, paymentMethod: sp.method || paymentMethod };
+      return { splitPayments: null, paymentMethod };
+    })(),
     partialPayAmount: partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null,
     // Explicit payment status tracking (matches dine-frontend)
     ...(() => {
@@ -923,6 +930,12 @@ export default function CartModal({
     return { overStock, lowStock };
   }, [cart]);
 
+  // What split payments must add up to: the part-payment amount when one is being taken now,
+  // else the whole bill.
+  const splitTarget = () => {
+    const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+    return pp != null && pp > 0 && pp < (billing.grandTotal || 0) ? pp : billing.grandTotal;
+  };
   const proceedPlaceOrder = () => {
     setActiveAction('place');
     if (paymentMethod === 'upi' && upiConfigured) {
@@ -965,6 +978,11 @@ export default function CartModal({
   };
 
   const handlePlaceOrder = () => {
+    const spCheck = resolveSplitPayments(splitPayments, splitTarget());
+    if (spCheck.mode === 'invalid' && !(splitConfig && splitConfig.guests?.length > 1)) {
+      Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
+      return;
+    }
     if (stockWarnings.overStock.length > 0) {
       Alert.alert('Stock Exceeded',
         stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
@@ -979,6 +997,11 @@ export default function CartModal({
   };
 
   const handleCompleteBill = () => {
+    const spCheck = resolveSplitPayments(splitPayments, splitTarget());
+    if (spCheck.mode === 'invalid' && !(splitConfig && splitConfig.guests?.length > 1)) {
+      Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
+      return;
+    }
     if (stockWarnings.overStock.length > 0) {
       Alert.alert('Stock Exceeded',
         stockWarnings.overStock.map(i => `"${i.name}": only ${i.stockQuantity} available, ${i.quantity} in cart`).join('\n'));
