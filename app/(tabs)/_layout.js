@@ -68,6 +68,7 @@ function TabsNavigator() {
         // Route to correct backend based on restaurant config
         if (userData.restaurant) apiClient.setRestaurantBaseURL(userData.restaurant);
         apiClient.setBusinessDayStartHour(userData.restaurant?.posSettings?.businessDayStartHour || 0);
+        apiClient.setRestaurantTimezone(userData.restaurant?.posSettings?.timezone || null);
         // Phone notifications for shift schedule updates (best-effort, never blocks the app).
         registerStaffPush(userData.restaurantId || userData.restaurant?.id);
         const storedType = userData.restaurant?.businessType;

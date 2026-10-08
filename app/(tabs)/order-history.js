@@ -24,6 +24,7 @@ import * as printerService from '../../services/printerService';
 import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { businessRange, fmtDay, fmtClock, fmtDayTime } from '../../utils/restaurantClock';
 import { roleCan } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
 
@@ -183,34 +184,15 @@ export default function OrderHistoryScreen() {
     }
   };
 
-  const getDateRange = useCallback(() => {
-    const now = new Date();
-    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
-
-    switch (dateMode) {
-      case 'today': return { startDate: todayStart.toISOString(), endDate: todayEnd.toISOString() };
-      case 'yesterday': {
-        const y = new Date(todayStart); y.setDate(y.getDate() - 1);
-        const ye = new Date(y); ye.setHours(23, 59, 59, 999);
-        return { startDate: y.toISOString(), endDate: ye.toISOString() };
-      }
-      case 'week': {
-        const w = new Date(todayStart); w.setDate(w.getDate() - 7);
-        return { startDate: w.toISOString(), endDate: todayEnd.toISOString() };
-      }
-      case 'month': {
-        const m = new Date(todayStart); m.setDate(m.getDate() - 30);
-        return { startDate: m.toISOString(), endDate: todayEnd.toISOString() };
-      }
-      case 'custom': {
-        const cs = new Date(customStartDate); cs.setHours(0, 0, 0, 0);
-        const ce = new Date(customEndDate); ce.setHours(23, 59, 59, 999);
-        return { startDate: cs.toISOString(), endDate: ce.toISOString() };
-      }
-      default: return {};
-    }
-  }, [dateMode, customStartDate, customEndDate]);
+  // Date filters on the RESTAURANT's business day (timezone + day-start hour) — web parity
+  // (orderhistory getDateRange); was the phone's midnight, so after-midnight orders and phones in
+  // another timezone landed on the wrong day. 'week' = last 7 days incl. today, 'month' = last 30.
+  const getDateRange = useCallback(() => businessRange(dateMode, {
+    off: apiClient.getClockOffset(),
+    dayStartHour: apiClient.getBusinessDayStartHour(),
+    customStart: customStartDate,
+    customEnd: customEndDate,
+  }), [dateMode, customStartDate, customEndDate]);
 
   const loadAnalytics = async (dateRange) => {
     try {
@@ -289,14 +271,9 @@ export default function OrderHistoryScreen() {
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d;
   };
-  const formatDate = (d) => {
-    const date = toDate(d);
-    return date ? date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
-  };
-  const formatTime = (d) => {
-    const date = toDate(d);
-    return date ? date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
-  };
+  // Order dates / times in the restaurant's timezone (web parity) — the phone's when none is set.
+  const formatDate = (d) => fmtDay(toDate(d), apiClient.getClockOffset());
+  const formatTime = (d) => fmtClock(toDate(d), apiClient.getClockOffset());
 
   const canRestore = userRole === 'owner' || userRole === 'manager';
 
@@ -841,7 +818,7 @@ export default function OrderHistoryScreen() {
                   </Text>
                 </View>
                 <Text style={styles.detailTime}>
-                  {(() => { const d = toDate(selectedOrder.completedAt || selectedOrder.createdAt); return d ? d.toLocaleString('en-IN') : '—'; })()}
+                  {(() => { const d = toDate(selectedOrder.completedAt || selectedOrder.createdAt); return d ? fmtDayTime(d, apiClient.getClockOffset()) : '—'; })()}
                 </Text>
                 {selectedOrder.tableNumber && (
                   <Text style={styles.detailMeta}>Table: {selectedOrder.tableNumber}</Text>

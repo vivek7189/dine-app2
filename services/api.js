@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { getLocalServerUrl, setLocalServerUrl, initLocalServer } from './localServer';
+import { clockOffset } from '../utils/restaurantClock';
 
 // Sent on every request so the server can tell app versions apart (roles: old versions' staff edits).
 let APP_CLIENT_HEADER = 'dine-app';
@@ -100,6 +101,8 @@ class ApiClient {
     this._lanClient = null;
     // Business day start hour (0 = midnight/default, 1-23 = custom)
     this._businessDayStartHour = 0;
+    // Restaurant's IANA timezone (posSettings.timezone) — null = the phone's timezone
+    this._restaurantTimezone = null;
   }
 
   /**
@@ -298,6 +301,32 @@ class ApiClient {
     this._businessDayStartHour = (isNaN(n) || n < 0 || n > 23) ? 0 : Math.floor(n);
   }
 
+  getBusinessDayStartHour() {
+    return this._businessDayStartHour || 0;
+  }
+
+  // Restaurant's timezone (web parity: lib/api.js setRestaurantTimezone) — date boundaries and the
+  // tz sent to the server follow the RESTAURANT, so a phone in another timezone (or an owner abroad)
+  // gets the restaurant's day. Unset → the phone's timezone (unchanged).
+  setRestaurantTimezone(iana) {
+    this._restaurantTimezone = (typeof iana === 'string' && iana.trim()) ? iana.trim() : null;
+  }
+
+  getRestaurantTimezone() {
+    return this._restaurantTimezone || null;
+  }
+
+  // Minutes offset in getTimezoneOffset() convention for the restaurant (phone's when unset/unknown).
+  getClockOffset() {
+    const tz = this._restaurantTimezone;
+    if (!tz) return new Date().getTimezoneOffset();
+    const c = this._clockOffsetCache;
+    if (c && c.tz === tz && Date.now() - c.at < 10 * 60 * 1000) return c.off; // re-checked every 10 min (DST)
+    const off = clockOffset(tz);
+    this._clockOffsetCache = { tz, off, at: Date.now() };
+    return off;
+  }
+
   // Process queued requests after token refresh
   processQueue(newToken) {
     this.refreshQueue.forEach(({ resolve }) => resolve(newToken));
@@ -484,10 +513,11 @@ class ApiClient {
 
   // Make authenticated request
   async request(endpoint, options = {}, isRetry = false) {
-    // Auto-inject device timezone offset so backend computes correct date boundaries
+    // Auto-inject the timezone offset so backend computes correct date boundaries — the restaurant's
+    // (posSettings.timezone) when set, else the phone's (web parity).
     if (!endpoint.includes('tz=')) {
       const sep = endpoint.includes('?') ? '&' : '?';
-      endpoint = `${endpoint}${sep}tz=${new Date().getTimezoneOffset()}`;
+      endpoint = `${endpoint}${sep}tz=${this.getClockOffset()}`;
     }
     // Auto-inject business day start hour if configured
     if (this._businessDayStartHour > 0 && !endpoint.includes('dayStart=')) {
