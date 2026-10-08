@@ -37,6 +37,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { doEcrPurchase, ECR_APPROVED } from '../services/ecrService';
 import { buildSplitBillPayload } from '../utils/splitBill';
 import { filterAllowedOrderTypes } from '../utils/staffAccessClient';
+import { getOrderItemBaseKey } from '../utils/orderItemKey';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -1094,7 +1095,7 @@ export default function CartModal({
 
   const renderCartItem = ({ item }) => {
     const existingItem = isUpdateOrder && existingOrderItems?.length > 0
-      ? existingOrderItems.find(e => (e.menuItemId || e.id) === (item.menuItemId || item.id))
+      ? existingOrderItems.find(e => getOrderItemBaseKey(e) === getOrderItemBaseKey(item)) // item + size + add-ons
       : null;
     const isNewItem = isUpdateOrder && existingOrderItems?.length > 0 && !existingItem;
     const quantityDelta = existingItem ? item.quantity - existingItem.quantity : 0;

@@ -54,6 +54,7 @@ import { resolveAdditionalCharges } from '../utils/additionalCharges';
 import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 import { orderLinesToCart } from '../utils/orderLines';
+import { snapshotOrderItems, computeKotDelta } from '../utils/orderItemKey';
 import { buildGuestInvoice } from '../utils/splitBill';
 import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 import { billNumberLabel } from '../utils/billNumber';
@@ -642,7 +643,7 @@ export default function MenuScreen() {
               if (data.dailyOrderId) setExistingDailyOrderId(data.dailyOrderId);
               if (data.cartItems) {
                 setCart(data.cartItems);
-                setExistingOrderItems(data.cartItems.map(i => ({ menuItemId: i.menuItemId || i.id, name: i.name, quantity: i.quantity })));
+                setExistingOrderItems(snapshotOrderItems(data.cartItems));
               }
             }
           } catch (e) {
@@ -1489,21 +1490,12 @@ export default function MenuScreen() {
   // reprints the whole station slice (old bug: already-sent items re-cooked) or fires no update at
   // all. Keyed by menuItemId||id, matching this screen's local KOT delta. Same contract the web sends.
   const buildUpdateDelta = () => {
-    const key = (i) => `${i.menuItemId || i.id}`;
-    const items = cart.map((item) => {
-      const payload = buildItemPayload(item);
-      if (!existingOrderItems) return payload;
-      const existing = existingOrderItems.find((e) => key(e) === key(item));
-      if (!existing) return { ...payload, isNew: true };
-      if (existing.quantity !== item.quantity) {
-        return { ...payload, isUpdated: true, previousQuantity: existing.quantity, quantityDelta: item.quantity - existing.quantity };
-      }
-      return payload; // unchanged — already sent to the kitchen, no marker
-    });
-    const cartKeys = new Set(cart.map(key));
-    const removedItems = (existingOrderItems || [])
-      .filter((e) => !cartKeys.has(key(e)))
-      .map((e) => ({ ...buildItemPayload(e), isRemoved: true, previousQuantity: e.quantity }));
+    // Lines are matched by item + size + add-ons (utils/orderItemKey — same rule as the web), so a
+    // new size / add-on combo of an item already on the order is sent as a NEW line.
+    if (!existingOrderItems) return { items: cart.map((item) => buildItemPayload(item)), removedItems: [] };
+    const { lines, removed } = computeKotDelta(existingOrderItems, cart);
+    const items = cart.map((item, i) => ({ ...buildItemPayload(item), ...lines[i] }));
+    const removedItems = removed.map((e) => ({ ...buildItemPayload(e), isRemoved: true, previousQuantity: e.quantity }));
     return { items, removedItems };
   };
 
@@ -1703,7 +1695,7 @@ export default function MenuScreen() {
         else merged.push({ ...line, quantity: addQty });
       });
       setCart(merged);
-      setExistingOrderItems(freshCart.map(i => ({ menuItemId: i.menuItemId || i.id, name: i.name, quantity: i.quantity })));
+      setExistingOrderItems(snapshotOrderItems(freshCart));
       baseItemsSigRef.current = orderItemsSignature(fresh);
       Alert.alert(
         'Order updated on another device',
@@ -1806,35 +1798,15 @@ export default function MenuScreen() {
       let isIncremental = false;
       let removedItems = [];
       if (existingOrderId && existingOrderItems) {
-        const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
-        const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
-
-        const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id)).map(item => ({
+        // Matched by item + size + add-ons (utils/orderItemKey), same as the web.
+        const { lines, removed } = computeKotDelta(existingOrderItems, cart);
+        const newItems = cart.map((item, i) => ({ ...item, ...lines[i] })).filter(item => item.isNew);
+        const updatedItems = cart.map((item, i) => ({ ...item, ...lines[i] })).filter(item => item.isUpdated);
+        removedItems = removed.map(item => ({
           ...item,
-          isNew: true,
+          isRemoved: true,
+          previousQuantity: item.quantity,
         }));
-
-        const updatedItems = cart.filter(item => {
-          const existing = existingMap.get(item.menuItemId || item.id);
-          return existing && existing.quantity !== item.quantity;
-        }).map(item => {
-          const existing = existingMap.get(item.menuItemId || item.id);
-          return {
-            ...item,
-            isUpdated: true,
-            previousQuantity: existing.quantity,
-            quantityDelta: item.quantity - existing.quantity,
-          };
-        });
-
-        // Detect removed items
-        removedItems = existingOrderItems
-          .filter(existing => !cartMap.has(existing.menuItemId || existing.id))
-          .map(item => ({
-            ...item,
-            isRemoved: true,
-            previousQuantity: item.quantity,
-          }));
 
         const incrementalItems = [...newItems, ...updatedItems];
         if (incrementalItems.length > 0 || removedItems.length > 0) {
@@ -2133,33 +2105,17 @@ export default function MenuScreen() {
           let isIncremental = false;
           let removedKotItems = [];
           if (existingOrderItems) {
-            const existingMap = new Map(existingOrderItems.map(i => [i.menuItemId || i.id, i]));
-            const cartMap = new Map(cart.map(i => [i.menuItemId || i.id, i]));
-
-            const newItems = cart.filter(item => !existingMap.has(item.menuItemId || item.id)).map(item => ({
-              ...item,
-              isNew: true,
+            // Matched by item + size + add-ons (utils/orderItemKey), same as the web.
+            const { lines, removed } = computeKotDelta(existingOrderItems, cart);
+            const newItems = cart.map((item, i) => ({ ...item, ...lines[i] })).filter(item => item.isNew);
+            const updatedItems = cart.map((item, i) => ({ ...item, ...lines[i] })).filter(item => item.isUpdated);
+            removedKotItems = removed.map(item => ({
+              name: item.name,
+              quantity: item.quantity,
+              selectedVariant: item.selectedVariant || null,
+              selectedCustomizations: item.selectedCustomizations || [],
+              isRemoved: true,
             }));
-            const updatedItems = cart.filter(item => {
-              const existing = existingMap.get(item.menuItemId || item.id);
-              return existing && existing.quantity !== item.quantity;
-            }).map(item => {
-              const existing = existingMap.get(item.menuItemId || item.id);
-              return {
-                ...item,
-                isUpdated: true,
-                previousQuantity: existing.quantity,
-                quantityDelta: item.quantity - existing.quantity,
-              };
-            });
-
-            removedKotItems = existingOrderItems
-              .filter(existing => !cartMap.has(existing.menuItemId || existing.id))
-              .map(item => ({
-                name: item.name,
-                quantity: item.quantity,
-                isRemoved: true,
-              }));
 
             const incrementalItems = [...newItems, ...updatedItems];
             if (incrementalItems.length > 0 || removedKotItems.length > 0) {

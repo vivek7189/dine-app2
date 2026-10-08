@@ -23,6 +23,7 @@ import { resolveCustomizationExtras } from '../utils/customizationPrice';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
 import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
+import { getOrderItemBaseKey } from '../utils/orderItemKey';
 
 // ─── Multi-tier pricing helpers (mirror screens/MenuNative.js) ───
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
@@ -258,6 +259,7 @@ export default function WaiterOrderModal({
                 name: i.name,
                 quantity: i.quantity,
                 selectedVariant: i.selectedVariant || null,
+                selectedCustomizations: Array.isArray(i.selectedCustomizations) ? i.selectedCustomizations : [],
                 seat: sanitizeSeat(i.seat),
               })));
               setLoadedChair(order.chairNumber || order.customerInfo?.chairNumber || null);
@@ -485,7 +487,7 @@ export default function WaiterOrderModal({
   // so a pure seat reassignment never registers as a kitchen-facing change.
   const orderChanges = useMemo(() => {
     if (!existingOrderId || !existingOrderItems) return null;
-    const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+    const keyOf = getOrderItemBaseKey; // item + size + add-ons (utils/orderItemKey, same as web)
     const sumByKey = (items) => {
       const m = new Map();
       items.forEach(i => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (i.quantity || 0)));
@@ -694,7 +696,7 @@ export default function WaiterOrderModal({
       if (existingOrderId && existingOrderItems) {
         // Keys are menuItemId + variant (NO seat); quantities aggregated per key so a
         // pure seat reassignment produces no incremental KOT.
-        const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+        const keyOf = getOrderItemBaseKey; // item + size + add-ons (utils/orderItemKey, same as web)
         const sumByKey = (items) => {
           const m = new Map();
           items.forEach(i => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (i.quantity || 0)));
@@ -850,6 +852,7 @@ export default function WaiterOrderModal({
             name: i.name,
             quantity: i.quantity,
             selectedVariant: i.selectedVariant || null,
+            selectedCustomizations: Array.isArray(i.selectedCustomizations) ? i.selectedCustomizations : [],
             seat: sanitizeSeat(i.seat),
           })));
           baseItemsSigRef.current = orderItemsSignature(fresh);
@@ -1063,7 +1066,7 @@ export default function WaiterOrderModal({
   // ─── Get change tag for an item ───
   const getChangeTag = (item) => {
     if (!orderChanges) return null;
-    const keyOf = (i) => `${i.menuItemId || i.id}|${i.selectedVariant?.name || ''}`;
+    const keyOf = getOrderItemBaseKey; // item + size + add-ons (utils/orderItemKey, same as web)
     const key = keyOf(item);
     if (orderChanges.newItems.find(i => keyOf(i) === key)) {
       return { label: 'NEW', icon: 'add-circle', color: '#16a34a', bg: '#f0fdf4', borderColor: '#16a34a' };
