@@ -364,6 +364,9 @@ export default function CartModal({
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [manualDiscount, setManualDiscount] = useState('');
+  // Discount the WhatsApp OTP was verified for ("type:value"); a different discount needs a new code.
+  const [discountOtpApprovedKey, setDiscountOtpApprovedKey] = useState(null);
+  const [discountOtpRequestKey, setDiscountOtpRequestKey] = useState(null);
   const [manualDiscountType, setManualDiscountType] = useState('flat');
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
@@ -397,18 +400,11 @@ export default function CartModal({
     setDiscountApproved(false);
   }, [manualDiscount, manualDiscountType]);
 
-  // Check if current role needs discount approval
-  const needsDiscountApproval = useCallback(() => {
-    if (!discountApprovalSettings?.enabled) return false;
-    if (manualDiscountAmount <= 0) return false;
-    if (discountApproved) return false;
-    const roleKey = mode === 'owner' ? null : mode === 'waiter' ? 'waiter' : mode === 'cashier' ? 'cashier' : 'staff';
-    if (!roleKey) return false; // owners don't need approval
-    const config = discountApprovalSettings.roleConfig?.[roleKey];
-    if (!config?.requireApproval) return false;
-    if (config.maxDiscountWithoutApproval > 0 && manualDiscountAmount <= config.maxDiscountWithoutApproval) return false;
-    return true;
-  }, [discountApprovalSettings, manualDiscountAmount, mode, discountApproved]);
+  // A verified discount code belongs to the current cart only — cleared once the cart is emptied
+  // (order placed / billed / cleared) so the next order needs its own code (web parity).
+  useEffect(() => {
+    if (!cart || cart.length === 0) setDiscountOtpApprovedKey(null);
+  }, [cart?.length]);
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
@@ -521,7 +517,37 @@ export default function CartModal({
     }
     return { amount: Math.max(0, amt), type, value };
   })();
-  const manualDiscountAmount = manualDiscountApplied.amount;
+  // WhatsApp-OTP approval for manual discounts (Admin → Tax → Discount Settings) — web parity
+  // (OrderSummary discountOtpRequired). Owner/admin are the approvers and never need a code. Until
+  // the code for THIS discount is verified it counts as 0 everywhere (totals, tax, every order
+  // button and the payload), so an unapproved discount can't reach an order.
+  const discountOtpRole = String(userRole || '').toLowerCase().trim();
+  const discountOtpRequired = (() => {
+    const ds = taxSettings?.discountSettings || {};
+    return ds.enabled === true && ds.allowManualDiscount !== false && ds.requireOtpApproval === true
+      && discountOtpRole !== 'owner' && discountOtpRole !== 'admin';
+  })();
+  const manualDiscountKey = `${manualDiscountType}:${parseFloat(manualDiscount) || 0}`;
+  const manualDiscountRawAmount = manualDiscountApplied.amount;
+  const manualDiscountPendingOtp = discountOtpRequired && manualDiscountRawAmount > 0
+    && discountOtpApprovedKey !== manualDiscountKey;
+  const manualDiscountAmount = manualDiscountPendingOtp ? 0 : manualDiscountRawAmount;
+
+  // (Declared after manualDiscountAmount so its dependency list sees the real value.)
+  // Web parity (OrderSummary needsDiscountApproval): keyed by the user's REAL role — the cart
+  // mode made a manager / captain / custom role / billing waiter count as 'owner' (no approval).
+  const needsDiscountApproval = useCallback(() => {
+    if (discountOtpRequired) return false; // the Tax-tab WhatsApp OTP already gates the discount
+    if (!discountApprovalSettings?.enabled) return false;
+    if (manualDiscountAmount <= 0) return false;
+    if (discountApproved) return false;
+    const roleKey = String(userRole || '').toLowerCase().trim();
+    if (!roleKey || roleKey === 'owner') return false; // owners don't need approval
+    const config = discountApprovalSettings.roleConfig?.[roleKey];
+    if (!config?.requireApproval) return false;
+    if (config.maxDiscountWithoutApproval > 0 && manualDiscountAmount <= config.maxDiscountWithoutApproval) return false;
+    return true;
+  }, [discountApprovalSettings, manualDiscountAmount, userRole, discountApproved, discountOtpRequired]);
 
   // Comp/void amounts — reported to the backend as audit metadata (compItems/voidItems).
   // Web parity: neither reduces the payable total here (web + backend charge full price and
@@ -1105,6 +1131,12 @@ export default function CartModal({
 
   const handleDiscountApproved = () => {
     setShowDiscountApproval(false);
+    if (discountOtpRequestKey) {
+      // WhatsApp-OTP verified for the discount typed when the code was requested.
+      setDiscountOtpApprovedKey(discountOtpRequestKey);
+      setDiscountOtpRequestKey(null);
+      return;
+    }
     setDiscountApproved(true);
     // Resume the pending action
     if (pendingOrderAction === 'place') proceedPlaceOrder();
@@ -2326,9 +2358,22 @@ export default function CartModal({
                       onChangeText={setManualDiscount}
                     />
                   </View>
-                  {manualDiscountAmount > 0 && (
+                  {manualDiscountPendingOtp ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                      <Text style={{ flex: 1, fontSize: 11, color: '#b45309', fontWeight: '600' }}>
+                        -{getCurrencySymbol()}{fmtAmt(manualDiscountRawAmount)} · needs approval code (not applied yet)
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => { setDiscountOtpRequestKey(manualDiscountKey); setPendingOrderAction(null); setShowDiscountApproval(true); }}
+                        style={{ backgroundColor: '#dc2626', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Verify OTP</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : manualDiscountAmount > 0 && (
                     <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '500' }}>
-                      Discount: -{getCurrencySymbol()}{fmtAmt(manualDiscountAmount)}
+                      Discount: -{getCurrencySymbol()}{fmtAmt(manualDiscountAmount)}{discountOtpRequired ? ' ✓ approved' : ''}
                     </Text>
                   )}
                 </View>
@@ -2812,16 +2857,16 @@ export default function CartModal({
       />
       <DiscountApprovalModal
         visible={showDiscountApproval}
-        onClose={() => { setShowDiscountApproval(false); setPendingOrderAction(null); }}
+        onClose={() => { setShowDiscountApproval(false); setPendingOrderAction(null); setDiscountOtpRequestKey(null); }}
         onApproved={handleDiscountApproved}
         restaurantId={restaurantId}
         discountData={{
           discountType: manualDiscountType,
           discountValue: parseFloat(manualDiscount) || 0,
-          discountAmount: manualDiscountAmount,
+          discountAmount: manualDiscountRawAmount,
           subtotal,
         }}
-        userRole={mode === 'owner' ? 'owner' : mode}
+        userRole={String(userRole || '').toLowerCase().trim() || (mode === 'owner' ? 'owner' : mode)}
         userName=""
       />
 
