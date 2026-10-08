@@ -370,8 +370,9 @@ export default function CartModal({
   const [noteEditKey, setNoteEditKey] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState(''); // delivery orders (web parity)
-  // "Served by" (counter logins, new orders) — remembered on this device per restaurant (utils/servedBy)
-  const isCounterLogin = COUNTER_ROLES.has(String(userRole || '').toLowerCase().trim());
+  // "Served by" (counter logins, new orders) — remembered on this device per restaurant (utils/servedBy).
+  // Only when the restaurant turned it on (Admin → POS → "Credit counter orders to a waiter", off by default).
+  const isCounterLogin = COUNTER_ROLES.has(String(userRole || '').toLowerCase().trim()) && posSettings?.servedByPicker === true;
   const [servedBy, setServedByState] = useState(null);
   const [servedByStaff, setServedByStaff] = useState([]);
   useEffect(() => {
