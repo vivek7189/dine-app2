@@ -26,7 +26,7 @@ import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 export default function CashierInvoiceModal({
   visible,
   onClose,
-  invoiceData,
+  invoiceData: invoiceDataProp,
   onNewOrder,
   restaurantId,
   whatsappConnected = false,
@@ -34,6 +34,12 @@ export default function CashierInvoiceModal({
   manualPrintEnabled = true,
   printSettings = {},
 }) {
+  // Keep the last invoice while the popup slides closed: the parent clears it in the same render as
+  // closing, and returning null then rips the <Modal> out mid-animation — on iOS that leaves an
+  // invisible layer that swallows every tap until the app is restarted (Svadhaa, 2026-10).
+  const lastInvoiceDataRef = React.useRef(null);
+  if (invoiceDataProp) lastInvoiceDataRef.current = invoiceDataProp;
+  const invoiceData = invoiceDataProp || lastInvoiceDataRef.current;
   const { isTablet } = useResponsive();
   const [waSending, setWaSending] = React.useState(false);
   const [waSent, setWaSent] = React.useState(false);

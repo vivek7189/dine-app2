@@ -32,11 +32,17 @@ const DARK_SEC = '#2d2d44';
 export default function KOTModal({
   visible,
   onClose,
-  orderData,
+  orderData: orderDataProp,
   onPrint,
   printSettings = {},
   userRole,
 }) {
+  // Keep the last order while the popup slides closed: the parent clears it in the same render as
+  // closing, and returning null then rips the <Modal> out mid-animation — on iOS that leaves an
+  // invisible layer that swallows every tap until the app is restarted (Svadhaa, 2026-10).
+  const lastOrderDataRef = React.useRef(null);
+  if (orderDataProp) lastOrderDataRef.current = orderDataProp;
+  const orderData = orderDataProp || lastOrderDataRef.current;
   const { modalWidth } = useResponsive();
   const [printing, setPrinting] = useState(false);
   const [sharingWhatsApp, setSharingWhatsApp] = useState(false);

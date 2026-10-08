@@ -24,7 +24,7 @@ const ORANGE_50 = '#fff7ed';
 const ORANGE_200 = '#fed7aa';
 
 const ItemCustomizationModal = ({
-  item,
+  item: itemProp,
   isOpen,
   onClose,
   onAddToCart,
@@ -37,6 +37,12 @@ const ItemCustomizationModal = ({
   // base) — so an item with add-ons is billed at the order-type price, not the base menu price.
   resolveItemPrice = null,
 }) => {
+  // Keep the last item while the popup slides closed: the parent clears it in the same render as
+  // closing, and returning null then rips the <Modal> out mid-animation — on iOS that leaves an
+  // invisible layer that swallows every tap until the app is restarted (Svadhaa, 2026-10).
+  const lastItemRef = React.useRef(null);
+  if (itemProp) lastItemRef.current = itemProp;
+  const item = itemProp || lastItemRef.current;
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [selectedCustomizations, setSelectedCustomizations] = useState([]);
   const [selectedGroupItems, setSelectedGroupItems] = useState({});

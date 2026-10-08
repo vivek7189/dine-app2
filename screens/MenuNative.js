@@ -148,18 +148,14 @@ export default function MenuScreen() {
   const [canResetTable, setCanResetTable] = useState(false);
 
   // Run a navigation / next-modal-open AFTER the just-closed <Modal> has finished
-  // tearing down. On Android, doing both in the same JS frame orphans the native
-  // Modal window on top of this (persistent tab) screen, swallowing every touch
-  // until the app is restarted — i.e. the menu "freezes" right after an order is
-  // placed. Deferring past the slide-out lets Android detach the window first.
-  // iOS is unaffected, so keep its timing identical (run synchronously).
+  // tearing down. Doing both in the same JS frame orphans the native Modal window
+  // on top of this (persistent tab) screen, swallowing every touch until the app is
+  // restarted — the menu "freezes" right after an order. Android detaches the window
+  // late; iOS refuses to present a modal while another is still dismissing (Svadhaa,
+  // iPhone, 2026-10). So both platforms wait for the slide-out.
   const afterModalClose = useCallback((fn) => {
     if (typeof fn !== 'function') return;
-    if (Platform.OS === 'android') {
-      setTimeout(fn, 320); // ~Modal slide-out (250ms) + margin
-    } else {
-      fn();
-    }
+    setTimeout(fn, Platform.OS === 'ios' ? 380 : 320); // ~Modal slide-out + margin
   }, []);
   const [showImages, setShowImages] = useState(true);
   const [globalHideImages, setGlobalHideImages] = useState(false);
@@ -1288,6 +1284,33 @@ export default function MenuScreen() {
       addToCart(item);
     }
   }, [addToCart]);
+
+  // Card −/+ . An item with sizes / add-ons sits in the cart as one line per choice (cartId), so
+  // "+" opens the options again (pick a size) and "−" takes one off its newest line. Plain items
+  // change their single line as before.
+  const changeCardQty = useCallback((item, delta) => {
+    const hasOptions = (Array.isArray(item?.variants) && item.variants.length > 0)
+      || (Array.isArray(item?.customizations) && item.customizations.length > 0)
+      || item?.modifierGroups?.length > 0;
+    if (!hasOptions) {
+      setCart(prev => {
+        const line = prev.find(c => c.id === item.id && !c.cartId);
+        if (!line) return prev;
+        if (delta > 0 && item.isStockManaged && typeof item.stockQuantity === 'number' && line.quantity >= item.stockQuantity) return prev;
+        const q = line.quantity + delta;
+        return q <= 0 ? prev.filter(c => c !== line) : prev.map(c => (c === line ? { ...c, quantity: q } : c));
+      });
+      return;
+    }
+    if (delta > 0) { handleItemPress(item); return; }
+    setCart(prev => {
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) { if (prev[i].id === item.id) { idx = i; break; } }
+      if (idx < 0) return prev;
+      const q = prev[idx].quantity - 1;
+      return q <= 0 ? prev.filter((_, i) => i !== idx) : prev.map((c, i) => (i === idx ? { ...c, quantity: q } : c));
+    });
+  }, [handleItemPress]);
 
   const removeFromCart = useCallback((itemId) => {
     setCart(prev => prev.filter(item => (item.cartId || item.id) !== itemId));
@@ -3391,14 +3414,14 @@ export default function MenuScreen() {
                 <View style={styles.cardQuantityControls}>
                   <TouchableOpacity
                     style={styles.cardQtyBtn}
-                    onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity - 1); }}
+                    onPress={(e) => { e.stopPropagation(); changeCardQty(item, -1); }}
                   >
                     <Ionicons name="remove" size={14} color="#fff" />
                   </TouchableOpacity>
                   <Text style={styles.cardQtyText}>{quantity}</Text>
                   <TouchableOpacity
                     style={styles.cardQtyBtn}
-                    onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity + 1); }}
+                    onPress={(e) => { e.stopPropagation(); changeCardQty(item, 1); }}
                   >
                     <Ionicons name="add" size={14} color="#fff" />
                   </TouchableOpacity>
@@ -3467,14 +3490,14 @@ export default function MenuScreen() {
               <View style={styles.cardQuantityControls}>
                 <TouchableOpacity
                   style={styles.cardQtyBtn}
-                  onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity - 1); }}
+                  onPress={(e) => { e.stopPropagation(); changeCardQty(item, -1); }}
                 >
                   <Ionicons name="remove" size={14} color="#fff" />
                 </TouchableOpacity>
                 <Text style={styles.cardQtyText}>{quantity}</Text>
                 <TouchableOpacity
                   style={styles.cardQtyBtn}
-                  onPress={(e) => { e.stopPropagation(); updateCartQuantity(item.id, quantity + 1); }}
+                  onPress={(e) => { e.stopPropagation(); changeCardQty(item, 1); }}
                 >
                   <Ionicons name="add" size={14} color="#fff" />
                 </TouchableOpacity>
@@ -3491,7 +3514,7 @@ export default function MenuScreen() {
         </View>
       </TouchableOpacity>
     );
-  }, [cartMap, addToCart, handleItemPress, updateCartQuantity, showImages, globalHideImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
+  }, [cartMap, addToCart, handleItemPress, updateCartQuantity, changeCardQty, showImages, globalHideImages, getItemImage, getTypeSubtitle, getItemDisplayPrice, getItemTakeawayPrice, takeawayRule, activePricingRuleId]);
 
   const renderCategory = ({ item }) => {
     const isSelected = selectedCategory === item.id;
