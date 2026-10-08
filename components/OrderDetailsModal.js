@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../services/api';
@@ -20,6 +21,7 @@ import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import { orderLinesToCart } from '../utils/orderLines';
 import { resolveSplitPayments } from '../utils/splitPayment';
+import { registerBlocksBilling } from '../utils/registerGate';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, billingSettings = {}, posSettings = {} }) {
   const { modalWidth } = useResponsive();
@@ -200,25 +202,29 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
     };
   };
 
-  const handleSettle = () => {
+  const handleSettle = async () => {
     if (settling) return;
-    // Validate split totals if used
     // Full Due (nothing paid now) needs a customer on the order to hold the receivable (web parity).
     const ppNow = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
     const ci = order?.customerInfo || {};
     const hasCustomer = !!(order?.customerId || ci.id || ci.customerId
       || String(ci.phone || order?.customerPhone || '').replace(/\D/g, '').length >= 6);
     if (ppNow === 0 && !hasCustomer) {
-      setError('A due (udhar) bill needs the customer. Use "Add Items" to add the customer phone, or take the payment now.');
+      Alert.alert('Customer needed', 'A due (udhar) bill needs the customer. Use "Add Items" to add the customer phone, or take the payment now.');
       return;
     }
     const spCheck = resolveSplitPayments(splitPayments, splitTarget());
     if (spCheck.mode === 'invalid') {
-      setError(`Split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments`);
+      Alert.alert('Split payment', `Split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
       return;
     }
     setSettling(true);
     try {
+      // Register must be open to bill (when the restaurant requires it) — utils/registerGate
+      if (await registerBlocksBilling(restaurantId, posSettings)) {
+        Alert.alert('Register not open', 'Open the cash register (More → Register) or start your shift (More → Shifts & Cash) before billing.');
+        return;
+      }
       onCompleteBill(order, buildSettlementData());
     } finally {
       setSettling(false);

@@ -3285,6 +3285,15 @@ class ApiClient {
 
   // ==================== CUSTOMER WALLET ====================
   // Returns { walletBalance } for a customer (used to redeem wallet as a tender at billing).
+  // Cash register / Shifts & Cash — current open one (null when none). Used by the register gate.
+  async getCurrentRegister(restaurantId) {
+    return this.request(`/api/register/${restaurantId}/current`);
+  }
+
+  async getCurrentShift(restaurantId) {
+    return this.request(`/api/shifts-cash/${restaurantId}/current`);
+  }
+
   async getCustomerWallet(customerId) {
     return this.request(`/api/customers/${customerId}/wallet`);
   }

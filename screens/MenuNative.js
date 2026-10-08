@@ -55,6 +55,7 @@ import useTimedMenu from '../hooks/useTimedMenu';
 import { orderItemsSignature, isOrderChangedError } from '../utils/orderSignature';
 import { orderLinesToCart } from '../utils/orderLines';
 import { snapshotOrderItems, computeKotDelta } from '../utils/orderItemKey';
+import { registerBlocksBilling, alertRegisterNotOpen } from '../utils/registerGate';
 import { buildGuestInvoice } from '../utils/splitBill';
 import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 import { billNumberLabel } from '../utils/billNumber';
@@ -2369,6 +2370,10 @@ export default function MenuScreen() {
     }
 
     setSendingOrder(true);
+    // Register must be open to bill (when the restaurant requires it) — utils/registerGate
+    if (await registerBlocksBilling(restaurantId, user?.restaurant?.posSettings)) {
+      setSendingOrder(false); alertRegisterNotOpen(); return;
+    }
 
     try {
       const subtotal = getCartTotal();
@@ -2622,6 +2627,10 @@ export default function MenuScreen() {
     }
 
     setSendingOrder(true);
+    // Register must be open to bill (when the restaurant requires it) — utils/registerGate
+    if (await registerBlocksBilling(restaurantId, user?.restaurant?.posSettings)) {
+      setSendingOrder(false); alertRegisterNotOpen(); return;
+    }
 
     try {
       const subtotal = getCartTotal();
@@ -3047,6 +3056,9 @@ export default function MenuScreen() {
   const handleKotBillSettleConfirm = async (method) => {
     if (!kotBillSettle?.orderId || kotBillSettling) return;
     setKotBillSettling(true);
+    if (await registerBlocksBilling(restaurantId, user?.restaurant?.posSettings)) {
+      setKotBillSettling(false); alertRegisterNotOpen(); return;
+    }
     const { orderId: oid, amount, discountFields } = kotBillSettle;
     try {
       // This phone already printed the bill (KOT+Bill) → with the opt-in on, the desktop shouldn't
