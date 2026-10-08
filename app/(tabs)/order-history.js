@@ -493,13 +493,17 @@ export default function OrderHistoryScreen() {
 
   const openRefund = (order) => { setRefundFull(true); setRefundAmount(String(orderTotal(order))); setRefundReason(''); setRefundModal(true); };
   const submitRefund = async () => {
-    const amt = refundFull ? orderTotal(selectedOrder) : (parseFloat(refundAmount) || 0);
+    // Web parity (orderhistory submitRefund): amount > 0 and not above the bill, reason required.
+    const maxAmt = orderTotal(selectedOrder);
+    const amt = refundFull ? maxAmt : (parseFloat(refundAmount) || 0);
     if (amt <= 0) { Alert.alert('Invalid amount', 'Enter a refund amount greater than 0.'); return; }
+    if (amt > maxAmt + 0.001) { Alert.alert('Invalid amount', `Refund cannot be more than the bill (${formatCurrency(maxAmt)}).`); return; }
+    if (!refundReason.trim()) { Alert.alert('Reason needed', 'Please enter a reason for the refund.'); return; }
     try {
       setActionBusy(true);
       await apiClient.processRefund(selectedOrder.id || selectedOrder._id, {
         // Backend expects refundAmount/refundReason (POST /api/orders/:id/refund).
-        refundAmount: amt, refundReason: refundReason.trim() || 'Refund', refundType: refundFull ? 'full' : 'partial',
+        refundAmount: amt, refundReason: refundReason.trim(), refundType: amt >= maxAmt ? 'full' : 'partial',
       });
       setRefundModal(false); reloadAfterAction();
     } catch (e) { Alert.alert('Error', e.message || 'Refund failed'); } finally { setActionBusy(false); }
@@ -938,7 +942,7 @@ export default function OrderHistoryScreen() {
                     <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
                   </TouchableOpacity>
                 )}
-                {canRefund && selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'refunded' && (
+                {canRefund && selectedOrder.status === 'completed' && !selectedOrder.refundedAt && (
                   <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => openRefund(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="arrow-undo-outline" size={16} color="#7c3aed" /><Text style={[styles.actBtnText, { color: '#7c3aed' }]}>Refund</Text>
                   </TouchableOpacity>
