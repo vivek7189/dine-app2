@@ -1270,6 +1270,36 @@ export default function TablesScreen() {
               </View>
             )}
 
+            {/* Running bill · guests · server — web TableCard parity (the floors API sends
+                currentOrderTotal / currentOrderCovers for a table's running order) */}
+            {isOccupied && (() => {
+              const amt = Number(table.currentOrderFinalAmount || table.currentOrderTotal) || 0;
+              const covers = Number(table.currentOrderCovers) || 0;
+              const server = table.waiterName || null;
+              if (!amt && !covers && !server) return null;
+              return (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                  {amt > 0 && (
+                    <View style={{ backgroundColor: '#fef3c7', borderColor: '#fcd34d', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#b45309' }}>{formatCurrency(amt)}</Text>
+                    </View>
+                  )}
+                  {covers > 0 && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: '#eff6ff', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
+                      <Ionicons name="people-outline" size={11} color="#2563eb" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563eb' }}>{covers}</Text>
+                    </View>
+                  )}
+                  {!!server && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: '#f0fdfa', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1, maxWidth: 100 }}>
+                      <Ionicons name="person-outline" size={10} color="#0d9488" />
+                      <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: '#0d9488' }}>{server}</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* Action Buttons */}
             <View style={styles.tableActions}>
               {isOutOfService ? (
