@@ -76,6 +76,7 @@ const extractPassthroughBilling = (dd = {}) => {
   if (dd.scheduledFor) { out.scheduledFor = dd.scheduledFor; out.isScheduled = true; }
   if (dd.ecrResponse) out.ecrResponse = dd.ecrResponse;
   if (dd.deliveryAddress) out.deliveryAddress = dd.deliveryAddress; // delivery orders only (CartModal)
+  if (dd.servedBy && dd.servedBy.id) out.servedBy = dd.servedBy;    // counter login, new orders (CartModal)
   return out;
 };
 
@@ -1780,6 +1781,7 @@ export default function MenuScreen() {
           ...(discountData.totalTax > 0 && { taxAmount: discountData.totalTax }),
           ...(discountData.deliveryStaffId && { deliveryStaffId: discountData.deliveryStaffId, deliveryStaffName: discountData.deliveryStaffName, deliveryPartnerId: discountData.deliveryStaffId, deliveryPartnerName: discountData.deliveryStaffName }),
           ...(discountData.deliveryAddress && { deliveryAddress: discountData.deliveryAddress }),
+          ...(discountData.servedBy && discountData.servedBy.id && !existingOrderId && { servedBy: discountData.servedBy }),
           ...(discountData.tipAmount && { tipAmount: discountData.tipAmount }),
           ...(discountData.tipPercentage && { tipPercentage: discountData.tipPercentage }),
           ...(discountData.roundOffAmount != null && discountData.roundOffAmount !== 0 && { roundOffAmount: discountData.roundOffAmount }),

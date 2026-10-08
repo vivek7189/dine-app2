@@ -39,6 +39,7 @@ import { buildSplitBillPayload } from '../utils/splitBill';
 import { filterAllowedOrderTypes } from '../utils/staffAccessClient';
 import { getOrderItemBaseKey } from '../utils/orderItemKey';
 import { resolveSplitPayments } from '../utils/splitPayment';
+import { COUNTER_ROLES, servedByRank, loadServedBy, saveServedBy } from '../utils/servedBy';
 
 // Channel pricing rules (dine-in/takeaway/delivery) are auto-applied by order type,
 // so they must NOT appear as selectable zone pills in the dine-in zone picker —
@@ -369,6 +370,29 @@ export default function CartModal({
   const [noteEditKey, setNoteEditKey] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState(''); // delivery orders (web parity)
+  // "Served by" (counter logins, new orders) — remembered on this device per restaurant (utils/servedBy)
+  const isCounterLogin = COUNTER_ROLES.has(String(userRole || '').toLowerCase().trim());
+  const [servedBy, setServedByState] = useState(null);
+  const [servedByStaff, setServedByStaff] = useState([]);
+  useEffect(() => {
+    if (!visible || !isCounterLogin || !restaurantId) return undefined;
+    let alive = true;
+    loadServedBy(restaurantId).then((v) => { if (alive) setServedByState(v); });
+    apiClient.getWaiters(restaurantId)
+      .then((res) => {
+        if (!alive) return;
+        const list = (Array.isArray(res?.waiters) ? res.waiters : []).filter((x) => x && x.id && x.name);
+        list.sort((a, b) => servedByRank(a.role) - servedByRank(b.role) || String(a.name).localeCompare(String(b.name)));
+        setServedByStaff(list);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [visible, isCounterLogin, restaurantId]);
+  const pickServedBy = (staff) => {
+    const next = staff && servedBy?.id !== String(staff.id) ? { id: String(staff.id), name: staff.name || '' } : null;
+    setServedByState(next);
+    saveServedBy(restaurantId, next);
+  };
   // Discount the WhatsApp OTP was verified for ("type:value"); a different discount needs a new code.
   const [discountOtpApprovedKey, setDiscountOtpApprovedKey] = useState(null);
   const [discountOtpRequestKey, setDiscountOtpRequestKey] = useState(null);
@@ -700,6 +724,8 @@ export default function CartModal({
     additionalCharges: billing.additionalCharges.length > 0 ? billing.additionalCharges : null,
     additionalChargesTotal: billing.additionalChargesTotal || null,
     deliveryStaffId: selectedDeliveryStaff?.id || null,
+    // "Served by" — counter logins, NEW orders only (web stamps it on create) — utils/servedBy
+    servedBy: isCounterLogin && !isUpdateOrder && servedBy ? servedBy : null,
     // Delivery address — only on delivery orders (web OrderSummary parity); the server stores it.
     deliveryAddress: orderType === 'delivery' && deliveryAddress.trim() ? deliveryAddress.trim() : null,
     deliveryStaffName: selectedDeliveryStaff?.name || null,
@@ -1887,6 +1913,28 @@ export default function CartModal({
                       />
                     </View>
                   )}
+                </View>
+              )}
+
+              {/* Served by — counter logins pick whose sales this is (remembered on this device) */}
+              {isCounterLogin && !isUpdateOrder && servedByStaff.length > 0 && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                    <Ionicons name="person-circle-outline" size={12} color="#1f2937" />
+                    <Text style={styles.paymentSectionLabel}>Served by</Text>
+                    {servedBy && <Text style={{ fontSize: 11, color: '#64748b' }}>· tap again to clear</Text>}
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                    {servedByStaff.map(st => {
+                      const on = servedBy?.id === String(st.id);
+                      return (
+                        <TouchableOpacity key={st.id} onPress={() => pickServedBy(st)}
+                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1.5, borderColor: on ? '#0d9488' : '#e2e8f0', backgroundColor: on ? '#f0fdfa' : 'white' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: on ? '#0f766e' : '#475569' }}>{st.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
                 </View>
               )}
 
