@@ -715,27 +715,22 @@ export default function MenuScreen() {
   const filteredItems = useMemo(() => {
     let filtered = [...menuItems];
 
-    // Filter by category
-    if (selectedCategory !== 'all-items') {
+    // Search — web parity (dashboard filteredItemsBase): one search over the WHOLE menu (the selected
+    // category is ignored while searching) matching name, description, short code (any case) and PLU.
+    // The box routes short upper-case text to shortCodeSearch (instant) and the rest to searchTerm
+    // (debounced); both are the same search here.
+    const query = debouncedSearch || shortCodeSearch.trim().toLowerCase();
+    if (query) {
+      filtered = filtered.filter(item =>
+        item.name?.toLowerCase().includes(query) ||
+        item.description?.toLowerCase().includes(query) ||
+        (item.shortCode != null && String(item.shortCode).toLowerCase().includes(query)) ||
+        (item.pluCode != null && String(item.pluCode).toLowerCase().includes(query))
+      );
+    } else if (selectedCategory !== 'all-items') {
+      // Filter by category (only when not searching)
       filtered = filtered.filter(item =>
         item.category?.toLowerCase() === selectedCategory
-      );
-    }
-
-    // Filter by search term (name or description) — uses the debounced value.
-    if (debouncedSearch) {
-      filtered = filtered.filter(item =>
-        item.name?.toLowerCase().includes(debouncedSearch) ||
-        item.description?.toLowerCase().includes(debouncedSearch)
-      );
-    }
-
-    // Filter by short code
-    if (shortCodeSearch.trim()) {
-      const code = shortCodeSearch.toLowerCase();
-      filtered = filtered.filter(item =>
-        item.shortCode?.toLowerCase().includes(code) ||
-        item.name?.toLowerCase().startsWith(code)
       );
     }
 
