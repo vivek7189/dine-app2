@@ -75,6 +75,7 @@ const extractPassthroughBilling = (dd = {}) => {
   if (dd.walletCustomerId) out.walletCustomerId = dd.walletCustomerId;
   if (dd.scheduledFor) { out.scheduledFor = dd.scheduledFor; out.isScheduled = true; }
   if (dd.ecrResponse) out.ecrResponse = dd.ecrResponse;
+  if (dd.deliveryAddress) out.deliveryAddress = dd.deliveryAddress; // delivery orders only (CartModal)
   return out;
 };
 
@@ -1309,6 +1310,11 @@ export default function MenuScreen() {
     });
   }, [handleItemPress]);
 
+  // Per-line kitchen note from the cart (web parity) — buildItemPayload / KOT already carry item.notes.
+  const updateCartItemNote = useCallback((itemKey, note) => {
+    setCart(prev => prev.map(item => ((item.cartId || item.id) === itemKey ? { ...item, notes: note || '' } : item)));
+  }, []);
+
   const removeFromCart = useCallback((itemId) => {
     setCart(prev => prev.filter(item => (item.cartId || item.id) !== itemId));
   }, []);
@@ -1773,6 +1779,7 @@ export default function MenuScreen() {
           ...(discountData.taxBreakdown && { additionalCharges: discountData.additionalCharges || [], additionalChargesTotal: discountData.additionalChargesTotal || 0 }),
           ...(discountData.totalTax > 0 && { taxAmount: discountData.totalTax }),
           ...(discountData.deliveryStaffId && { deliveryStaffId: discountData.deliveryStaffId, deliveryStaffName: discountData.deliveryStaffName, deliveryPartnerId: discountData.deliveryStaffId, deliveryPartnerName: discountData.deliveryStaffName }),
+          ...(discountData.deliveryAddress && { deliveryAddress: discountData.deliveryAddress }),
           ...(discountData.tipAmount && { tipAmount: discountData.tipAmount }),
           ...(discountData.tipPercentage && { tipPercentage: discountData.tipPercentage }),
           ...(discountData.roundOffAmount != null && discountData.roundOffAmount !== 0 && { roundOffAmount: discountData.roundOffAmount }),
@@ -4007,6 +4014,7 @@ export default function MenuScreen() {
         cart={cart}
         getItemPrice={getEffectiveItemPrice}
         onUpdateQuantity={updateCartQuantity}
+        onUpdateItemNote={updateCartItemNote}
         onRemoveItem={removeFromCart}
         onEditItemPrice={editCartItemPrice}
         onAddCustomItem={addCustomItem}

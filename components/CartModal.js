@@ -89,6 +89,7 @@ export default function CartModal({
   autoSelectedRule = false,
   isUpdateOrder = false,
   existingOrderItems = [],
+  onUpdateItemNote,       // (cartKey, note) — per-line kitchen note (web OrderSummary parity)
   existingOrderOfferIds = [], // offers already on the order being added to (not a cashier change)
   existingOrderDiscounts = null, // the order's stored discounts (add items): kept unless changed here
   floors = [],
@@ -364,6 +365,10 @@ export default function CartModal({
   const [showCustomerDetail, setShowCustomerDetail] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [manualDiscount, setManualDiscount] = useState('');
+  // Per-line note being edited: cart key (cartId || id) + draft text
+  const [noteEditKey, setNoteEditKey] = useState(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState(''); // delivery orders (web parity)
   // Discount the WhatsApp OTP was verified for ("type:value"); a different discount needs a new code.
   const [discountOtpApprovedKey, setDiscountOtpApprovedKey] = useState(null);
   const [discountOtpRequestKey, setDiscountOtpRequestKey] = useState(null);
@@ -449,6 +454,7 @@ export default function CartModal({
       setRedeemPoints(0);
       setManualDiscount('');
       setManualDiscountType('flat');
+      setDeliveryAddress(''); setNoteEditKey(null);
       setShowOffersModal(false);
       resetOffers();
       setAppliedCoupon(null);
@@ -694,6 +700,8 @@ export default function CartModal({
     additionalCharges: billing.additionalCharges.length > 0 ? billing.additionalCharges : null,
     additionalChargesTotal: billing.additionalChargesTotal || null,
     deliveryStaffId: selectedDeliveryStaff?.id || null,
+    // Delivery address — only on delivery orders (web OrderSummary parity); the server stores it.
+    deliveryAddress: orderType === 'delivery' && deliveryAddress.trim() ? deliveryAddress.trim() : null,
     deliveryStaffName: selectedDeliveryStaff?.name || null,
     // Full split payload (same shape the web sends) built from the LIVE totals at submit time, so
     // a cart change after "Apply Split" is reflected. Previously the raw UI config was passed and
@@ -1248,6 +1256,38 @@ export default function CartModal({
           + {item.selectedCustomizations.map(c => c.name).join(', ')}
         </Text>
       ) : null}
+      {/* Per-line kitchen note ("no onion") — goes on the order line and the KOT (web parity) */}
+      {typeof onUpdateItemNote === 'function' && (() => {
+        const key = item.cartId || item.id;
+        if (noteEditKey === key) {
+          const save = () => { onUpdateItemNote(key, noteDraft.trim()); setNoteEditKey(null); };
+          return (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              <TextInput
+                style={{ flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 12, color: '#1f2937' }}
+                value={noteDraft}
+                onChangeText={setNoteDraft}
+                placeholder="e.g. no onion, less spicy"
+                placeholderTextColor="#9ca3af"
+                autoFocus
+                maxLength={120}
+                onSubmitEditing={save}
+                returnKeyType="done"
+              />
+              <TouchableOpacity onPress={save} style={{ backgroundColor: '#2563eb', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
+        return (
+          <TouchableOpacity onPress={() => { setNoteEditKey(key); setNoteDraft(item.notes || ''); }} activeOpacity={0.7} style={{ marginTop: 3, alignSelf: 'flex-start' }}>
+            <Text style={{ fontSize: 11, color: item.notes ? '#b45309' : '#2563eb', fontWeight: '600' }} numberOfLines={2}>
+              {item.notes ? `📝 ${item.notes}` : '+ Add note'}
+            </Text>
+          </TouchableOpacity>
+        );
+      })()}
       <View style={styles.cartItemFooter}>
         <View style={styles.cartItemPriceInfo}>
           {canEditPrice && !item.soldByWeight ? (
@@ -1847,6 +1887,25 @@ export default function CartModal({
                       />
                     </View>
                   )}
+                </View>
+              )}
+
+              {/* Delivery address (web parity) — on the order, the bill and for the rider */}
+              {orderType === 'delivery' && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                    <Ionicons name="location-outline" size={12} color="#1f2937" />
+                    <Text style={styles.paymentSectionLabel}>Delivery Address</Text>
+                  </View>
+                  <TextInput
+                    style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13, color: '#1f2937', minHeight: 44, textAlignVertical: 'top' }}
+                    value={deliveryAddress}
+                    onChangeText={setDeliveryAddress}
+                    placeholder="House / street / area / landmark"
+                    placeholderTextColor="#9ca3af"
+                    multiline
+                    maxLength={300}
+                  />
                 </View>
               )}
 
