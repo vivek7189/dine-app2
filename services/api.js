@@ -1630,10 +1630,11 @@ class ApiClient {
   }
 
   // Update order status
-  async updateOrderStatus(orderId, status, restaurantId) {
+  async updateOrderStatus(orderId, status, restaurantId, reason) {
     const result = await this.offlineWrite(`/api/orders/${orderId}/status`, {
       method: 'PATCH',
-      data: { status, restaurantId },
+      // reason: only sent when given (cancelling a settled bill asks for one)
+      data: { status, restaurantId, ...(reason ? { reason } : {}) },
       entityType: 'order_status',
       operation: 'update',
       priority: 20,

@@ -61,6 +61,9 @@ export default function OrderHistoryScreen() {
   const [refundAmount, setRefundAmount] = useState('');
   const [refundReason, setRefundReason] = useState('');
   const [refundFull, setRefundFull] = useState(true);
+  // Cancelling a SETTLED bill: asks for a reason (stored on the order) — like a refund
+  const [cancelBillModal, setCancelBillModal] = useState(false);
+  const [cancelBillReason, setCancelBillReason] = useState('');
   const [settleModal, setSettleModal] = useState(false);
   const [settleAmount, setSettleAmount] = useState('');
   const [settleMethod, setSettleMethod] = useState('cash');
@@ -133,9 +136,9 @@ export default function OrderHistoryScreen() {
     pollGuardRef.current = {
       page,
       busy: loading || refreshing || loadingMore || actionBusy || restoringOrder,
-      modalOpen: !!selectedOrder || settleModal || refundModal,
+      modalOpen: !!selectedOrder || settleModal || refundModal || cancelBillModal,
     };
-  }, [page, loading, refreshing, loadingMore, actionBusy, restoringOrder, selectedOrder, settleModal, refundModal]);
+  }, [page, loading, refreshing, loadingMore, actionBusy, restoringOrder, selectedOrder, settleModal, refundModal, cancelBillModal]);
 
   // Refresh on focus AND poll while visible so newly placed orders show up without a manual
   // refresh or an app restart. The poll only auto-reloads page 1 when nothing is in progress
@@ -355,6 +358,10 @@ export default function OrderHistoryScreen() {
   const canRefund = refundSettingAllows && (rc('orders.refund') !== null ? (rc('orders.refund') && rc('orders.refundButton')) : canManage);
   const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel') : canManage;
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
+  // Closing the order detail closes its sheets too — else one could reappear on the next order.
+  useEffect(() => {
+    if (!selectedOrder) { setRefundModal(false); setSettleModal(false); setCancelBillModal(false); }
+  }, [selectedOrder]);
 
   // Same gate as web order history (Admin → Billing Settings → reprintKotRoles / reprintBillRoles):
   // empty list (default) = everyone; owner/admin always; otherwise only the listed roles.
@@ -482,7 +489,22 @@ export default function OrderHistoryScreen() {
     finally { setActionBusy(false); }
   };
 
+  // A settled bill is cancelled with a reason (sheet below); running orders keep the quick confirm.
+  const submitCancelBill = async () => {
+    const reason = cancelBillReason.trim();
+    if (!reason) { Alert.alert('Reason needed', 'Please enter why this bill is being cancelled.'); return; }
+    try {
+      setActionBusy(true);
+      const oid = selectedOrder.id || selectedOrder._id;
+      // the /cancel endpoint refuses completed orders → status change (reverses stats & stock), with the reason
+      await apiClient.updateOrderStatus(oid, 'cancelled', restaurantId, reason);
+      setCancelBillModal(false);
+      reloadAfterAction();
+    } catch (e) { Alert.alert('Error', e.message || 'Cancel failed'); } finally { setActionBusy(false); }
+  };
+
   const handleCancelOrder = (order) => {
+    if (order.status === 'completed') { setCancelBillReason(''); setCancelBillModal(true); return; }
     Alert.alert('Cancel Order', `Cancel order #${order.dailyOrderId || order.orderNumber || ''}?\nThis reverses stats and inventory.`, [
       { text: 'No', style: 'cancel' },
       { text: 'Cancel Order', style: 'destructive', onPress: async () => {
@@ -960,7 +982,7 @@ export default function OrderHistoryScreen() {
                     <Ionicons name="arrow-undo-outline" size={16} color="#7c3aed" /><Text style={[styles.actBtnText, { color: '#7c3aed' }]}>Refund</Text>
                   </TouchableOpacity>
                 )}
-                {canCancel && selectedOrder.status !== 'cancelled' && (
+                {canCancel && selectedOrder.status !== 'cancelled' && (selectedOrder.status !== 'completed' || canRefund) && (
                   <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleCancelOrder(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="close-circle-outline" size={16} color="#ef4444" /><Text style={[styles.actBtnText, { color: '#ef4444' }]}>Cancel Order</Text>
                   </TouchableOpacity>
@@ -997,10 +1019,27 @@ export default function OrderHistoryScreen() {
                     <TextInput style={styles.modalInput} value={refundAmount} onChangeText={setRefundAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#9ca3af" />
                   </>
                 )}
-                <Text style={styles.sheetSectionTitle}>Reason (optional)</Text>
+                <Text style={styles.sheetSectionTitle}>Reason</Text>
                 <TextInput style={styles.modalInput} value={refundReason} onChangeText={setRefundReason} placeholder="e.g. wrong item" placeholderTextColor="#9ca3af" />
                 <TouchableOpacity style={[styles.sheetApply, { backgroundColor: '#7c3aed' }]} disabled={actionBusy} onPress={submitRefund} activeOpacity={0.85}>
                   {actionBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.sheetApplyText}>Process refund{refundFull && selectedOrder ? ` (${formatCurrency(orderTotal(selectedOrder))})` : ''}</Text>}
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          )}
+
+          {/* Cancel a settled bill — reason required (in-modal overlay, like refund) */}
+          {cancelBillModal && (
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.inlineOverlay}>
+              <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setCancelBillModal(false)} />
+              <View style={[styles.sheet, { paddingBottom: 24 + (insets.bottom || 0) }]}>
+                <View style={styles.sheetHandle} />
+                <Text style={styles.sheetTitle}>Cancel this bill</Text>
+                {selectedOrder && <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Order #{selectedOrder.dailyOrderId || selectedOrder.orderNumber || ''} · {formatCurrency(orderTotal(selectedOrder))} — this reverses its sales and stock.</Text>}
+                <Text style={[styles.sheetSectionTitle, { marginTop: 14 }]}>Reason</Text>
+                <TextInput style={styles.modalInput} value={cancelBillReason} onChangeText={setCancelBillReason} placeholder="e.g. customer left, wrong order" placeholderTextColor="#9ca3af" />
+                <TouchableOpacity style={[styles.sheetApply, { backgroundColor: '#dc2626' }]} disabled={actionBusy} onPress={submitCancelBill} activeOpacity={0.85}>
+                  {actionBusy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.sheetApplyText}>Cancel bill</Text>}
                 </TouchableOpacity>
               </View>
             </KeyboardAvoidingView>
