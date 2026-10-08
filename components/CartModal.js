@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/Theme';
-import CustomerLookup from './CustomerLookup';
+import CustomerLookup, { getPhoneMinLength } from './CustomerLookup';
 import CustomerDetailModal from './CustomerDetailModal';
 import useBillingCalculation from '../hooks/useBillingCalculation';
 import useOfferEngine from '../hooks/useOfferEngine';
@@ -956,6 +956,16 @@ export default function CartModal({
     return { overStock, lowStock };
   }, [cart]);
 
+  // Full Due (udhar, nothing paid now) needs a customer to hold the receivable — web parity
+  // (OrderSummary dueCustomerReady): a found customer, or a valid phone typed (the server creates the
+  // customer from it). Without one the amount owed was lost from the khata.
+  const fullDueWithoutCustomer = () => {
+    const pp = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+    if (!(pp != null && pp === 0)) return false;
+    if (customerData) return false;
+    return String(customerMobile || '').replace(/\D/g, '').length < getPhoneMinLength(countryCode);
+  };
+  const dueNeedsCustomerAlert = () => Alert.alert('Customer needed', 'A due (udhar) bill needs the customer. Enter the customer phone number first.');
   // What split payments must add up to: the part-payment amount when one is being taken now,
   // else the whole bill.
   const splitTarget = () => {
@@ -1004,6 +1014,7 @@ export default function CartModal({
   };
 
   const handlePlaceOrder = () => {
+    if (fullDueWithoutCustomer()) { dueNeedsCustomerAlert(); return; }
     const spCheck = resolveSplitPayments(splitPayments, splitTarget());
     if (spCheck.mode === 'invalid' && !(splitConfig && splitConfig.guests?.length > 1)) {
       Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);
@@ -1023,6 +1034,7 @@ export default function CartModal({
   };
 
   const handleCompleteBill = () => {
+    if (fullDueWithoutCustomer()) { dueNeedsCustomerAlert(); return; }
     const spCheck = resolveSplitPayments(splitPayments, splitTarget());
     if (spCheck.mode === 'invalid' && !(splitConfig && splitConfig.guests?.length > 1)) {
       Alert.alert('Split payment', `The split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the bill total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments.`);

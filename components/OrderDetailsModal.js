@@ -203,6 +203,15 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const handleSettle = () => {
     if (settling) return;
     // Validate split totals if used
+    // Full Due (nothing paid now) needs a customer on the order to hold the receivable (web parity).
+    const ppNow = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
+    const ci = order?.customerInfo || {};
+    const hasCustomer = !!(order?.customerId || ci.id || ci.customerId
+      || String(ci.phone || order?.customerPhone || '').replace(/\D/g, '').length >= 6);
+    if (ppNow === 0 && !hasCustomer) {
+      setError('A due (udhar) bill needs the customer. Use "Add Items" to add the customer phone, or take the payment now.');
+      return;
+    }
     const spCheck = resolveSplitPayments(splitPayments, splitTarget());
     if (spCheck.mode === 'invalid') {
       setError(`Split payments (${getCurrencySymbol()}${spCheck.sum.toFixed(2)}) must add up to the total ${getCurrencySymbol()}${spCheck.total.toFixed(2)}, with at least two payments`);
