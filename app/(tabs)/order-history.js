@@ -339,7 +339,20 @@ export default function OrderHistoryScreen() {
   // Roles on: each action follows the person's role (null = roles off → today's rule above)
   const rc = (k) => roleCan(currentUser, k);
   const canSettle = rc('orders.completeBill') !== null ? (rc('orders.completeBill') && rc('orders.settleButton')) : canManage;
-  const canRefund = rc('orders.refund') !== null ? (rc('orders.refund') && rc('orders.refundButton')) : canManage;
+  // Web parity (orderhistory canRefund): Admin → Billing Settings "Refunds" switched off → no
+  // refunds; a refundsRoles list → only those roles (case/space-insensitive). Owner/admin always keep
+  // it here so an owner can never be locked out of refunds.
+  const refundSettingAllows = (() => {
+    const bs = restaurant?.billingSettings || {};
+    if (bs.refundsEnabled === false) return false;
+    const roles = bs.refundsRoles;
+    if (!Array.isArray(roles) || roles.length === 0) return true;
+    const role = String(userRole || '').toLowerCase().trim();
+    if (role === 'owner' || role === 'admin') return true;
+    const key = (r) => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return roles.some(r => key(r) === key(role));
+  })();
+  const canRefund = refundSettingAllows && (rc('orders.refund') !== null ? (rc('orders.refund') && rc('orders.refundButton')) : canManage);
   const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel') : canManage;
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
 
