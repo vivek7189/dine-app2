@@ -6,7 +6,7 @@ import {
   ActivityIndicator, RefreshControl, Platform, Animated, TextInput, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 let Location = null;
 try {
@@ -234,7 +234,12 @@ export default function AttendanceScreen() {
   });
 
   // Tabs: 'attendance', 'leave', 'dashboard' (admin only)
-  const [activeTab, setActiveTab] = useState('attendance');
+  // ?mode=leave — opened from More → "Apply Leave" when the restaurant hid Attendance (clock-in) for
+  // this role (e.g. biometric clock-in): only the Leave tab, no clock-in/out.
+  const { mode } = useLocalSearchParams();
+  const leaveOnly = mode === 'leave';
+  const [activeTab, setActiveTab] = useState(leaveOnly ? 'leave' : 'attendance');
+  useEffect(() => { if (leaveOnly) setActiveTab('leave'); }, [leaveOnly]);
   const [toast, setToast] = useState(null);
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
 
@@ -626,13 +631,13 @@ export default function AttendanceScreen() {
 
       {/* Tab Bar */}
       <View style={s.tabBar}>
-        <TouchableOpacity
+        {!leaveOnly && <TouchableOpacity
           style={[s.tab, activeTab === 'attendance' && s.tabActive]}
           onPress={() => setActiveTab('attendance')}
         >
           <Ionicons name="time-outline" size={15} color={activeTab === 'attendance' ? '#fff' : '#6b7280'} />
           <Text style={[s.tabText, activeTab === 'attendance' && s.tabTextActive]}>Attendance</Text>
-        </TouchableOpacity>
+        </TouchableOpacity>}
         <TouchableOpacity
           style={[s.tab, activeTab === 'leave' && s.tabActive]}
           onPress={() => setActiveTab('leave')}
@@ -640,7 +645,7 @@ export default function AttendanceScreen() {
           <Ionicons name="calendar-outline" size={15} color={activeTab === 'leave' ? '#fff' : '#6b7280'} />
           <Text style={[s.tabText, activeTab === 'leave' && s.tabTextActive]}>Leave</Text>
         </TouchableOpacity>
-        {isAdmin && (
+        {isAdmin && !leaveOnly && (
           <TouchableOpacity
             style={[s.tab, activeTab === 'dashboard' && s.tabActive]}
             onPress={() => setActiveTab('dashboard')}
@@ -651,9 +656,9 @@ export default function AttendanceScreen() {
         )}
       </View>
 
-      {activeTab === 'dashboard' && isAdmin ? (
+      {activeTab === 'dashboard' && isAdmin && !leaveOnly ? (
         <AttendanceWebView user={user} restaurantId={restaurantId} />
-      ) : activeTab === 'leave' ? (
+      ) : activeTab === 'leave' || leaveOnly ? (
         <LeaveTab
           leaveBalances={leaveBalances}
           leaveRequests={leaveRequests}

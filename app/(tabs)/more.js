@@ -186,6 +186,8 @@ export default function MoreScreen() {
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], perm: 'settings.googleReviews', color: '#eab308', iconBg: '#fefce8' },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'My Shifts', icon: 'calendar-outline', route: '/(tabs)/my-shifts', roles: null, color: '#ef4444', iconBg: '#fef2f2' },
+        // Only when the owner hid Attendance (clock-in) for this role — leave applications stay available
+        { title: 'Apply Leave', icon: 'calendar-clear-outline', route: { pathname: '/(tabs)/attendance', params: { mode: 'leave' } }, roles: null, leaveOnly: true, color: '#0ea5e9', iconBg: '#f0f9ff' },
         { title: 'Events', icon: 'sparkles-outline', route: '/(tabs)/calendar', roles: null, calendar: true, color: '#d97706', iconBg: '#fffbeb' },
         // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
@@ -277,6 +279,7 @@ export default function MoreScreen() {
 
   const shouldShowItem = (item) => {
     if (item.calendar) return calendarAllowed;
+    if (item.leaveOnly) return followsWaiterAppConfig(role, waiterAppConfig) && waiterAppConfig.showAttendance === false;
     // Waiter app config overrides — waiters and any role the owner applied it to
     if (followsWaiterAppConfig(role, waiterAppConfig)) {
       const waiterConfigMap = {

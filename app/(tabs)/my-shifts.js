@@ -9,7 +9,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl,
   Alert, Modal, Switch, Platform, TextInput,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -46,6 +46,7 @@ const slotsOverlap = ([a, b]) => {
 };
 
 export default function MyShiftsScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [rid, setRid] = useState(null);
@@ -210,7 +211,8 @@ export default function MyShiftsScreen() {
         <TouchableOpacity onPress={onRefresh} style={{ padding: 4 }}><Ionicons name="refresh" size={20} color="#6b7280" /></TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 60 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+      {/* The bottom tab bar covers the end of the page — leave room so the Save button can be scrolled into view */}
+      <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 140 + (insets.bottom || 0) }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         {!!error && <Text style={styles.error}>{error}</Text>}
 
         {/* Next shift */}
