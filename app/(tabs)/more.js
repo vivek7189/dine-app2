@@ -193,6 +193,7 @@ export default function MoreScreen() {
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
         // My Pay: own payslips / advances / bonuses / appraisals — only when the role has it (roles on)
         { title: 'My Pay', icon: 'wallet-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-pay`, title: 'My Pay' } }, roles: [], perm: 'page.myPay', color: '#059669', iconBg: '#ecfdf5' },
+        { title: 'My Meetings', icon: 'people-circle-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-meetings`, title: 'My Meetings' } }, roles: null, color: '#4f46e5', iconBg: '#eef2ff' },
         { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, perm: 'page.printer', color: '#64748b', iconBg: '#f1f5f9' },
         { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],

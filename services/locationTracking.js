@@ -64,8 +64,7 @@ if (TaskManager) {
         // Staff shift tracking → attendance location-ping endpoint
         await apiClient.request(
           `/api/attendance/${restaurantId}/location-ping`,
-          'POST',
-          {
+          { method: 'POST', data: {
             staffId,
             staffName: staffName || '',
             lat: latest.coords.latitude,
@@ -74,14 +73,13 @@ if (TaskManager) {
             speed: latest.coords.speed,
             heading: latest.coords.heading,
             timestamp: new Date(latest.timestamp).toISOString(),
-          }
+          } }
         );
       } else {
         // Delivery tracking → delivery location-update endpoint
         await apiClient.request(
           `/api/delivery/${restaurantId}/location-update`,
-          'POST',
-          {
+          { method: 'POST', data: {
             driverId: staffId,
             orderId,
             lat: latest.coords.latitude,
@@ -90,7 +88,7 @@ if (TaskManager) {
             speed: latest.coords.speed,
             heading: latest.coords.heading,
             timestamp: new Date(latest.timestamp).toISOString(),
-          }
+          } }
         );
       }
     } catch (err) {

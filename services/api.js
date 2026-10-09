@@ -3411,6 +3411,14 @@ class ApiClient {
     });
   }
 
+  async breakStart(restaurantId, { staffId, location }) {
+    return this.request(`/api/attendance/${restaurantId}/break-start`, { method: 'POST', data: { staffId, location } });
+  }
+
+  async breakEnd(restaurantId, { staffId, location }) {
+    return this.request(`/api/attendance/${restaurantId}/break-end`, { method: 'POST', data: { staffId, location } });
+  }
+
   async getAttendanceToday(restaurantId) {
     return this.request(`/api/attendance/${restaurantId}/today`);
   }

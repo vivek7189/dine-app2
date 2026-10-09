@@ -261,13 +261,18 @@ export default function AttendanceScreen() {
 
   // ── Live Timer ──────────────────────────────────────────
 
+  const timerSessions = todayRecord?.calc?.sessions;
   useEffect(() => {
     if (todayRecord?.clockIn && !todayRecord?.clockOut) {
-      // Start timer
+      // Start timer — time on shift today across all check-ins (breaks not counted); servers without
+      // sessions → since the first clock-in.
       const clockInTime = new Date(todayRecord.clockIn).getTime();
+      const sess = Array.isArray(timerSessions) && timerSessions.length ? timerSessions : null;
       const updateTimer = () => {
         const now = Date.now();
-        setElapsedSeconds(Math.floor((now - clockInTime) / 1000));
+        if (!sess) { setElapsedSeconds(Math.floor((now - clockInTime) / 1000)); return; }
+        const ms = sess.reduce((t, x) => t + Math.max(0, (x.out ? new Date(x.out).getTime() : now) - new Date(x.in).getTime()), 0);
+        setElapsedSeconds(Math.floor(ms / 1000));
       };
       updateTimer();
       timerRef.current = setInterval(updateTimer, 1000);
@@ -276,7 +281,7 @@ export default function AttendanceScreen() {
       clearInterval(timerRef.current);
       setElapsedSeconds(0);
     }
-  }, [todayRecord?.clockIn, todayRecord?.clockOut]);
+  }, [todayRecord?.clockIn, todayRecord?.clockOut, timerSessions]);
 
   // ── Load Data ──────────────────────────────────────────
 
@@ -476,6 +481,27 @@ export default function AttendanceScreen() {
     }
   };
 
+  // ── Break (start / end) ──────────────────────────────────
+
+  const [breakBusy, setBreakBusy] = useState(false);
+  const handleBreak = async (kind) => {
+    if (breakBusy || !user || !restaurantId) return;
+    setBreakBusy(true);
+    try {
+      const location = await getCurrentLocation();
+      const result = kind === 'start'
+        ? await apiClient.breakStart(restaurantId, { staffId: user.id, location })
+        : await apiClient.breakEnd(restaurantId, { staffId: user.id, location });
+      setTodayRecord(prev => ({ ...prev, ...result }));
+      showToast(kind === 'start' ? 'Break started' : 'Break ended — back on shift', 'success');
+      loadData();
+    } catch (err) {
+      showToast(err.message || (kind === 'start' ? 'Could not start the break' : 'Could not end the break'), 'error');
+    } finally {
+      setBreakBusy(false);
+    }
+  };
+
   // ── Apply Leave ──────────────────────────────────────────
 
   const openApplyLeave = (prefillDate) => {
@@ -524,6 +550,10 @@ export default function AttendanceScreen() {
   const isClockedIn = todayRecord?.clockIn && !todayRecord?.clockOut;
   const isClockedOut = todayRecord?.clockIn && todayRecord?.clockOut;
   const hasNotClockedIn = !todayRecord?.clockIn;
+  // Break / several check-ins a day (servers with the attendance sessions update send calc)
+  const dayState = todayRecord?.calc?.state || null;
+  const onBreak = isClockedIn && dayState === 'on_break';
+  const supportsSessions = !!dayState;
 
   const hasLeaveRequestForDate = (date) => {
     return leaveRequests.some(lr => {
@@ -688,7 +718,7 @@ export default function AttendanceScreen() {
               {isClockedIn && (
                 <>
                   <PulseDot color="#10b981" />
-                  <Text style={[s.clockStatusText, { color: '#059669' }]}>Clocked In</Text>
+                  <Text style={[s.clockStatusText, { color: onBreak ? '#b45309' : '#059669' }]}>{onBreak ? 'On Break' : 'Clocked In'}</Text>
                   <Text style={s.clockSinceText}>since {formatTime(todayRecord.clockIn)}</Text>
                   {isTracking && (
                     <View style={s.trackingChip}>
@@ -710,7 +740,7 @@ export default function AttendanceScreen() {
             {isClockedIn && (
               <View style={s.timerWrap}>
                 <Text style={s.timerText}>{formatTimerDisplay(elapsedSeconds)}</Text>
-                <Text style={s.timerLabel}>hours on shift</Text>
+                <Text style={s.timerLabel}>{onBreak ? 'on break — shift time paused' : 'hours on shift'}</Text>
               </View>
             )}
 
@@ -735,7 +765,7 @@ export default function AttendanceScreen() {
                 disabled={effectivelyOffline}
               />
             )}
-            {isClockedIn && (
+            {isClockedIn && !onBreak && (
               <CircleActionButton
                 icon="log-out-outline"
                 color="#ef4444"
@@ -745,6 +775,40 @@ export default function AttendanceScreen() {
                 loading={clockingOut}
                 disabled={effectivelyOffline}
               />
+            )}
+            {onBreak && (
+              <CircleActionButton
+                icon="play-outline"
+                color="#f59e0b"
+                glowColor="#f59e0b"
+                label="Tap to End Break"
+                onPress={() => handleBreak('end')}
+                loading={breakBusy}
+                disabled={effectivelyOffline}
+              />
+            )}
+            {/* Start break (while working) · clock out (on break) · clock in again (after clocking out) */}
+            {supportsSessions && !effectivelyOffline && (isClockedIn || isClockedOut) && (
+              <View style={s.secondaryRow}>
+                {isClockedIn && !onBreak && (
+                  <TouchableOpacity style={s.secondaryBtn} onPress={() => handleBreak('start')} disabled={breakBusy}>
+                    <Ionicons name="cafe-outline" size={15} color="#b45309" />
+                    <Text style={[s.secondaryBtnText, { color: '#b45309' }]}>{breakBusy ? 'Starting…' : 'Start Break'}</Text>
+                  </TouchableOpacity>
+                )}
+                {onBreak && (
+                  <TouchableOpacity style={s.secondaryBtn} onPress={handleClockOut} disabled={clockingOut}>
+                    <Ionicons name="log-out-outline" size={15} color="#ef4444" />
+                    <Text style={[s.secondaryBtnText, { color: '#ef4444' }]}>Clock Out for the day</Text>
+                  </TouchableOpacity>
+                )}
+                {isClockedOut && (
+                  <TouchableOpacity style={s.secondaryBtn} onPress={handleClockIn} disabled={clockingIn}>
+                    <Ionicons name="log-in-outline" size={15} color="#059669" />
+                    <Text style={[s.secondaryBtnText, { color: '#059669' }]}>{clockingIn ? 'Clocking in…' : 'Clock In Again'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
 
             {/* Time summary row */}
@@ -1302,6 +1366,9 @@ const s = StyleSheet.create({
   badgeOvertimeText: { fontSize: 12, fontWeight: '600', color: '#3b82f6' },
 
   offlineNote: { fontSize: 12, color: '#f59e0b', textAlign: 'center', marginTop: 8 },
+  secondaryRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' },
+  secondaryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#fff' },
+  secondaryBtnText: { fontSize: 13, fontWeight: '700' },
 
   // ═══ SECTIONS ═══
   section: {
