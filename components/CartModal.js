@@ -291,6 +291,10 @@ export default function CartModal({
 
   // Keyboard-aware bottom offset — lifts stickyBottom above keyboard
   const keyboardOffset = useRef(new Animated.Value(0)).current;
+  // Height of the fixed bottom panel (total, customer, payment, buttons). It floats over the item
+  // list, so the list needs that much room at its end — else the last items stay hidden under the
+  // panel and bounce back (iPad landscape: the panel is taller than any fixed padding).
+  const [bottomPanelH, setBottomPanelH] = useState(300);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -1511,7 +1515,7 @@ export default function CartModal({
             )}
           </View>
 
-          <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" onScrollBeginDrag={Keyboard.dismiss}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: cart.length > 0 ? bottomPanelH + 16 : 24 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" onScrollBeginDrag={Keyboard.dismiss}>
             {/* Kitchen Notes — collapsible */}
             {showKitchenNotes && (
               <View style={styles.kitchenNotesBar}>
@@ -1649,7 +1653,8 @@ export default function CartModal({
 
           {/* Fixed Bottom — payment, offers, buttons */}
           {cart.length > 0 && (
-            <Animated.View style={[styles.stickyBottom, { paddingBottom: Math.max(insets.bottom, 10), bottom: keyboardOffset }]}>
+            <Animated.View onLayout={(e) => { const h = Math.round(e.nativeEvent.layout.height); if (h > 0 && Math.abs(h - bottomPanelH) > 2) setBottomPanelH(h); }}
+              style={[styles.stickyBottom, { paddingBottom: Math.max(insets.bottom, 10), bottom: keyboardOffset }]}>
             <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false} bounces={false}>
               {/* Total Card — mode-specific */}
               {isCashierMode ? (
