@@ -23,7 +23,7 @@ import { orderLinesToCart } from '../utils/orderLines';
 import { resolveSplitPayments } from '../utils/splitPayment';
 import { registerBlocksBilling } from '../utils/registerGate';
 
-export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, billingSettings = {}, posSettings = {} }) {
+export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, userPageAccess = null, billingSettings = {}, posSettings = {} }) {
   const { modalWidth } = useResponsive();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -36,7 +36,14 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const roleAllowed = !completeRoles || completeRoles.length === 0
     ? true
     : completeRoles.map((r) => String(r).toLowerCase()).includes(roleLc);
-  const canCompleteBill = roleLc !== 'waiter' && roleAllowed;
+  // …and the person's own "Complete bill" permission when it is explicitly OFF (both the top-level
+  // switch and Orders → Complete bill) — chef / parcel / captain saw the button and got an error.
+  // Not set at all = role default (the server decides), so nobody loses the button by default.
+  const billSwitchTop = userPageAccess?.completeBill;
+  const billSwitchNested = userPageAccess?.orders && typeof userPageAccess.orders === 'object' ? userPageAccess.orders.completeBill : undefined;
+  const billExplicitlyOff = !['owner', 'admin'].includes(roleLc) && billSwitchTop !== true && billSwitchNested !== true
+    && (billSwitchTop === false || billSwitchNested === false);
+  const canCompleteBill = roleLc !== 'waiter' && roleAllowed && !billExplicitlyOff;
 
   // Per-feature role gate (empty/unset ⇒ all roles allowed), same semantics as CartModal.
   const isRoleAllowed = (rolesArr) => {

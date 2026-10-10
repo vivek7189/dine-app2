@@ -25,7 +25,7 @@ import { Colors, Spacing } from '../../constants/Theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { businessRange, fmtDay, fmtClock, fmtDayTime } from '../../utils/restaurantClock';
-import { roleCan } from '../../utils/permissions';
+import { roleCan, canPerform } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
 
 const STATUS_COLORS = {
@@ -318,7 +318,10 @@ export default function OrderHistoryScreen() {
   const canManage = ['owner', 'manager', 'cashier'].includes((userRole || '').toLowerCase());
   // Roles on: each action follows the person's role (null = roles off → today's rule above)
   const rc = (k) => roleCan(currentUser, k);
-  const canSettle = rc('orders.completeBill') !== null ? (rc('orders.completeBill') && rc('orders.settleButton')) : canManage;
+  // Roles off: owner / manager / cashier as before, or anyone allowed to take payment (biller,
+  // director … — custom roles with "Complete bill" couldn't settle a due bill: MFC).
+  const canBill = canManage || canPerform(currentUser, currentUser?.pageAccess, 'orders', 'completeBill');
+  const canSettle = rc('orders.completeBill') !== null ? (rc('orders.completeBill') && rc('orders.settleButton')) : canBill;
   // Web parity (orderhistory canRefund): Admin → Billing Settings "Refunds" switched off → no
   // refunds; a refundsRoles list → only those roles (case/space-insensitive). Owner/admin always keep
   // it here so an owner can never be locked out of refunds.
@@ -333,7 +336,10 @@ export default function OrderHistoryScreen() {
     return roles.some(r => key(r) === key(role));
   })();
   const canRefund = refundSettingAllows && (rc('orders.refund') !== null ? (rc('orders.refund') && rc('orders.refundButton')) : canManage);
-  const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel') : canManage;
+  // Cancel (roles off): as before, or someone who can take payment AND cancel orders (not plain
+  // waiters, whose broad "orders" access must not suddenly let them cancel billed orders).
+  const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel')
+    : (canManage || (canBill && canPerform(currentUser, currentUser?.pageAccess, 'orders', 'cancel')));
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
   // Closing the order detail closes its sheets too — else one could reappear on the next order.
   useEffect(() => {

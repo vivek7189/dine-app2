@@ -2218,6 +2218,7 @@ export default function TablesScreen() {
         tableNumber={selectedTableForOrder?.name}
         restaurantId={selectedRestaurant?.id}
         userRole={user?.role}
+        userPageAccess={user?.pageAccess || null}
         billingSettings={selectedRestaurant?.billingSettings || {}}
         posSettings={selectedRestaurant?.posSettings || {}}
         onAddItems={handleAddItemsToOrder}

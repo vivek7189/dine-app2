@@ -248,11 +248,14 @@ function TabsNavigator() {
             const byRoleM = roleCan(roleUser, 'page.dashboard');
             if (byRoleM !== null) return byRoleM ? undefined : null;
             if (['owner', 'admin', 'captain', 'manager', 'cashier'].includes(roleLower)) return undefined;
-            // Other roles need pageAccess.menu
+            // Other roles: the POS permission ('dashboard' — this tab is the ORDERING screen, same as the
+            // waiter rule above) or, as before, 'menu'. A biller with POS access had no ordering tab (MFC).
             if (pageAccess) {
-              const val = pageAccess.menu;
-              if (val === true) return undefined;
-              if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return undefined;
+              for (const key of ['dashboard', 'menu']) {
+                const val = pageAccess[key];
+                if (val === true) return undefined;
+                if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return undefined;
+              }
             }
             return null;
           })(),

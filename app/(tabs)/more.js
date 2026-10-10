@@ -201,7 +201,7 @@ export default function MoreScreen() {
     {
       title: 'Finance',
       items: [
-        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: 'admin', perm: 'page.books', color: '#10b981', iconBg: '#ecfdf5' },
+        { title: 'Books', icon: 'book-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/books`, title: 'Books' } }, roles: ['owner', 'manager', 'admin'], feature: ['admin', 'books'], perm: 'page.books', color: '#10b981', iconBg: '#ecfdf5' },
         { title: 'Invoices', icon: 'document-text-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/invoice`, title: 'Invoices' } }, roles: ['owner', 'manager', 'admin'], feature: 'invoice', perm: 'page.invoice', color: '#f97316', iconBg: '#fff7ed' },
         // Open / close a shift and count the cash drawer — the web page in the app (same rule as the web
         // sidebar / home: only where the restaurant uses Shifts & Cash).
@@ -214,7 +214,7 @@ export default function MoreScreen() {
       title: 'History',
       items: [
         { title: 'Order History', icon: 'time-outline', route: '/(tabs)/order-history', roles: null, feature: 'history', perm: 'page.history', color: '#8b5cf6', iconBg: '#f5f3ff' },
-        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'], perm: 'page.analytics', color: '#06b6d4', iconBg: '#ecfeff' },
+        { title: 'Sales Summary', icon: 'stats-chart-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/sales-summary`, title: 'Sales Summary' } }, roles: ['owner', 'manager', 'admin'], feature: 'analytics', perm: 'page.analytics', color: '#06b6d4', iconBg: '#ecfeff' },
       ],
     },
     ...(isHotelType ? [{
@@ -303,19 +303,22 @@ export default function MoreScreen() {
 
     // For items with no role restriction, show by default — but allow owner to disable via pageAccess
     if (!item.roles) {
-      if (item.feature && user?.pageAccess && user.pageAccess[item.feature] === false) return false;
+      if (typeof item.feature === 'string' && user?.pageAccess && user.pageAccess[item.feature] === false) return false;
       return true;
     }
     if (!role) return false;
     // If role is in the hardcoded list, show it
     if (item.roles.includes(role)) return true;
-    // For roles not in the list, check pageAccess (supports custom roles, employee, etc.)
+    // For roles not in the list, check pageAccess (supports custom roles, employee, etc.). A feature
+    // list = any of them (Books: Admin or Books).
     if (item.feature && user?.pageAccess) {
-      let val = user.pageAccess[item.feature];
-      // billing permission is also stored nested (pageAccess.orders.completeBill — current format)
-      if (item.feature === 'completeBill' && val == null) val = user.pageAccess.orders?.completeBill;
-      if (val === true) return true;
-      if (typeof val === 'object' && val !== null) return Object.values(val).some(Boolean);
+      for (const feature of (Array.isArray(item.feature) ? item.feature : [item.feature])) {
+        let val = user.pageAccess[feature];
+        // billing permission is also stored nested (pageAccess.orders.completeBill — current format)
+        if (feature === 'completeBill' && val == null) val = user.pageAccess.orders?.completeBill;
+        if (val === true) return true;
+        if (typeof val === 'object' && val !== null && Object.values(val).some(Boolean)) return true;
+      }
     }
     return false;
   };
