@@ -192,8 +192,12 @@ export default function MoreScreen() {
         // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
         // My Pay: own payslips / advances / bonuses / appraisals — only when the role has it (roles on)
-        { title: 'My Pay', icon: 'wallet-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-pay`, title: 'My Pay' } }, roles: [], perm: 'page.myPay', color: '#059669', iconBg: '#ecfdf5' },
+        // feature 'myPay' = the "My Pay" tick in Staff access (restaurants without roles), as on the web
+        { title: 'My Pay', icon: 'wallet-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-pay`, title: 'My Pay' } }, roles: [], perm: 'page.myPay', feature: 'myPay', color: '#059669', iconBg: '#ecfdf5' },
         { title: 'My Meetings', icon: 'people-circle-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-meetings`, title: 'My Meetings' } }, roles: null, color: '#4f46e5', iconBg: '#eef2ff' },
+        // Staff self-service (MFC): report a repair / send a suggestion or feedback to the owner — everyone
+        { title: 'Repairs', icon: 'construct-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=repair`, title: 'Repairs' } }, roles: null, color: '#b45309', iconBg: '#fffbeb' },
+        { title: 'Suggestions & feedback', icon: 'chatbubbles-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=suggestion`, title: 'Suggestions' } }, roles: null, color: '#0f766e', iconBg: '#f0fdfa' },
         { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, perm: 'page.printer', color: '#64748b', iconBg: '#f1f5f9' },
         { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],
@@ -280,7 +284,9 @@ export default function MoreScreen() {
 
   const shouldShowItem = (item) => {
     if (item.calendar) return calendarAllowed;
-    if (item.leaveOnly) return followsWaiterAppConfig(role, waiterAppConfig) && waiterAppConfig.showAttendance === false;
+    // Apply Leave: whenever this person doesn't see Attendance (for any reason) — leave must always be
+    // possible from the app (MFC: staff couldn't find where to apply).
+    if (item.leaveOnly) return !shouldShowItem({ title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null });
     // Waiter app config overrides — waiters and any role the owner applied it to
     if (followsWaiterAppConfig(role, waiterAppConfig)) {
       const waiterConfigMap = {
