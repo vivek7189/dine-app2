@@ -194,6 +194,8 @@ export default function MoreScreen() {
         // My Pay: own payslips / advances / bonuses / appraisals — only when the role has it (roles on)
         // feature 'myPay' = the "My Pay" tick in Staff access (restaurants without roles), as on the web
         { title: 'My Pay', icon: 'wallet-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-pay`, title: 'My Pay' } }, roles: [], perm: 'page.myPay', feature: 'myPay', color: '#059669', iconBg: '#ecfdf5' },
+        // Birthday, anniversary and important days (prayer, wedding, child birth…) so the manager plans around them
+        { title: 'My dates', icon: 'gift-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-dates`, title: 'My dates' } }, roles: null, color: '#be185d', iconBg: '#fdf2f8' },
         { title: 'My Meetings', icon: 'people-circle-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-meetings`, title: 'My Meetings' } }, roles: null, color: '#4f46e5', iconBg: '#eef2ff' },
         // Staff self-service (MFC): report a repair / send a suggestion or feedback to the owner — everyone
         { title: 'Repairs', icon: 'construct-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=repair`, title: 'Repairs' } }, roles: null, color: '#b45309', iconBg: '#fffbeb' },
