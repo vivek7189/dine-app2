@@ -39,6 +39,7 @@ const STATUS_COLORS = {
   served: '#3b82f6',
   cancelled: '#ef4444',
   refunded: '#f59e0b',
+  awaiting_approval: '#ea580c',
 };
 
 const STATUS_LABELS = {
@@ -50,6 +51,7 @@ const STATUS_LABELS = {
   served: 'SERVED',
   cancelled: 'CANCELLED',
   refunded: 'REFUNDED',
+  awaiting_approval: 'AWAITING APPROVAL',
 };
 
 const parseDate = (val) => {
@@ -460,7 +462,8 @@ export default function ActiveOrdersNative() {
     const amt = order.finalAmount || order.totalAmount || 0;
     const expanded = expandedOrders[order.id];
     const isUpdating = updatingOrderId === order.id;
-    const isActive = !['completed', 'served', 'cancelled', 'refunded'].includes(order.status);
+    // A customer QR order waiting for approval has no kitchen / bill actions until it is approved.
+    const isActive = !['completed', 'served', 'cancelled', 'refunded', 'awaiting_approval'].includes(order.status);
     const orderDate = getOrderTime(order);
     const timeStr = formatTime(orderDate);
     const ago = getTimeAgo(orderDate);

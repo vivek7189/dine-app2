@@ -480,6 +480,8 @@ export default function TablesScreen() {
     };
 
     const handleOrderCreated = (data) => {
+      // A customer QR order waiting for approval doesn't occupy its table until it is approved.
+      if (data?.status === 'awaiting_approval') { debouncedRefresh(); return; }
       if (data?.tableId) {
         updateTableStatusOptimistically(data.tableId, 'occupied', data.orderId);
       } else if (data?.tableNumber && data?.floorId) {
