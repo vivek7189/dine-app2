@@ -37,7 +37,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter, withSeatLabel } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
-import { splitIndiaGst, attachInclusiveSplits } from '../utils/printTemplates/helpers';
+import { splitIndiaGst, attachInclusiveSplits, billDateOf, formatDateTime } from '../utils/printTemplates/helpers';
 import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
@@ -1115,12 +1115,18 @@ export const generateBillText = (invoiceData) => {
   const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
   lines.push(leftRight(payMethod + ' Sale', '', W));
   const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || '-';
-  const now = invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date();
+  // Bill date = first bill time (billDateOf: billedBy.at → completedAt → order time), never the reprint time.
+  const now = billDateOf(invoiceData) || (invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date());
   const dateStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
   let _h = now.getHours(); const _ampm = _h >= 12 ? 'pm' : 'am'; _h = _h % 12 || 12;
   const timeStr = `${_h}:${String(now.getMinutes()).padStart(2,'0')} ${_ampm}`;
   lines.push(leftRight('', `Date: ${dateStr}`, W));
   lines.push(leftRight('', `Time: ${timeStr}`, W));
+  // Reprint later than the bill time → show when this copy was printed too.
+  if (Date.now() - now.getTime() > 2 * 60 * 1000) {
+    const p = new Date(); let ph = p.getHours(); const pap = ph >= 12 ? 'pm' : 'am'; ph = ph % 12 || 12;
+    lines.push(leftRight('', `Copy printed: ${String(p.getDate()).padStart(2,'0')}/${String(p.getMonth()+1).padStart(2,'0')} ${ph}:${String(p.getMinutes()).padStart(2,'0')} ${pap}`, W));
+  }
   lines.push(leftRight('', `Invoice no: ${invoiceNum}`, W));
   if (bl.showTable !== false && invoiceData.tableNumber) lines.push(leftRight('Table', invoiceData.tableNumber, W));
   if (bl.showWaiter !== false && invoiceData.waiterName) lines.push(leftRight('Waiter', invoiceData.waiterName, W));
@@ -1500,7 +1506,16 @@ export const generateBillHTML = (invoiceData = {}, printSettings = {}) => {
   try {
     try { attachInclusiveSplits(invoiceData, invoiceData.currencySymbol || '₹'); } catch (_) {} // per-item MRP + tax
     try { splitIndiaGst(invoiceData); } catch (_) { /* never block */ } // India: GST -> CGST + SGST
-    return renderBill(invoiceData, printSettings || invoiceData.printSettings || {}, {});
+    let html = renderBill(invoiceData, printSettings || invoiceData.printSettings || {}, {});
+    // Reprint later than the bill time → add when this copy was printed (bill keeps its bill date).
+    try {
+      const billed = billDateOf(invoiceData);
+      if (html && billed && Date.now() - billed.getTime() > 2 * 60 * 1000) {
+        const note = `<div style="text-align:center;font-size:10px;margin-top:6px;border-top:1px dashed #000;padding-top:4px;">Copy printed: ${formatDateTime().combined}</div>`;
+        html = html.includes('</body>') ? html.replace('</body>', `${note}</body>`) : html + note;
+      }
+    } catch (_) { /* never block printing */ }
+    return html;
   } catch (e) {
     console.warn('generateBillHTML failed:', e?.message);
     return null;

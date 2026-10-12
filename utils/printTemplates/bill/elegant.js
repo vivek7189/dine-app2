@@ -4,7 +4,7 @@
 import {
   esc, getBillLabels, buildIdentityHtml, getSublineHtml,
   buildBillItemRows, buildTaxHtml, buildDiscountHtml, buildChargesHtml,
-  buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
+  buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime, billDateOf,
   getPrintFontSizes, getBillHeaderHTML, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
   buildInclusiveTaxNote,
@@ -49,7 +49,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const receiptLogo = printSettings.receiptLogo || null;
   const billTitleText = showAr ? dualTitle('~ ' + L.billTitle + ' ~', '~ ' + AR.billTitle + ' ~', showAr) : '~ ' + L.billTitle + ' ~';
   const headerHtml = getBillHeaderHTML(esc(invoice.restaurantName || 'Restaurant'), identityHtml, receiptLogo, billTitleText);
-  const { combined: dateStr } = formatDateTime();
+  const { combined: dateStr } = formatDateTime(billDateOf(invoice));
 
   const baseCss = getElegantBillCSS(printSettings.billFontScale || printSettings.billFontSize);
   const finalCss = showAr ? baseCss + getBillDualCSS() : baseCss;

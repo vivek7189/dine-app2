@@ -3,7 +3,7 @@
 // variant below name, "New Order" / "KOT Update" marker at bottom.
 
 import {
-  esc, getKOTLabels, formatDateTime,
+  esc, getKOTLabels, formatDateTime, kotDateOf,
   getPrintFontSizes, getPrintFontFamily, wrapInDocument,
   KOT_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
 } from '../helpers';
@@ -32,7 +32,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
   const showAr = lang === 'dual' || lang === 'ar';
   const kl = printSettings?.kotLayout || {};
   const k = kotData;
-  const { dateStr, timeStr } = formatDateTime();
+  const { dateStr, timeStr } = formatDateTime(kotDateOf(kotData));
   const removedItems = k.removedItems || [];
   const hasChanges = k.isIncremental && ((k.items || []).length > 0 || removedItems.length > 0);
   const showPrice = !!printSettings.showPriceOnKot;

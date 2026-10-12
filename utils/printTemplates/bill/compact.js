@@ -4,7 +4,7 @@
 import {
   esc, getBillLabels, buildIdentityHtml, getSublineHtml,
   buildBillItemRows, buildTaxHtml, buildDiscountHtml, buildChargesHtml,
-  buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
+  buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime, billDateOf,
   getPrintFontSizes, getPrintFontFamily, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
   buildInclusiveTaxNote,
@@ -56,7 +56,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const paymentHtml = buildPaymentHtml(invoice, L, cs);
   const deliveryHtml = buildDeliveryAddressHtml(invoice);
   const grandTotal = calcGrandTotal(invoice);
-  const { combined: dateStr } = formatDateTime();
+  const { combined: dateStr } = formatDateTime(billDateOf(invoice));
 
   const baseCss = getCompactBillCSS(printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
   const css = showAr ? baseCss + getBillDualCSS() : baseCss;

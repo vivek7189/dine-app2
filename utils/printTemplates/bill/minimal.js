@@ -3,7 +3,7 @@
 
 import {
   esc, getBillLabels, buildIdentityHtml, getSeatTagHtml,
-  buildChargesHtml, buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime,
+  buildChargesHtml, buildPaymentHtml, buildDeliveryAddressHtml, calcGrandTotal, formatDateTime, billDateOf,
   getPrintFontSizes, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
   buildInclusiveTaxNote,
@@ -35,7 +35,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
   const bl = printSettings?.billLayout || {};
   const cs = invoice.currencySymbol || getCurrencySymbol();
   const items = invoice.items || [];
-  const { combined: dateStr } = formatDateTime();
+  const { combined: dateStr } = formatDateTime(billDateOf(invoice));
 
   // Minimal items: inline qty with name (2x Butter Chicken)
   const itemsHtml = items.map(item => {

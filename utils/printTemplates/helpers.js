@@ -504,9 +504,40 @@ export function buildSpecialInstructionsHtml(kotData, L) {
     : '';
 }
 
-// Format current date/time for receipts
-export function formatDateTime() {
-  const now = new Date();
+// Any stored time (Date / ISO string / ms / Firestore-style {_seconds} or {seconds}) → Date, else null.
+export function toPrintDate(v) {
+  if (!v) return null;
+  try {
+    let d;
+    if (v instanceof Date) d = v;
+    else if (typeof v.toDate === 'function') d = v.toDate();
+    else if (typeof v === 'object' && v._seconds != null) d = new Date(v._seconds * 1000);
+    else if (typeof v === 'object' && v.seconds != null) d = new Date(v.seconds * 1000);
+    else d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  } catch (_) { return null; }
+}
+
+// The date a BILL shows = when it was billed the FIRST time (same as the web POS and the sales
+// reports): billedBy.at → completedAt → (completed order) createdAt → the timestamp the screen
+// passed (order history / active orders pass the order's own time). Pre-bill → print time.
+export function billDateOf(invoice) {
+  if (!invoice || invoice.isPreBill) return null;
+  return toPrintDate(invoice.billedAt || (invoice.billedBy && invoice.billedBy.at))
+    || toPrintDate(invoice.completedAt)
+    || (String(invoice.status || '').toLowerCase() === 'completed' ? toPrintDate(invoice.createdAt) : null)
+    || toPrintDate(invoice.timestamp);
+}
+
+// The date a KOT shows: a REPRINT keeps the original order/KOT time; a new KOT shows now.
+export function kotDateOf(kotData) {
+  if (!kotData || !kotData.isReprint) return null;
+  return toPrintDate(kotData.kotTime || kotData.createdAt || kotData.timestamp);
+}
+
+// Format a date/time for receipts (default: now)
+export function formatDateTime(date) {
+  const now = toPrintDate(date) || new Date();
   return {
     dateStr: now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
     timeStr: now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
