@@ -1697,6 +1697,37 @@ const printViaThermal = async (text) => {
 // ESC/POS text can't carry an image, so a text-path bill used to drop the receipt logo silently.
 // Print the logo on its own as a small raster (same image pipeline as image receipts) just before
 // the text bill. Only when the bill text carries a <LOGO:url> marker (receiptLogo enabled).
+// Which printer links can print an IMAGE reliably from the phone (JS-only knowledge of the native
+// layer this build ships with):
+//  • iOS Bluetooth — vendor PrinterSDK prints the bitmap (verified on customer printers). Full-receipt
+//    images (image receipts / ₹ glyph / complex scripts) stay as before here.
+//  • Android Bluetooth — the native adapter shrinks any image to ≤200 px (resizeTheImageForPrinting),
+//    so a full receipt prints as a sliver; a small logo (≤200 px) prints fine.
+//  • Android WiFi / USB — the native adapter can't read the local image file (file:// cast to
+//    HttpURLConnection) → no images at all until a native fix ships.
+//  • iOS WiFi — images need the native raster patch, which older App Store builds lack (they send
+//    0 bytes) → no full-receipt image; the logo is still tried (harmless on old builds).
+// Everything else prints the bill as ESC/POS text (₹ → "Rs") — what mobile POS apps do.
+const canPrintFullImage = () => Platform.OS === 'ios' && connectionType === 'bluetooth';
+const canPrintLogo = () => connectionType === 'bluetooth' || (Platform.OS === 'ios' && connectionType === 'network');
+const LOGO_MAX_ANDROID_BT = 200;
+
+// Print problems → server (print_diagnostics on AWS), so support can see what failed on a customer's
+// phone/tablet without remote debugging. Failures only (logPrintDiag drops non-failures unless the
+// restaurant turned printDiagnostics on). Never throws, never delays printing.
+const diag = (event) => {
+  try {
+    const rid = _savedForRid;
+    if (!rid) return;
+    const printer = connectedPrinter ? String(typeof connectedPrinter === 'object' ? (connectedPrinter.address || connectedPrinter.name || JSON.stringify(connectedPrinter)) : connectedPrinter).slice(0, 80) : null;
+    require('./printDiagnostics').logPrintDiag(rid, {
+      phase: 'failed', success: false, connectionType: connectionType || null, printer,
+      imagePrint: _imagePrintEnabled, paperWidthPx: _imagePrintWidth, ...event,
+      error: event.error ? String(event.error?.message || event.error).slice(0, 300) : undefined,
+    }, false);
+  } catch (_) { /* diagnostics must never affect printing */ }
+};
+
 const _logoSizeByUrl = {};
 const printLogoRaster = async (text) => {
   const m = String(text || '').match(/^<LOGO:(.+?)>/);
@@ -1704,7 +1735,8 @@ const printLogoRaster = async (text) => {
   const url = m[1];
   let safeUrl = url;
   try { safeUrl = encodeURI(decodeURI(url)); } catch (_) { safeUrl = encodeURI(url); } // spaces / ( )
-  const w = Math.max(80, Math.min(Number(_logoSizeByUrl[url]) || 160, _imagePrintWidth));
+  const cap = (Platform.OS === 'android' && connectionType === 'bluetooth') ? LOGO_MAX_ANDROID_BT : _imagePrintWidth;
+  const w = Math.max(80, Math.min(Number(_logoSizeByUrl[url]) || 160, cap));
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>`
     + `<body style="margin:0;background:#fff"><div style="text-align:center;padding:4px 0">`
     + `<img src="${safeUrl.replace(/"/g, '%22')}" style="width:${w}px;max-width:100%;height:auto" /></div></body></html>`;
@@ -1790,7 +1822,7 @@ const printViaAirPrint = async (html, printerUrl) => {
  * @param {string} options.text - Plain text (for thermal printers)
  * @returns {Promise<{method: string}>}
  */
-export const printContent = async ({ html, text, imageHtml, silentOnly = false }) => {
+export const printContent = async ({ html, text, imageHtml, silentOnly = false, label = 'Print' }) => {
   await ensureSavedPrintSettings(); // image flag + paper width apply from the first print after start
   return enqueuePrint(async () => {
     const mode = await getPrinterMode();
@@ -1826,6 +1858,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
           return { method: 'silent-airprint' };
         } catch (err) {
           console.error('AirPrint silent failed:', err);
+          diag({ kind: label, path: 'airprint', reason: 'airprint-failed', error: err });
           if (silentOnly) return { method: 'skipped', reason: 'airprint-failed' };
           // fall through to dialog
         }
@@ -1847,13 +1880,14 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       // A receipt logo is an <img> — ESC/POS text can't print images, so force the image path when
       // the HTML contains one (the bill template only emits it when receiptLogo is enabled).
       const wantImageForLogo = /<img\b/i.test(imageHtml || html || '');
-      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript || wantImageForLogo) && (imageHtml || html) && connectionType !== 'airprint') {
+      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript || wantImageForLogo) && (imageHtml || html) && connectionType !== 'airprint' && canPrintFullImage()) {
         try {
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };
         } catch (imgErr) {
           imagePathFailed = true;
           console.warn('[imagePrint] failed, falling back to text:', imgErr?.message);
+          diag({ kind: label, path: 'image', reason: 'image-print-failed-fell-back-to-text', error: imgErr });
           // fall through to the text path (unchanged)
         }
       }
@@ -1862,14 +1896,15 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
       if (connectionType !== 'airprint' && text) {
         // Receipt logo on the text path: print it as a small image first. Skipped when this
         // printer already failed an image job above; a logo failure never blocks the bill.
-        if (!imagePathFailed && /^<LOGO:/.test(text)) {
-          try { await printLogoRaster(text); } catch (logoErr) { console.warn('[logo] raster print skipped:', logoErr?.message); }
+        if (!imagePathFailed && /^<LOGO:/.test(text) && canPrintLogo()) {
+          try { await printLogoRaster(text); } catch (logoErr) { console.warn('[logo] raster print skipped:', logoErr?.message); diag({ kind: label, path: 'logo', reason: 'logo-print-failed', error: logoErr }); }
         }
         try {
           await printViaThermal(text);
           return { method: `silent-${connectionType}` };
         } catch (err) {
           console.error(`${connectionType} silent print failed:`, err);
+          diag({ kind: label, path: 'text', reason: 'printer-unreachable', error: err });
           if (silentOnly) return { method: 'skipped', reason: `${connectionType}-failed` };
           // fall through to dialog
         }
@@ -1885,6 +1920,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
         ? `Bluetooth printer not ready: ${_lastBluetoothError}`
         : 'Printer not connected. Please connect a printer in Settings.';
       emitPrinterEvent({ type: 'disconnected', message, connectionType: savedPrinter?.type || null });
+      diag({ kind: label, reason: savedPrinter ? 'saved-printer-not-connected' : 'no-printer-set-up', savedPrinterType: savedPrinter?.type || null, error: message });
       return { method: 'skipped', reason: 'no-connected-printer', error: message };
     }
 
@@ -1899,6 +1935,7 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false }
         type: 'print_failed',
         message: 'Could not reach the printer. Make sure it is switched on and in range, then reconnect it in Printer Settings and try again.',
       });
+      diag({ kind: label, reason: 'printer-not-responding', savedPrinterType: savedPrinter?.type || null });
       throw new Error('Printer not responding. Turn it on / reconnect and try again.');
     }
 
@@ -1981,7 +2018,7 @@ export const printTestPage = async () => {
 <style>${_htmlReceiptCss()}</style>
 </head><body><pre>${testText}</pre></body></html>`;
 
-  return printContent({ html: testHtml, text: testText });
+  return printContent({ html: testHtml, text: testText, label: 'Test print' });
 };
 
 // ==================== HEARTBEAT (WiFi keep-alive) ====================
@@ -2193,7 +2230,7 @@ export const printWithFeedback = async ({ html, text, imageHtml, silentOnly = tr
   };
 
   try {
-    const result = await printContent({ html, text, imageHtml, silentOnly });
+    const result = await printContent({ html, text, imageHtml, silentOnly, label });
 
     if (result?.method?.startsWith('silent-') || result?.method === 'dialog') {
       if (jobId) { try { await removePendingPrintJob(jobId); } catch (_) {} }
