@@ -580,3 +580,173 @@ if (fs.existsSync(IOS_NET_FILE)) {
     console.log('✅ iOS WiFi image printing already patched');
   }
 }
+
+// --- Clean image printing on every printer link (DINEOPEN_RASTER) ---
+// Logos / image receipts printed with thin white stripes (ESC * bit-image bands on Android, the
+// vendor SDK's image print on iOS Bluetooth), and Android Bluetooth shrank images to 200 px.
+// Add printRasterImage(url, …) to every native printer module: scale to the paper's dot width,
+// pure black & white, standard ESC/POS raster (GS v 0) in 24-row strips — what POS apps send.
+// JS feature-detects printRasterImage, so builds without this patch keep their old behaviour.
+const PRINTER_PKG = path.join(__dirname, '../node_modules/react-native-thermal-receipt-printer');
+const RASTER_SRC = path.join(__dirname, 'native/DineRaster.java');
+const RASTER_DST = path.join(PRINTER_PKG, 'android/src/main/java/com/pinmi/react/printer/adapter/DineRaster.java');
+if (fs.existsSync(path.dirname(RASTER_DST)) && fs.existsSync(RASTER_SRC)) {
+  fs.copyFileSync(RASTER_SRC, RASTER_DST);
+  console.log('✅ Android DineRaster helper in place');
+  const androidMethod = `
+    // DINEOPEN_RASTER_METHOD: clean GS v 0 raster image print (see DineRaster).
+    @ReactMethod
+    public void printRasterImage(final String imageUrl, final int widthDots, final Callback errorCallback) {
+        final com.pinmi.react.printer.adapter.PrinterAdapter target = this.adapter;
+        if (target == null) { errorCallback.invoke("printer is not connected"); return; }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String data;
+                try {
+                    data = com.pinmi.react.printer.adapter.DineRaster.toBase64(imageUrl, widthDots);
+                } catch (Throwable t) {
+                    errorCallback.invoke(t.getMessage() != null ? t.getMessage() : "image print failed");
+                    return;
+                }
+                target.printRawData(data, errorCallback);
+            }
+        }).start();
+    }
+`;
+  for (const mod of ['RNBLEPrinterModule', 'RNNetPrinterModule', 'RNUSBPrinterModule']) {
+    const f = path.join(PRINTER_PKG, `android/src/main/java/com/pinmi/react/printer/${mod}.java`);
+    if (!fs.existsSync(f)) continue;
+    let src = fs.readFileSync(f, 'utf8');
+    if (src.includes('DINEOPEN_RASTER_METHOD')) { console.log(`✅ ${mod}.printRasterImage already patched`); continue; }
+    const end = src.lastIndexOf('}');
+    src = src.slice(0, end) + androidMethod + src.slice(end);
+    fs.writeFileSync(f, src, 'utf8');
+    console.log(`✅ Patched ${mod}.printRasterImage`);
+  }
+}
+
+// Android Bluetooth: big payloads (image receipts) in 1 KB chunks with a short pause, so small
+// printer buffers don't overflow (lost bytes = garbage / missing lines). Text bills (< 4 KB) are
+// written exactly as before.
+if (fs.existsSync(BLE_FILE)) {
+  let ble = fs.readFileSync(BLE_FILE, 'utf8');
+  if (!ble.includes('DINEOPEN_BT_CHUNKED')) {
+    const before = ble;
+    ble = ble.replace(
+      /(byte \[\] bytes = Base64\.decode\(rawData, Base64\.DEFAULT\);\s*try\{\s*OutputStream printerOutputStream = socket\.getOutputStream\(\);\s*)printerOutputStream\.write\(bytes, 0, bytes\.length\);/,
+      `$1// DINEOPEN_BT_CHUNKED
+                    if (bytes.length > 4096) {
+                        for (int off = 0; off < bytes.length; off += 1024) {
+                            printerOutputStream.write(bytes, off, Math.min(1024, bytes.length - off));
+                            printerOutputStream.flush();
+                            try { Thread.sleep(15); } catch (InterruptedException ie) { /* keep sending */ }
+                        }
+                    } else {
+                        printerOutputStream.write(bytes, 0, bytes.length);
+                    }`
+    );
+    if (ble !== before) { fs.writeFileSync(BLE_FILE, ble, 'utf8'); console.log('✅ Patched Android BT chunked writes'); }
+    else console.log('⚠️  Android BT printRawData write not found (chunking skipped)');
+  } else {
+    console.log('✅ Android BT chunked writes already patched');
+  }
+}
+
+const iosRasterMethod = (connectedCheck, bandDelayMs) => `
+// DINEOPEN_RASTER_METHOD: clean GS v 0 raster image print — picture scaled to the paper's dot
+// width, pure black & white, 24-row strips sent one after another.
+RCT_EXPORT_METHOD(printRasterImage:(NSString *)imgUrl
+                  printerOptions:(NSDictionary *)options
+                  fail:(RCTResponseSenderBlock)errorCallback) {
+    @try {
+        ${connectedCheck}
+        NSInteger w = [[options valueForKey:@"widthDots"] integerValue];
+        if (w < 8 || w > 1200) w = 384;
+        NSData* imageData = nil;
+        if ([imgUrl hasPrefix:@"data:"]) {
+            NSRange comma = [imgUrl rangeOfString:@","];
+            if (comma.location != NSNotFound) imageData = [[NSData alloc] initWithBase64EncodedString:[imgUrl substringFromIndex:comma.location + 1] options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        } else if ([imgUrl hasPrefix:@"/"]) {
+            imageData = [NSData dataWithContentsOfFile:imgUrl];
+        } else {
+            NSURL* url = [NSURL URLWithString:imgUrl];
+            if (url != nil) imageData = [NSData dataWithContentsOfURL:url];
+        }
+        if (imageData == nil) { errorCallback(@[@"Could not load receipt image"]); return; }
+        UIImage* image = [UIImage imageWithData:imageData];
+        if (image == nil || image.CGImage == nil) { errorCallback(@[@"Receipt image unreadable"]); return; }
+        NSInteger h = (NSInteger)llround(image.size.height * (CGFloat)w / MAX(image.size.width, 1.0));
+        if (h < 1) h = 1;
+        if (h > 8000) h = 8000;
+        NSInteger rowBytes = (w + 7) / 8;
+        CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+        CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, 0, gray, (CGBitmapInfo)kCGImageAlphaNone);
+        CGColorSpaceRelease(gray);
+        if (ctx == NULL) { errorCallback(@[@"Could not rasterize receipt image"]); return; }
+        CGContextSetGrayFillColor(ctx, 1.0, 1.0); // transparent pixels = paper
+        CGContextFillRect(ctx, CGRectMake(0, 0, w, h));
+        CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+        CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), image.CGImage);
+        const uint8_t* px = (const uint8_t*)CGBitmapContextGetData(ctx);
+        size_t ctxRow = CGBitmapContextGetBytesPerRow(ctx);
+        NSMutableArray<NSString*>* bands = [NSMutableArray array];
+        for (NSInteger y0 = 0; y0 < h; y0 += 24) {
+            NSInteger rows = MIN(24, h - y0);
+            NSMutableString* hex = [NSMutableString stringWithCapacity:(NSUInteger)((14 + rowBytes * rows) * 2)];
+            if (y0 == 0) [hex appendString:@"1B6100"]; // left: the image is already paper-wide
+            [hex appendFormat:@"1D763000%02X%02X%02X%02X", (unsigned)(rowBytes & 0xFF), (unsigned)((rowBytes >> 8) & 0xFF), (unsigned)(rows & 0xFF), (unsigned)((rows >> 8) & 0xFF)];
+            for (NSInteger y = y0; y < y0 + rows; y++) {
+                const uint8_t* row = px + (size_t)y * ctxRow;
+                for (NSInteger bx = 0; bx < rowBytes; bx++) {
+                    unsigned b = 0;
+                    for (NSInteger bit = 0; bit < 8; bit++) {
+                        NSInteger x = bx * 8 + bit;
+                        if (x < w && row[x] < 160) b |= (0x80u >> bit);
+                    }
+                    [hex appendFormat:@"%02X", b];
+                }
+            }
+            [bands addObject:hex];
+        }
+        CGContextRelease(ctx);
+        [bands addObject:@"0A"];
+        [self dineSendBands:bands index:0 delayMs:${bandDelayMs} done:errorCallback];
+    } @catch (NSException *exception) {
+        errorCallback(@[exception.reason ?: @"image print failed"]);
+    }
+}
+
+- (void)dineSendBands:(NSArray<NSString*>*)bands index:(NSUInteger)i delayMs:(int)delayMs done:(RCTResponseSenderBlock)done {
+    @try {
+        while (i < bands.count) {
+            [[PrinterSDK defaultPrinterSDK] sendHex:bands[i]];
+            i++;
+            if (delayMs > 0 && i < bands.count) {
+                // pace the strips so a small Bluetooth buffer never drops bytes (main queue stays free)
+                NSUInteger next = i;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delayMs * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                    [self dineSendBands:bands index:next delayMs:delayMs done:done];
+                });
+                return;
+            }
+        }
+        done(@[[NSNull null]]); // all strips handed to the printer connection
+    } @catch (NSException *exception) {
+        done(@[exception.reason ?: @"image print failed"]);
+    }
+}
+`;
+for (const [file, check, delay] of [
+  ['RNBLEPrinter.m', '!m_printer ? [NSException raise:@"Invalid connection" format:@"printRasterImage: Can\'t connect to printer"] : nil;', 20],
+  ['RNNetPrinter.m', '!connected_ip ? [NSException raise:@"Invalid connection" format:@"Can\'t connect to printer"] : nil;', 20],
+]) {
+  const f = path.join(PRINTER_PKG, 'ios', file);
+  if (!fs.existsSync(f)) continue;
+  let src = fs.readFileSync(f, 'utf8');
+  if (src.includes('DINEOPEN_RASTER_METHOD')) { console.log(`✅ iOS ${file} printRasterImage already patched`); continue; }
+  const end = src.lastIndexOf('@end');
+  src = src.slice(0, end) + iosRasterMethod(check, delay) + '\n' + src.slice(end);
+  fs.writeFileSync(f, src, 'utf8');
+  console.log(`✅ Patched iOS ${file} printRasterImage`);
+}

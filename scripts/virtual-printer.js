@@ -99,8 +99,13 @@ function parse(buf) {
       if (c === 0x76 && buf[i + 2] === 0x30) { // GS v 0 m xL xH yL yH data
         flushStripes(); flushLine();
         const xBytes = buf[i + 4] + buf[i + 5] * 256, rows = buf[i + 6] + buf[i + 7] * 256; const data = buf.slice(i + 8, i + 8 + xBytes * rows);
-        const png = pngFromBits(xBytes * 8, rows, (x, y) => (data[y * xBytes + (x >> 3)] >> (7 - (x & 7))) & 1);
-        blocks.push({ kind: 'image', png, width: xBytes * 8, height: rows, align, how: 'GS v 0' });
+        // Back-to-back strips print as one seamless picture on paper — show them that way.
+        const last = blocks[blocks.length - 1];
+        if (last && last.how === 'GS v 0' && last.xBytes === xBytes) {
+          last.raw = Buffer.concat([last.raw, data]); last.height += rows; last.strips += 1;
+        } else {
+          blocks.push({ kind: 'image', raw: data, xBytes, width: xBytes * 8, height: rows, strips: 1, align, how: 'GS v 0' });
+        }
         i += 8 + xBytes * rows; continue;
       }
       if ([0x48, 0x66, 0x68, 0x77, 0x4c, 0x42].includes(c)) { i += 3; continue; }
@@ -129,7 +134,8 @@ function render(blocks, notes, meta) {
     if (b.kind === 'cut') return '<div class="cut">✂ cut</div>';
     if (b.kind === 'image') {
       const shown = Math.min(b.width, DOTS);
-      return `<div style="text-align:${alignCss[b.align]}"><img src="data:image/png;base64,${b.png.toString('base64')}" style="width:${(shown / DOTS) * 100}%" title="${b.how} ${b.width}×${b.height}"></div>`;
+      if (!b.png) b.png = pngFromBits(b.width, b.height, (x, y) => (b.raw[y * b.xBytes + (x >> 3)] >> (7 - (x & 7))) & 1);
+      return `<div style="text-align:${alignCss[b.align]};line-height:0"><img src="data:image/png;base64,${b.png.toString('base64')}" style="width:${(shown / DOTS) * 100}%" title="${b.how} ${b.width}×${b.height}"></div>`;
     }
     const over = b.text.length > CHARS;
     return `<div class="ln${over ? ' over' : ''}" style="text-align:${alignCss[b.align]};${b.bold ? 'font-weight:bold;' : ''}${b.big ? 'font-size:1.6em;' : ''}">${esc(b.text) || '&nbsp;'}</div>`;
@@ -140,7 +146,7 @@ function render(blocks, notes, meta) {
 <style>body{background:#e5e7eb;font-family:system-ui;padding:20px}.paper{background:#fff;width:${PAPER_MM === 58 ? 300 : 440}px;margin:0 auto;padding:14px 10px;box-shadow:0 2px 8px #0003;font-family:Menlo,monospace;font-size:${PAPER_MM === 58 ? 14 : 13}px;white-space:pre;overflow:hidden}
 .ln.over{background:#fee2e2}.cut{border-top:2px dashed #999;color:#999;font-size:11px;text-align:center;margin:8px 0}.info{max-width:600px;margin:14px auto;font-size:13px;color:#374151;white-space:normal}</style>
 <div class="info"><b>${meta.from}</b> · ${meta.time} · ${meta.bytes} bytes · paper ${PAPER_MM} mm (${CHARS} chars)<br>
-Text lines by alignment: ${JSON.stringify(aligns)} · images: ${images.length ? images.map(x => `${x.how} ${x.width}×${x.height}`).join(', ') : 'none'}${notes.length ? ' · ' + notes.join(', ') : ''}<br>
+Text lines by alignment: ${JSON.stringify(aligns)} · images: ${images.length ? images.map(x => `${x.how} ${x.width}×${x.height}${x.strips > 1 ? ` (${x.strips} strips)` : ''}`).join(', ') : 'none'}${notes.length ? ' · ' + notes.join(', ') : ''}<br>
 ${wide.length ? `<span style="color:#b91c1c">⚠ ${wide.length} line(s) longer than ${CHARS} chars — a real ${PAPER_MM} mm printer wraps these (highlighted red)</span>` : '✓ no line is wider than the paper'}</div>
 <div class="paper">${body}</div>`;
 }

@@ -1708,8 +1708,19 @@ const printViaThermal = async (text) => {
 //  • iOS WiFi — images need the native raster patch, which older App Store builds lack (they send
 //    0 bytes) → no full-receipt image; the logo is still tried (harmless on old builds).
 // Everything else prints the bill as ESC/POS text (₹ → "Rs") — what mobile POS apps do.
-const canPrintFullImage = () => Platform.OS === 'ios' && connectionType === 'bluetooth';
-const canPrintLogo = () => connectionType === 'bluetooth' || (Platform.OS === 'ios' && connectionType === 'network');
+//  • Builds with the DINEOPEN_RASTER native patch expose printRasterImage on every link: the app
+//    sends the picture as clean ESC/POS raster (GS v 0, pure black & white, 24-row strips) — no
+//    white stripes, no 200 px cap, works on Android WiFi/USB too. Feature-detected, so phones still
+//    on an older build keep exactly the behaviour above.
+const currentNativePrinter = () => (
+  connectionType === 'bluetooth' ? NativeModules.RNBLEPrinter :
+  connectionType === 'network' ? NativeModules.RNNetPrinter :
+  connectionType === 'usb' ? NativeModules.RNUSBPrinter : null
+);
+const hasCleanRaster = () => { const m = currentNativePrinter(); return !!m && typeof m.printRasterImage === 'function'; };
+const isLegacyIosBt = () => Platform.OS === 'ios' && connectionType === 'bluetooth';
+const canPrintFullImage = () => hasCleanRaster() || isLegacyIosBt();
+const canPrintLogo = () => hasCleanRaster() || connectionType === 'bluetooth' || (Platform.OS === 'ios' && connectionType === 'network');
 const LOGO_MAX_ANDROID_BT = 200;
 
 // Print problems → server (print_diagnostics on AWS), so support can see what failed on a customer's
@@ -1735,7 +1746,7 @@ const printLogoRaster = async (text) => {
   const url = m[1];
   let safeUrl = url;
   try { safeUrl = encodeURI(decodeURI(url)); } catch (_) { safeUrl = encodeURI(url); } // spaces / ( )
-  const cap = (Platform.OS === 'android' && connectionType === 'bluetooth') ? LOGO_MAX_ANDROID_BT : _imagePrintWidth;
+  const cap = (Platform.OS === 'android' && connectionType === 'bluetooth' && !hasCleanRaster()) ? LOGO_MAX_ANDROID_BT : _imagePrintWidth;
   const w = Math.max(80, Math.min(Number(_logoSizeByUrl[url]) || 160, cap));
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>`
     + `<body style="margin:0;background:#fff"><div style="text-align:center;padding:4px 0">`
@@ -1747,11 +1758,9 @@ const printLogoRaster = async (text) => {
 const printViaThermalImage = async (html) => {
   const { htmlToImageFile, hasImagePrintHost } = require('./imagePrintService');
   if (!hasImagePrintHost()) throw new Error('image-print host not mounted');
-  const nativeMod =
-    connectionType === 'bluetooth' ? NativeModules.RNBLEPrinter :
-    connectionType === 'network' ? NativeModules.RNNetPrinter :
-    connectionType === 'usb' ? NativeModules.RNUSBPrinter : null;
-  if (!nativeMod || typeof nativeMod.printImageData !== 'function') {
+  const nativeMod = currentNativePrinter();
+  const raster = !!nativeMod && typeof nativeMod.printRasterImage === 'function';
+  if (!nativeMod || (!raster && typeof nativeMod.printImageData !== 'function')) {
     throw new Error(`printImageData not available for ${connectionType}`);
   }
   const cleanHtml = String(html || '').replace(/^<LOGO:.+?>\n?/, '');
@@ -1768,6 +1777,16 @@ const printViaThermalImage = async (html) => {
       if (err) reject(new Error(String(err))); else resolve();
     };
     try {
+      if (raster) {
+        // Clean raster (GS v 0). The callback carries an error, or null once every strip went out
+        // (iOS, Android Bluetooth). Android WiFi/USB only call back on error → resolve after dispatch.
+        if (Platform.OS === 'ios') nativeMod.printRasterImage(fileUri, { widthDots: _imagePrintWidth }, onErr);
+        else nativeMod.printRasterImage(fileUri, _imagePrintWidth, onErr);
+        if (Platform.OS !== 'ios' && connectionType !== 'bluetooth') {
+          setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1500);
+        }
+        return;
+      }
       // The native printImageData signature differs by platform:
       //  • iOS  → printImageData(imgUrl, {imageWidth, printerWidthType, paddingX}, fail)
       //           WITHOUT the options dict, iOS silently downscales the receipt to 150px wide
@@ -1880,7 +1899,12 @@ export const printContent = async ({ html, text, imageHtml, silentOnly = false, 
       // A receipt logo is an <img> — ESC/POS text can't print images, so force the image path when
       // the HTML contains one (the bill template only emits it when receiptLogo is enabled).
       const wantImageForLogo = /<img\b/i.test(imageHtml || html || '');
-      if ((_imagePrintEnabled || wantImageForCurrency || wantImageForScript || wantImageForLogo) && (imageHtml || html) && connectionType !== 'airprint' && canPrintFullImage()) {
+      // Full-receipt image only when the restaurant turned Image Receipts on or the language needs it;
+      // otherwise the bill prints as text with the logo as a clean raster on top. iPhone/iPad Bluetooth
+      // on an OLDER build (no clean raster) keeps its earlier rule (₹ / logo → image) unchanged.
+      const legacyAutoImage = isLegacyIosBt() && !hasCleanRaster() && (wantImageForCurrency || wantImageForLogo);
+      const wantFullImage = _imagePrintEnabled || wantImageForScript || legacyAutoImage;
+      if (wantFullImage && (imageHtml || html) && connectionType !== 'airprint' && canPrintFullImage()) {
         try {
           await printViaThermalImage(imageHtml || html);
           return { method: `silent-${connectionType}-image` };
