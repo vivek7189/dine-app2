@@ -40,6 +40,7 @@ const STATUS_COLORS = {
   cancelled: '#ef4444',
   refunded: '#f59e0b',
   awaiting_approval: '#ea580c',
+  pending_payment: '#1d4ed8',
 };
 
 const STATUS_LABELS = {
@@ -52,6 +53,7 @@ const STATUS_LABELS = {
   cancelled: 'CANCELLED',
   refunded: 'REFUNDED',
   awaiting_approval: 'AWAITING APPROVAL',
+  pending_payment: 'PENDING PAYMENT',
 };
 
 const parseDate = (val) => {
@@ -462,8 +464,8 @@ export default function ActiveOrdersNative() {
     const amt = order.finalAmount || order.totalAmount || 0;
     const expanded = expandedOrders[order.id];
     const isUpdating = updatingOrderId === order.id;
-    // A customer QR order waiting for approval has no kitchen / bill actions until it is approved.
-    const isActive = !['completed', 'served', 'cancelled', 'refunded', 'awaiting_approval'].includes(order.status);
+    // A customer QR order waiting for approval / for its Paytm payment has no kitchen / bill actions yet.
+    const isActive = !['completed', 'served', 'cancelled', 'refunded', 'awaiting_approval', 'pending_payment'].includes(order.status);
     const orderDate = getOrderTime(order);
     const timeStr = formatTime(orderDate);
     const ago = getTimeAgo(orderDate);
