@@ -1,12 +1,13 @@
 import { Tabs, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, Platform, Animated, StyleSheet } from 'react-native';
+import { View, Text, Platform, Animated, StyleSheet, AppState } from 'react-native';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
 import { registerStaffPush } from '../../services/staffPush';
+import { reportAppVersion, checkAppNotices } from '../../services/appVersionHeartbeat';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { TabBarProvider, useTabBar } from '../../contexts/TabBarContext';
@@ -71,6 +72,9 @@ function TabsNavigator() {
         apiClient.setRestaurantTimezone(userData.restaurant?.posSettings?.timezone || null);
         // Phone notifications for shift schedule updates (best-effort, never blocks the app).
         registerStaffPush(userData.restaurantId || userData.restaurant?.id);
+        // App version → dine-admin App Control; notices it targets at this phone (best-effort).
+        reportAppVersion(userData.restaurantId || userData.restaurant?.id);
+        checkAppNotices(userData.restaurantId || userData.restaurant?.id);
         const storedType = userData.restaurant?.businessType;
         if (userData.restaurant?.parkingEnabled) setParkingEnabled(true);
         if (storedType) {
@@ -110,7 +114,15 @@ function TabsNavigator() {
       const u = await apiClient.getUser();
       if (u) { setPageAccess(u.pageAccess || null); setRoleUser(u); }
     });
+    // Back in the foreground → version heartbeat + notices (each at most every 6 h per outlet).
+    const appStateSub = AppState.addEventListener('change', async (state) => {
+      if (state !== 'active') return;
+      const u = await apiClient.getUser().catch(() => null);
+      const rid = u && (u.restaurantId || u.restaurant?.id);
+      if (rid) { reportAppVersion(rid); checkAppNotices(rid); }
+    });
     return () => {
+      if (appStateSub) appStateSub.remove();
       if (typeof unsub === 'function') unsub();
       if (typeof unsubAccess === 'function') unsubAccess();
     };

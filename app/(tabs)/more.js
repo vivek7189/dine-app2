@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   TextInput,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
@@ -56,6 +56,8 @@ export default function MoreScreen() {
   const { modes: tabModes, setMode: setTabMode } = useTabModes();
   // Events calendar: shown only when the API lets this person see it (403 = owner turned staff view off)
   const [calendarAllowed, setCalendarAllowed] = useState(false);
+  // Announcements from the owner / managers: only where the restaurant has them on (+ unread count)
+  const [announcements, setAnnouncements] = useState({ enabled: false, unread: 0 });
 
   useEffect(() => {
     loadUserData();
@@ -173,6 +175,15 @@ export default function MoreScreen() {
     loadUpcoming(calendarRid).then(r => { if (alive) setCalendarAllowed(!!r.allowed); });
     return () => { alive = false; };
   }, [calendarRid]);
+  // Re-checked whenever More is opened, so the unread count drops after reading.
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    if (!calendarRid) { setAnnouncements({ enabled: false, unread: 0 }); return undefined; }
+    apiClient.request(`/api/staff-announcements/${calendarRid}/mine`)
+      .then(r => { if (alive) setAnnouncements({ enabled: !!r?.enabled, unread: r?.unread || 0 }); })
+      .catch(() => { if (alive) setAnnouncements({ enabled: false, unread: 0 }); });
+    return () => { alive = false; };
+  }, [calendarRid]));
 
   const menuSections = [
     {
@@ -184,6 +195,7 @@ export default function MoreScreen() {
         { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', perm: 'inventory.view', color: '#8b5cf6', iconBg: '#f5f3ff' },
         { title: 'Kitchen Display', icon: 'flame-outline', route: '/(tabs)/kitchen', roles: ['owner', 'manager', 'admin', 'waiter', 'employee', 'kitchen', 'chef', 'cook'], feature: 'kot', perm: 'page.kot', color: '#ef4444', iconBg: '#fef2f2' },
         { title: 'Google Reviews', icon: 'star-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/google-reviews`, title: 'Google Reviews' } }, roles: ['owner', 'manager', 'admin'], perm: 'settings.googleReviews', color: '#eab308', iconBg: '#fefce8' },
+        { title: 'Announcements', icon: 'megaphone-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/announcements`, title: 'Announcements' } }, roles: null, announcements: true, color: '#2563eb', iconBg: '#eff6ff' },
         { title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null, color: '#14b8a6', iconBg: '#f0fdfa' },
         { title: 'My Shifts', icon: 'calendar-outline', route: '/(tabs)/my-shifts', roles: null, color: '#ef4444', iconBg: '#fef2f2' },
         // Only when the owner hid Attendance (clock-in) for this role — leave applications stay available
@@ -289,6 +301,7 @@ export default function MoreScreen() {
 
   const shouldShowItem = (item) => {
     if (item.calendar) return calendarAllowed;
+    if (item.announcements) return announcements.enabled;
     // Apply Leave: whenever this person doesn't see Attendance (for any reason) — leave must always be
     // possible from the app (MFC: staff couldn't find where to apply).
     if (item.leaveOnly) return !shouldShowItem({ title: 'Attendance', icon: 'time-outline', route: '/(tabs)/attendance', roles: null });
@@ -877,6 +890,11 @@ export default function MoreScreen() {
                         <Ionicons name={item.icon} size={18} color={item.color || '#8b7355'} />
                       </View>
                       <Text style={styles.menuItemText}>{item.title}</Text>
+                      {item.announcements && announcements.unread > 0 && (
+                        <View style={{ backgroundColor: '#2563eb', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, marginRight: 6 }}>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{announcements.unread} new</Text>
+                        </View>
+                      )}
                       <Ionicons name="chevron-forward" size={16} color="#d1d5db" />
                     </TouchableOpacity>
                   ))}
