@@ -51,6 +51,9 @@ export default function OrderHistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
+  // Admin → Billing Settings → reprintAfterBillRoles, fetched on its own (the restaurant above can be
+  // the login copy without billingSettings). Empty / unknown = everyone, as before.
+  const [reprintAfterBillRoles, setReprintAfterBillRoles] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -358,7 +361,29 @@ export default function OrderHistoryScreen() {
     return roles.some(r => key(r) === key(role));
   };
 
+  useEffect(() => {
+    if (!restaurantId) return;
+    let alive = true;
+    const pick = (bs) => { if (alive && bs) setReprintAfterBillRoles(Array.isArray(bs.reprintAfterBillRoles) ? bs.reprintAfterBillRoles : []); };
+    pick(restaurant?.billingSettings);
+    apiClient.getRestaurant(restaurantId)
+      .then((r) => pick((r?.restaurant || r)?.billingSettings || {}))
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [restaurantId, restaurant]);
+
+  // Once billed, only these roles (owner/admin always) see Print Bill / Print KOT — running orders unchanged.
+  const canReprintBilled = (order) => {
+    if (!['completed', 'paid', 'settled', 'refunded'].includes(order?.status)) return true;
+    if (!Array.isArray(reprintAfterBillRoles) || reprintAfterBillRoles.length === 0) return true;
+    const role = String(userRole || '').toLowerCase();
+    if (role === 'owner' || role === 'admin') return true;
+    const key = (r) => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return reprintAfterBillRoles.some(r => key(r) === key(role));
+  };
+
   const handleReprint = async (order, type) => {
+    if (!canReprintBilled(order)) return;
     if (!canReprintKind(type === 'kot' ? 'kot' : 'bill')) {
       Alert.alert('Not allowed', `Your role is not allowed to reprint ${type === 'kot' ? 'KOTs' : 'bills'}. Ask the owner or manager.`);
       return;
@@ -949,12 +974,14 @@ export default function OrderHistoryScreen() {
             <View style={[styles.actionBar, { paddingBottom: 10 + (insets.bottom || 0) }]}>
               {/* Wrapping row so every action is visible (no clipped "+more") */}
               <View style={styles.actionBarRow}>
+                {canReprintBilled(selectedOrder) && (<>
                 <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleReprint(selectedOrder, 'bill')} activeOpacity={0.8}>
                   <Ionicons name="print-outline" size={16} color="#2563eb" /><Text style={[styles.actBtnText, { color: '#2563eb' }]}>Print Bill</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => handleReprint(selectedOrder, 'kot')} activeOpacity={0.8}>
                   <Ionicons name="print-outline" size={16} color="#f59e0b" /><Text style={[styles.actBtnText, { color: '#f59e0b' }]}>Print KOT</Text>
                 </TouchableOpacity>
+                </>)}
                 {canSettle && needsSettle(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openSettle(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
