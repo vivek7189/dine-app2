@@ -51,7 +51,10 @@ function cloudBase(url) {
     if (u.protocol === 'https:' && ALLOWED_CLOUD_HOSTS.has(u.hostname.toLowerCase())) base = `${u.origin}`;
   } catch (_) { /* fall through */ }
   try {
-    if (_sameBoxRemote && SAME_BOX_HOSTS.has(new URL(base).hostname.toLowerCase())) return _sameBoxRemote;
+    if (SAME_BOX_HOSTS.has(new URL(base).hostname.toLowerCase())) {
+      // Remote config not fetched yet → the main name (AWS directly), never the old GCP forwarder.
+      return _sameBoxRemote || 'https://api.dineopen.com';
+    }
   } catch (_) { /* keep base */ }
   return base;
 }
