@@ -108,6 +108,25 @@ export default function ActiveOrdersNative() {
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [isLive, setIsLive] = useState(false);
   const [printMenuOrderId, setPrintMenuOrderId] = useState(null);
+  // Admin → Billing Settings → "Re-print after billing is completed" (billingSettings.reprintAfterBillRoles):
+  // once billed, only these roles (owner/admin always) see Print. Empty / unknown = everyone, as before.
+  const [reprintAfterBillRoles, setReprintAfterBillRoles] = useState([]);
+  useEffect(() => {
+    if (!restaurantId) return;
+    let alive = true;
+    const pick = (bs) => { if (alive) setReprintAfterBillRoles(Array.isArray(bs?.reprintAfterBillRoles) ? bs.reprintAfterBillRoles : []); };
+    pick(restaurant?.id === restaurantId ? restaurant?.billingSettings : null);
+    apiClient.getRestaurant(restaurantId).then((r) => pick((r?.restaurant || r)?.billingSettings || {})).catch(() => {});
+    return () => { alive = false; };
+  }, [restaurantId, restaurant]);
+  const canReprintBilled = (order) => {
+    if (!['completed', 'paid', 'settled', 'refunded'].includes(order?.status)) return true;
+    if (!Array.isArray(reprintAfterBillRoles) || reprintAfterBillRoles.length === 0) return true;
+    const role = String(user?.role || '').toLowerCase();
+    if (role === 'owner' || role === 'admin') return true;
+    const key = (r) => String(r || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return reprintAfterBillRoles.some(r => key(r) === key(role));
+  };
   const [showWaiterOrderModal, setShowWaiterOrderModal] = useState(false);
   const [editOrderContext, setEditOrderContext] = useState(null);
 
@@ -333,6 +352,7 @@ export default function ActiveOrdersNative() {
 
   const handlePrintKOT = async (order) => {
     setPrintMenuOrderId(null);
+    if (!canReprintBilled(order)) return;
     try {
       const remotePrint = await printerService.getRemotePrintEnabled();
       if (remotePrint) {
@@ -366,6 +386,7 @@ export default function ActiveOrdersNative() {
 
   const handlePrintBill = async (order) => {
     setPrintMenuOrderId(null);
+    if (!canReprintBilled(order)) return;
     const isCompleted = order.status === 'completed' || order.status === 'served';
     const printType = isCompleted ? 'bill' : 'pre-bill';
     const label = isCompleted ? 'Bill' : 'Pre-Bill';
@@ -529,12 +550,14 @@ export default function ActiveOrdersNative() {
               <Text style={s.actionBtnText}>Served</Text>
             </TouchableOpacity>
           )}
+          {canReprintBilled(order) && (
           <TouchableOpacity
             style={s.iconAction}
             onPress={() => setPrintMenuOrderId(printMenuOrderId === order.id ? null : order.id)}
           >
             <Ionicons name="print-outline" size={20} color="#6b7280" />
           </TouchableOpacity>
+          )}
           {isActive && (
             <>
               {roleCan(user, 'orders.cancel') !== false && (
@@ -560,7 +583,7 @@ export default function ActiveOrdersNative() {
         </View>
 
         {/* Print Menu Dropdown */}
-        {printMenuOrderId === order.id && (
+        {printMenuOrderId === order.id && canReprintBilled(order) && (
           <View style={s.printMenu}>
             <TouchableOpacity style={s.printMenuItem} onPress={() => handlePrintKOT(order)}>
               <Ionicons name="restaurant-outline" size={16} color="#374151" />
