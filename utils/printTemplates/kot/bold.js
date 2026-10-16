@@ -86,7 +86,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
     totalItems = (k.items || []).reduce((sum, i) => sum + (i.quantity || 1), 0);
   }
 
-  const css = getBoldKOTCSS(printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
+  const css = getBoldKOTCSS(printSettings.kotFontScale || printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
   const finalCss = showAr ? css + getBillDualCSS() : css;
 
   const titleEn = hasChanges ? L.kotUpdate : L.kitchenOrder;

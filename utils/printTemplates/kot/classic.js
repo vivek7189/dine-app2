@@ -30,7 +30,7 @@ export function render(kotData, printSettings = {}, labels = {}) {
   const titleEn = hasChanges ? L.kotUpdate : L.kitchenOrder;
   const title = showAr ? dualTitle(titleEn, hasChanges ? AR.kotUpdate : AR.kitchenOrder, showAr) : titleEn;
 
-  const css = getKOTPrintCSS(printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
+  const css = getKOTPrintCSS(printSettings.kotFontScale || printSettings.billFontScale || printSettings.billFontSize, printSettings.billFontFamily);
   const finalCss = showAr ? css + getBillDualCSS() : css;
 
   // Build table/room inline text
