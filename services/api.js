@@ -2970,6 +2970,26 @@ class ApiClient {
     });
   }
 
+  // ==================== VOICE TICKET (speak an order → checked kitchen ticket) ====================
+  async getVoiceTicketSettings(restaurantId) {
+    return this.request(`/api/voice-ticket/${restaurantId}/settings`);
+  }
+
+  // audioUri: a local recording (expo-av); or transcript text
+  async voiceTicketUnderstand(restaurantId, { audioUri = null, mimeType = 'audio/m4a', transcript = '' } = {}) {
+    if (audioUri) {
+      const formData = new FormData();
+      formData.append('audio', { uri: audioUri, name: 'order.m4a', type: mimeType });
+      return this.request(`/api/voice-ticket/${restaurantId}/understand`, {
+        method: 'POST',
+        data: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 45000,
+      });
+    }
+    return this.request(`/api/voice-ticket/${restaurantId}/understand`, { method: 'POST', data: { transcript } });
+  }
+
   async parseQuickOrderImage(restaurantId, imageUri, mimeType = 'image/jpeg') {
     const formData = new FormData();
     formData.append('mode', 'parse');

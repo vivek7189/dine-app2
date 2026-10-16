@@ -11,7 +11,9 @@ export function getOrderItemKey(item) {
     ? [...item.selectedCustomizations].map((c) => c.id || c.name || '').sort().join(',')
     : '';
   const seat = sanitizeSeat(item.seat);
-  const base = `${id}|${variant}|${custs}`;
+  // Voice Ticket lines (noteLine) keep their kitchen note in the identity (same rule as the server).
+  const nk = item.noteLine === true && item.notes ? '|n:' + String(item.notes).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+  const base = `${id}|${variant}|${custs}${nk}`;
   return seat === null ? base : `${base}|s${seat}`;
 }
 

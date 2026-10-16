@@ -215,6 +215,8 @@ export default function MoreScreen() {
         // R&D (chefs propose new dishes) + Marketing tasks given by the owner / managers (MFC)
         { title: 'New dishes (R&D)', icon: 'restaurant-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=idea`, title: 'New dishes' } }, roles: null, color: '#be123c', iconBg: '#fff1f2' },
         { title: 'Marketing tasks', icon: 'megaphone-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=task`, title: 'Marketing' } }, roles: null, color: '#7c3aed', iconBg: '#f5f3ff' },
+        // Voice Ticket — speak an order, check it, print it in the kitchen (only where the owner turned it on)
+        ...(restaurant?.posSettings?.voiceTicket?.enabled ? [{ title: 'Voice Ticket', icon: 'mic-outline', route: '/(tabs)/voice', roles: null, feature: 'voiceTicket', color: '#dc2626', iconBg: '#fef2f2' }] : []),
         { title: 'Printer', icon: 'print-outline', route: '/(tabs)/printer-settings', roles: null, perm: 'page.printer', color: '#64748b', iconBg: '#f1f5f9' },
         { title: 'Local Server', icon: 'server-outline', route: '/local-server', roles: ['owner', 'manager', 'admin'], color: '#4f46e5', iconBg: '#eef2ff' },
       ],

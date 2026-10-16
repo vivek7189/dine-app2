@@ -369,6 +369,7 @@ function TabsNavigator() {
       <Tabs.Screen name="order-history" options={{ href: null }} />
       <Tabs.Screen name="webview" options={{ href: null }} />
       <Tabs.Screen name="printer-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="voice" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="billing-webview" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   );
