@@ -3007,6 +3007,23 @@ class ApiClient {
     return this.request(`/api/voice-ticket/${restaurantId}/converse`, { method: 'POST', data: { transcript, draft: compact }, timeout: 30000 });
   }
 
+  // Live two-way voice (restaurant.voiceAi.engine 'live'): short-lived key for the device's own call,
+  // the model's tool calls checked by our server, and the finished call's usage.
+  async voiceLiveSession(restaurantId, draft = null) {
+    return this.request(`/api/voice-ticket/${restaurantId}/live-session`, { method: 'POST', data: { draft }, timeout: 20000 });
+  }
+  async voiceLiveTool(restaurantId, { name, args, draft = null, transcript = '' }) {
+    return this.request(`/api/voice-ticket/${restaurantId}/live-tool`, { method: 'POST', data: { name, args, draft, transcript }, timeout: 20000 });
+  }
+  async voiceLiveUsage(restaurantId, { seconds, usage }) {
+    return this.request(`/api/voice-ticket/${restaurantId}/live-usage`, { method: 'POST', data: { seconds, usage }, timeout: 10000 });
+  }
+  // Natural AI voice for an answer (classic engine + voiceAi.aiVoice): a URL + headers expo-av can stream.
+  async voiceSpeakSource(restaurantId, text) {
+    const token = await this.getToken();
+    return { uri: `${this.baseURL}/api/voice-ticket/${restaurantId}/speak?text=${encodeURIComponent(String(text || '').slice(0, 300))}`, headers: token ? { Authorization: `Bearer ${token}` } : {} };
+  }
+
   async parseQuickOrderImage(restaurantId, imageUri, mimeType = 'image/jpeg') {
     const formData = new FormData();
     formData.append('mode', 'parse');

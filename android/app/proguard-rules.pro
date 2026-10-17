@@ -12,3 +12,7 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# react-native-webrtc (live voice orders) — keep the WebRTC JNI classes when minify is on
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**

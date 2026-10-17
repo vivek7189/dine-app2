@@ -5,7 +5,7 @@
 // posSettings.voiceTicket.enabled.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, Modal, StyleSheet, Platform, KeyboardAvoidingView,
+  View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, Modal, StyleSheet, Platform, KeyboardAvoidingView, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -17,6 +17,10 @@ import { getOrderItemKey } from '../utils/orderItemKey';
 import { useResponsive } from '../hooks/useResponsive';
 import { loadVoicePrintConfig, voicePrintClaims, printVoiceKOT } from '../services/voiceTicketPrint';
 import { startVoiceSegmenter } from '../services/voiceSegmenter';
+import { startLiveVoice, liveVoiceAvailable } from '../services/voiceLive';
+import VoiceOrb from '../components/VoiceOrb';
+import * as Haptics from 'expo-haptics';
+import Animated, { FadeInDown, FadeIn, LinearTransition } from 'react-native-reanimated';
 import { formatCurrency } from '../utils/formatCurrency';
 import restaurantEvents from '../services/restaurantEvents';
 
@@ -49,6 +53,18 @@ export default function VoiceTicketNative() {
   const tabBarH = rs(64, 74) + (Platform.OS === 'android' ? Math.max(insets.bottom, 24) : insets.bottom);
   const [tabMode, setTabMode] = useState(false); // posSettings.voiceTicket.showTab → Voice is a bottom tab
   const [sheet, setSheet] = useState(null); // 'table' | 'server'
+  // live two-way voice (restaurant.voiceAi.engine 'live', needs the WebRTC module in this build)
+  const liveRef = useRef(null);
+  const [live, setLive] = useState(false);
+  const [aiState, setAiState] = useState('idle'); // idle | connecting | listening | hearing | thinking | speaking
+  const [youText, setYouText] = useState('');
+  const [aiText, setAiText] = useState('');
+  const [muted, setMuted] = useState(false);
+  const sendWaiter = useRef(null);
+  const reportSend = (msg) => { const w = sendWaiter.current; sendWaiter.current = null; if (w) w(msg); };
+  const handlers = useRef({});
+  const levelRef = useRef(0);
+  const soundRef = useRef(null);
   const [me, setMe] = useState(null);
   const [rid, setRid] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
@@ -214,7 +230,7 @@ export default function VoiceTicketNative() {
           if (typeof st?.metering === 'number') {
             r.metered = true;
             if (st.metering > -42) r.voiced += 1; // a slice with real voice energy
-            setLevel(Math.max(0, Math.min(1, (st.metering + 60) / 50)));
+            const lvl = Math.max(0, Math.min(1, (st.metering + 60) / 50)); levelRef.current = lvl; setLevel(lvl);
           }
         },
         120,
@@ -250,7 +266,28 @@ export default function VoiceTicketNative() {
 
   // ── hands-free conversation ──
   const speak = (text) => {
-    if (settings?.replies !== 'voice' || !text || !Speech) return;
+    if (settings?.replies !== 'voice' || !text) return;
+    if (settings?.ai?.aiVoice && rid) {
+      // natural AI voice (DineOpen turned it on for this restaurant); the mic pauses while it talks
+      const seg = segRef.current;
+      (async () => {
+        let resumed = false;
+        const resume = () => { if (resumed) return; resumed = true; setAiState('idle'); if (convoRef.current && segRef.current) segRef.current.resume(); };
+        try {
+          if (seg) await seg.pause();
+          try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }); } catch (_) { /* ignore */ }
+          if (soundRef.current) { try { await soundRef.current.unloadAsync(); } catch (_) { /* gone */ } }
+          const src = await apiClient.voiceSpeakSource(rid, text);
+          const { sound } = await Audio.Sound.createAsync(src, { shouldPlay: true });
+          soundRef.current = sound;
+          setAiState('speaking');
+          sound.setOnPlaybackStatusUpdate((st) => { if (st.didJustFinish || (st.isLoaded === false && st.error)) { resume(); sound.unloadAsync().catch(() => {}); } });
+          setTimeout(resume, 12000);
+        } catch (_) { resume(); }
+      })();
+      return;
+    }
+    if (!Speech) return;
     const seg = segRef.current;
     let resumed = false;
     const resume = () => { if (resumed) return; resumed = true; if (convoRef.current && segRef.current) segRef.current.resume(); };
@@ -340,7 +377,7 @@ export default function VoiceTicketNative() {
       setConvo(true); setPhase('listening');
       segRef.current = await startVoiceSegmenter({
         onSegment: handleSegment,
-        onLevel: setLevel,
+        onLevel: (lvl) => { levelRef.current = lvl; setLevel(lvl); },
         onSpeaking: setHearing,
         onIdle: () => { if (convoRef.current) { stopConvo(); flash('Stopped listening — tap the mic to talk again'); } },
       });
@@ -393,6 +430,8 @@ export default function VoiceTicketNative() {
   });
 
   const finishSent = async (tk, orderId, order, printed, added) => {
+    reportSend(`${printed === 'failed' ? 'Saved, but the printer did not answer — tell them to reprint.' : 'Sent to the kitchen.'}${added ? ` Added to ${tk.tableNumber ? 'table ' + tk.tableNumber + "'s" : 'the'} open order.` : ''}${order?.dailyOrderId || order?.orderNumber ? ` Order number ${order.dailyOrderId || order.orderNumber}.` : ''}`);
+    try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch (_) { /* no haptics */ }
     const dine = isDineIn(tk.orderType);
     const head = dine ? (tk.tableNumber ? `Table ${tk.tableNumber}` : 'Dine-in') : `${typeLabel(tk.orderType)}${tk.customerName ? ' · ' + tk.customerName : ''}`;
     const entry = {
@@ -415,9 +454,10 @@ export default function VoiceTicketNative() {
   const canSend = ready && (phase === 'check' || (convo && phase === 'listening'));
 
   const send = async ({ tableNotSetUp = false, auto = false } = {}) => {
-    if (!canSend && !tableNotSetUp && !(auto && ready)) return;
+    const tk = ticketRef.current || ticket;
+    const tkReady = !!tk && tk.lines.length > 0 && tk.unclear.length === 0 && !tk.lines.some((l) => l.needsVariant);
+    if (!canSend && !(tableNotSetUp && tkReady) && !(auto && tkReady)) { reportSend('Nothing ready to send.'); return; }
     if (convoRef.current) stopConvo();
-    const tk = ticket;
     const dine = isDineIn(tk.orderType);
     setPhase('sending'); setError(''); setConflict(null);
     const cfg = printCfg || { printSettings: {}, printStationCount: 0, localKotPrintingOn: false };
@@ -454,12 +494,16 @@ export default function VoiceTicketNative() {
           if (hit) {
             const conf = { orderId: hit.id, table: tk.tableNumber };
             if (auto) { setPhase('check'); await addToOpenOrder(conf); return; } // spoken order for a busy table → add to it
-            setConflict(conf); setPhase('check'); return;
+            setConflict(conf); setPhase('check'); reportSend(`Table ${tk.tableNumber} already has an open order — the staff must choose on screen.`); return;
           }
         } catch { /* plain message */ }
       }
-      if (dine && tk.tableNumber && !tableNotSetUp && /not found/i.test(msg)) { setConflict({ missing: true, table: tk.tableNumber }); setPhase('check'); return; }
+      if (dine && tk.tableNumber && !tableNotSetUp && /not found/i.test(msg)) {
+        if (auto && liveRef.current) { await send({ tableNotSetUp: true, auto: true }); return; } // live: send with the number on the ticket
+        setConflict({ missing: true, table: tk.tableNumber }); setPhase('check'); reportSend(`Table ${tk.tableNumber} is not set up — the staff must choose on screen.`); return;
+      }
       setError(msg || 'Could not send — nothing was printed. Please try again.');
+      reportSend(`Failed: ${msg || 'could not send'}. Nothing was printed.`);
       setPhase('check');
     }
   };
@@ -486,8 +530,8 @@ export default function VoiceTicketNative() {
   };
 
   const addToOpenOrder = async (conf = conflict) => {
-    if (!conf || !ticket) return;
-    const tk = ticket;
+    const tk = ticketRef.current || ticket;
+    if (!conf || !tk) return;
     setPhase('sending'); setError('');
     try {
       const full = await apiClient.request(`/api/orders/single/${conf.orderId}`);
@@ -505,6 +549,7 @@ export default function VoiceTicketNative() {
       finishSent(tk, existing.id, existing, printed, true);
     } catch (e) {
       setError(e?.response?.data?.error || e?.message || 'Could not add to the open order');
+      reportSend(`Failed: ${e?.message || 'could not add to the open order'}`);
       setPhase('check');
     }
   };
@@ -515,6 +560,59 @@ export default function VoiceTicketNative() {
     flash(r === 'failed' ? 'Reprint failed — check the printer' : `Reprinting ${entry.head}`);
   };
 
+  // ── live two-way voice ──
+  // The call outlives renders; it reaches the latest screen functions through this ref.
+  handlers.current = {
+    applyOps: (ops) => { const tk = applyAgent(ops); if (tk) setPhase('check'); return tk; },
+    sendVoice: () => new Promise((resolve) => {
+      const tk = ticketRef.current;
+      if (!tk || !tk.lines.length) { resolve('Nothing on the order yet.'); return; }
+      if (tk.unclear.length || tk.lines.some((l) => l.needsVariant)) { resolve('Cannot send yet: an item still needs a choice (see ORDER NOW). Ask the staff.'); return; }
+      sendWaiter.current = resolve;
+      setTimeout(() => reportSend('Still sending — tell them to check the screen.'), 25000);
+      send({ auto: true });
+    }),
+    cancel: () => { ticketRef.current = null; setTicket(null); setSel(null); setConflict(null); setPhase('idle'); },
+  };
+  const startLive = async () => {
+    if (liveRef.current) return;
+    setError(''); setYouText(''); setAiText(''); setMuted(false);
+    setLive(true); setAiState('connecting');
+    try {
+      liveRef.current = await startLiveVoice({
+        restaurantId: rid,
+        getDraft: () => ticketRef.current,
+        onOps: (ops) => handlers.current.applyOps(ops),
+        onSend: () => handlers.current.sendVoice(),
+        onCancel: () => handlers.current.cancel(),
+        onState: (s2) => setAiState(s2 === 'ended' ? 'idle' : s2),
+        onYou: (txt, fin) => { setYouText(txt); if (fin && txt) pushLog('you', txt); },
+        onAi: (txt, fin) => { setAiText(txt); if (fin && txt) pushLog('say', txt); },
+        onError: (m) => setError(m),
+        onEnd: (why) => {
+          liveRef.current = null; setLive(false); setAiState('idle');
+          if (why === 'time') flash('Live voice ended (time limit) — tap to talk again');
+          else if (why === 'dropped') flash('Connection dropped — tap to talk again');
+        },
+      });
+    } catch (e) {
+      liveRef.current = null; setLive(false); setAiState('idle');
+      setError(e?.code === 'NO_WEBRTC' ? 'Live voice needs the latest app update' : /permission|denied|NotAllowed/i.test(String(e?.message || e?.name)) ? 'Microphone is blocked — allow it in the phone settings' : (e?.message || 'Could not start the live voice'));
+    }
+  };
+  const stopLive = () => { const l = liveRef.current; liveRef.current = null; if (l) l.stop('user'); setLive(false); setAiState('idle'); };
+  useEffect(() => () => {
+    if (liveRef.current) liveRef.current.stop('user');
+    if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
+  }, []);
+  // a light tap on the hand whenever an item lands on the ticket
+  const lineCount = ticket ? ticket.lines.reduce((a, l) => a + l.quantity, 0) : 0;
+  const prevCount = useRef(0);
+  useEffect(() => {
+    if (lineCount > prevCount.current) { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch (_) { /* none */ } }
+    prevCount.current = lineCount;
+  }, [lineCount]);
+
   // "That's it" → 3 s to Undo, then the normal send (a busy table gets the items added)
   useEffect(() => {
     if (!autoSend) return undefined;
@@ -522,6 +620,10 @@ export default function VoiceTicketNative() {
     const t = setTimeout(() => setAutoSend((a) => (a ? { left: a.left - 1 } : a)), 1000);
     return () => clearTimeout(t);
   }, [autoSend]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // orb loudness: the live call's levels, or the mic level while the classic mode listens
+  const getLevels = useCallbackSafe(() => (liveRef.current ? liveRef.current.levels() : { you: (convoRef.current || recRef.current.rec) ? levelRef.current : 0, ai: 0 }));
+  const { width: winW } = useWindowDimensions();
 
   // ── derived ──
   const results = useMemo(() => {
@@ -563,9 +665,8 @@ export default function VoiceTicketNative() {
 
   const listening = phase === 'listening';
   const busy = phase === 'thinking' || phase === 'sending';
-  const orbLive = convo || listening;
   // the dock sits above the bottom tab bar when Voice is a tab, else above the home indicator
-  const dockBottom = tabMode ? tabBarH + 10 : Math.max(insets.bottom, 12) + 6;
+  const dockBottom = tabMode ? tabBarH + 8 : Math.max(insets.bottom, 12) + 4;
   const total = ticket ? ticket.lines.reduce((a, l) => a + (Number(l.price) || 0) * l.quantity, 0) : 0;
   const curType = (ticket && ticket.orderType) || orderTypes[0] || 'dine-in';
   const dine = isDineIn(curType);
@@ -575,136 +676,105 @@ export default function VoiceTicketNative() {
       : `${typeLabel(curType)}${ticket.customerName ? ' · ' + ticket.customerName : ''}`;
   const blankTicket = () => ({ orderType: orderTypes[0] || 'dine-in', tableNumber: null, customerName: null, orderNotes: null, lines: [], unclear: [] });
   const setHead = (patch) => setTicket((tk) => ({ ...(tk || blankTicket()), ...patch }));
-  const lastYou = [...log].reverse().find((t) => t.kind === 'you');
-  const lastAi = [...log].reverse().find((t) => t.kind !== 'you');
   const hasLines = !!(ticket && (ticket.lines.length || ticket.unclear.length));
-  const examples = [
-    ['Order', 'Table five, two cheeseburgers, one no onion, and a Coke'],
-    ['Change', 'Make it two Cokes, no ice'],
-    ['Ask', 'What’s on table twelve, and the bill?'],
-    ['Send', handsFree ? 'That’s it' : 'Tap Send when it looks right'],
-  ];
-  const dotColor = error ? ERR : autoSend || phase === 'sent' || status.tone === 'ok' ? OK : status.tone === 'warn' ? WARN : orbLive ? RED : '#C9C2BE';
   const closeSheet = () => setSheet(null);
   const undoSend = () => { setAutoSend(null); flash('Not sent — keep editing'); pushLog('say', 'Not sent — keep editing'); };
 
-  const Orb = (big) => {
-    const size = big ? 128 : 76;
-    const live = handsFree ? convo : listening;
-    const onPress = handsFree ? (convo ? stopConvo : startConvo) : (listening ? stopListening : startListening);
-    const disabled = handsFree ? (phase === 'sending' || !!autoSend) : busy;
-    return (
-      <View style={[st.ring, { width: size + 22, height: size + 22, borderRadius: (size + 22) / 2 }, live && st.ringLive]}>
-        <Pressable
-          style={({ pressed }) => [st.orb, { width: size, height: size, borderRadius: size / 2 }, autoSend && { backgroundColor: OK }, disabled && { opacity: 0.55 }, pressed && { transform: [{ scale: 0.96 }] }]}
-          disabled={disabled} onPress={onPress} accessibilityRole="button" accessibilityLabel={live ? 'Stop listening' : 'Start talking'}
-        >
-          {live ? (
-            <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 6 + Math.max(0.1, level) * k * (big ? 46 : 28) }]} />)}</View>
-          ) : <Ionicons name={autoSend ? 'checkmark' : 'mic'} size={big ? 50 : 32} color="#fff" />}
-        </Pressable>
-      </View>
-    );
-  };
+  // one engine picks the orb's behaviour; the screen is the same for both
+  const engineLive = settings?.ai?.engine === 'live' && liveVoiceAvailable();
+  const talking = engineLive ? live : (handsFree ? convo : listening);
+  const stageState = engineLive
+    ? (live ? aiState : (phase === 'sending' ? 'thinking' : 'idle'))
+    : (aiState === 'speaking' ? 'speaking' : convo ? (thinking > 0 && !hearing ? 'thinking' : hearing ? 'hearing' : 'listening') : listening ? 'hearing' : busy ? 'thinking' : 'idle');
+  const stageLabel = error ? 'Something went wrong'
+    : autoSend ? `Sending in ${autoSend.left}`
+      : phase === 'sent' ? 'Sent to the kitchen'
+        : ({ connecting: 'Connecting…', listening: 'Listening', hearing: 'Hearing you', thinking: 'Thinking…', speaking: 'Speaking' }[stageState]) || (needs && phase === 'check' ? (needs === 1 ? 'Check 1 item' : `Check ${needs} items`) : 'Tap to talk');
+  const mainAction = engineLive ? (live ? stopLive : startLive) : handsFree ? (convo ? stopConvo : startConvo) : (listening ? stopListening : startListening);
+  const mainDisabled = engineLive ? aiState === 'connecting' : handsFree ? (phase === 'sending' || !!autoSend) : busy;
+  // what is said right now: live captions, or the last sentence / answer in the classic mode
+  const lastYou = [...log].reverse().find((t) => t.kind === 'you');
+  const lastAi = [...log].reverse().find((t) => t.kind !== 'you');
+  const capYou = engineLive ? youText : (lastYou ? lastYou.text.replace(/^“|”$/g, '') : '');
+  const capAi = engineLive ? aiText : (lastAi ? lastAi.text : '');
+  const hint = talking
+    ? (engineLive ? 'Talk naturally — it answers. Say “that’s it” when done.' : 'Say the table, then the items. “That’s it” sends.')
+    : (engineLive ? 'Tap the orb and talk. It talks back, and you can interrupt it.' : handsFree ? 'Tap the orb and just talk. Say “that’s it” to send.' : 'Tap the orb, say the order, tap again.');
 
-  const Status = (big) => (
-    <View style={[st.status, big && { marginTop: 18 }]}>
-      <View style={st.statusTop}>
-        {busy || (convo && thinking > 0) ? <ActivityIndicator size="small" color={RED} /> : <View style={[st.dot, { backgroundColor: dotColor }]} />}
-        <Text style={[big ? st.statusTBig : st.statusT, error && { color: ERR }]} numberOfLines={1}>{error ? 'Something went wrong' : status.title}</Text>
-      </View>
-      <Text style={[st.statusS, big && { fontSize: 15 }, error && { color: ERR }]} numberOfLines={2}>{error || status.text}</Text>
-    </View>
-  );
+  const orbSize = isTablet ? 250 : Math.min(200, Math.round(winW * 0.48));
 
-  const Bubble = (t) => (t.kind === 'you' ? (
-    <View key={t.id} style={st.youB}><Text style={st.youT}>{t.text.replace(/^“|”$/g, '')}</Text></View>
-  ) : (
-    <View key={t.id} style={[st.aiB, t.kind === 'did' && st.didB]}>
-      <Ionicons name={t.kind === 'did' ? 'checkmark-circle' : 'sparkles'} size={16} color={t.kind === 'did' ? OK : RED} style={{ marginTop: 2 }} />
-      <Text style={[st.aiT, t.kind === 'say' && { color: DEEP }]}>{t.text}</Text>
-    </View>
-  ));
-
-  const Hero = (
-    <View style={st.hero}>
-      <Text style={[st.heroT, isTablet && { fontSize: 26 }]}>{handsFree ? 'Tap the mic and just talk' : 'Tap the mic and say the order'}</Text>
-      <Text style={st.heroS}>{handsFree ? 'Say the table, then the items. Say “that’s it” to send.' : 'Say the table, then the items. Tap the mic again when done.'}</Text>
-      <View style={st.group}>
-        {examples.map(([k, say], i) => (
-          <View key={k} style={[st.exRow, i > 0 && st.sep]}>
-            <Text style={st.exK}>{k}</Text>
-            <Text style={st.exT}>“{say}”</Text>
-          </View>
-        ))}
+  const Stage = (
+    <View style={[st.stage, isTablet && { paddingTop: 10 }]}>
+      <VoiceOrb size={hasLines && !isTablet ? Math.round(orbSize * 0.72) : orbSize} state={autoSend || phase === 'sent' ? 'done' : stageState} done={!!autoSend || phase === 'sent'} getLevels={getLevels} onPress={mainAction} disabled={mainDisabled} />
+      <Animated.Text key={stageLabel} entering={FadeIn.duration(220)} style={[st.stateLbl, error && { color: ERR }]}>{stageLabel}</Animated.Text>
+      <View style={[st.captions, hasLines && !isTablet && { minHeight: 64 }]}>
+        {error ? <Text style={st.capErr}>{error}</Text> : null}
+        {!error && capYou ? <Text style={[st.capYou, isTablet && { fontSize: 24 }]} numberOfLines={hasLines && !isTablet ? 2 : 4}>{capYou}</Text> : null}
+        {!error && capAi ? <Text style={[st.capAi, isTablet && { fontSize: 21 }]} numberOfLines={hasLines && !isTablet ? 2 : 4}>{capAi}</Text> : null}
+        {!error && !capYou && !capAi ? <Text style={st.capHint}>{hint}</Text> : null}
       </View>
     </View>
   );
 
-  const OrderCard = (
-    <View style={st.group}>
-      <View style={st.cardHead}>
-        <Text style={st.cardTitle}>Order</Text>
-        <Text style={st.cardMeta}>{itemCount ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}</Text>
-        <View style={{ flex: 1 }} />
-        {ticket ? <Pressable onPress={startOver} hitSlop={10}><Text style={st.clear}>Clear</Text></Pressable> : null}
-      </View>
-      {!hasLines && (phase === 'thinking'
-        ? <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View>
-        : <Text style={st.emptyT}>Items you say show up here.</Text>)}
-      {ticket && ticket.lines.map((l) => (
-        <View key={l.key} style={[st.sep, sel === l.key && st.rowSel]}>
-          <Pressable style={({ pressed }) => [st.row, pressed && { backgroundColor: '#FAF6F4' }]} onPress={() => { setSel(sel === l.key ? null : l.key); setNoteDraft(''); }} accessibilityLabel={`Change ${l.name}`}>
-            <View style={st.qty}><Text style={st.qtyT}>{l.quantity}</Text></View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={st.itemT}>{l.name}{l.variant ? <Text style={st.varT}>{'  ' + l.variant}</Text> : null}</Text>
-              {l.notes.length ? (
-                <Text style={st.notesT}>{l.notes.map((n, k) => <Text key={k} style={/^(no|hold|without|less)\b/i.test(n) ? { color: ERR } : /^(extra|add|with)\b/i.test(n) ? { color: OK } : null}>{k ? '  ·  ' : ''}{n}</Text>)}</Text>
-              ) : null}
-            </View>
-            {Number(l.price) ? <Text style={st.priceT}>{formatCurrency(l.price * l.quantity)}</Text> : null}
-          </Pressable>
-          {l.needsVariant && (
-            <View style={st.ask}>
-              <Text style={st.askT}>Which one?</Text>
-              <View style={st.wrap}>{l.variants.map((v) => <Pressable key={v} style={st.choice} onPress={() => setVariant(l, v)}><Text style={st.choiceT}>{v}</Text></Pressable>)}</View>
-            </View>
-          )}
-          {sel === l.key && (
-            <View style={st.edit}>
-              <View style={st.wrap}>
-                <View style={st.stepper}>
-                  <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: Math.max(1, x.quantity - 1) }))} accessibilityLabel="One less"><Ionicons name="remove" size={20} color={INK} /></Pressable>
-                  <Text style={st.stepN}>{l.quantity}</Text>
-                  <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: x.quantity + 1 }))} accessibilityLabel="One more"><Ionicons name="add" size={20} color={INK} /></Pressable>
-                </View>
-                <Pressable style={st.ghost} onPress={() => { setTicket((tk) => ({ ...tk, lines: tk.lines.filter((x) => x.key !== l.key) })); setSel(null); }}>
-                  <Ionicons name="trash-outline" size={17} color={ERR} /><Text style={[st.ghostT, { color: ERR }]}>Remove</Text>
-                </Pressable>
-                <Pressable style={[st.ghost, st.ghostDone]} onPress={() => setSel(null)}><Text style={[st.ghostT, { color: '#fff' }]}>Done</Text></Pressable>
-              </View>
-              {l.notes.length > 0 && <View style={st.wrap}>{l.notes.map((n, k) => <Pressable key={k} style={st.chip} onPress={() => upd(l.key, (x) => ({ ...x, notes: x.notes.filter((_, j) => j !== k) }))}><Text style={st.chipT}>{n}</Text><Ionicons name="close" size={14} color={MUTED} /></Pressable>)}</View>}
-              <TextInput style={st.input} placeholder="Add a note, e.g. no onion" placeholderTextColor="#A8A29E" value={noteDraft} onChangeText={setNoteDraft} onSubmitEditing={() => { const n = noteDraft.trim(); if (n) { upd(l.key, (x) => ({ ...x, notes: [...x.notes, n.slice(0, 80)] })); setNoteDraft(''); } }} returnKeyType="done" />
-            </View>
-          )}
+  const Lines = ticket ? ticket.lines.map((l) => (
+    <Animated.View key={l.key} entering={FadeInDown.duration(260)} layout={LinearTransition.duration(200)} style={[st.sep, sel === l.key && st.rowSel]}>
+      <Pressable style={({ pressed }) => [st.row, pressed && { backgroundColor: '#FAF6F4' }]} onPress={() => { setSel(sel === l.key ? null : l.key); setNoteDraft(''); }} accessibilityLabel={`Change ${l.name}`}>
+        <View style={st.qty}><Text style={st.qtyT}>{l.quantity}</Text></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.itemT} numberOfLines={2}>{l.name}{l.variant ? <Text style={st.varT}>{'  ' + l.variant}</Text> : null}</Text>
+          {l.notes.length ? (
+            <Text style={st.notesT}>{l.notes.map((n, k) => <Text key={k} style={/^(no|hold|without|less)\b/i.test(n) ? { color: ERR } : /^(extra|add|with)\b/i.test(n) ? { color: OK } : null}>{k ? '  ·  ' : ''}{n}</Text>)}</Text>
+          ) : null}
         </View>
-      ))}
-      {ticket && ticket.unclear.map((u) => (
-        <View key={u.key} style={st.sep}>
-          <View style={[st.ask, { marginTop: 12 }]}>
-            <Text style={st.askT}>{u.reason === 'sold_out' ? `${u.heard} is sold out.` : `Heard “${u.heard}”.`} {u.options.length ? 'Which one?' : 'Not on the menu.'}{u.quantity > 1 ? ` (×${u.quantity})` : ''}</Text>
-            <View style={st.wrap}>
-              {u.options.map((o) => <Pressable key={o.menuItemId} style={st.choice} onPress={() => resolve(u, o)}><Text style={st.choiceT}>{o.name}</Text></Pressable>)}
-              <Pressable style={[st.choice, st.choiceGhost]} onPress={() => { setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) })); setSearch(u.heard); setAdding(true); }}><Text style={st.choiceT}>Search</Text></Pressable>
-              <Pressable style={[st.choice, st.choiceGhost]} onPress={() => setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) }))}><Text style={st.choiceT}>Skip</Text></Pressable>
+        {Number(l.price) ? <Text style={st.priceT}>{formatCurrency(l.price * l.quantity)}</Text> : null}
+      </Pressable>
+      {l.needsVariant && (
+        <View style={st.ask}>
+          <Text style={st.askT}>Which one?</Text>
+          <View style={st.wrap}>{l.variants.map((v) => <Pressable key={v} style={st.choice} onPress={() => setVariant(l, v)}><Text style={st.choiceT}>{v}</Text></Pressable>)}</View>
+        </View>
+      )}
+      {sel === l.key && (
+        <View style={st.edit}>
+          <View style={st.wrap}>
+            <View style={st.stepper}>
+              <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: Math.max(1, x.quantity - 1) }))} accessibilityLabel="One less"><Ionicons name="remove" size={20} color={INK} /></Pressable>
+              <Text style={st.stepN}>{l.quantity}</Text>
+              <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: x.quantity + 1 }))} accessibilityLabel="One more"><Ionicons name="add" size={20} color={INK} /></Pressable>
             </View>
+            <Pressable style={st.ghost} onPress={() => { setTicket((tk) => ({ ...tk, lines: tk.lines.filter((x) => x.key !== l.key) })); setSel(null); }}>
+              <Ionicons name="trash-outline" size={17} color={ERR} /><Text style={[st.ghostT, { color: ERR }]}>Remove</Text>
+            </Pressable>
+            <Pressable style={[st.ghost, st.ghostDone]} onPress={() => setSel(null)}><Text style={[st.ghostT, { color: '#fff' }]}>Done</Text></Pressable>
           </View>
+          {l.notes.length > 0 && <View style={st.wrap}>{l.notes.map((n, k) => <Pressable key={k} style={st.chip} onPress={() => upd(l.key, (x) => ({ ...x, notes: x.notes.filter((_, j) => j !== k) }))}><Text style={st.chipT}>{n}</Text><Ionicons name="close" size={14} color={MUTED} /></Pressable>)}</View>}
+          <TextInput style={st.input} placeholder="Add a note, e.g. no onion" placeholderTextColor="#A8A29E" value={noteDraft} onChangeText={setNoteDraft} onSubmitEditing={() => { const n = noteDraft.trim(); if (n) { upd(l.key, (x) => ({ ...x, notes: [...x.notes, n.slice(0, 80)] })); setNoteDraft(''); } }} returnKeyType="done" />
         </View>
-      ))}
-      <View style={[st.sep, st.cardFoot]}>
-        <Pressable style={st.addBtn} onPress={() => setAdding(true)} hitSlop={6}><Ionicons name="add-circle" size={20} color={RED} /><Text style={st.addT}>Add item</Text></Pressable>
-        {total ? <Text style={st.totalT}>{formatCurrency(total)}</Text> : null}
+      )}
+    </Animated.View>
+  )) : null;
+
+  const Unclear = ticket ? ticket.unclear.map((u) => (
+    <Animated.View key={u.key} entering={FadeInDown.duration(260)} layout={LinearTransition.duration(200)} style={st.sep}>
+      <View style={[st.ask, { marginTop: 12 }]}>
+        <Text style={st.askT}>{u.reason === 'sold_out' ? `${u.heard} is sold out.` : `Heard “${u.heard}”.`} {u.options.length ? 'Which one?' : 'Not on the menu.'}{u.quantity > 1 ? ` (×${u.quantity})` : ''}</Text>
+        <View style={st.wrap}>
+          {u.options.map((o) => <Pressable key={o.menuItemId} style={st.choice} onPress={() => resolve(u, o)}><Text style={st.choiceT}>{o.name}</Text></Pressable>)}
+          <Pressable style={[st.choice, st.choiceGhost]} onPress={() => { setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) })); setSearch(u.heard); setAdding(true); }}><Text style={st.choiceT}>Search</Text></Pressable>
+          <Pressable style={[st.choice, st.choiceGhost]} onPress={() => setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) }))}><Text style={st.choiceT}>Skip</Text></Pressable>
+        </View>
       </View>
+    </Animated.View>
+  )) : null;
+
+  const TicketHead = (
+    <View style={st.cardHead}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={st.cardTitle} numberOfLines={1}>{hasHead ? where : 'Order'}</Text>
+        <Text style={st.cardMeta}>{itemCount ? `${itemCount} item${itemCount === 1 ? '' : 's'}${total ? ' · ' + formatCurrency(total) : ''}` : 'Items you say land here'}</Text>
+      </View>
+      <Pressable onPress={() => setAdding(true)} hitSlop={8} style={st.headBtn}><Ionicons name="add" size={18} color={RED} /><Text style={st.headBtnT}>Add</Text></Pressable>
+      {ticket ? <Pressable onPress={startOver} hitSlop={8} style={st.headBtn}><Text style={[st.headBtnT, { color: MUTED }]}>Clear</Text></Pressable> : null}
     </View>
   );
 
@@ -722,12 +792,13 @@ export default function VoiceTicketNative() {
 
   const WideSend = autoSend ? (
     <Pressable style={[st.wideBtn, { backgroundColor: OK }]} onPress={undoSend} accessibilityRole="button">
+      <Ionicons name="time-outline" size={19} color="#fff" />
       <Text style={st.wideBtnT}>Sending in {autoSend.left} · Undo</Text>
     </Pressable>
   ) : (
-    <Pressable style={[st.wideBtn, !canSend && st.wideOff]} disabled={!canSend} onPress={() => send()} accessibilityRole="button">
-      <Ionicons name="paper-plane" size={18} color={canSend ? '#fff' : '#A8A29E'} />
-      <Text style={[st.wideBtnT, !canSend && { color: '#A8A29E' }]}>Send to kitchen{itemCount ? ` · ${itemCount}` : ''}</Text>
+    <Pressable style={[st.wideBtn, !canSend && st.wideOff]} disabled={!canSend && !(engineLive && live && ready)} onPress={() => send({ auto: engineLive && live })} accessibilityRole="button">
+      <Ionicons name="paper-plane" size={18} color={canSend || (engineLive && live && ready) ? '#fff' : '#A8A29E'} />
+      <Text style={[st.wideBtnT, !(canSend || (engineLive && live && ready)) && { color: '#A8A29E' }]}>Send to kitchen{itemCount ? ` · ${itemCount}` : ''}</Text>
     </Pressable>
   );
 
@@ -735,12 +806,20 @@ export default function VoiceTicketNative() {
     <View style={st.header}>
       <View style={st.top}>
         {!tabMode && <Pressable style={st.back} onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><Ionicons name="chevron-back" size={26} color={INK} /></Pressable>}
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={st.title}>Voice order</Text>
-          {restaurantName ? <Text style={st.subT} numberOfLines={1}>{restaurantName}</Text> : null}
+        <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text style={st.title} numberOfLines={1}>Voice order</Text>
+          <View style={[st.engine, talking && st.engineOn]}>
+            <View style={[st.engDot, talking && { backgroundColor: RED }]} />
+            <Text style={st.engineT}>{engineLive ? 'Live' : settings?.ai?.aiVoice ? 'AI voice' : 'Voice'}</Text>
+          </View>
         </View>
+        {engineLive && live ? (
+          <Pressable style={[st.round, muted && st.roundOn]} onPress={() => { const m = !muted; setMuted(m); liveRef.current && liveRef.current.mute(m); }} accessibilityLabel={muted ? 'Unmute' : 'Mute'}>
+            <Ionicons name={muted ? 'mic-off' : 'mic-outline'} size={20} color={muted ? DEEP : INK} />
+          </Pressable>
+        ) : null}
         <Pressable style={st.round} onPress={() => setShowToday(true)} accessibilityLabel={`Sent today: ${tickets.length}`}>
-          <Ionicons name="receipt-outline" size={21} color={INK} />
+          <Ionicons name="receipt-outline" size={20} color={INK} />
           {tickets.length ? <View style={st.badge}><Text style={st.badgeT}>{tickets.length > 99 ? '99+' : tickets.length}</Text></View> : null}
         </Pressable>
       </View>
@@ -761,7 +840,7 @@ export default function VoiceTicketNative() {
     </View>
   );
 
-  // bottom sheet (plain function, not a component, so its inputs keep focus across re-renders)
+  // bottom sheet (a plain function, not a component, so its inputs keep focus across re-renders)
   const Sheet = ({ visible, onClose, title, children, keyboard }) => (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={keyboard && Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -786,32 +865,52 @@ export default function VoiceTicketNative() {
         {isTablet ? (
           <View style={st.tabletBody}>
             <View style={st.leftPane}>
-              <ScrollView ref={logScroll} style={{ flex: 1 }} contentContainerStyle={st.leftScroll} keyboardShouldPersistTaps="handled" onContentSizeChange={() => { try { logScroll.current && logScroll.current.scrollToEnd({ animated: true }); } catch (_) { /* ignore */ } }}>
-                {log.length ? <View style={{ gap: 10 }}>{log.map(Bubble)}</View> : Hero}
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingVertical: 12 }} keyboardShouldPersistTaps="handled">
+                {Stage}
+                {log.length > 1 && (
+                  <View style={st.hist}>
+                    {log.slice(-5, -1).map((t) => (
+                      <Text key={t.id} style={[st.histT, t.kind === 'say' && { color: DEEP }, t.kind === 'did' && { color: OK }]} numberOfLines={2}>
+                        <Text style={st.histK}>{t.kind === 'you' ? 'YOU  ' : t.kind === 'did' ? '✓  ' : 'AI  '}</Text>{t.text.replace(/^“|”$/g, '')}
+                      </Text>
+                    ))}
+                  </View>
+                )}
               </ScrollView>
-              <View style={[st.tabDock, { paddingBottom: dockBottom + 6 }]}>
-                {Orb(true)}
-                {Status(true)}
+              <View style={[st.tabDock, { paddingBottom: dockBottom }]}>
+                <Pressable style={[st.mainPill, talking && st.mainPillStop, mainDisabled && { opacity: 0.55 }]} onPress={mainAction} disabled={mainDisabled}>
+                  <Ionicons name={talking ? 'stop' : 'mic'} size={20} color="#fff" />
+                  <Text style={st.mainPillT}>{talking ? 'End' : engineLive ? 'Start live voice' : 'Start talking'}</Text>
+                </Pressable>
               </View>
             </View>
             <View style={st.rightPane}>
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 18, gap: 12 }} keyboardShouldPersistTaps="handled">
                 {ConflictBox}
-                {OrderCard}
+                <View style={st.card}>
+                  {TicketHead}
+                  {Lines}
+                  {Unclear}
+                  {!hasLines && (phase === 'thinking' ? <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View> : null)}
+                </View>
               </ScrollView>
-              <View style={[st.rightFoot, { paddingBottom: dockBottom }]}>
-                {WideSend}
-                {handsFree && !autoSend ? <Text style={st.hint}>or just say “that’s it”</Text> : null}
-              </View>
+              <View style={[st.rightFoot, { paddingBottom: dockBottom }]}>{WideSend}</View>
             </View>
           </View>
         ) : (
           <>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={st.phoneScroll} keyboardShouldPersistTaps="handled">
-              {ConflictBox}
-              {(lastYou || lastAi) && <View style={{ gap: 8 }}>{lastYou && Bubble(lastYou)}{lastAi && Bubble(lastAi)}</View>}
-              {ticket || phase === 'thinking' ? OrderCard : Hero}
-            </ScrollView>
+            <View style={{ flex: hasLines ? 0 : 1, justifyContent: 'center' }}>{Stage}</View>
+            {ConflictBox ? <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>{ConflictBox}</View> : null}
+            {hasLines || phase === 'thinking' ? (
+              <View style={[st.card, st.cardPhone]}>
+                {TicketHead}
+                <ScrollView style={{ flexGrow: 0 }} keyboardShouldPersistTaps="handled">
+                  {Lines}
+                  {Unclear}
+                  {!hasLines && <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View>}
+                </ScrollView>
+              </View>
+            ) : null}
             <View style={[st.dock, { paddingBottom: dockBottom }]}>
               {autoSend ? (
                 <Pressable style={st.undoBar} onPress={undoSend} accessibilityRole="button" accessibilityLabel="Undo send">
@@ -819,21 +918,21 @@ export default function VoiceTicketNative() {
                   <Text style={st.undoT}>Sending in {autoSend.left}…</Text>
                   <Text style={st.undoBtn}>UNDO</Text>
                 </Pressable>
-              ) : Status(false)}
-              <View style={st.dockRow}>
-                <Pressable style={st.sideWrap} onPress={() => setAdding(true)} accessibilityLabel="Search the menu">
-                  <View style={st.side}><Ionicons name="search" size={22} color={INK} /></View>
-                  <Text style={st.sideL}>Search</Text>
-                </Pressable>
-                {Orb(false)}
-                <Pressable style={st.sideWrap} disabled={!canSend} onPress={() => send()} accessibilityLabel="Send to kitchen">
-                  <View style={[st.side, canSend && st.sideGo]}>
-                    <Ionicons name="paper-plane" size={21} color={canSend ? '#fff' : '#B9B2AE'} />
+              ) : (
+                <View style={st.dockRow}>
+                  <Pressable style={st.side} onPress={() => setAdding(true)} accessibilityLabel="Add by typing">
+                    <Ionicons name="search" size={21} color={INK} />
+                  </Pressable>
+                  <Pressable style={[st.mainPill, talking && st.mainPillStop, mainDisabled && { opacity: 0.55 }, { flex: 1 }]} onPress={mainAction} disabled={mainDisabled}>
+                    <Ionicons name={talking ? 'stop' : 'mic'} size={20} color="#fff" />
+                    <Text style={st.mainPillT}>{talking ? 'End' : engineLive ? 'Start live voice' : 'Start talking'}</Text>
+                  </Pressable>
+                  <Pressable style={[st.side, (canSend || (engineLive && live && ready)) && st.sideGo]} disabled={!(canSend || (engineLive && live && ready))} onPress={() => send({ auto: engineLive && live })} accessibilityLabel="Send to kitchen">
+                    <Ionicons name="paper-plane" size={20} color={canSend || (engineLive && live && ready) ? '#fff' : '#B9B2AE'} />
                     {itemCount ? <View style={st.sideBadge}><Text style={st.sideBadgeT}>{itemCount}</Text></View> : null}
-                  </View>
-                  <Text style={[st.sideL, canSend && { color: RED }]}>Send</Text>
-                </Pressable>
-              </View>
+                  </Pressable>
+                </View>
+              )}
             </View>
           </>
         )}
@@ -935,9 +1034,16 @@ export default function VoiceTicketNative() {
         ),
       })}
 
-      {toast ? <View style={[st.toast, { bottom: dockBottom + (isTablet ? 200 : 150) }]} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></View> : null}
+      {toast ? <Animated.View entering={FadeInDown.duration(200)} style={[st.toast, { bottom: dockBottom + 86 }]} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></Animated.View> : null}
     </SafeAreaView>
   );
+}
+
+// a stable function identity for the orb's level polling (the orb keeps one interval)
+function useCallbackSafe(fn) {
+  const ref = React.useRef(fn);
+  ref.current = fn;
+  return React.useCallback(() => ref.current(), []);
 }
 
 const st = StyleSheet.create({
@@ -947,42 +1053,41 @@ const st = StyleSheet.create({
   h1: { fontSize: 22, fontWeight: '700', color: INK },
   muted: { color: MUTED, fontSize: 14 },
 
-  header: { backgroundColor: BG, paddingBottom: 10 },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingTop: 6 },
-  back: { marginLeft: -8, width: 36, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 28, fontWeight: '800', color: INK, letterSpacing: -0.4 },
-  subT: { fontSize: 13, color: MUTED, marginTop: 1 },
-  round: { width: 44, height: 44, borderRadius: 22, backgroundColor: CARD, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  header: { paddingBottom: 6 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 4 },
+  back: { marginLeft: -8, width: 34, height: 40, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 24, fontWeight: '800', color: INK, letterSpacing: -0.4, flexShrink: 1 },
+  engine: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 26, paddingHorizontal: 10, borderRadius: 13, backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  engineOn: { backgroundColor: SOFT, borderColor: '#F5B8B1' },
+  engDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#CFC6C2' },
+  engineT: { fontSize: 12, fontWeight: '700', color: DEEP, letterSpacing: 0.3 },
+  round: { width: 42, height: 42, borderRadius: 21, backgroundColor: CARD, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  roundOn: { backgroundColor: SOFT, borderColor: RED },
   badge: { position: 'absolute', top: -3, right: -3, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BG },
   badgeT: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  ctx: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginTop: 12 },
-  pill: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  ctx: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginTop: 10 },
+  pill: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 13, borderRadius: 18, backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
   pillOn: { backgroundColor: SOFT, borderColor: '#F5B8B1' },
   pillT: { flexShrink: 1, fontSize: 15, fontWeight: '600', color: INK },
 
-  phoneScroll: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20, gap: 14 },
-  hero: { gap: 6, paddingTop: 14 },
-  heroT: { fontSize: 21, fontWeight: '700', color: INK, letterSpacing: -0.2 },
-  heroS: { fontSize: 15, color: MUTED, lineHeight: 21, marginBottom: 12 },
-  group: { backgroundColor: CARD, borderRadius: 16, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  stage: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 4 },
+  stateLbl: { marginTop: 2, fontSize: 13, fontWeight: '700', letterSpacing: 1.4, textTransform: 'uppercase', color: DEEP },
+  captions: { minHeight: 100, alignSelf: 'stretch', alignItems: 'center', gap: 8, paddingTop: 10, paddingHorizontal: 8 },
+  capYou: { fontSize: 20, lineHeight: 27, fontWeight: '600', color: INK, textAlign: 'center' },
+  capAi: { fontSize: 18, lineHeight: 25, fontWeight: '600', color: RED, textAlign: 'center' },
+  capHint: { fontSize: 16, lineHeight: 23, color: MUTED, textAlign: 'center', maxWidth: 340 },
+  capErr: { fontSize: 16, lineHeight: 22, fontWeight: '600', color: ERR, textAlign: 'center' },
+
+  card: { backgroundColor: CARD, borderRadius: 20, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  cardPhone: { flex: 1, marginHorizontal: 12, marginBottom: 10, shadowColor: '#3B1D17', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 },
+  cardTitle: { fontSize: 18, fontWeight: '700', color: INK },
+  cardMeta: { fontSize: 13, color: MUTED, marginTop: 1 },
+  headBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 34, paddingHorizontal: 10, borderRadius: 17, backgroundColor: '#F7F2F0' },
+  headBtnT: { fontSize: 14, fontWeight: '700', color: RED },
   sep: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: LINE },
-  exRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 3 },
-  exK: { fontSize: 12, fontWeight: '700', color: RED, textTransform: 'uppercase', letterSpacing: 0.6 },
-  exT: { fontSize: 16, color: INK, lineHeight: 22 },
-
-  youB: { alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: INK, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9 },
-  youT: { color: '#fff', fontSize: 15, lineHeight: 21 },
-  aiB: { alignSelf: 'flex-start', maxWidth: '92%', flexDirection: 'row', gap: 8, backgroundColor: SOFT, borderRadius: 18, borderBottomLeftRadius: 6, paddingHorizontal: 12, paddingVertical: 9 },
-  didB: { backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
-  aiT: { flexShrink: 1, fontSize: 15, lineHeight: 21, color: INK, fontWeight: '500' },
-
-  cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 8, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
-  cardTitle: { fontSize: 17, fontWeight: '700', color: INK },
-  cardMeta: { fontSize: 14, color: MUTED },
-  clear: { fontSize: 15, fontWeight: '600', color: RED },
-  emptyT: { fontSize: 15, color: MUTED, paddingHorizontal: 16, paddingBottom: 18 },
-  emptyRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 18 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 56 },
+  emptyRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 11, minHeight: 54 },
   rowSel: { backgroundColor: '#FCF8F6' },
   qty: { minWidth: 32, height: 32, paddingHorizontal: 6, borderRadius: 9, backgroundColor: SOFT, alignItems: 'center', justifyContent: 'center' },
   qtyT: { fontSize: 15, fontWeight: '700', color: DEEP, fontVariant: ['tabular-nums'] },
@@ -1006,43 +1111,30 @@ const st = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#F3EEEC' },
   chipT: { fontSize: 14, color: INK },
   input: { minHeight: 48, borderRadius: 12, paddingHorizontal: 14, fontSize: 16, backgroundColor: '#F3EEEC', color: INK },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
-  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  addT: { fontSize: 15, fontWeight: '600', color: RED },
-  totalT: { fontSize: 16, fontWeight: '700', color: INK, fontVariant: ['tabular-nums'] },
   conflict: { backgroundColor: '#FFF7E6', borderRadius: 16, padding: 14, gap: 12 },
 
-  dock: { paddingHorizontal: 20, paddingTop: 12, backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, gap: 10, shadowColor: '#3B1D17', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: -4 }, elevation: 10 },
-  status: { alignItems: 'center', gap: 2 },
-  statusTop: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%' },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  statusT: { fontSize: 16, fontWeight: '700', color: INK, flexShrink: 1 },
-  statusTBig: { fontSize: 24, fontWeight: '700', color: INK, flexShrink: 1 },
-  statusS: { fontSize: 13, color: MUTED, textAlign: 'center', lineHeight: 18 },
-  dockRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8 },
-  sideWrap: { alignItems: 'center', gap: 4, width: 72 },
-  side: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#F3EEEC', alignItems: 'center', justifyContent: 'center' },
-  sideGo: { backgroundColor: RED },
-  sideL: { fontSize: 12, fontWeight: '600', color: MUTED },
-  sideBadge: { position: 'absolute', top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: INK, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: CARD },
+  dock: { paddingHorizontal: 16, paddingTop: 10 },
+  dockRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  mainPill: { height: 58, borderRadius: 29, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 26, shadowColor: RED, shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
+  mainPillStop: { backgroundColor: INK, shadowColor: '#000', shadowOpacity: 0.25 },
+  mainPillT: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  side: { width: 58, height: 58, borderRadius: 29, backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE, alignItems: 'center', justifyContent: 'center' },
+  sideGo: { backgroundColor: OK, borderColor: OK },
+  sideBadge: { position: 'absolute', top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: INK, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BG },
   sideBadgeT: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  ring: { alignItems: 'center', justifyContent: 'center' },
-  ringLive: { backgroundColor: 'rgba(217,45,32,0.12)' },
-  orb: { backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
-  bars: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  barI: { width: 4, borderRadius: 2, backgroundColor: '#fff' },
-  undoBar: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 46, borderRadius: 23, paddingHorizontal: 16, backgroundColor: OK },
-  undoT: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '600' },
+  undoBar: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 58, borderRadius: 29, paddingHorizontal: 20, backgroundColor: OK },
+  undoT: { flex: 1, color: '#fff', fontSize: 17, fontWeight: '600' },
   undoBtn: { color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.8 },
 
   tabletBody: { flex: 1, flexDirection: 'row' },
-  leftPane: { flex: 1.25, borderRightWidth: StyleSheet.hairlineWidth, borderColor: LINE },
-  leftScroll: { paddingHorizontal: 28, paddingTop: 8, paddingBottom: 20, gap: 14, maxWidth: 680, width: '100%', alignSelf: 'center' },
-  tabDock: { alignItems: 'center', paddingTop: 18, paddingHorizontal: 24 },
-  rightPane: { flex: 1, maxWidth: 480, backgroundColor: '#FBF7F5' },
-  rightFoot: { paddingHorizontal: 20, paddingTop: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: LINE },
-  hint: { textAlign: 'center', fontSize: 13, color: MUTED },
-  wideBtn: { height: 54, borderRadius: 27, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  leftPane: { flex: 1.25 },
+  hist: { alignSelf: 'center', maxWidth: 560, width: '100%', gap: 6, paddingHorizontal: 28, opacity: 0.85 },
+  histT: { fontSize: 15, lineHeight: 21, color: MUTED },
+  histK: { fontSize: 11, fontWeight: '700', color: '#A8A29E', letterSpacing: 0.6 },
+  tabDock: { alignItems: 'center', paddingTop: 10 },
+  rightPane: { flex: 1, maxWidth: 470, backgroundColor: '#FBF7F5', borderLeftWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  rightFoot: { paddingHorizontal: 18, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  wideBtn: { height: 56, borderRadius: 28, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   wideOff: { backgroundColor: '#EDE7E4' },
   wideBtnT: { color: '#fff', fontSize: 17, fontWeight: '700' },
 
