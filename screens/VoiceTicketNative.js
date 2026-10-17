@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, Modal, StyleSheet, Platform, KeyboardAvoidingView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,19 +17,23 @@ import { getOrderItemKey } from '../utils/orderItemKey';
 import { useResponsive } from '../hooks/useResponsive';
 import { loadVoicePrintConfig, voicePrintClaims, printVoiceKOT } from '../services/voiceTicketPrint';
 import { startVoiceSegmenter } from '../services/voiceSegmenter';
+import { formatCurrency } from '../utils/formatCurrency';
+import restaurantEvents from '../services/restaurantEvents';
 
 // Spoken answers (Admin → Voice Ticket → Answers: speak). Optional native module: builds without it
 // (older App Store / APK builds) simply show the answer on screen.
 let Speech = null;
 try { Speech = require('expo-speech'); if (!Speech || typeof Speech.speak !== 'function') Speech = null; } catch (_) { Speech = null; }
 
-const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 const RED = '#D92D20';
 const DEEP = '#9F1F14';
 const SOFT = '#FDE8E5';
-const LINE = '#EFDDD8';
-const BG = '#F8F1EF';
-const HEAD = '#FFFAF8';
+const LINE = '#E9DDD8';
+const BG = '#F7F2F0';
+const CARD = '#FFFFFF';
+const MUTED = '#78716C';
+const ERR = '#B42318';
+const WARN = '#D97706';
 const OK = '#0F7A43';
 const INK = '#1C1917';
 const MAX_SECONDS = 60;
@@ -39,7 +43,12 @@ const todayKey = (rid) => `vt:tickets:${rid}:${new Date().toISOString().slice(0,
 
 export default function VoiceTicketNative() {
   const router = useRouter();
-  const { isTablet } = useResponsive();
+  const { isTablet, r: rs } = useResponsive();
+  const insets = useSafeAreaInsets();
+  // same height as the bottom tab bar (app/(tabs)/_layout.js) — the dock sits above it when Voice is a tab
+  const tabBarH = rs(64, 74) + (Platform.OS === 'android' ? Math.max(insets.bottom, 24) : insets.bottom);
+  const [tabMode, setTabMode] = useState(false); // posSettings.voiceTicket.showTab → Voice is a bottom tab
+  const [sheet, setSheet] = useState(null); // 'table' | 'server'
   const [me, setMe] = useState(null);
   const [rid, setRid] = useState(null);
   const [restaurantName, setRestaurantName] = useState('');
@@ -115,6 +124,7 @@ export default function VoiceTicketNative() {
         const id = user?.restaurantId || user?.restaurant?.id;
         if (!id) { setLoadError('No restaurant assigned'); return; }
         setMe(user); setRid(id); setRestaurantName(user?.restaurant?.name || '');
+        setTabMode(user?.restaurant?.posSettings?.voiceTicket?.showTab === true);
         setServer({ id: user?.id || user?.userId || null, name: user?.name || 'Me', role: user?.role || '' });
         try { setTickets(JSON.parse((await AsyncStorage.getItem(todayKey(id))) || '[]')); } catch { /* none */ }
         const [vs, ms, cfg] = await Promise.all([
@@ -149,6 +159,14 @@ export default function VoiceTicketNative() {
       try { Speech && Speech.stop(); } catch (_) { /* none */ }
     };
   }, []);
+
+  // owner changed Voice settings on the web → pick them up when the app refreshes settings
+  useEffect(() => restaurantEvents.on('settings', ({ posSettings } = {}) => {
+    const v = posSettings && posSettings.voiceTicket;
+    if (!v) return;
+    setTabMode(v.showTab === true);
+    setSettings((cur) => (cur ? { ...cur, enabled: v.enabled === true, askServer: v.askServer === true, handsFree: v.handsFree !== false, replies: ['text', 'voice', 'off'].includes(v.replies) ? v.replies : 'text', afterSend: v.afterSend === 'mark_served' ? 'mark_served' : 'keep_open' } : cur));
+  }), []);
 
   // ── understand ──
   const understand = useCallback(async (payload) => {
@@ -512,9 +530,6 @@ export default function VoiceTicketNative() {
   }, [menu, search]);
   const itemCount = ticket ? ticket.lines.reduce((a, l) => a + l.quantity, 0) : 0;
   const needs = ticket ? ticket.unclear.length + ticket.lines.filter((l) => l.needsVariant).length : 0;
-  const headText = ticket
-    ? (isDineIn(ticket.orderType) ? (ticket.tableNumber ? `TABLE ${ticket.tableNumber}` : 'DINE-IN') : `${typeLabel(ticket.orderType).toUpperCase()}${ticket.customerName ? ' · ' + ticket.customerName.toUpperCase() : ''}`)
-    : 'NEW ORDER';
   const handsFree = settings?.handsFree !== false;
   let status = { tone: 'muted', title: handsFree ? 'Tap and just talk' : 'Tap and say the order', text: handsFree ? 'Table or to-go name, then the items · say “that’s it” to send' : 'Table or to-go name, then each item · tap again when done' };
   if (autoSend) status = { tone: 'ok', title: `Sending in ${autoSend.left}`, text: 'Tap Undo to keep editing' };
@@ -526,404 +541,536 @@ export default function VoiceTicketNative() {
   else if (phase === 'check' && needs) status = { tone: 'warn', title: needs === 1 ? 'Check 1 item' : `Check ${needs} items`, text: 'Pick the right choice, then send' };
   else if (phase === 'check') status = { tone: 'ok', title: 'Ready to send', text: 'Tap a line to change it' };
 
-  if (loadError) return <SafeAreaView style={st.center}><Text style={st.muted}>{loadError}</Text></SafeAreaView>;
+  if (loadError) {
+    return (
+      <SafeAreaView style={st.center}>
+        <Ionicons name="cloud-offline-outline" size={40} color={MUTED} />
+        <Text style={[st.muted, { marginTop: 10, textAlign: 'center' }]}>{loadError}</Text>
+      </SafeAreaView>
+    );
+  }
   if (!settings) return <SafeAreaView style={st.center}><ActivityIndicator color={RED} /></SafeAreaView>;
   if (!settings.enabled) {
     return (
       <SafeAreaView style={st.center}>
-        <Text style={st.h1}>Voice Ticket is off</Text>
-        <Text style={[st.muted, { textAlign: 'center', marginTop: 8, maxWidth: 360 }]}>The owner can turn it on in Admin → Settings → Voice Ticket.</Text>
-        <Pressable style={[st.btnDark, { marginTop: 16 }]} onPress={() => router.back()}><Text style={st.btnDarkT}>Back</Text></Pressable>
+        <View style={st.offIcon}><Ionicons name="mic-off-outline" size={30} color={RED} /></View>
+        <Text style={st.h1}>Voice orders are off</Text>
+        <Text style={[st.muted, { textAlign: 'center', marginTop: 8, maxWidth: 340, lineHeight: 20 }]}>The owner can turn them on in Admin → Settings → Voice Ticket.</Text>
+        {!tabMode && <Pressable style={[st.wideBtn, { marginTop: 20, alignSelf: 'center', paddingHorizontal: 28 }]} onPress={() => router.back()}><Text style={st.wideBtnT}>Back</Text></Pressable>}
       </SafeAreaView>
     );
   }
 
   const listening = phase === 'listening';
   const busy = phase === 'thinking' || phase === 'sending';
+  const orbLive = convo || listening;
+  // the dock sits above the bottom tab bar when Voice is a tab, else above the home indicator
+  const dockBottom = tabMode ? tabBarH + 10 : Math.max(insets.bottom, 12) + 6;
+  const total = ticket ? ticket.lines.reduce((a, l) => a + (Number(l.price) || 0) * l.quantity, 0) : 0;
+  const curType = (ticket && ticket.orderType) || orderTypes[0] || 'dine-in';
+  const dine = isDineIn(curType);
+  const hasHead = !!(ticket && (ticket.tableNumber || ticket.customerName));
+  const where = !ticket ? (dine ? 'Choose table' : typeLabel(curType))
+    : dine ? (ticket.tableNumber ? `Table ${ticket.tableNumber}` : 'Choose table')
+      : `${typeLabel(curType)}${ticket.customerName ? ' · ' + ticket.customerName : ''}`;
+  const blankTicket = () => ({ orderType: orderTypes[0] || 'dine-in', tableNumber: null, customerName: null, orderNotes: null, lines: [], unclear: [] });
+  const setHead = (patch) => setTicket((tk) => ({ ...(tk || blankTicket()), ...patch }));
+  const lastYou = [...log].reverse().find((t) => t.kind === 'you');
+  const lastAi = [...log].reverse().find((t) => t.kind !== 'you');
+  const hasLines = !!(ticket && (ticket.lines.length || ticket.unclear.length));
+  const examples = [
+    ['Order', 'Table five, two cheeseburgers, one no onion, and a Coke'],
+    ['Change', 'Make it two Cokes, no ice'],
+    ['Ask', 'What’s on table twelve, and the bill?'],
+    ['Send', handsFree ? 'That’s it' : 'Tap Send when it looks right'],
+  ];
+  const dotColor = error ? ERR : autoSend || phase === 'sent' || status.tone === 'ok' ? OK : status.tone === 'warn' ? WARN : orbLive ? RED : '#C9C2BE';
+  const closeSheet = () => setSheet(null);
+  const undoSend = () => { setAutoSend(null); flash('Not sent — keep editing'); pushLog('say', 'Not sent — keep editing'); };
 
-  const TicketPaper = (
-    <View style={st.paper}>
-      <Text style={st.sub}>KITCHEN TICKET</Text>
-      <Pressable disabled={!ticket} onPress={() => setEditHead((v) => !v)} accessibilityRole="button" accessibilityLabel="Change table or name">
-        <Text style={[st.head, !ticket && { color: '#C9C9C9' }]}>{headText}</Text>
-      </Pressable>
-      {editHead && ticket && (
-        <View style={st.headEdit}>
-          <View style={st.seg}>
-            {orderTypes.slice(0, 4).map((ot) => (
-              <Pressable key={ot} onPress={() => setTicket((tk) => ({ ...tk, orderType: ot }))} style={[st.segB, ticket.orderType === ot && st.segOn]}>
-                <Text style={[st.segT, ticket.orderType === ot && { color: INK }]}>{typeLabel(ot)}</Text>
-              </Pressable>
-            ))}
+  const Orb = (big) => {
+    const size = big ? 128 : 76;
+    const live = handsFree ? convo : listening;
+    const onPress = handsFree ? (convo ? stopConvo : startConvo) : (listening ? stopListening : startListening);
+    const disabled = handsFree ? (phase === 'sending' || !!autoSend) : busy;
+    return (
+      <View style={[st.ring, { width: size + 22, height: size + 22, borderRadius: (size + 22) / 2 }, live && st.ringLive]}>
+        <Pressable
+          style={({ pressed }) => [st.orb, { width: size, height: size, borderRadius: size / 2 }, autoSend && { backgroundColor: OK }, disabled && { opacity: 0.55 }, pressed && { transform: [{ scale: 0.96 }] }]}
+          disabled={disabled} onPress={onPress} accessibilityRole="button" accessibilityLabel={live ? 'Stop listening' : 'Start talking'}
+        >
+          {live ? (
+            <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 6 + Math.max(0.1, level) * k * (big ? 46 : 28) }]} />)}</View>
+          ) : <Ionicons name={autoSend ? 'checkmark' : 'mic'} size={big ? 50 : 32} color="#fff" />}
+        </Pressable>
+      </View>
+    );
+  };
+
+  const Status = (big) => (
+    <View style={[st.status, big && { marginTop: 18 }]}>
+      <View style={st.statusTop}>
+        {busy || (convo && thinking > 0) ? <ActivityIndicator size="small" color={RED} /> : <View style={[st.dot, { backgroundColor: dotColor }]} />}
+        <Text style={[big ? st.statusTBig : st.statusT, error && { color: ERR }]} numberOfLines={1}>{error ? 'Something went wrong' : status.title}</Text>
+      </View>
+      <Text style={[st.statusS, big && { fontSize: 15 }, error && { color: ERR }]} numberOfLines={2}>{error || status.text}</Text>
+    </View>
+  );
+
+  const Bubble = (t) => (t.kind === 'you' ? (
+    <View key={t.id} style={st.youB}><Text style={st.youT}>{t.text.replace(/^“|”$/g, '')}</Text></View>
+  ) : (
+    <View key={t.id} style={[st.aiB, t.kind === 'did' && st.didB]}>
+      <Ionicons name={t.kind === 'did' ? 'checkmark-circle' : 'sparkles'} size={16} color={t.kind === 'did' ? OK : RED} style={{ marginTop: 2 }} />
+      <Text style={[st.aiT, t.kind === 'say' && { color: DEEP }]}>{t.text}</Text>
+    </View>
+  ));
+
+  const Hero = (
+    <View style={st.hero}>
+      <Text style={[st.heroT, isTablet && { fontSize: 26 }]}>{handsFree ? 'Tap the mic and just talk' : 'Tap the mic and say the order'}</Text>
+      <Text style={st.heroS}>{handsFree ? 'Say the table, then the items. Say “that’s it” to send.' : 'Say the table, then the items. Tap the mic again when done.'}</Text>
+      <View style={st.group}>
+        {examples.map(([k, say], i) => (
+          <View key={k} style={[st.exRow, i > 0 && st.sep]}>
+            <Text style={st.exK}>{k}</Text>
+            <Text style={st.exT}>“{say}”</Text>
           </View>
-          {isDineIn(ticket.orderType)
-            ? <TextInput style={st.input} placeholder="Table" keyboardType="number-pad" value={ticket.tableNumber || ''} onChangeText={(v) => setTicket((tk) => ({ ...tk, tableNumber: v.slice(0, 20) }))} />
-            : <TextInput style={st.input} placeholder="Name" value={ticket.customerName || ''} onChangeText={(v) => setTicket((tk) => ({ ...tk, customerName: v.slice(0, 60) }))} />}
-          <Pressable style={st.btnDark} onPress={() => setEditHead(false)}><Text style={st.btnDarkT}>Done</Text></Pressable>
-        </View>
-      )}
-      <View style={st.meta}><Text style={st.metaT}>{server?.name ? `Server: ${server.name.split(' ')[0]}` : ''}</Text><Text style={st.metaT}>{itemCount ? `${itemCount} ITEM${itemCount === 1 ? '' : 'S'}` : ''}</Text></View>
-      <View style={st.rule} />
+        ))}
+      </View>
+    </View>
+  );
 
-      {!ticket && phase !== 'thinking' && <Text style={st.empty}>The ticket builds itself as you talk. Table or to-go name first, then the items.</Text>}
-      {phase === 'thinking' && !ticket && <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the ticket…</Text></View>}
-
+  const OrderCard = (
+    <View style={st.group}>
+      <View style={st.cardHead}>
+        <Text style={st.cardTitle}>Order</Text>
+        <Text style={st.cardMeta}>{itemCount ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}</Text>
+        <View style={{ flex: 1 }} />
+        {ticket ? <Pressable onPress={startOver} hitSlop={10}><Text style={st.clear}>Clear</Text></Pressable> : null}
+      </View>
+      {!hasLines && (phase === 'thinking'
+        ? <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View>
+        : <Text style={st.emptyT}>Items you say show up here.</Text>)}
       {ticket && ticket.lines.map((l) => (
-        <View key={l.key} style={[st.line, sel === l.key && st.lineSel]}>
-          <Pressable onPress={() => { setSel(sel === l.key ? null : l.key); setNoteDraft(''); }} style={st.lineBtn} accessibilityLabel={`Change ${l.name}`}>
-            <Text style={st.q}>{l.quantity}</Text>
-            <Text style={st.name}>{l.name.toUpperCase()}{l.variant ? ` (${l.variant.toUpperCase()})` : ''}</Text>
+        <View key={l.key} style={[st.sep, sel === l.key && st.rowSel]}>
+          <Pressable style={({ pressed }) => [st.row, pressed && { backgroundColor: '#FAF6F4' }]} onPress={() => { setSel(sel === l.key ? null : l.key); setNoteDraft(''); }} accessibilityLabel={`Change ${l.name}`}>
+            <View style={st.qty}><Text style={st.qtyT}>{l.quantity}</Text></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={st.itemT}>{l.name}{l.variant ? <Text style={st.varT}>{'  ' + l.variant}</Text> : null}</Text>
+              {l.notes.length ? (
+                <Text style={st.notesT}>{l.notes.map((n, k) => <Text key={k} style={/^(no|hold|without|less)\b/i.test(n) ? { color: ERR } : /^(extra|add|with)\b/i.test(n) ? { color: OK } : null}>{k ? '  ·  ' : ''}{n}</Text>)}</Text>
+              ) : null}
+            </View>
+            {Number(l.price) ? <Text style={st.priceT}>{formatCurrency(l.price * l.quantity)}</Text> : null}
           </Pressable>
-          {l.notes.map((n, k) => (
-            <Text key={k} style={[st.note, /^(no|hold|without)\b/i.test(n) ? { color: '#B42318' } : /^(extra|add|with)\b/i.test(n) ? { color: '#0F7A43' } : null]}>** {n.toUpperCase()}</Text>
-          ))}
           {l.needsVariant && (
-            <View style={st.pick}><Text style={st.pickT}>Which size?</Text><View style={st.wrap}>{l.variants.map((v) => <Pressable key={v} style={st.pickB} onPress={() => setVariant(l, v)}><Text style={st.pickBT}>{v}</Text></Pressable>)}</View></View>
+            <View style={st.ask}>
+              <Text style={st.askT}>Which one?</Text>
+              <View style={st.wrap}>{l.variants.map((v) => <Pressable key={v} style={st.choice} onPress={() => setVariant(l, v)}><Text style={st.choiceT}>{v}</Text></Pressable>)}</View>
+            </View>
           )}
           {sel === l.key && (
             <View style={st.edit}>
               <View style={st.wrap}>
-                <Pressable style={st.step} onPress={() => upd(l.key, (x) => ({ ...x, quantity: Math.max(1, x.quantity - 1) }))} accessibilityLabel="One less"><Ionicons name="remove" size={20} color={INK} /></Pressable>
-                <Pressable style={st.step} onPress={() => upd(l.key, (x) => ({ ...x, quantity: x.quantity + 1 }))} accessibilityLabel="One more"><Ionicons name="add" size={20} color={INK} /></Pressable>
-                <Pressable style={st.step} onPress={() => { setTicket((tk) => ({ ...tk, lines: tk.lines.filter((x) => x.key !== l.key) })); setSel(null); }}><Text style={{ color: '#B42318', fontWeight: '600' }}>Remove</Text></Pressable>
-                <Pressable style={[st.step, { backgroundColor: RED, borderColor: RED, marginLeft: 'auto' }]} onPress={() => setSel(null)}><Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text></Pressable>
+                <View style={st.stepper}>
+                  <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: Math.max(1, x.quantity - 1) }))} accessibilityLabel="One less"><Ionicons name="remove" size={20} color={INK} /></Pressable>
+                  <Text style={st.stepN}>{l.quantity}</Text>
+                  <Pressable style={st.stepB} onPress={() => upd(l.key, (x) => ({ ...x, quantity: x.quantity + 1 }))} accessibilityLabel="One more"><Ionicons name="add" size={20} color={INK} /></Pressable>
+                </View>
+                <Pressable style={st.ghost} onPress={() => { setTicket((tk) => ({ ...tk, lines: tk.lines.filter((x) => x.key !== l.key) })); setSel(null); }}>
+                  <Ionicons name="trash-outline" size={17} color={ERR} /><Text style={[st.ghostT, { color: ERR }]}>Remove</Text>
+                </Pressable>
+                <Pressable style={[st.ghost, st.ghostDone]} onPress={() => setSel(null)}><Text style={[st.ghostT, { color: '#fff' }]}>Done</Text></Pressable>
               </View>
-              {l.notes.length > 0 && <View style={st.wrap}>{l.notes.map((n, k) => <Pressable key={k} style={st.chip} onPress={() => upd(l.key, (x) => ({ ...x, notes: x.notes.filter((_, j) => j !== k) }))}><Text style={st.chipT}>{n} ✕</Text></Pressable>)}</View>}
-              <View style={st.wrap}>
-                <TextInput style={[st.input, { flex: 1 }]} placeholder="Add a note, e.g. No onion" value={noteDraft} onChangeText={setNoteDraft} onSubmitEditing={() => { const n = noteDraft.trim(); if (n) { upd(l.key, (x) => ({ ...x, notes: [...x.notes, n.slice(0, 80)] })); setNoteDraft(''); } }} returnKeyType="done" />
-              </View>
+              {l.notes.length > 0 && <View style={st.wrap}>{l.notes.map((n, k) => <Pressable key={k} style={st.chip} onPress={() => upd(l.key, (x) => ({ ...x, notes: x.notes.filter((_, j) => j !== k) }))}><Text style={st.chipT}>{n}</Text><Ionicons name="close" size={14} color={MUTED} /></Pressable>)}</View>}
+              <TextInput style={st.input} placeholder="Add a note, e.g. no onion" placeholderTextColor="#A8A29E" value={noteDraft} onChangeText={setNoteDraft} onSubmitEditing={() => { const n = noteDraft.trim(); if (n) { upd(l.key, (x) => ({ ...x, notes: [...x.notes, n.slice(0, 80)] })); setNoteDraft(''); } }} returnKeyType="done" />
             </View>
           )}
         </View>
       ))}
-
       {ticket && ticket.unclear.map((u) => (
-        <View key={u.key} style={st.unclear}>
-          <Text style={st.pickT}>{u.reason === 'sold_out' ? `${u.heard} is sold out.` : `Heard “${u.heard}”.`} {u.options.length ? 'Which one?' : 'Not on the menu.'}{u.quantity > 1 ? ` (×${u.quantity})` : ''}</Text>
-          <View style={st.wrap}>
-            {u.options.map((o) => <Pressable key={o.menuItemId} style={st.pickB} onPress={() => resolve(u, o)}><Text style={st.pickBT}>{o.name}</Text></Pressable>)}
-            <Pressable style={[st.pickB, st.pickGhost]} onPress={() => { setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) })); setSearch(u.heard); setAdding(true); }}><Text style={st.pickBT}>Search menu</Text></Pressable>
-            <Pressable style={[st.pickB, st.pickGhost]} onPress={() => setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) }))}><Text style={st.pickBT}>Remove</Text></Pressable>
+        <View key={u.key} style={st.sep}>
+          <View style={[st.ask, { marginTop: 12 }]}>
+            <Text style={st.askT}>{u.reason === 'sold_out' ? `${u.heard} is sold out.` : `Heard “${u.heard}”.`} {u.options.length ? 'Which one?' : 'Not on the menu.'}{u.quantity > 1 ? ` (×${u.quantity})` : ''}</Text>
+            <View style={st.wrap}>
+              {u.options.map((o) => <Pressable key={o.menuItemId} style={st.choice} onPress={() => resolve(u, o)}><Text style={st.choiceT}>{o.name}</Text></Pressable>)}
+              <Pressable style={[st.choice, st.choiceGhost]} onPress={() => { setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) })); setSearch(u.heard); setAdding(true); }}><Text style={st.choiceT}>Search</Text></Pressable>
+              <Pressable style={[st.choice, st.choiceGhost]} onPress={() => setTicket((tk) => ({ ...tk, unclear: tk.unclear.filter((x) => x.key !== u.key) }))}><Text style={st.choiceT}>Skip</Text></Pressable>
+            </View>
           </View>
         </View>
       ))}
-
-      <View style={st.rule} />
-      <View style={st.foot}>
-        <Pressable onPress={() => setAdding(true)} hitSlop={8}><Text style={st.link}>+ Add item</Text></Pressable>
-        {ticket ? <Pressable onPress={startOver} hitSlop={8}><Text style={st.link}>Start over</Text></Pressable> : null}
-      </View>
-    </View>
-  );
-
-  const TodayList = (
-    <View style={st.today}>
-      <View style={st.todayH}><Text style={st.todayHT}>Today</Text><Text style={st.muted}>{tickets.length} tickets</Text></View>
-      {!tickets.length && <Text style={st.muted}>Sent tickets show here for reprint.</Text>}
-      {tickets.map((e, i) => (
-        <View key={e.orderId + '_' + i} style={st.tk}>
-          <View style={{ flex: 1 }}><Text style={st.tkH}>{e.head}</Text><Text style={st.tkM}>{[e.number && `#${e.number}`, e.who, `${e.count} items`, e.at].filter(Boolean).join(' · ')}</Text></View>
-          <Pressable style={st.tkB} onPress={() => reprint(e)} accessibilityLabel={`Reprint ${e.head}`}><Ionicons name="print-outline" size={20} color={INK} /></Pressable>
-        </View>
-      ))}
-    </View>
-  );
-
-  const orbLive = convo || listening;
-  const eyebrow = autoSend ? 'ORDER COMPLETE' : error ? 'PROBLEM' : orbLive ? 'LISTENING' : phase === 'sent' ? 'SENT' : busy ? 'WORKING' : 'READY';
-  const eyeColor = autoSend || phase === 'sent' ? OK : error ? '#B42318' : RED;
-  const lastSay = [...log].reverse().find((t) => t.kind === 'say');
-  const examples = [
-    ['ORDER', 'Table five, two cheeseburgers, one no onion, and a Coke'],
-    ['CHANGE', 'Make it two Cokes, no ice'],
-    ['ASK', 'What’s on table twelve, and the bill?'],
-    ['SEND', handsFree ? 'That’s it' : 'Tap Send when it looks right'],
-  ];
-
-  const Orb = (big) => (handsFree ? (
-    <Pressable style={[big ? st.orbBig : st.orb, orbLive && st.orbLive, autoSend && { backgroundColor: OK }, phase === 'sending' && { opacity: 0.6 }]} disabled={phase === 'sending' || !!autoSend} onPress={convo ? stopConvo : startConvo} accessibilityRole="button" accessibilityLabel={convo ? 'Stop listening' : 'Start talking'}>
-      {convo ? (
-        <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 8 + (hearing ? level * k : 0.12) * (big ? 40 : 26) }]} />)}</View>
-      ) : <Ionicons name={autoSend ? 'checkmark' : 'mic'} size={big ? 46 : 32} color="#fff" />}
-    </Pressable>
-  ) : (
-    <Pressable style={[big ? st.orbBig : st.orb, listening && st.orbLive, busy && { opacity: 0.6 }]} disabled={busy} onPress={listening ? stopListening : startListening} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Start speaking'}>
-      {listening ? <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 8 + level * k * (big ? 40 : 26) }]} />)}</View> : <Ionicons name="mic" size={big ? 46 : 32} color="#fff" />}
-    </Pressable>
-  ));
-
-  const StatusText = (big) => (
-    <View style={{ flex: 1, minWidth: 0 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Text style={[st.eyebrow, { color: eyeColor }]}>{eyebrow}</Text>
-        {(busy || (convo && thinking > 0)) && <ActivityIndicator size="small" color={RED} />}
-      </View>
-      <Text style={big ? st.otitleBig : st.otitle}>{error ? 'Something went wrong' : status.title}</Text>
-      <Text style={[st.otext, error && { color: '#B42318', fontWeight: '600' }]} numberOfLines={big ? 3 : 2}>{error || status.text}</Text>
-      {big && heard && orbLive ? <Text style={st.liveT} numberOfLines={2}>“{heard}”</Text> : null}
-    </View>
-  );
-
-  const LogList = (
-    <View style={{ gap: 8 }}>
-      {log.map((t) => (
-        <View key={t.id} style={[st.turn, t.kind === 'did' && st.turnDid, t.kind === 'say' && st.turnSay]}>
-          <View style={[st.tbadge, t.kind === 'you' && st.tbYou, t.kind === 'did' && { backgroundColor: OK }, t.kind === 'say' && { backgroundColor: RED }]}>
-            <Text style={[st.tbadgeT, t.kind === 'you' && { color: '#44403C' }]}>{t.kind === 'you' ? 'You' : t.kind === 'did' ? '✓' : 'AI'}</Text>
-          </View>
-          <Text style={[st.turnT, t.kind === 'did' && { color: INK, fontWeight: '500' }, t.kind === 'say' && { color: DEEP, fontWeight: '600' }]}>{t.text}</Text>
-        </View>
-      ))}
-    </View>
-  );
-
-  const Examples = (
-    <View style={{ gap: 10 }}>
-      <Text style={st.cap}>{handsFree ? 'JUST TALK — FOR EXAMPLE' : 'FOR EXAMPLE'}</Text>
-      <View style={[st.exGrid, isTablet && { flexDirection: 'row', flexWrap: 'wrap' }]}>
-        {examples.map(([k, say]) => (
-          <View key={k} style={[st.ex, isTablet && { width: '48.5%' }]}><Text style={st.exK}>{k}</Text><Text style={st.exT}>“{say}”</Text></View>
-        ))}
+      <View style={[st.sep, st.cardFoot]}>
+        <Pressable style={st.addBtn} onPress={() => setAdding(true)} hitSlop={6}><Ionicons name="add-circle" size={20} color={RED} /><Text style={st.addT}>Add item</Text></Pressable>
+        {total ? <Text style={st.totalT}>{formatCurrency(total)}</Text> : null}
       </View>
     </View>
   );
 
   const ConflictBox = conflict ? (
     <View style={st.conflict}>
-      <Text style={st.pickT}>{conflict.missing ? `Table ${conflict.table} isn't set up in DineOpen. Send it with “Table ${conflict.table}” on the kitchen ticket?` : `Table ${conflict.table} already has an open order. Add these items to it? The kitchen gets only the new items.`}</Text>
+      <Text style={st.askT}>{conflict.missing ? `Table ${conflict.table} isn't set up in DineOpen. Send it with “Table ${conflict.table}” on the kitchen ticket?` : `Table ${conflict.table} already has an open order. Add these items to it? The kitchen gets only the new items.`}</Text>
       <View style={st.wrap}>
-        <Pressable style={[st.step, { backgroundColor: RED, borderColor: RED }]} disabled={phase === 'sending'} onPress={() => (conflict.missing ? send({ tableNotSetUp: true }) : addToOpenOrder())}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>{conflict.missing ? `Send with Table ${conflict.table}` : `Add to Table ${conflict.table}'s order`}</Text>
+        <Pressable style={[st.ghost, st.ghostDone]} disabled={phase === 'sending'} onPress={() => (conflict.missing ? send({ tableNotSetUp: true }) : addToOpenOrder())}>
+          <Text style={[st.ghostT, { color: '#fff' }]}>{conflict.missing ? `Send with Table ${conflict.table}` : `Add to Table ${conflict.table}`}</Text>
         </Pressable>
-        <Pressable style={st.step} onPress={() => { setConflict(null); if (conflict.missing) setEditHead(true); }}><Text style={{ fontWeight: '600' }}>{conflict.missing ? 'Change table' : 'Cancel'}</Text></Pressable>
+        <Pressable style={st.ghost} onPress={() => { setConflict(null); if (conflict.missing) setSheet('table'); }}><Text style={st.ghostT}>{conflict.missing ? 'Change table' : 'Cancel'}</Text></Pressable>
       </View>
     </View>
   ) : null;
 
-  const SendBtn = autoSend ? (
-    <Pressable style={[st.send, { backgroundColor: OK }]} onPress={() => { setAutoSend(null); flash('Not sent — keep editing'); pushLog('say', 'Not sent — keep editing'); }} accessibilityRole="button">
-      <Text style={st.sendT}>Sending in {autoSend.left} — tap to Undo</Text>
+  const WideSend = autoSend ? (
+    <Pressable style={[st.wideBtn, { backgroundColor: OK }]} onPress={undoSend} accessibilityRole="button">
+      <Text style={st.wideBtnT}>Sending in {autoSend.left} · Undo</Text>
     </Pressable>
   ) : (
-    <Pressable style={[st.send, !canSend && st.sendOff]} disabled={!canSend} onPress={() => send()} accessibilityRole="button">
-      <Text style={[st.sendT, !canSend && { color: '#8A8580' }]}>Send to kitchen</Text>
-      {itemCount ? <View style={[st.sendPill, !canSend && { backgroundColor: '#D6CFCB' }]}><Text style={st.sendPillT}>{itemCount}</Text></View> : null}
+    <Pressable style={[st.wideBtn, !canSend && st.wideOff]} disabled={!canSend} onPress={() => send()} accessibilityRole="button">
+      <Ionicons name="paper-plane" size={18} color={canSend ? '#fff' : '#A8A29E'} />
+      <Text style={[st.wideBtnT, !canSend && { color: '#A8A29E' }]}>Send to kitchen{itemCount ? ` · ${itemCount}` : ''}</Text>
     </Pressable>
+  );
+
+  const Header = (
+    <View style={st.header}>
+      <View style={st.top}>
+        {!tabMode && <Pressable style={st.back} onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><Ionicons name="chevron-back" size={26} color={INK} /></Pressable>}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.title}>Voice order</Text>
+          {restaurantName ? <Text style={st.subT} numberOfLines={1}>{restaurantName}</Text> : null}
+        </View>
+        <Pressable style={st.round} onPress={() => setShowToday(true)} accessibilityLabel={`Sent today: ${tickets.length}`}>
+          <Ionicons name="receipt-outline" size={21} color={INK} />
+          {tickets.length ? <View style={st.badge}><Text style={st.badgeT}>{tickets.length > 99 ? '99+' : tickets.length}</Text></View> : null}
+        </Pressable>
+      </View>
+      <View style={st.ctx}>
+        <Pressable style={({ pressed }) => [st.pill, hasHead && st.pillOn, pressed && { opacity: 0.7 }]} onPress={() => setSheet('table')} accessibilityLabel="Choose table or to-go">
+          <Ionicons name={dine ? 'restaurant-outline' : 'bag-handle-outline'} size={16} color={hasHead ? DEEP : INK} />
+          <Text style={[st.pillT, hasHead && { color: DEEP }]} numberOfLines={1}>{where}</Text>
+          <Ionicons name="chevron-down" size={14} color={hasHead ? DEEP : MUTED} />
+        </Pressable>
+        {settings.askServer && (
+          <Pressable style={({ pressed }) => [st.pill, pressed && { opacity: 0.7 }]} onPress={() => setSheet('server')} accessibilityLabel="Who is taking the order">
+            <Ionicons name="person-circle-outline" size={17} color={INK} />
+            <Text style={st.pillT} numberOfLines={1}>{server?.name ? server.name.split(' ')[0] : 'Who?'}</Text>
+            <Ionicons name="chevron-down" size={14} color={MUTED} />
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+
+  // bottom sheet (plain function, not a component, so its inputs keep focus across re-renders)
+  const Sheet = ({ visible, onClose, title, children, keyboard }) => (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={keyboard && Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Pressable style={st.sheetBg} onPress={onClose}>
+          <Pressable style={[st.sheet, isTablet && st.sheetTablet, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]} onPress={() => {}}>
+            <View style={st.grab} />
+            <View style={st.sheetHead}>
+              <Text style={st.sheetH}>{title}</Text>
+              <Pressable style={st.sheetX} onPress={onClose} hitSlop={10} accessibilityLabel="Close"><Ionicons name="close" size={20} color={INK} /></Pressable>
+            </View>
+            {children}
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 
   return (
     <SafeAreaView style={st.wrapAll} edges={['top', 'left', 'right']}>
-      <View style={st.top}>
-        <Pressable style={st.iconBtn} onPress={() => router.back()} hitSlop={6} accessibilityLabel="Back"><Ionicons name="chevron-back" size={22} color={INK} /></Pressable>
-        <View style={st.mark}><Ionicons name="mic" size={15} color="#fff" /></View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={st.title}>Voice Ticket</Text>
-          {isTablet && restaurantName ? <Text style={st.sub2} numberOfLines={1}>{restaurantName}</Text> : null}
-        </View>
-        <Pressable style={st.todayBtn} onPress={() => setShowToday(true)} accessibilityLabel={`Today's tickets: ${tickets.length}`}>
-          <Ionicons name="print-outline" size={16} color={INK} />
-          <Text style={st.todayBtnT}>Today</Text>
-          <View style={st.countPill}><Text style={st.countPillT}>{tickets.length}</Text></View>
-        </Pressable>
-      </View>
-      {floor.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.floorBar} contentContainerStyle={st.floorRow}>
-          {floor.map((t) => {
-            const mine = ticket && isDineIn(ticket.orderType) && String(ticket.tableNumber || '') === t.n;
-            return (
-              <View key={t.n} style={[st.tb, t.busy && st.tbBusy, mine && st.tbMine]} accessibilityLabel={`Table ${t.n} ${mine ? 'this ticket' : t.busy ? 'has an order' : 'free'}`}>
-                <Text style={[st.tbT, t.busy && { color: DEEP }, mine && { color: '#fff' }]}>{t.n}</Text>
-              </View>
-            );
-          })}
-        </ScrollView>
-      )}
-      {settings.askServer && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.servers}>
-          <Text style={st.muted}>Taken by  </Text>
-          {[server, ...staff.filter((s) => s.id !== server?.id)].filter(Boolean).slice(0, 10).map((s) => (
-            <Pressable key={s.id || s.name} style={[st.srv, server?.id === s.id && server?.name === s.name && st.srvOn]} onPress={() => setServer(s)}>
-              <Text style={[st.srvT, server?.id === s.id && server?.name === s.name && { color: '#fff' }]}>{s.name.split(' ')[0]}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
+      {Header}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {isTablet ? (
           <View style={st.tabletBody}>
-            <ScrollView ref={logScroll} style={{ flex: 1.35 }} contentContainerStyle={{ padding: 20, gap: 16 }} keyboardShouldPersistTaps="handled" onContentSizeChange={() => { try { logScroll.current && logScroll.current.scrollToEnd({ animated: true }); } catch (_) { /* ignore */ } }}>
-              <View style={st.orbCard}>{Orb(true)}{StatusText(true)}</View>
-              {ConflictBox}
-              {log.length ? LogList : Examples}
-            </ScrollView>
-            <ScrollView style={{ flex: 1, maxWidth: 460 }} contentContainerStyle={{ padding: 20, paddingLeft: 4, gap: 12 }} keyboardShouldPersistTaps="handled">
-              {TicketPaper}
-              {SendBtn}
-              {handsFree && !autoSend ? <Text style={st.hint}>or just say “that’s it”</Text> : null}
-            </ScrollView>
+            <View style={st.leftPane}>
+              <ScrollView ref={logScroll} style={{ flex: 1 }} contentContainerStyle={st.leftScroll} keyboardShouldPersistTaps="handled" onContentSizeChange={() => { try { logScroll.current && logScroll.current.scrollToEnd({ animated: true }); } catch (_) { /* ignore */ } }}>
+                {log.length ? <View style={{ gap: 10 }}>{log.map(Bubble)}</View> : Hero}
+              </ScrollView>
+              <View style={[st.tabDock, { paddingBottom: dockBottom + 6 }]}>
+                {Orb(true)}
+                {Status(true)}
+              </View>
+            </View>
+            <View style={st.rightPane}>
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
+                {ConflictBox}
+                {OrderCard}
+              </ScrollView>
+              <View style={[st.rightFoot, { paddingBottom: dockBottom }]}>
+                {WideSend}
+                {handsFree && !autoSend ? <Text style={st.hint}>or just say “that’s it”</Text> : null}
+              </View>
+            </View>
           </View>
         ) : (
           <>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={st.stage} keyboardShouldPersistTaps="handled">
-              {lastSay && orbLive ? (
-                <View style={[st.turn, st.turnSay, { alignSelf: 'stretch' }]}>
-                  <View style={[st.tbadge, { backgroundColor: RED }]}><Text style={st.tbadgeT}>AI</Text></View>
-                  <Text style={[st.turnT, { color: DEEP, fontWeight: '600' }]}>{lastSay.text}</Text>
-                </View>
-              ) : null}
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={st.phoneScroll} keyboardShouldPersistTaps="handled">
               {ConflictBox}
-              {TicketPaper}
-              {log.length ? (<View style={{ alignSelf: 'stretch', gap: 8 }}><Text style={st.cap}>WHAT YOU SAID</Text>{LogList}</View>) : <View style={{ alignSelf: 'stretch' }}>{Examples}</View>}
+              {(lastYou || lastAi) && <View style={{ gap: 8 }}>{lastYou && Bubble(lastYou)}{lastAi && Bubble(lastAi)}</View>}
+              {ticket || phase === 'thinking' ? OrderCard : Hero}
             </ScrollView>
-            <View style={st.bar}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>{Orb(false)}{StatusText(false)}</View>
-              {SendBtn}
+            <View style={[st.dock, { paddingBottom: dockBottom }]}>
+              {autoSend ? (
+                <Pressable style={st.undoBar} onPress={undoSend} accessibilityRole="button" accessibilityLabel="Undo send">
+                  <Ionicons name="time-outline" size={18} color="#fff" />
+                  <Text style={st.undoT}>Sending in {autoSend.left}…</Text>
+                  <Text style={st.undoBtn}>UNDO</Text>
+                </Pressable>
+              ) : Status(false)}
+              <View style={st.dockRow}>
+                <Pressable style={st.sideWrap} onPress={() => setAdding(true)} accessibilityLabel="Search the menu">
+                  <View style={st.side}><Ionicons name="search" size={22} color={INK} /></View>
+                  <Text style={st.sideL}>Search</Text>
+                </Pressable>
+                {Orb(false)}
+                <Pressable style={st.sideWrap} disabled={!canSend} onPress={() => send()} accessibilityLabel="Send to kitchen">
+                  <View style={[st.side, canSend && st.sideGo]}>
+                    <Ionicons name="paper-plane" size={21} color={canSend ? '#fff' : '#B9B2AE'} />
+                    {itemCount ? <View style={st.sideBadge}><Text style={st.sideBadgeT}>{itemCount}</Text></View> : null}
+                  </View>
+                  <Text style={[st.sideL, canSend && { color: RED }]}>Send</Text>
+                </Pressable>
+              </View>
             </View>
           </>
         )}
       </KeyboardAvoidingView>
 
-      <Modal visible={adding} animationType="slide" transparent onRequestClose={() => setAdding(false)}>
-        <View style={st.sheetBg}>
-          <View style={st.sheet}>
-            <View style={st.todayH}><Text style={st.todayHT}>Add item</Text><Pressable onPress={() => setAdding(false)} hitSlop={10}><Ionicons name="close" size={24} color={INK} /></Pressable></View>
-            <TextInput style={st.input} autoFocus placeholder="Search the menu" value={search} onChangeText={setSearch} />
-            <ScrollView style={{ maxHeight: 380 }} keyboardShouldPersistTaps="handled">
-              {results.map((m) => <Pressable key={m.id} style={st.result} onPress={() => addItem(m)}><Text style={st.resultT}>{m.name}</Text></Pressable>)}
-              {!results.length && <Text style={st.muted}>No match</Text>}
+      {Sheet({
+        visible: sheet === 'table', onClose: closeSheet, title: 'Order for', keyboard: true,
+        children: (
+          <View style={{ gap: 14 }}>
+            {orderTypes.length > 1 && (
+              <View style={st.seg}>
+                {orderTypes.slice(0, 4).map((ot) => (
+                  <Pressable key={ot} onPress={() => setHead({ orderType: ot })} style={[st.segB, curType === ot && st.segOn]}>
+                    <Text style={[st.segT, curType === ot && { color: INK }]}>{typeLabel(ot)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+            {dine ? (
+              <>
+                {floor.length > 0 && (
+                  <ScrollView style={{ maxHeight: 300 }} contentContainerStyle={st.tableGrid}>
+                    {floor.map((t) => {
+                      const on = String(ticket?.tableNumber || '') === t.n;
+                      return (
+                        <Pressable key={t.n} style={[st.tableT, t.busy && st.tableBusy, on && st.tableOn]} onPress={() => { setHead({ orderType: curType, tableNumber: t.n }); closeSheet(); }} accessibilityLabel={`Table ${t.n}${t.busy ? ', has an order' : ''}`}>
+                          <Text style={[st.tableN, on && { color: '#fff' }]}>{t.n}</Text>
+                          <Text style={[st.tableS, t.busy && { color: DEEP }, on && { color: '#fff' }]}>{t.busy ? 'busy' : 'free'}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+                <TextInput style={st.input} placeholder={floor.length ? 'Or type a table number' : 'Table number'} placeholderTextColor="#A8A29E" keyboardType="number-pad" value={ticket?.tableNumber || ''} onChangeText={(v) => setHead({ orderType: curType, tableNumber: v.slice(0, 20) || null })} returnKeyType="done" onSubmitEditing={closeSheet} />
+              </>
+            ) : (
+              <TextInput style={st.input} placeholder="Customer name (optional)" placeholderTextColor="#A8A29E" value={ticket?.customerName || ''} onChangeText={(v) => setHead({ customerName: v.slice(0, 60) || null })} returnKeyType="done" onSubmitEditing={closeSheet} />
+            )}
+            <Pressable style={st.wideBtn} onPress={closeSheet}><Text style={st.wideBtnT}>Done</Text></Pressable>
+          </View>
+        ),
+      })}
+
+      {Sheet({
+        visible: sheet === 'server', onClose: closeSheet, title: 'Who is taking it?',
+        children: (
+          <ScrollView style={{ maxHeight: 420 }}>
+            {[server, ...staff.filter((s) => s.id !== server?.id)].filter(Boolean).slice(0, 12).map((s, i) => {
+              const on = server?.id === s.id && server?.name === s.name;
+              return (
+                <Pressable key={s.id || s.name} style={[st.listRow, i > 0 && st.sep]} onPress={() => { setServer(s); closeSheet(); }}>
+                  <View style={st.avatar}><Text style={st.avatarT}>{s.name.slice(0, 1).toUpperCase()}</Text></View>
+                  <View style={{ flex: 1 }}><Text style={st.listT}>{s.name}</Text>{s.role ? <Text style={st.listS}>{s.role}</Text> : null}</View>
+                  {on && <Ionicons name="checkmark" size={22} color={RED} />}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ),
+      })}
+
+      {Sheet({
+        visible: adding, onClose: () => setAdding(false), title: 'Add item', keyboard: true,
+        children: (
+          <View style={{ gap: 10 }}>
+            <View style={st.searchBox}>
+              <Ionicons name="search" size={18} color={MUTED} />
+              <TextInput style={st.searchIn} autoFocus placeholder="Search the menu" placeholderTextColor="#A8A29E" value={search} onChangeText={setSearch} />
+            </View>
+            <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+              {results.map((m, i) => (
+                <Pressable key={m.id} style={({ pressed }) => [st.listRow, i > 0 && st.sep, pressed && { backgroundColor: '#FAF6F4' }]} onPress={() => addItem(m)}>
+                  <Text style={[st.listT, { flex: 1 }]}>{m.name}</Text>
+                  {Number(m.price) ? <Text style={st.listS}>{formatCurrency(m.price)}</Text> : null}
+                  <Ionicons name="add-circle" size={22} color={RED} />
+                </Pressable>
+              ))}
+              {!results.length && <Text style={[st.muted, { paddingVertical: 16 }]}>No match</Text>}
             </ScrollView>
           </View>
-        </View>
-      </Modal>
-      <Modal visible={showToday} animationType="slide" transparent onRequestClose={() => setShowToday(false)}>
-        <View style={st.sheetBg}>
-          <View style={st.sheet}>
-            <View style={st.todayH}><Text style={st.todayHT}> </Text><Pressable onPress={() => setShowToday(false)} hitSlop={10}><Ionicons name="close" size={24} color={INK} /></Pressable></View>
-            <ScrollView style={{ maxHeight: 460 }}>{TodayList}</ScrollView>
-          </View>
-        </View>
-      </Modal>
-      {toast ? <View style={st.toast} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></View> : null}
+        ),
+      })}
+
+      {Sheet({
+        visible: showToday, onClose: () => setShowToday(false), title: `Sent today · ${tickets.length}`,
+        children: (
+          <ScrollView style={{ maxHeight: 460 }}>
+            {!tickets.length && <Text style={[st.muted, { paddingVertical: 16 }]}>Orders you send show here, so you can reprint them.</Text>}
+            {tickets.map((e, i) => (
+              <View key={e.orderId + '_' + i} style={[st.listRow, i > 0 && st.sep]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.listT}>{e.head}</Text>
+                  <Text style={st.listS}>{[e.number && `#${e.number}`, e.who, `${e.count} items`, e.at].filter(Boolean).join(' · ')}</Text>
+                </View>
+                <Pressable style={st.round} onPress={() => reprint(e)} accessibilityLabel={`Reprint ${e.head}`}><Ionicons name="print-outline" size={20} color={INK} /></Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        ),
+      })}
+
+      {toast ? <View style={[st.toast, { bottom: dockBottom + (isTablet ? 200 : 150) }]} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></View> : null}
     </SafeAreaView>
   );
 }
 
 const st = StyleSheet.create({
-  iconBtn: { width: 42, height: 42, borderRadius: 12, borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  sub2: { fontSize: 12, color: '#57534E' },
-  countPill: { backgroundColor: SOFT, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
-  countPillT: { fontFamily: MONO, fontSize: 12, fontWeight: '600', color: DEEP },
-  floorBar: { flexGrow: 0, backgroundColor: HEAD, borderBottomWidth: 1, borderColor: LINE },
-  floorRow: { gap: 6, paddingHorizontal: 14, paddingVertical: 8, alignItems: 'center' },
-  tb: { minWidth: 34, height: 34, paddingHorizontal: 8, borderRadius: 9, borderWidth: 1.5, borderColor: '#CFCAC4', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  tbBusy: { backgroundColor: SOFT, borderColor: RED },
-  tbMine: { backgroundColor: RED, borderColor: RED },
-  tbT: { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: INK },
-  tabletBody: { flex: 1, flexDirection: 'row' },
-  orbCard: { flexDirection: 'row', alignItems: 'center', gap: 22, padding: 22, backgroundColor: '#fff', borderRadius: 24, borderWidth: 1, borderColor: LINE },
-  orb: { width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.45, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
-  orbBig: { width: 120, height: 120, borderRadius: 60, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
-  orbLive: { borderWidth: 6, borderColor: 'rgba(217,45,32,0.18)' },
-  bars: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  barI: { width: 4, borderRadius: 2, backgroundColor: '#fff' },
-  eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.1 },
-  otitle: { fontSize: 17, fontWeight: '700', color: INK },
-  otitleBig: { fontSize: 26, fontWeight: '700', color: INK, marginTop: 2 },
-  otext: { fontSize: 13, color: '#57534E', marginTop: 1 },
-  liveT: { fontSize: 15, fontStyle: 'italic', color: INK, marginTop: 6 },
-  cap: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: '#78716C' },
-  exGrid: { gap: 10, justifyContent: 'space-between' },
-  ex: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE, borderRadius: 16, padding: 14, gap: 4 },
-  exK: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: DEEP },
-  exT: { fontSize: 15, color: INK, lineHeight: 21 },
-  turn: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 14 },
-  turnDid: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE },
-  turnSay: { backgroundColor: SOFT, borderWidth: 1, borderColor: RED },
-  tbadge: { minWidth: 24, height: 24, paddingHorizontal: 6, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
-  tbYou: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE },
-  tbadgeT: { fontSize: 11, fontWeight: '700', color: '#fff' },
-  turnT: { flex: 1, fontSize: 15, lineHeight: 21, color: '#44403C' },
-  sendPill: { backgroundColor: DEEP, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 2, marginLeft: 10 },
-  sendPillT: { fontFamily: MONO, color: '#fff', fontSize: 14, fontWeight: '600' },
-  hint: { textAlign: 'center', fontSize: 13, color: '#57534E' },
   wrapAll: { flex: 1, backgroundColor: BG },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: BG, padding: 24 },
-  h1: { fontSize: 24, fontWeight: '700', color: INK },
-  muted: { color: '#5B5B63', fontSize: 14 },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: HEAD, borderBottomWidth: 1, borderColor: LINE },
-  mark: { width: 30, height: 30, borderRadius: 9, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 18, fontWeight: '700', color: INK },
-  todayBtn: { height: 40, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', gap: 6 },
-  todayBtnT: { fontWeight: '600', color: INK },
-  servers: { alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingBottom: 8 },
-  srv: { height: 40, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#fff', justifyContent: 'center', borderWidth: 1, borderColor: '#E4E3DF' },
-  srvOn: { backgroundColor: RED, borderColor: RED },
-  srvT: { fontWeight: '600', color: INK },
-  body: { flex: 1 },
-  stage: { padding: 14, alignItems: 'center', gap: 12 },
-  paper: { width: '100%', maxWidth: 460, backgroundColor: '#fff', borderRadius: 6, padding: 18, shadowColor: '#1C1917', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
-  sub: { textAlign: 'center', fontFamily: MONO, fontSize: 12, fontWeight: '600', letterSpacing: 1, color: '#555' },
-  head: { textAlign: 'center', fontFamily: MONO, fontSize: 26, fontWeight: '700', color: '#111', marginVertical: 6 },
-  headEdit: { gap: 10, padding: 12, backgroundColor: '#F7F7F5', borderRadius: 12, marginBottom: 8 },
-  seg: { flexDirection: 'row', backgroundColor: '#E9E8E4', borderRadius: 999, padding: 4 },
-  segB: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
-  segOn: { backgroundColor: '#fff' },
-  segT: { fontWeight: '600', color: '#555' },
-  input: { minHeight: 46, borderWidth: 1, borderColor: '#D6D6D2', borderRadius: 10, paddingHorizontal: 12, fontSize: 16, backgroundColor: '#fff', color: INK },
-  meta: { flexDirection: 'row', justifyContent: 'space-between' },
-  metaT: { fontFamily: MONO, fontSize: 13, color: '#111' },
-  rule: { borderTopWidth: 2, borderStyle: 'dashed', borderColor: '#111', marginVertical: 10 },
-  empty: { textAlign: 'center', color: '#777', fontSize: 15, paddingVertical: 30, paddingHorizontal: 8 },
-  emptyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 30 },
-  line: { borderRadius: 10, marginHorizontal: -8, paddingHorizontal: 8, paddingVertical: 2 },
-  lineSel: { backgroundColor: '#F7F7F5', borderWidth: 2, borderColor: '#111' },
-  lineBtn: { flexDirection: 'row', gap: 12, minHeight: 44, alignItems: 'center' },
-  q: { fontFamily: MONO, fontSize: 19, fontWeight: '700', color: '#111', minWidth: 22 },
-  name: { fontFamily: MONO, fontSize: 18, fontWeight: '700', color: '#111', flex: 1 },
-  note: { fontFamily: MONO, fontSize: 15, fontWeight: '700', color: '#2D31A6', marginLeft: 34, marginBottom: 4 },
-  pick: { backgroundColor: '#FFF6E0', borderWidth: 2, borderColor: '#E8A317', borderRadius: 10, padding: 10, marginLeft: 26, marginVertical: 4, gap: 8 },
-  unclear: { backgroundColor: '#FFF6E0', borderWidth: 2, borderColor: '#E8A317', borderRadius: 10, padding: 10, marginVertical: 6, gap: 8 },
-  pickT: { fontSize: 15, fontWeight: '600', color: '#7A3E06' },
+  offIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: SOFT, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  h1: { fontSize: 22, fontWeight: '700', color: INK },
+  muted: { color: MUTED, fontSize: 14 },
+
+  header: { backgroundColor: BG, paddingBottom: 10 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingTop: 6 },
+  back: { marginLeft: -8, width: 36, height: 40, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 28, fontWeight: '800', color: INK, letterSpacing: -0.4 },
+  subT: { fontSize: 13, color: MUTED, marginTop: 1 },
+  round: { width: 44, height: 44, borderRadius: 22, backgroundColor: CARD, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  badge: { position: 'absolute', top: -3, right: -3, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BG },
+  badgeT: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  ctx: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginTop: 12 },
+  pill: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  pillOn: { backgroundColor: SOFT, borderColor: '#F5B8B1' },
+  pillT: { flexShrink: 1, fontSize: 15, fontWeight: '600', color: INK },
+
+  phoneScroll: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 20, gap: 14 },
+  hero: { gap: 6, paddingTop: 14 },
+  heroT: { fontSize: 21, fontWeight: '700', color: INK, letterSpacing: -0.2 },
+  heroS: { fontSize: 15, color: MUTED, lineHeight: 21, marginBottom: 12 },
+  group: { backgroundColor: CARD, borderRadius: 16, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  sep: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  exRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 3 },
+  exK: { fontSize: 12, fontWeight: '700', color: RED, textTransform: 'uppercase', letterSpacing: 0.6 },
+  exT: { fontSize: 16, color: INK, lineHeight: 22 },
+
+  youB: { alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: INK, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9 },
+  youT: { color: '#fff', fontSize: 15, lineHeight: 21 },
+  aiB: { alignSelf: 'flex-start', maxWidth: '92%', flexDirection: 'row', gap: 8, backgroundColor: SOFT, borderRadius: 18, borderBottomLeftRadius: 6, paddingHorizontal: 12, paddingVertical: 9 },
+  didB: { backgroundColor: CARD, borderWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  aiT: { flexShrink: 1, fontSize: 15, lineHeight: 21, color: INK, fontWeight: '500' },
+
+  cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 8, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
+  cardTitle: { fontSize: 17, fontWeight: '700', color: INK },
+  cardMeta: { fontSize: 14, color: MUTED },
+  clear: { fontSize: 15, fontWeight: '600', color: RED },
+  emptyT: { fontSize: 15, color: MUTED, paddingHorizontal: 16, paddingBottom: 18 },
+  emptyRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 18 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 56 },
+  rowSel: { backgroundColor: '#FCF8F6' },
+  qty: { minWidth: 32, height: 32, paddingHorizontal: 6, borderRadius: 9, backgroundColor: SOFT, alignItems: 'center', justifyContent: 'center' },
+  qtyT: { fontSize: 15, fontWeight: '700', color: DEEP, fontVariant: ['tabular-nums'] },
+  itemT: { fontSize: 16, fontWeight: '600', color: INK },
+  varT: { fontSize: 14, fontWeight: '500', color: MUTED },
+  notesT: { fontSize: 14, color: MUTED, marginTop: 2 },
+  priceT: { fontSize: 15, color: INK, fontVariant: ['tabular-nums'] },
+  ask: { backgroundColor: '#FFF7E6', borderRadius: 12, padding: 12, marginHorizontal: 16, marginBottom: 12, gap: 10 },
+  askT: { fontSize: 15, fontWeight: '600', color: '#7A3E06' },
+  choice: { minHeight: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E3A43A', justifyContent: 'center' },
+  choiceGhost: { borderColor: '#EBD7AF' },
+  choiceT: { fontSize: 15, fontWeight: '600', color: '#7A3E06' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  pickB: { minHeight: 44, paddingHorizontal: 16, borderRadius: 10, borderWidth: 2, borderColor: '#C4790A', backgroundColor: '#fff', justifyContent: 'center' },
-  pickGhost: { borderColor: '#E3CFA5' },
-  pickBT: { fontSize: 15, fontWeight: '600', color: '#7A3E06' },
-  edit: { gap: 8, paddingLeft: 34, paddingVertical: 8 },
-  step: { minHeight: 44, minWidth: 44, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: '#D6D6D2', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  chip: { minHeight: 36, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#F4F4F2', justifyContent: 'center' },
-  chipT: { fontSize: 13, color: INK },
-  foot: { flexDirection: 'row', justifyContent: 'space-between' },
-  link: { fontSize: 15, fontWeight: '600', color: '#111', textDecorationLine: 'underline', paddingVertical: 10 },
-  heard: { color: '#5B5B63', fontSize: 14, textAlign: 'center', maxWidth: 460 },
-  today: { gap: 8 },
-  todayH: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  todayHT: { fontSize: 18, fontWeight: '700', color: INK },
-  tk: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#E4E3DF', padding: 10 },
-  tkH: { fontWeight: '600', fontSize: 15, color: INK },
-  tkM: { fontSize: 12, color: '#5B5B63', marginTop: 2 },
-  tkB: { width: 44, height: 44, borderRadius: 10, backgroundColor: '#F4F4F2', alignItems: 'center', justifyContent: 'center' },
-  conflict: { alignSelf: 'stretch', backgroundColor: '#FFF6E0', borderWidth: 2, borderColor: '#E8A317', borderRadius: 14, padding: 12, gap: 10 },
-  bar: { gap: 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 24 : 16, backgroundColor: HEAD, borderTopWidth: 1, borderColor: LINE },
-  mic: { width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: RED, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 6 } },
-  micLive: { backgroundColor: INK },
-  micHearing: { backgroundColor: RED, shadowOpacity: 0.6, shadowRadius: 16 },
-  reply: { position: 'absolute', alignSelf: 'center', bottom: 170, maxWidth: 520, marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#E4E3DF', paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 4 },
-  replyDot: { width: 22, height: 22, borderRadius: 7, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
-  replyT: { flexShrink: 1, fontSize: 15, color: INK },
-  status: { flex: 1, minHeight: 72, borderRadius: 18, backgroundColor: '#fff', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  levelBar: { height: 8, borderRadius: 4, backgroundColor: RED },
-  stT: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },
-  stX: { fontSize: 15, color: INK },
-  send: { height: 60, alignSelf: 'stretch', borderRadius: 16, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, shadowColor: RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
-  sendOff: { backgroundColor: '#E7E1DE', shadowOpacity: 0, elevation: 0 },
-  sendT: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  sheetBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, gap: 10, paddingBottom: 30 },
-  result: { minHeight: 48, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#F0EFEC' },
-  resultT: { fontSize: 16, color: INK },
-  toast: { position: 'absolute', alignSelf: 'center', bottom: 170, backgroundColor: DEEP, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 12 },
-  toastT: { color: '#fff', fontSize: 15, fontWeight: '500' },
-  btnDark: { minHeight: 46, paddingHorizontal: 20, borderRadius: 12, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
-  btnDarkT: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  edit: { gap: 10, paddingRight: 16, paddingBottom: 14, paddingLeft: 60 },
+  stepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3EEEC', borderRadius: 22, height: 44 },
+  stepB: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  stepN: { minWidth: 24, textAlign: 'center', fontSize: 16, fontWeight: '700', color: INK, fontVariant: ['tabular-nums'] },
+  ghost: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: '#F3EEEC' },
+  ghostDone: { backgroundColor: RED, marginLeft: 'auto' },
+  ghostT: { fontSize: 15, fontWeight: '600', color: INK },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#F3EEEC' },
+  chipT: { fontSize: 14, color: INK },
+  input: { minHeight: 48, borderRadius: 12, paddingHorizontal: 14, fontSize: 16, backgroundColor: '#F3EEEC', color: INK },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  addT: { fontSize: 15, fontWeight: '600', color: RED },
+  totalT: { fontSize: 16, fontWeight: '700', color: INK, fontVariant: ['tabular-nums'] },
+  conflict: { backgroundColor: '#FFF7E6', borderRadius: 16, padding: 14, gap: 12 },
+
+  dock: { paddingHorizontal: 20, paddingTop: 12, backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, gap: 10, shadowColor: '#3B1D17', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: -4 }, elevation: 10 },
+  status: { alignItems: 'center', gap: 2 },
+  statusTop: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  statusT: { fontSize: 16, fontWeight: '700', color: INK, flexShrink: 1 },
+  statusTBig: { fontSize: 24, fontWeight: '700', color: INK, flexShrink: 1 },
+  statusS: { fontSize: 13, color: MUTED, textAlign: 'center', lineHeight: 18 },
+  dockRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8 },
+  sideWrap: { alignItems: 'center', gap: 4, width: 72 },
+  side: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#F3EEEC', alignItems: 'center', justifyContent: 'center' },
+  sideGo: { backgroundColor: RED },
+  sideL: { fontSize: 12, fontWeight: '600', color: MUTED },
+  sideBadge: { position: 'absolute', top: -2, right: -2, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: INK, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: CARD },
+  sideBadgeT: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  ring: { alignItems: 'center', justifyContent: 'center' },
+  ringLive: { backgroundColor: 'rgba(217,45,32,0.12)' },
+  orb: { backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+  bars: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  barI: { width: 4, borderRadius: 2, backgroundColor: '#fff' },
+  undoBar: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 46, borderRadius: 23, paddingHorizontal: 16, backgroundColor: OK },
+  undoT: { flex: 1, color: '#fff', fontSize: 16, fontWeight: '600' },
+  undoBtn: { color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.8 },
+
+  tabletBody: { flex: 1, flexDirection: 'row' },
+  leftPane: { flex: 1.25, borderRightWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  leftScroll: { paddingHorizontal: 28, paddingTop: 8, paddingBottom: 20, gap: 14, maxWidth: 680, width: '100%', alignSelf: 'center' },
+  tabDock: { alignItems: 'center', paddingTop: 18, paddingHorizontal: 24 },
+  rightPane: { flex: 1, maxWidth: 480, backgroundColor: '#FBF7F5' },
+  rightFoot: { paddingHorizontal: 20, paddingTop: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: LINE },
+  hint: { textAlign: 'center', fontSize: 13, color: MUTED },
+  wideBtn: { height: 54, borderRadius: 27, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  wideOff: { backgroundColor: '#EDE7E4' },
+  wideBtnT: { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  sheetBg: { flex: 1, backgroundColor: 'rgba(28,25,23,0.4)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 8, gap: 12 },
+  sheetTablet: { alignSelf: 'center', width: '100%', maxWidth: 560 },
+  grab: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: '#DDD5D1' },
+  sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetH: { fontSize: 20, fontWeight: '700', color: INK },
+  sheetX: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F3EEEC', alignItems: 'center', justifyContent: 'center' },
+  seg: { flexDirection: 'row', backgroundColor: '#F3EEEC', borderRadius: 12, padding: 3 },
+  segB: { flex: 1, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  segOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  segT: { fontSize: 15, fontWeight: '600', color: MUTED },
+  tableGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tableT: { width: 68, height: 60, borderRadius: 14, backgroundColor: '#F3EEEC', alignItems: 'center', justifyContent: 'center' },
+  tableBusy: { backgroundColor: SOFT },
+  tableOn: { backgroundColor: RED },
+  tableN: { fontSize: 18, fontWeight: '700', color: INK, fontVariant: ['tabular-nums'] },
+  tableS: { fontSize: 11, color: MUTED, marginTop: 1 },
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingVertical: 8 },
+  listT: { fontSize: 16, fontWeight: '600', color: INK },
+  listS: { fontSize: 13, color: MUTED, marginTop: 1 },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: SOFT, alignItems: 'center', justifyContent: 'center' },
+  avatarT: { fontSize: 15, fontWeight: '700', color: DEEP },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 46, borderRadius: 12, paddingHorizontal: 12, backgroundColor: '#F3EEEC' },
+  searchIn: { flex: 1, fontSize: 16, color: INK },
+
+  toast: { position: 'absolute', alignSelf: 'center', maxWidth: '88%', backgroundColor: INK, borderRadius: 22, paddingHorizontal: 18, paddingVertical: 11 },
+  toastT: { color: '#fff', fontSize: 15, fontWeight: '500', textAlign: 'center' },
 });

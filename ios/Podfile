@@ -77,7 +77,17 @@ target 'DineOpen' do
         # RNFBApp…" + implicit-int errors. Plain #import (modules off) for this one target compiles
         # cleanly; Firebase / RNFBApp / the app keep modules on.
         config.build_settings['CLANG_ENABLE_MODULES'] = 'NO' if target.name == 'RNFBMessaging'
+        # Xcode 26.4 + React Native built from source: fmt 11.0.2's own format.cc fails the stricter
+        # C++20 consteval check ("call to consteval function … is not a constant expression").
+        # Compiling just the fmt library as C++17 avoids it; everything else is unchanged.
+        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17' if target.name == 'fmt'
       end
     end
+    # pod install re-extracts the Debug Hermes engine but leaves the old ".last_build_configuration"
+    # (e.g. "Release"), so the build-phase swap thinks nothing changed and a Release app ships Debug
+    # Hermes → launch crash in HermesRuntimeImpl::debugJavaScript. Drop the marker so the next build
+    # always puts the engine that matches its configuration.
+    marker = File.join(installer.sandbox.root.to_s, '.last_build_configuration')
+    File.delete(marker) if File.exist?(marker)
   end
 end

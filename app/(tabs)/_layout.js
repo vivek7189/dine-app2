@@ -45,6 +45,8 @@ function TabsNavigator() {
   const [tabsKey, setTabsKey] = useState(0); // bumped on restaurant switch → remount all tabs
   const [waiterAppConfig, setWaiterAppConfig] = useState({});
   const [roleUser, setRoleUser] = useState(null); // user incl. rolePermissions (roles-on restaurants)
+  // Voice tab: only when the owner turned on Voice Ticket AND "Show as a tab" (posSettings.voiceTicket.showTab)
+  const [voiceTab, setVoiceTab] = useState(false);
 
   useEffect(() => {
     // Check authentication on mount
@@ -63,6 +65,7 @@ function TabsNavigator() {
         setRoleUser(userData);
         // Flag from staff login, or a delivery-type role (older logins never sent the flag)
         if (userData.isDeliveryPartner || /deliver|rider|driver/i.test(String(userData.role || ''))) setIsDeliveryPartner(true);
+        { const v = userData.restaurant?.posSettings?.voiceTicket; setVoiceTab(!!(v && v.enabled === true && v.showTab === true)); }
         if (userData.restaurant?.posSettings?.waiterAppConfig) {
           setWaiterAppConfig(userData.restaurant.posSettings.waiterAppConfig);
         }
@@ -134,6 +137,7 @@ function TabsNavigator() {
     const stop = startRestaurantSettingsRefresh();
     const unsub = restaurantEvents.on('settings', ({ posSettings } = {}) => {
       setWaiterAppConfig((posSettings && posSettings.waiterAppConfig) || {});
+      if (posSettings) { const v = posSettings.voiceTicket; setVoiceTab(!!(v && v.enabled === true && v.showTab === true)); }
     });
     return () => { stop(); if (typeof unsub === 'function') unsub(); };
   }, []);
@@ -339,6 +343,23 @@ function TabsNavigator() {
         }}
       />
 
+      {/* Voice — speak an order (off by default; owner: Admin → Settings → Voice Ticket → Show as a tab) */}
+      <Tabs.Screen
+        name="voice"
+        options={{
+          title: 'Voice',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "mic" : "mic-outline"}
+              size={iconSize}
+              color={color}
+            />
+          ),
+          href: voiceTab ? undefined : null,
+          ...(voiceTab ? {} : { tabBarStyle: { display: 'none' } }),
+        }}
+      />
+
       {/* More — visible to all roles */}
       <Tabs.Screen
         name="more"
@@ -369,7 +390,6 @@ function TabsNavigator() {
       <Tabs.Screen name="order-history" options={{ href: null }} />
       <Tabs.Screen name="webview" options={{ href: null }} />
       <Tabs.Screen name="printer-settings" options={{ href: null, tabBarStyle: { display: 'none' } }} />
-      <Tabs.Screen name="voice" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="billing-webview" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   );

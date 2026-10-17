@@ -14,16 +14,34 @@ export async function startVoiceSegmenter({
   if (!perm.granted) { const e = new Error('Microphone is blocked — allow it in the phone settings'); e.code = 'NO_MIC'; throw e; }
   await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: false });
 
-  const s = { rec: null, stopped: false, paused: false, busy: false, speaking: false, noise: -50, voicedMs: 0, quietMs: 0, startedAt: 0, lastSpeech: Date.now() };
+  const s = { rec: null, stopped: false, paused: false, busy: false, speaking: false, noise: -50, calib: [], voicedMs: 0, quietMs: 0, startedAt: 0, lastSpeech: Date.now() };
 
   const onStatus = (st) => {
     if (s.stopped || s.paused || s.busy || typeof st?.metering !== 'number') return;
     const db = st.metering;
-    onLevel && onLevel(Math.max(0, Math.min(1, (db + 60) / 50)));
-    const loud = db > Math.max(-45, s.noise + 12);
     const now = Date.now();
+    // iOS reports -160 / junk for the first moments of every new recording window: skip them, or the
+    // room level is learned from nothing.
+    if (db < -100 || now - s.startedAt < 200) return;
+    onLevel && onLevel(Math.max(0, Math.min(1, (db + 60) / 50)));
+    // first ~0.6 s of the session: just measure the room (median), so ordinary room noise is never
+    // taken for speech on a phone whose mic sits higher than the -50 dB starting guess.
+    if (s.calib) {
+      s.calib.push(db);
+      if (s.calib.length < 6) return;
+      const sorted = s.calib.slice().sort((x, y) => x - y);
+      s.noise = Math.max(-75, Math.min(-20, sorted[Math.floor(sorted.length / 2)]));
+      s.calib = null;
+      return;
+    }
+    // Speech = clearly above the room. The room level follows the QUIET moments only
+    // (drops fast, rises very slowly): before, it averaged everything that was not yet "loud", so on
+    // iPhones (mic gain → voice only ~8–10 dB over the room) it climbed up to the voice and nothing
+    // ever counted as speech → "Stopped listening" after 20 s.
+    const loud = db > Math.max(-50, s.noise + 9);
     if (!s.speaking) {
-      if (!loud) s.noise = s.noise * 0.9 + db * 0.1; // learn the room
+      if (!loud) s.noise = db < s.noise ? s.noise * 0.6 + db * 0.4 : s.noise * 0.98 + db * 0.02;
+      s.noise = Math.max(-75, Math.min(-20, s.noise));
       if (loud) { s.speaking = true; s.voicedMs = TICK; s.quietMs = 0; s.lastSpeech = now; onSpeaking && onSpeaking(true); return; }
       if (now - s.lastSpeech > idleMs) { if (!s.idleFired) { s.idleFired = true; onIdle && onIdle(); } return; }
       if (now - s.startedAt > quietRollMs) roll(false); // keep the lead-in short: quiet windows are dropped
