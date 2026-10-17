@@ -25,7 +25,13 @@ try { Speech = require('expo-speech'); if (!Speech || typeof Speech.speak !== 'f
 
 const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 const RED = '#D92D20';
-const INK = '#18181B';
+const DEEP = '#9F1F14';
+const SOFT = '#FDE8E5';
+const LINE = '#EFDDD8';
+const BG = '#F8F1EF';
+const HEAD = '#FFFAF8';
+const OK = '#0F7A43';
+const INK = '#1C1917';
 const MAX_SECONDS = 60;
 const isDineIn = (t) => /dine|table/i.test(String(t || ''));
 const typeLabel = (t) => (isDineIn(t) ? 'Dine-in' : /deliver/i.test(String(t || '')) ? 'Delivery' : 'To-go');
@@ -73,6 +79,31 @@ export default function VoiceTicketNative() {
   const chainRef = useRef(Promise.resolve());
   const ticketRef = useRef(null);
   useEffect(() => { ticketRef.current = ticket; }, [ticket]);
+  const [log, setLog] = useState([]); // what was said / done / answered
+  const [floor, setFloor] = useState([]); // [{ n, busy }]
+  const logScroll = useRef(null);
+  const pushLog = useCallback((kind, text) => {
+    if (!text) return;
+    setLog((l) => [...l, { id: Date.now() + Math.random(), kind, text: String(text).slice(0, 240) }].slice(-24));
+  }, []);
+  const loadFloor = useCallback(async () => {
+    if (!rid) return;
+    try {
+      const res = await apiClient.getFloors(rid);
+      const list = [];
+      (res?.floors || (Array.isArray(res) ? res : [])).forEach((f) => (f.tables || []).forEach((t) => {
+        const n = t.number ?? t.tableNumber ?? t.name;
+        if (n != null && String(n).trim()) list.push({ n: String(n).trim(), busy: t.status === 'occupied' || !!t.currentOrderId });
+      }));
+      list.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true }));
+      setFloor(list.slice(0, 60));
+    } catch (_) { /* chips are a convenience */ }
+  }, [rid]);
+  useEffect(() => {
+    loadFloor();
+    const t = setInterval(loadFloor, 30000);
+    return () => clearInterval(t);
+  }, [loadFloor]);
   const toastTimer = useRef(null);
   const flash = useCallback((m) => { clearTimeout(toastTimer.current); setToast(m); toastTimer.current = setTimeout(() => setToast(''), 3200); }, []);
 
@@ -126,6 +157,8 @@ export default function VoiceTicketNative() {
       const res = await apiClient.voiceTicketUnderstand(rid, payload);
       if (!res?.success) throw new Error(res?.error || 'Could not build the ticket');
       setHeard(res.transcript || '');
+      pushLog('you', `“${res.transcript || ''}”`);
+      pushLog('did', `${res.ticket.lines.length ? `Added ${res.ticket.lines.reduce((a, l) => a + l.quantity, 0)} item(s)` : 'Nothing added'}${res.ticket.unclear.length ? ` · ${res.ticket.unclear.length} to check` : ''}`);
       setTicket((prev) => {
         if (prev && (prev.lines.length || prev.unclear.length)) {
           const tag = '_' + Date.now();
@@ -146,7 +179,7 @@ export default function VoiceTicketNative() {
       setError(msg);
       setPhase((p) => (ticket ? 'check' : 'idle'));
     }
-  }, [rid, ticket]);
+  }, [rid, ticket, pushLog]);
 
   // ── recording (expo-av) ──
   const startListening = async () => {
@@ -254,6 +287,7 @@ export default function VoiceTicketNative() {
     stopConvo();
     setPhase('check');
     setAutoSend({ left: 3 });
+    pushLog('say', 'Sending to the kitchen — tap Undo to keep editing');
   };
 
   const handleSegment = (uri) => {
@@ -266,7 +300,10 @@ export default function VoiceTicketNative() {
         if (res.heardNothing || !convoRef.current) return;
         setError('');
         setHeard(res.transcript || '');
+        pushLog('you', `“${res.transcript}”`);
         const tk = applyAgent(res);
+        if (res.touched || res.cancel) pushLog('did', res.say || (res.cancel ? 'Cleared the ticket' : 'Updated the ticket'));
+        else if (res.say) pushLog('say', res.say);
         // speak only what needs ears (answers, sending, cancelled); edits are on the ticket
         if (res.say) { setReply(res.say); if (!res.touched || res.send || res.cancel) speak(res.say); }
         if (res.send) requestAutoSend(tk);
@@ -320,7 +357,7 @@ export default function VoiceTicketNative() {
     });
     setPhase('check'); setAdding(false); setSearch('');
   };
-  const startOver = () => { setTicket(null); setHeard(''); setSel(null); setEditHead(false); setError(''); setConflict(null); setPhase('idle'); };
+  const startOver = () => { setTicket(null); setHeard(''); setSel(null); setEditHead(false); setError(''); setConflict(null); setPhase('idle'); setLog([]); };
 
   // ── send ──
   const toItems = (tk) => tk.lines.map((l) => ({
@@ -352,7 +389,8 @@ export default function VoiceTicketNative() {
     });
     setConflict(null); setPhase('sent');
     flash(printed === 'failed' ? 'Saved — but the printer did not answer. Use Reprint.' : added ? `Added to ${head} — sent to the kitchen` : `${head} sent to the kitchen`);
-    setTimeout(() => { setTicket(null); setHeard(''); setSel(null); setEditHead(false); setPhase((p) => (p === 'sent' ? 'idle' : p)); }, 1500);
+    loadFloor();
+    setTimeout(() => { setTicket(null); setHeard(''); setSel(null); setEditHead(false); setLog([]); setPhase((p) => (p === 'sent' ? 'idle' : p)); }, 1500);
   };
 
   const ready = !!ticket && ticket.lines.length > 0 && ticket.unclear.length === 0 && !ticket.lines.some((l) => l.needsVariant);
@@ -478,7 +516,7 @@ export default function VoiceTicketNative() {
     ? (isDineIn(ticket.orderType) ? (ticket.tableNumber ? `TABLE ${ticket.tableNumber}` : 'DINE-IN') : `${typeLabel(ticket.orderType).toUpperCase()}${ticket.customerName ? ' · ' + ticket.customerName.toUpperCase() : ''}`)
     : 'NEW ORDER';
   const handsFree = settings?.handsFree !== false;
-  let status = { tone: 'muted', title: 'Ready', text: handsFree ? 'Tap the mic and just talk — say “that’s it” to send' : 'Tap the mic and say the whole order' };
+  let status = { tone: 'muted', title: handsFree ? 'Tap and just talk' : 'Tap and say the order', text: handsFree ? 'Table or to-go name, then the items · say “that’s it” to send' : 'Table or to-go name, then each item · tap again when done' };
   if (autoSend) status = { tone: 'ok', title: `Sending in ${autoSend.left}`, text: 'Tap Undo to keep editing' };
   else if (convo) status = { tone: 'live', title: hearing ? 'Hearing you' : thinking ? 'Got it…' : 'Listening', text: 'Talk naturally · ask anything · say “that’s it” to send' };
   else if (phase === 'listening') status = { tone: 'live', title: `Listening · 0:${String(secs).padStart(2, '0')}`, text: 'Tap again when you’re done' };
@@ -487,7 +525,6 @@ export default function VoiceTicketNative() {
   else if (phase === 'sent') status = { tone: 'ok', title: 'Sent', text: 'Printed in the kitchen' };
   else if (phase === 'check' && needs) status = { tone: 'warn', title: needs === 1 ? 'Check 1 item' : `Check ${needs} items`, text: 'Pick the right choice, then send' };
   else if (phase === 'check') status = { tone: 'ok', title: 'Ready to send', text: 'Tap a line to change it' };
-  const toneColor = { muted: '#5B5B63', live: RED, ok: '#0F7A43', warn: '#B45309' }[status.tone];
 
   if (loadError) return <SafeAreaView style={st.center}><Text style={st.muted}>{loadError}</Text></SafeAreaView>;
   if (!settings) return <SafeAreaView style={st.center}><ActivityIndicator color={RED} /></SafeAreaView>;
@@ -528,7 +565,7 @@ export default function VoiceTicketNative() {
       <View style={st.meta}><Text style={st.metaT}>{server?.name ? `Server: ${server.name.split(' ')[0]}` : ''}</Text><Text style={st.metaT}>{itemCount ? `${itemCount} ITEM${itemCount === 1 ? '' : 'S'}` : ''}</Text></View>
       <View style={st.rule} />
 
-      {!ticket && phase !== 'thinking' && <Text style={st.empty}>Tap the mic and say the order — table or to-go name first, then each item and any changes.</Text>}
+      {!ticket && phase !== 'thinking' && <Text style={st.empty}>The ticket builds itself as you talk. Table or to-go name first, then the items.</Text>}
       {phase === 'thinking' && !ticket && <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the ticket…</Text></View>}
 
       {ticket && ticket.lines.map((l) => (
@@ -549,7 +586,7 @@ export default function VoiceTicketNative() {
                 <Pressable style={st.step} onPress={() => upd(l.key, (x) => ({ ...x, quantity: Math.max(1, x.quantity - 1) }))} accessibilityLabel="One less"><Ionicons name="remove" size={20} color={INK} /></Pressable>
                 <Pressable style={st.step} onPress={() => upd(l.key, (x) => ({ ...x, quantity: x.quantity + 1 }))} accessibilityLabel="One more"><Ionicons name="add" size={20} color={INK} /></Pressable>
                 <Pressable style={st.step} onPress={() => { setTicket((tk) => ({ ...tk, lines: tk.lines.filter((x) => x.key !== l.key) })); setSel(null); }}><Text style={{ color: '#B42318', fontWeight: '600' }}>Remove</Text></Pressable>
-                <Pressable style={[st.step, { backgroundColor: INK, borderColor: INK, marginLeft: 'auto' }]} onPress={() => setSel(null)}><Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text></Pressable>
+                <Pressable style={[st.step, { backgroundColor: RED, borderColor: RED, marginLeft: 'auto' }]} onPress={() => setSel(null)}><Text style={{ color: '#fff', fontWeight: '600' }}>Done</Text></Pressable>
               </View>
               {l.notes.length > 0 && <View style={st.wrap}>{l.notes.map((n, k) => <Pressable key={k} style={st.chip} onPress={() => upd(l.key, (x) => ({ ...x, notes: x.notes.filter((_, j) => j !== k) }))}><Text style={st.chipT}>{n} ✕</Text></Pressable>)}</View>}
               <View style={st.wrap}>
@@ -592,15 +629,115 @@ export default function VoiceTicketNative() {
     </View>
   );
 
+  const orbLive = convo || listening;
+  const eyebrow = autoSend ? 'ORDER COMPLETE' : error ? 'PROBLEM' : orbLive ? 'LISTENING' : phase === 'sent' ? 'SENT' : busy ? 'WORKING' : 'READY';
+  const eyeColor = autoSend || phase === 'sent' ? OK : error ? '#B42318' : RED;
+  const lastSay = [...log].reverse().find((t) => t.kind === 'say');
+  const examples = [
+    ['ORDER', 'Table five, two cheeseburgers, one no onion, and a Coke'],
+    ['CHANGE', 'Make it two Cokes, no ice'],
+    ['ASK', 'What’s on table twelve, and the bill?'],
+    ['SEND', handsFree ? 'That’s it' : 'Tap Send when it looks right'],
+  ];
+
+  const Orb = (big) => (handsFree ? (
+    <Pressable style={[big ? st.orbBig : st.orb, orbLive && st.orbLive, autoSend && { backgroundColor: OK }, phase === 'sending' && { opacity: 0.6 }]} disabled={phase === 'sending' || !!autoSend} onPress={convo ? stopConvo : startConvo} accessibilityRole="button" accessibilityLabel={convo ? 'Stop listening' : 'Start talking'}>
+      {convo ? (
+        <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 8 + (hearing ? level * k : 0.12) * (big ? 40 : 26) }]} />)}</View>
+      ) : <Ionicons name={autoSend ? 'checkmark' : 'mic'} size={big ? 46 : 32} color="#fff" />}
+    </Pressable>
+  ) : (
+    <Pressable style={[big ? st.orbBig : st.orb, listening && st.orbLive, busy && { opacity: 0.6 }]} disabled={busy} onPress={listening ? stopListening : startListening} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Start speaking'}>
+      {listening ? <View style={st.bars}>{[0.5, 0.85, 1, 0.7, 0.45].map((k, i) => <View key={i} style={[st.barI, { height: 8 + level * k * (big ? 40 : 26) }]} />)}</View> : <Ionicons name="mic" size={big ? 46 : 32} color="#fff" />}
+    </Pressable>
+  ));
+
+  const StatusText = (big) => (
+    <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Text style={[st.eyebrow, { color: eyeColor }]}>{eyebrow}</Text>
+        {(busy || (convo && thinking > 0)) && <ActivityIndicator size="small" color={RED} />}
+      </View>
+      <Text style={big ? st.otitleBig : st.otitle}>{error ? 'Something went wrong' : status.title}</Text>
+      <Text style={[st.otext, error && { color: '#B42318', fontWeight: '600' }]} numberOfLines={big ? 3 : 2}>{error || status.text}</Text>
+      {big && heard && orbLive ? <Text style={st.liveT} numberOfLines={2}>“{heard}”</Text> : null}
+    </View>
+  );
+
+  const LogList = (
+    <View style={{ gap: 8 }}>
+      {log.map((t) => (
+        <View key={t.id} style={[st.turn, t.kind === 'did' && st.turnDid, t.kind === 'say' && st.turnSay]}>
+          <View style={[st.tbadge, t.kind === 'you' && st.tbYou, t.kind === 'did' && { backgroundColor: OK }, t.kind === 'say' && { backgroundColor: RED }]}>
+            <Text style={[st.tbadgeT, t.kind === 'you' && { color: '#44403C' }]}>{t.kind === 'you' ? 'You' : t.kind === 'did' ? '✓' : 'AI'}</Text>
+          </View>
+          <Text style={[st.turnT, t.kind === 'did' && { color: INK, fontWeight: '500' }, t.kind === 'say' && { color: DEEP, fontWeight: '600' }]}>{t.text}</Text>
+        </View>
+      ))}
+    </View>
+  );
+
+  const Examples = (
+    <View style={{ gap: 10 }}>
+      <Text style={st.cap}>{handsFree ? 'JUST TALK — FOR EXAMPLE' : 'FOR EXAMPLE'}</Text>
+      <View style={[st.exGrid, isTablet && { flexDirection: 'row', flexWrap: 'wrap' }]}>
+        {examples.map(([k, say]) => (
+          <View key={k} style={[st.ex, isTablet && { width: '48.5%' }]}><Text style={st.exK}>{k}</Text><Text style={st.exT}>“{say}”</Text></View>
+        ))}
+      </View>
+    </View>
+  );
+
+  const ConflictBox = conflict ? (
+    <View style={st.conflict}>
+      <Text style={st.pickT}>{conflict.missing ? `Table ${conflict.table} isn't set up in DineOpen. Send it with “Table ${conflict.table}” on the kitchen ticket?` : `Table ${conflict.table} already has an open order. Add these items to it? The kitchen gets only the new items.`}</Text>
+      <View style={st.wrap}>
+        <Pressable style={[st.step, { backgroundColor: RED, borderColor: RED }]} disabled={phase === 'sending'} onPress={() => (conflict.missing ? send({ tableNotSetUp: true }) : addToOpenOrder())}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{conflict.missing ? `Send with Table ${conflict.table}` : `Add to Table ${conflict.table}'s order`}</Text>
+        </Pressable>
+        <Pressable style={st.step} onPress={() => { setConflict(null); if (conflict.missing) setEditHead(true); }}><Text style={{ fontWeight: '600' }}>{conflict.missing ? 'Change table' : 'Cancel'}</Text></Pressable>
+      </View>
+    </View>
+  ) : null;
+
+  const SendBtn = autoSend ? (
+    <Pressable style={[st.send, { backgroundColor: OK }]} onPress={() => { setAutoSend(null); flash('Not sent — keep editing'); pushLog('say', 'Not sent — keep editing'); }} accessibilityRole="button">
+      <Text style={st.sendT}>Sending in {autoSend.left} — tap to Undo</Text>
+    </Pressable>
+  ) : (
+    <Pressable style={[st.send, !canSend && st.sendOff]} disabled={!canSend} onPress={() => send()} accessibilityRole="button">
+      <Text style={[st.sendT, !canSend && { color: '#8A8580' }]}>Send to kitchen</Text>
+      {itemCount ? <View style={[st.sendPill, !canSend && { backgroundColor: '#D6CFCB' }]}><Text style={st.sendPillT}>{itemCount}</Text></View> : null}
+    </Pressable>
+  );
+
   return (
     <SafeAreaView style={st.wrapAll} edges={['top', 'left', 'right']}>
       <View style={st.top}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><Ionicons name="chevron-back" size={26} color={INK} /></Pressable>
-        <View style={st.mark}><Ionicons name="mic" size={16} color="#fff" /></View>
-        <Text style={st.title}>Voice Ticket</Text>
-        <View style={{ flex: 1 }} />
-        {!isTablet && <Pressable style={st.todayBtn} onPress={() => setShowToday(true)}><Text style={st.todayBtnT}>Today · {tickets.length}</Text></Pressable>}
+        <Pressable style={st.iconBtn} onPress={() => router.back()} hitSlop={6} accessibilityLabel="Back"><Ionicons name="chevron-back" size={22} color={INK} /></Pressable>
+        <View style={st.mark}><Ionicons name="mic" size={15} color="#fff" /></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.title}>Voice Ticket</Text>
+          {isTablet && restaurantName ? <Text style={st.sub2} numberOfLines={1}>{restaurantName}</Text> : null}
+        </View>
+        <Pressable style={st.todayBtn} onPress={() => setShowToday(true)} accessibilityLabel={`Today's tickets: ${tickets.length}`}>
+          <Ionicons name="print-outline" size={16} color={INK} />
+          <Text style={st.todayBtnT}>Today</Text>
+          <View style={st.countPill}><Text style={st.countPillT}>{tickets.length}</Text></View>
+        </Pressable>
       </View>
+      {floor.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.floorBar} contentContainerStyle={st.floorRow}>
+          {floor.map((t) => {
+            const mine = ticket && isDineIn(ticket.orderType) && String(ticket.tableNumber || '') === t.n;
+            return (
+              <View key={t.n} style={[st.tb, t.busy && st.tbBusy, mine && st.tbMine]} accessibilityLabel={`Table ${t.n} ${mine ? 'this ticket' : t.busy ? 'has an order' : 'free'}`}>
+                <Text style={[st.tbT, t.busy && { color: DEEP }, mine && { color: '#fff' }]}>{t.n}</Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
       {settings.askServer && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.servers}>
           <Text style={st.muted}>Taken by  </Text>
@@ -613,54 +750,38 @@ export default function VoiceTicketNative() {
       )}
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={[st.body, isTablet && { flexDirection: 'row' }]}>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={st.stage} keyboardShouldPersistTaps="handled">
-            {TicketPaper}
-            {heard ? <Text style={st.heard}>Heard: “{heard}”</Text> : null}
-          </ScrollView>
-          {isTablet && <ScrollView style={{ width: 300, flexGrow: 0 }} contentContainerStyle={{ padding: 16 }}>{TodayList}</ScrollView>}
-        </View>
-
-        {conflict && (
-          <View style={st.conflict}>
-            <Text style={st.pickT}>{conflict.missing ? `Table ${conflict.table} isn't set up in DineOpen. Send it with “Table ${conflict.table}” on the kitchen ticket?` : `Table ${conflict.table} already has an open order. Add these items to it? The kitchen gets only the new items.`}</Text>
-            <View style={st.wrap}>
-              <Pressable style={[st.step, { backgroundColor: INK, borderColor: INK }]} disabled={phase === 'sending'} onPress={() => (conflict.missing ? send({ tableNotSetUp: true }) : addToOpenOrder())}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{conflict.missing ? `Send with Table ${conflict.table}` : `Add to Table ${conflict.table}'s order`}</Text>
-              </Pressable>
-              <Pressable style={st.step} onPress={() => { setConflict(null); if (conflict.missing) setEditHead(true); }}><Text style={{ fontWeight: '600' }}>{conflict.missing ? 'Change table' : 'Cancel'}</Text></Pressable>
-            </View>
+        {isTablet ? (
+          <View style={st.tabletBody}>
+            <ScrollView ref={logScroll} style={{ flex: 1.35 }} contentContainerStyle={{ padding: 20, gap: 16 }} keyboardShouldPersistTaps="handled" onContentSizeChange={() => { try { logScroll.current && logScroll.current.scrollToEnd({ animated: true }); } catch (_) { /* ignore */ } }}>
+              <View style={st.orbCard}>{Orb(true)}{StatusText(true)}</View>
+              {ConflictBox}
+              {log.length ? LogList : Examples}
+            </ScrollView>
+            <ScrollView style={{ flex: 1, maxWidth: 460 }} contentContainerStyle={{ padding: 20, paddingLeft: 4, gap: 12 }} keyboardShouldPersistTaps="handled">
+              {TicketPaper}
+              {SendBtn}
+              {handsFree && !autoSend ? <Text style={st.hint}>or just say “that’s it”</Text> : null}
+            </ScrollView>
           </View>
+        ) : (
+          <>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={st.stage} keyboardShouldPersistTaps="handled">
+              {lastSay && orbLive ? (
+                <View style={[st.turn, st.turnSay, { alignSelf: 'stretch' }]}>
+                  <View style={[st.tbadge, { backgroundColor: RED }]}><Text style={st.tbadgeT}>AI</Text></View>
+                  <Text style={[st.turnT, { color: DEEP, fontWeight: '600' }]}>{lastSay.text}</Text>
+                </View>
+              ) : null}
+              {ConflictBox}
+              {TicketPaper}
+              {log.length ? (<View style={{ alignSelf: 'stretch', gap: 8 }}><Text style={st.cap}>WHAT YOU SAID</Text>{LogList}</View>) : <View style={{ alignSelf: 'stretch' }}>{Examples}</View>}
+            </ScrollView>
+            <View style={st.bar}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>{Orb(false)}{StatusText(false)}</View>
+              {SendBtn}
+            </View>
+          </>
         )}
-
-        <View style={[st.bar, !isTablet && { flexWrap: 'wrap' }]}>
-          {handsFree ? (
-            <Pressable style={[st.mic, convo && st.micLive, convo && hearing && st.micHearing, (phase === 'sending' || autoSend) && { opacity: 0.5 }]} disabled={phase === 'sending' || !!autoSend} onPress={convo ? stopConvo : startConvo} accessibilityRole="button" accessibilityLabel={convo ? 'Stop listening' : 'Start talking'}>
-              <Ionicons name={convo ? 'stop' : 'mic'} size={convo ? 26 : 32} color="#fff" />
-            </Pressable>
-          ) : (
-            <Pressable style={[st.mic, listening && st.micLive, busy && { opacity: 0.5 }]} disabled={busy} onPress={listening ? stopListening : startListening} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Start speaking'}>
-              <Ionicons name={listening ? 'stop' : 'mic'} size={listening ? 26 : 32} color="#fff" />
-            </Pressable>
-          )}
-          <View style={st.status}>
-            {(listening || convo) && <View style={[st.levelBar, { width: 6 + level * 40 }, convo && !hearing && { backgroundColor: '#C9C8C4' }]} />}
-            {(busy || (convo && thinking > 0)) && <ActivityIndicator color={RED} />}
-            <View style={{ flex: 1 }}>
-              <Text style={[st.stT, { color: error ? '#B42318' : toneColor }]}>{error ? 'PROBLEM' : status.title.toUpperCase()}</Text>
-              <Text style={[st.stX, error && { color: '#B42318', fontWeight: '600' }]} numberOfLines={2}>{error || status.text}</Text>
-            </View>
-          </View>
-          {autoSend ? (
-            <Pressable style={[st.send, { backgroundColor: '#0F7A43' }, !isTablet && { flexBasis: '100%' }]} onPress={() => { setAutoSend(null); flash('Not sent — keep editing'); }} accessibilityRole="button">
-              <Text style={st.sendT}>Undo  ·  {autoSend.left}</Text>
-            </Pressable>
-          ) : (
-            <Pressable style={[st.send, !canSend && st.sendOff, !isTablet && { flexBasis: '100%' }]} disabled={!canSend} onPress={() => send()}>
-              <Text style={[st.sendT, !canSend && { color: '#8A8A90' }]}>Send to kitchen{itemCount ? `  ·  ${itemCount}` : ''}</Text>
-            </Pressable>
-          )}
-        </View>
       </KeyboardAvoidingView>
 
       <Modal visible={adding} animationType="slide" transparent onRequestClose={() => setAdding(false)}>
@@ -683,34 +804,65 @@ export default function VoiceTicketNative() {
           </View>
         </View>
       </Modal>
-      {reply && (convo || autoSend || phase === 'check') ? (
-        <View style={[st.reply, { bottom: isTablet ? 112 : 196 }]} pointerEvents="none" accessibilityLiveRegion="polite">
-          <View style={st.replyDot}><Ionicons name="mic" size={12} color="#fff" /></View>
-          <Text style={st.replyT}>{reply}</Text>
-        </View>
-      ) : null}
       {toast ? <View style={st.toast} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></View> : null}
     </SafeAreaView>
   );
 }
 
 const st = StyleSheet.create({
-  wrapAll: { flex: 1, backgroundColor: '#EEEDEA' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEEDEA', padding: 24 },
+  iconBtn: { width: 42, height: 42, borderRadius: 12, borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  sub2: { fontSize: 12, color: '#57534E' },
+  countPill: { backgroundColor: SOFT, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
+  countPillT: { fontFamily: MONO, fontSize: 12, fontWeight: '600', color: DEEP },
+  floorBar: { flexGrow: 0, backgroundColor: HEAD, borderBottomWidth: 1, borderColor: LINE },
+  floorRow: { gap: 6, paddingHorizontal: 14, paddingVertical: 8, alignItems: 'center' },
+  tb: { minWidth: 34, height: 34, paddingHorizontal: 8, borderRadius: 9, borderWidth: 1.5, borderColor: '#CFCAC4', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  tbBusy: { backgroundColor: SOFT, borderColor: RED },
+  tbMine: { backgroundColor: RED, borderColor: RED },
+  tbT: { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: INK },
+  tabletBody: { flex: 1, flexDirection: 'row' },
+  orbCard: { flexDirection: 'row', alignItems: 'center', gap: 22, padding: 22, backgroundColor: '#fff', borderRadius: 24, borderWidth: 1, borderColor: LINE },
+  orb: { width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.45, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
+  orbBig: { width: 120, height: 120, borderRadius: 60, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', shadowColor: RED, shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
+  orbLive: { borderWidth: 6, borderColor: 'rgba(217,45,32,0.18)' },
+  bars: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  barI: { width: 4, borderRadius: 2, backgroundColor: '#fff' },
+  eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.1 },
+  otitle: { fontSize: 17, fontWeight: '700', color: INK },
+  otitleBig: { fontSize: 26, fontWeight: '700', color: INK, marginTop: 2 },
+  otext: { fontSize: 13, color: '#57534E', marginTop: 1 },
+  liveT: { fontSize: 15, fontStyle: 'italic', color: INK, marginTop: 6 },
+  cap: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: '#78716C' },
+  exGrid: { gap: 10, justifyContent: 'space-between' },
+  ex: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE, borderRadius: 16, padding: 14, gap: 4 },
+  exK: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: DEEP },
+  exT: { fontSize: 15, color: INK, lineHeight: 21 },
+  turn: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 14 },
+  turnDid: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE },
+  turnSay: { backgroundColor: SOFT, borderWidth: 1, borderColor: RED },
+  tbadge: { minWidth: 24, height: 24, paddingHorizontal: 6, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
+  tbYou: { backgroundColor: '#fff', borderWidth: 1, borderColor: LINE },
+  tbadgeT: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  turnT: { flex: 1, fontSize: 15, lineHeight: 21, color: '#44403C' },
+  sendPill: { backgroundColor: DEEP, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 2, marginLeft: 10 },
+  sendPillT: { fontFamily: MONO, color: '#fff', fontSize: 14, fontWeight: '600' },
+  hint: { textAlign: 'center', fontSize: 13, color: '#57534E' },
+  wrapAll: { flex: 1, backgroundColor: BG },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: BG, padding: 24 },
   h1: { fontSize: 24, fontWeight: '700', color: INK },
   muted: { color: '#5B5B63', fontSize: 14 },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: HEAD, borderBottomWidth: 1, borderColor: LINE },
   mark: { width: 30, height: 30, borderRadius: 9, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 19, fontWeight: '700', color: INK },
-  todayBtn: { height: 40, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#fff', justifyContent: 'center' },
+  title: { fontSize: 18, fontWeight: '700', color: INK },
+  todayBtn: { height: 40, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: LINE, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', gap: 6 },
   todayBtnT: { fontWeight: '600', color: INK },
   servers: { alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingBottom: 8 },
   srv: { height: 40, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#fff', justifyContent: 'center', borderWidth: 1, borderColor: '#E4E3DF' },
-  srvOn: { backgroundColor: INK, borderColor: INK },
+  srvOn: { backgroundColor: RED, borderColor: RED },
   srvT: { fontWeight: '600', color: INK },
   body: { flex: 1 },
-  stage: { padding: 14, alignItems: 'center', gap: 10 },
-  paper: { width: '100%', maxWidth: 460, backgroundColor: '#fff', borderRadius: 4, padding: 18, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
+  stage: { padding: 14, alignItems: 'center', gap: 12 },
+  paper: { width: '100%', maxWidth: 460, backgroundColor: '#fff', borderRadius: 6, padding: 18, shadowColor: '#1C1917', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
   sub: { textAlign: 'center', fontFamily: MONO, fontSize: 12, fontWeight: '600', letterSpacing: 1, color: '#555' },
   head: { textAlign: 'center', fontFamily: MONO, fontSize: 26, fontWeight: '700', color: '#111', marginVertical: 6 },
   headEdit: { gap: 10, padding: 12, backgroundColor: '#F7F7F5', borderRadius: 12, marginBottom: 8 },
@@ -751,8 +903,8 @@ const st = StyleSheet.create({
   tkH: { fontWeight: '600', fontSize: 15, color: INK },
   tkM: { fontSize: 12, color: '#5B5B63', marginTop: 2 },
   tkB: { width: 44, height: 44, borderRadius: 10, backgroundColor: '#F4F4F2', alignItems: 'center', justifyContent: 'center' },
-  conflict: { marginHorizontal: 14, marginBottom: 8, backgroundColor: '#FFF6E0', borderWidth: 2, borderColor: '#E8A317', borderRadius: 14, padding: 12, gap: 10 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 24 : 14, backgroundColor: '#EEEDEA', borderTopWidth: 1, borderColor: '#E4E3DF' },
+  conflict: { alignSelf: 'stretch', backgroundColor: '#FFF6E0', borderWidth: 2, borderColor: '#E8A317', borderRadius: 14, padding: 12, gap: 10 },
+  bar: { gap: 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 24 : 16, backgroundColor: HEAD, borderTopWidth: 1, borderColor: LINE },
   mic: { width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: RED, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 6 } },
   micLive: { backgroundColor: INK },
   micHearing: { backgroundColor: RED, shadowOpacity: 0.6, shadowRadius: 16 },
@@ -763,15 +915,15 @@ const st = StyleSheet.create({
   levelBar: { height: 8, borderRadius: 4, backgroundColor: RED },
   stT: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },
   stX: { fontSize: 15, color: INK },
-  send: { height: 64, flexBasis: 240, flexGrow: 0, borderRadius: 18, backgroundColor: INK, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  sendOff: { backgroundColor: '#DCDBD7' },
+  send: { height: 60, alignSelf: 'stretch', borderRadius: 16, backgroundColor: RED, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, shadowColor: RED, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
+  sendOff: { backgroundColor: '#E7E1DE', shadowOpacity: 0, elevation: 0 },
   sendT: { color: '#fff', fontSize: 18, fontWeight: '600' },
   sheetBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, gap: 10, paddingBottom: 30 },
   result: { minHeight: 48, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#F0EFEC' },
   resultT: { fontSize: 16, color: INK },
-  toast: { position: 'absolute', alignSelf: 'center', bottom: 150, backgroundColor: '#111', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 12 },
+  toast: { position: 'absolute', alignSelf: 'center', bottom: 170, backgroundColor: DEEP, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 12 },
   toastT: { color: '#fff', fontSize: 15, fontWeight: '500' },
-  btnDark: { minHeight: 46, paddingHorizontal: 20, borderRadius: 12, backgroundColor: INK, alignItems: 'center', justifyContent: 'center' },
+  btnDark: { minHeight: 46, paddingHorizontal: 20, borderRadius: 12, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
   btnDarkT: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });
