@@ -72,6 +72,11 @@ target 'DineOpen' do
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
         config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+        # Xcode 26.4: RNFBMessaging's headers use React types (RCTPromiseRejectBlock, RCTConvert) that
+        # the stricter clang now attributes to the RNFBApp module → "must be imported from module
+        # RNFBApp…" + implicit-int errors. Plain #import (modules off) for this one target compiles
+        # cleanly; Firebase / RNFBApp / the app keep modules on.
+        config.build_settings['CLANG_ENABLE_MODULES'] = 'NO' if target.name == 'RNFBMessaging'
       end
     end
   end
