@@ -271,6 +271,7 @@ PODS:
   - hermes-engine (0.81.5):
     - hermes-engine/Pre-built (= 0.81.5)
   - hermes-engine/Pre-built (0.81.5)
+  - JitsiWebRTC (124.0.2)
   - nanopb (3.30910.0):
     - nanopb/decode (= 3.30910.0)
     - nanopb/encode (= 3.30910.0)
@@ -2165,6 +2166,9 @@ PODS:
     - ReactCommon/turbomodule/core
     - SocketRocket
     - Yoga
+  - react-native-webrtc (124.0.8):
+    - JitsiWebRTC (~> 124.0.0)
+    - React-Core
   - react-native-webview (13.15.0):
     - boost
     - DoubleConversion
@@ -2728,6 +2732,8 @@ PODS:
     - React-perflogger (= 0.81.5)
     - React-utils (= 0.81.5)
     - SocketRocket
+  - ReactNativeIncallManager (4.3.0):
+    - React-Core
   - RecaptchaInterop (101.0.0)
   - RNCAsyncStorage (2.2.0):
     - boost
@@ -3317,6 +3323,7 @@ DEPENDENCIES:
   - react-native-safe-area-context (from `../node_modules/react-native-safe-area-context`)
   - react-native-thermal-receipt-printer (from `../node_modules/react-native-thermal-receipt-printer`)
   - react-native-view-shot (from `../node_modules/react-native-view-shot`)
+  - react-native-webrtc (from `../node_modules/react-native-webrtc`)
   - react-native-webview (from `../node_modules/react-native-webview`)
   - react-native-worklets-core (from `../node_modules/react-native-worklets-core`)
   - react-native-zeroconf (from `../node_modules/react-native-zeroconf`)
@@ -3350,6 +3357,7 @@ DEPENDENCIES:
   - ReactAppDependencyProvider (from `build/generated/ios`)
   - ReactCodegen (from `build/generated/ios`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
+  - ReactNativeIncallManager (from `../node_modules/react-native-incall-manager`)
   - RecaptchaInterop
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - "RNDateTimePicker (from `../node_modules/@react-native-community/datetimepicker`)"
@@ -3384,6 +3392,7 @@ SPEC REPOS:
     - GoogleUtilities
     - GTMAppAuth
     - GTMSessionFetcher
+    - JitsiWebRTC
     - nanopb
     - PromisesObjC
     - PromisesSwift
@@ -3547,6 +3556,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-thermal-receipt-printer"
   react-native-view-shot:
     :path: "../node_modules/react-native-view-shot"
+  react-native-webrtc:
+    :path: "../node_modules/react-native-webrtc"
   react-native-webview:
     :path: "../node_modules/react-native-webview"
   react-native-worklets-core:
@@ -3613,6 +3624,8 @@ EXTERNAL SOURCES:
     :path: build/generated/ios
   ReactCommon:
     :path: "../node_modules/react-native/ReactCommon"
+  ReactNativeIncallManager:
+    :path: "../node_modules/react-native-incall-manager"
   RNCAsyncStorage:
     :path: "../node_modules/@react-native-async-storage/async-storage"
   RNDateTimePicker:
@@ -3697,6 +3710,7 @@ SPEC CHECKSUMS:
   GTMAppAuth: 217a876b249c3c585a54fd6f73e6b58c4f5c4238
   GTMSessionFetcher: 5aea5ba6bd522a239e236100971f10cb71b96ab6
   hermes-engine: 9f4dfe93326146a1c99eb535b1cb0b857a3cd172
+  JitsiWebRTC: b47805ab5668be38e7ee60e2258f49badfe8e1d0
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
@@ -3738,6 +3752,7 @@ SPEC CHECKSUMS:
   react-native-safe-area-context: 0a3b034bb63a5b684dd2f5fffd3c90ef6ed41ee8
   react-native-thermal-receipt-printer: 1ac37fbaa14f544e605bd32d3927ec8ffe2a204b
   react-native-view-shot: aab9ffbcc2f01035ee8ffd9a00c773e215b35c8b
+  react-native-webrtc: da75ba1f85a36981cbcb3fdae7dfbab7ad63c040
   react-native-webview: d73728424a0e24989d71ffdc6fcf15d5f74ff4a2
   react-native-worklets-core: 2b8f8cd5c1fe549ae658a757e3d7b84eab21a6fb
   react-native-zeroconf: eb2e5584308f20f5fc3eb0cea2ceafbbd345b48b
@@ -3771,6 +3786,7 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 1bcd3527ac0390a1c898c114f81ff954be35ed79
   ReactCodegen: 2e921a931c5a4dd1d8ab37ade085fdf58fcfe1dd
   ReactCommon: 6d0fa86a4510730da7c72560e0ced14258292ab9
+  ReactNativeIncallManager: 4e46198f76b162ca8bdff48a4553a479b26b6d12
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
   RNCAsyncStorage: fd44f4b03e007e642e98df6726737bc66e9ba609
   RNDateTimePicker: ca1dc7e24d0b4839877f0ab619e7bca5db715289
@@ -3787,6 +3803,6 @@ SPEC CHECKSUMS:
   UMAppLoader: 145337733539f9af9b3dd97eeaa7f3bd97cacb23
   Yoga: cc4a6600d61e4e9276e860d4d68eebb834a050ba
 
-PODFILE CHECKSUM: 0c6915f8672545ac1620ceaced8c0a8e0e45894d
+PODFILE CHECKSUM: 32033ccdbb98fe81a4bda9b7f3940812a2ecc6c6
 
 COCOAPODS: 1.16.2
