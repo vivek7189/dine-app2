@@ -83,6 +83,9 @@ const BACKEND_CONFIG_URL =
 // Offline manager-PIN check: SHA-256 of the PIN per restaurant (`manager_pin_hash:<restaurantId>`,
 // value { hash, userId }), cleared on logout / when a different user logs in.
 const MANAGER_PIN_META_PREFIX = 'manager_pin_hash:';
+// Time limit per attempt for order create / update / payment verify (slow mobile data used to leave
+// the Complete spinner on forever). Other requests keep no limit.
+const ORDER_WRITE_TIMEOUT_MS = 15000;
 function clearManagerPinHashes() {
   try {
     const { getDb } = require('./db');
@@ -652,7 +655,13 @@ class ApiClient {
         httpErr.data = error.response.data;
         throw httpErr;
       } else if (error.request) {
-        throw new Error('Network error. Please check your connection.');
+        // No answer. A time limit (options.timeout) running out reads as "slow network"; flags let
+        // callers tell this apart from a server "no" (message-only callers are unaffected).
+        const timedOut = error.code === 'ECONNABORTED' || /timeout/i.test(String(error.message || ''));
+        const netErr = new Error(timedOut ? 'Network is slow — the server did not answer in time.' : 'Network error. Please check your connection.');
+        netErr.isNetwork = true;
+        netErr.isTimeout = timedOut;
+        throw netErr;
       } else {
         throw new Error(error.message || 'An unexpected error occurred');
       }
@@ -722,6 +731,28 @@ class ApiClient {
    * The sync engine pushes to cloud in the background.
    * UI never waits for network — instant response.
    */
+  // Order create when offline support is OFF: up to 3 tries with the same idempotency key on
+  // "no answer" / gateway errors / ORDER_IN_PROGRESS (server still saving the first try). A real
+  // server "no" (400 table occupied, 403, 409 …) is thrown at once, as before.
+  async sendOrderCreate(endpoint, method, data, timeoutMs) {
+    const waits = [2000, 4000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request(endpoint, { method, data, ...(timeoutMs ? { timeout: timeoutMs } : {}) });
+      } catch (e) {
+        const transient = !!(e && (e.isNetwork || [408, 502, 503, 504].includes(Number(e.status))));
+        if (!transient) throw e;
+        if (attempt >= waits.length) {
+          const err = new Error('Network is slow — the order could not be confirmed. Please check Orders before billing it again. (Tip: More → Offline Support keeps billing working when the internet is weak.)');
+          err.code = 'ORDER_UNCONFIRMED';
+          err.isNetwork = true;
+          throw err;
+        }
+        await new Promise((r) => setTimeout(r, waits[attempt]));
+      }
+    }
+  }
+
   async offlineWrite(endpoint, {
     method = 'POST',
     data,
@@ -732,12 +763,22 @@ class ApiClient {
     onOfflineQueue,
     onSuccess,
     idempotencyKey = null,
+    timeoutMs = null, // optional time limit per attempt (no limit when null — unchanged)
   }) {
+    const isOrderCreate = entityType === 'order' && operation === 'create' && data && typeof data === 'object';
     // When offline support is not enabled, make a direct API call (no SQLite queue)
     if (!this.isOfflineEnabled()) {
+      if (isOrderCreate) {
+        // Slow / dropping network: a create whose answer never comes is retried with the SAME
+        // idempotency key, so if the server already saved it, it returns that order (no duplicate).
+        const { generateIdempotencyKey: genKey } = require('./syncQueueV2');
+        const key = idempotencyKey || data.idempotencyKey || genKey();
+        return this.sendOrderCreate(endpoint, method, { ...data, idempotencyKey: key }, timeoutMs);
+      }
       return this.request(endpoint, {
         method,
         data,
+        ...(timeoutMs ? { timeout: timeoutMs } : {}),
       });
     }
 
@@ -757,6 +798,7 @@ class ApiClient {
         const result = await this.request(endpoint, {
           method,
           data: directData,
+          ...(timeoutMs ? { timeout: timeoutMs } : {}),
         });
         // Call onSuccess callback with server response
         if (onSuccess) {
@@ -1585,6 +1627,7 @@ class ApiClient {
       operation: 'create',
       priority: 10,
       idempotencyKey: orderData.idempotencyKey || null,
+      timeoutMs: ORDER_WRITE_TIMEOUT_MS,
       onOfflineQueue: (key, payload) => {
         // Generate local order ID
         const seq = offlineStore.getNextLocalOrderSequence(orderData.restaurantId);
@@ -1627,6 +1670,7 @@ class ApiClient {
       entityType: 'order_update',
       operation: 'update',
       priority: 15,
+      timeoutMs: ORDER_WRITE_TIMEOUT_MS,
       onOfflineQueue: (key) => {
         const offlineStore = require('./offlineStore');
         offlineStore.updateLocalOrder(orderId, orderData);
@@ -3310,6 +3354,7 @@ class ApiClient {
     const res = await this.request('/api/payments/verify', {
       method: 'POST',
       data: paymentData,
+      timeout: ORDER_WRITE_TIMEOUT_MS, // after billing it holds the Complete spinner — never forever
     });
     // Terminal-lock: a settled order ends this operator's session (if lock is on).
     try { require('./terminalLockEvents').emitTerminalOrderComplete(); } catch {}
