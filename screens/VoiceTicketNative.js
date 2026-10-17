@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
 import apiClient from '../services/api';
+import { getOrderItemKey } from '../utils/orderItemKey';
 import { useResponsive } from '../hooks/useResponsive';
 import { loadVoicePrintConfig, voicePrintClaims, printVoiceKOT } from '../services/voiceTicketPrint';
 
@@ -282,6 +283,24 @@ export default function VoiceTicketNative() {
     }
   };
 
+  // Same item already on the open order (same item / size / options, no kitchen note of its own) →
+  // raise that line's quantity, like the order screen does, so the server marks it "updated +N" and a
+  // desktop hand-back prints the extra too. Lines with a note stay separate (noteLine).
+  const mergeIntoOpenOrder = (existingItems, newItems) => {
+    const merged = (existingItems || []).map((it) => ({ ...it }));
+    for (const it of newItems) {
+      const k = getOrderItemKey(it);
+      const idx = merged.findIndex((x) => getOrderItemKey(x) === k);
+      if (idx >= 0) {
+        const q = (Number(merged[idx].quantity) || 0) + (Number(it.quantity) || 0);
+        merged[idx] = { ...merged[idx], quantity: q, total: (Number(merged[idx].price) || 0) * q };
+      } else {
+        merged.push(it);
+      }
+    }
+    return merged;
+  };
+
   const addToOpenOrder = async () => {
     if (!conflict || !ticket) return;
     const tk = ticket;
@@ -292,7 +311,7 @@ export default function VoiceTicketNative() {
       if (!existing?.id || ['completed', 'cancelled', 'paid', 'settled'].includes(existing.status)) throw new Error('That order is already closed — send this as a new order');
       const res = await apiClient.updateOrder(existing.id, {
         restaurantId: rid,
-        items: [...(existing.items || []), ...toItems(tk)],
+        items: mergeIntoOpenOrder(existing.items, toItems(tk)),
         updatedAt: new Date().toISOString(),
         lastUpdatedBy: { name: server?.name || 'Staff Member', id: server?.id || 'unknown' },
       });
