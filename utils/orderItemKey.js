@@ -12,7 +12,8 @@ export function getOrderItemKey(item) {
     : '';
   const seat = sanitizeSeat(item.seat);
   // Voice Ticket lines (noteLine) keep their kitchen note in the identity (same rule as the server).
-  const nk = item.noteLine === true && item.notes ? '|n:' + String(item.notes).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+  // (also with no notes, so a plain voice line never merges into an existing line that has notes)
+  const nk = item.noteLine === true ? '|n:' + (Array.isArray(item.notes) ? item.notes.join(',') : String(item.notes || '')).toLowerCase().split(',').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(',') : '';
   const base = `${id}|${variant}|${custs}${nk}`;
   return seat === null ? base : `${base}|s${seat}`;
 }

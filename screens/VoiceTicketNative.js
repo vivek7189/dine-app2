@@ -16,6 +16,12 @@ import apiClient from '../services/api';
 import { getOrderItemKey } from '../utils/orderItemKey';
 import { useResponsive } from '../hooks/useResponsive';
 import { loadVoicePrintConfig, voicePrintClaims, printVoiceKOT } from '../services/voiceTicketPrint';
+import { startVoiceSegmenter } from '../services/voiceSegmenter';
+
+// Spoken answers (Admin → Voice Ticket → Answers: speak). Optional native module: builds without it
+// (older App Store / APK builds) simply show the answer on screen.
+let Speech = null;
+try { Speech = require('expo-speech'); if (!Speech || typeof Speech.speak !== 'function') Speech = null; } catch (_) { Speech = null; }
 
 const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 const RED = '#D92D20';
@@ -56,6 +62,17 @@ export default function VoiceTicketNative() {
   const [conflict, setConflict] = useState(null);
 
   const recRef = useRef({ rec: null, voiced: 0, metered: false, started: 0, timer: null });
+  // hands-free conversation (settings.handsFree)
+  const [convo, setConvo] = useState(false);
+  const [hearing, setHearing] = useState(false);
+  const [thinking, setThinking] = useState(0);
+  const [reply, setReply] = useState('');
+  const [autoSend, setAutoSend] = useState(null); // { left } — "that's it" said → send unless Undo
+  const segRef = useRef(null);
+  const convoRef = useRef(false);
+  const chainRef = useRef(Promise.resolve());
+  const ticketRef = useRef(null);
+  useEffect(() => { ticketRef.current = ticket; }, [ticket]);
   const toastTimer = useRef(null);
   const flash = useCallback((m) => { clearTimeout(toastTimer.current); setToast(m); toastTimer.current = setTimeout(() => setToast(''), 3200); }, []);
 
@@ -96,6 +113,9 @@ export default function VoiceTicketNative() {
       const r = recRef.current;
       clearInterval(r.timer);
       if (r.rec) r.rec.stopAndUnloadAsync().catch(() => {});
+      convoRef.current = false;
+      if (segRef.current) segRef.current.stop().catch(() => {});
+      try { Speech && Speech.stop(); } catch (_) { /* none */ }
     };
   }, []);
 
@@ -177,6 +197,105 @@ export default function VoiceTicketNative() {
     understand({ audioUri: uri, mimeType: 'audio/m4a' });
   };
 
+  // ── hands-free conversation ──
+  const speak = (text) => {
+    if (settings?.replies !== 'voice' || !text || !Speech) return;
+    const seg = segRef.current;
+    let resumed = false;
+    const resume = () => { if (resumed) return; resumed = true; if (convoRef.current && segRef.current) segRef.current.resume(); };
+    (async () => {
+      try { if (seg) await seg.pause(); } catch (_) { /* ignore */ }
+      try { Speech.stop(); Speech.speak(text, { rate: 1.0, onDone: resume, onStopped: resume, onError: resume }); } catch (_) { resume(); }
+      setTimeout(resume, Math.min(8000, 900 + text.split(/\s+/).length * 330));
+    })();
+  };
+
+  const applyAgent = (res) => {
+    if (res.cancel) { ticketRef.current = null; setTicket(null); setHeard(''); return null; }
+    const base = ticketRef.current || { orderType: orderTypes[0] || 'dine-in', tableNumber: null, customerName: null, orderNotes: null, lines: [], unclear: [] };
+    const removed = new Set(res.remove || []);
+    let tk = { ...base, lines: base.lines.filter((l) => !removed.has(l.key)), unclear: [...(base.unclear || [])] };
+    if (res.header) tk = { ...tk, ...res.header };
+    for (const c of res.changes || []) {
+      tk.lines = tk.lines.map((l) => {
+        if (l.key !== c.key) return l;
+        const x = { ...l, notes: [...(l.notes || [])] };
+        if (c.quantity) x.quantity = c.quantity;
+        if (c.variant) {
+          const v = variantsOf(l.menuItemId).find((o) => o.name.toLowerCase() === c.variant.toLowerCase());
+          if (v) { x.variant = v.name; x.needsVariant = false; if (Number(v.price)) x.price = Number(v.price); }
+          else if (!x.notes.includes(c.variant)) x.notes.push(c.variant);
+        }
+        const drop = (c.removeNotes || []).map((n) => n.toLowerCase());
+        x.notes = [...x.notes.filter((n) => !drop.includes(n.toLowerCase())), ...(c.addNotes || []).filter((n) => !x.notes.includes(n))];
+        return x;
+      });
+    }
+    tk.lines = [...tk.lines, ...(res.addLines || [])];
+    tk.unclear = [...tk.unclear, ...(res.unclear || [])];
+    const empty = !tk.lines.length && !tk.unclear.length && !tk.tableNumber && !tk.customerName;
+    ticketRef.current = empty ? null : tk;
+    setTicket(empty ? null : tk);
+    return ticketRef.current;
+  };
+
+  const stopConvo = () => {
+    convoRef.current = false;
+    setConvo(false); setHearing(false); setLevel(0);
+    const seg = segRef.current; segRef.current = null;
+    if (seg) seg.stop().catch(() => {});
+    try { Speech && Speech.stop(); } catch (_) { /* none */ }
+    setPhase(ticketRef.current ? 'check' : 'idle');
+  };
+
+  const requestAutoSend = (tk) => {
+    if (!tk || !tk.lines.length) { const m = 'Nothing on the ticket yet.'; setReply(m); speak(m); return; }
+    if (tk.unclear.length || tk.lines.some((l) => l.needsVariant)) { const m = 'Pick the highlighted item first, then say send.'; setReply(m); speak(m); return; }
+    stopConvo();
+    setPhase('check');
+    setAutoSend({ left: 3 });
+  };
+
+  const handleSegment = (uri) => {
+    chainRef.current = chainRef.current.then(async () => {
+      if (!convoRef.current) return;
+      setThinking((n) => n + 1);
+      try {
+        const res = await apiClient.voiceTicketConverse(rid, { audioUri: uri, mimeType: 'audio/m4a', draft: ticketRef.current });
+        if (!res?.success) throw new Error(res?.error || 'Could not understand that');
+        if (res.heardNothing || !convoRef.current) return;
+        setError('');
+        setHeard(res.transcript || '');
+        const tk = applyAgent(res);
+        // speak only what needs ears (answers, sending, cancelled); edits are on the ticket
+        if (res.say) { setReply(res.say); if (!res.touched || res.send || res.cancel) speak(res.say); }
+        if (res.send) requestAutoSend(tk);
+      } catch (e) {
+        setError(e?.response?.data?.error || e?.message || 'Voice service had a problem — keep talking or tap to edit');
+      } finally {
+        setThinking((n) => Math.max(0, n - 1));
+      }
+    });
+  };
+
+  const startConvo = async () => {
+    setError(''); setReply(''); setAutoSend(null);
+    try {
+      convoRef.current = true;
+      setConvo(true); setPhase('listening');
+      segRef.current = await startVoiceSegmenter({
+        onSegment: handleSegment,
+        onLevel: setLevel,
+        onSpeaking: setHearing,
+        onIdle: () => { if (convoRef.current) { stopConvo(); flash('Stopped listening — tap the mic to talk again'); } },
+      });
+      if (!convoRef.current && segRef.current) { segRef.current.stop().catch(() => {}); segRef.current = null; }
+    } catch (e) {
+      convoRef.current = false; setConvo(false); setPhase(ticketRef.current ? 'check' : 'idle');
+      setError(e?.code === 'NO_MIC' ? e.message : 'Could not start the microphone');
+    }
+  };
+
   // ── edits ──
   const upd = (key, fn) => setTicket((tk) => ({ ...tk, lines: tk.lines.map((l) => (l.key === key ? fn(l) : l)) }));
   const variantsOf = (id) => { const m = menu.find((x) => x.id === id); return Array.isArray(m?.variants) ? m.variants.filter((v) => v?.name) : []; };
@@ -236,10 +355,12 @@ export default function VoiceTicketNative() {
     setTimeout(() => { setTicket(null); setHeard(''); setSel(null); setEditHead(false); setPhase((p) => (p === 'sent' ? 'idle' : p)); }, 1500);
   };
 
-  const canSend = !!ticket && ticket.lines.length > 0 && ticket.unclear.length === 0 && !ticket.lines.some((l) => l.needsVariant) && phase === 'check';
+  const ready = !!ticket && ticket.lines.length > 0 && ticket.unclear.length === 0 && !ticket.lines.some((l) => l.needsVariant);
+  const canSend = ready && (phase === 'check' || (convo && phase === 'listening'));
 
-  const send = async ({ tableNotSetUp = false } = {}) => {
-    if (!canSend && !tableNotSetUp) return;
+  const send = async ({ tableNotSetUp = false, auto = false } = {}) => {
+    if (!canSend && !tableNotSetUp && !(auto && ready)) return;
+    if (convoRef.current) stopConvo();
     const tk = ticket;
     const dine = isDineIn(tk.orderType);
     setPhase('sending'); setError(''); setConflict(null);
@@ -274,7 +395,11 @@ export default function VoiceTicketNative() {
         try {
           const open = await apiClient.getOpenOrders(rid);
           const hit = (open?.openOrders || []).find((o) => String(o.tableNumber || '') === String(tk.tableNumber) && !['completed', 'cancelled'].includes(o.status));
-          if (hit) { setConflict({ orderId: hit.id, table: tk.tableNumber }); setPhase('check'); return; }
+          if (hit) {
+            const conf = { orderId: hit.id, table: tk.tableNumber };
+            if (auto) { setPhase('check'); await addToOpenOrder(conf); return; } // spoken order for a busy table → add to it
+            setConflict(conf); setPhase('check'); return;
+          }
         } catch { /* plain message */ }
       }
       if (dine && tk.tableNumber && !tableNotSetUp && /not found/i.test(msg)) { setConflict({ missing: true, table: tk.tableNumber }); setPhase('check'); return; }
@@ -288,9 +413,12 @@ export default function VoiceTicketNative() {
   // desktop hand-back prints the extra too. Lines with a note stay separate (noteLine).
   const mergeIntoOpenOrder = (existingItems, newItems) => {
     const merged = (existingItems || []).map((it) => ({ ...it }));
+    // same dish (item / size / options / seat) AND the same kitchen notes — a plain burger never joins
+    // "burger, no lettuce"; an existing POS line (no noteLine flag) still counts as the same dish.
+    const dish = (it) => getOrderItemKey({ ...it, noteLine: false });
+    const notesOf = (it) => (Array.isArray(it.notes) ? it.notes.join(',') : String(it.notes || '')).toLowerCase().split(',').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean).sort().join(',');
     for (const it of newItems) {
-      const k = getOrderItemKey(it);
-      const idx = merged.findIndex((x) => getOrderItemKey(x) === k);
+      const idx = merged.findIndex((x) => dish(x) === dish(it) && notesOf(x) === notesOf(it));
       if (idx >= 0) {
         const q = (Number(merged[idx].quantity) || 0) + (Number(it.quantity) || 0);
         merged[idx] = { ...merged[idx], quantity: q, total: (Number(merged[idx].price) || 0) * q };
@@ -301,12 +429,12 @@ export default function VoiceTicketNative() {
     return merged;
   };
 
-  const addToOpenOrder = async () => {
-    if (!conflict || !ticket) return;
+  const addToOpenOrder = async (conf = conflict) => {
+    if (!conf || !ticket) return;
     const tk = ticket;
     setPhase('sending'); setError('');
     try {
-      const full = await apiClient.request(`/api/orders/single/${conflict.orderId}`);
+      const full = await apiClient.request(`/api/orders/single/${conf.orderId}`);
       const existing = full?.order || (Array.isArray(full?.orders) ? full.orders[0] : null) || full?.data || null;
       if (!existing?.id || ['completed', 'cancelled', 'paid', 'settled'].includes(existing.status)) throw new Error('That order is already closed — send this as a new order');
       const res = await apiClient.updateOrder(existing.id, {
@@ -331,6 +459,14 @@ export default function VoiceTicketNative() {
     flash(r === 'failed' ? 'Reprint failed — check the printer' : `Reprinting ${entry.head}`);
   };
 
+  // "That's it" → 3 s to Undo, then the normal send (a busy table gets the items added)
+  useEffect(() => {
+    if (!autoSend) return undefined;
+    if (autoSend.left <= 0) { setAutoSend(null); send({ auto: true }); return undefined; }
+    const t = setTimeout(() => setAutoSend((a) => (a ? { left: a.left - 1 } : a)), 1000);
+    return () => clearTimeout(t);
+  }, [autoSend]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── derived ──
   const results = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -341,8 +477,11 @@ export default function VoiceTicketNative() {
   const headText = ticket
     ? (isDineIn(ticket.orderType) ? (ticket.tableNumber ? `TABLE ${ticket.tableNumber}` : 'DINE-IN') : `${typeLabel(ticket.orderType).toUpperCase()}${ticket.customerName ? ' · ' + ticket.customerName.toUpperCase() : ''}`)
     : 'NEW ORDER';
-  let status = { tone: 'muted', title: 'Ready', text: 'Tap the mic and say the whole order' };
-  if (phase === 'listening') status = { tone: 'live', title: `Listening · 0:${String(secs).padStart(2, '0')}`, text: 'Tap again when you’re done' };
+  const handsFree = settings?.handsFree !== false;
+  let status = { tone: 'muted', title: 'Ready', text: handsFree ? 'Tap the mic and just talk — say “that’s it” to send' : 'Tap the mic and say the whole order' };
+  if (autoSend) status = { tone: 'ok', title: `Sending in ${autoSend.left}`, text: 'Tap Undo to keep editing' };
+  else if (convo) status = { tone: 'live', title: hearing ? 'Hearing you' : thinking ? 'Got it…' : 'Listening', text: 'Talk naturally · ask anything · say “that’s it” to send' };
+  else if (phase === 'listening') status = { tone: 'live', title: `Listening · 0:${String(secs).padStart(2, '0')}`, text: 'Tap again when you’re done' };
   else if (phase === 'thinking') status = { tone: 'muted', title: 'Building the ticket', text: 'Matching what you said to the menu…' };
   else if (phase === 'sending') status = { tone: 'muted', title: 'Sending', text: 'Placing the order and printing…' };
   else if (phase === 'sent') status = { tone: 'ok', title: 'Sent', text: 'Printed in the kitchen' };
@@ -495,20 +634,32 @@ export default function VoiceTicketNative() {
         )}
 
         <View style={[st.bar, !isTablet && { flexWrap: 'wrap' }]}>
-          <Pressable style={[st.mic, listening && st.micLive, busy && { opacity: 0.5 }]} disabled={busy} onPress={listening ? stopListening : startListening} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Start speaking'}>
-            <Ionicons name={listening ? 'stop' : 'mic'} size={listening ? 26 : 32} color="#fff" />
-          </Pressable>
+          {handsFree ? (
+            <Pressable style={[st.mic, convo && st.micLive, convo && hearing && st.micHearing, (phase === 'sending' || autoSend) && { opacity: 0.5 }]} disabled={phase === 'sending' || !!autoSend} onPress={convo ? stopConvo : startConvo} accessibilityRole="button" accessibilityLabel={convo ? 'Stop listening' : 'Start talking'}>
+              <Ionicons name={convo ? 'stop' : 'mic'} size={convo ? 26 : 32} color="#fff" />
+            </Pressable>
+          ) : (
+            <Pressable style={[st.mic, listening && st.micLive, busy && { opacity: 0.5 }]} disabled={busy} onPress={listening ? stopListening : startListening} accessibilityRole="button" accessibilityLabel={listening ? 'Stop listening' : 'Start speaking'}>
+              <Ionicons name={listening ? 'stop' : 'mic'} size={listening ? 26 : 32} color="#fff" />
+            </Pressable>
+          )}
           <View style={st.status}>
-            {listening && <View style={[st.levelBar, { width: 6 + level * 40 }]} />}
-            {busy && <ActivityIndicator color={RED} />}
+            {(listening || convo) && <View style={[st.levelBar, { width: 6 + level * 40 }, convo && !hearing && { backgroundColor: '#C9C8C4' }]} />}
+            {(busy || (convo && thinking > 0)) && <ActivityIndicator color={RED} />}
             <View style={{ flex: 1 }}>
               <Text style={[st.stT, { color: error ? '#B42318' : toneColor }]}>{error ? 'PROBLEM' : status.title.toUpperCase()}</Text>
               <Text style={[st.stX, error && { color: '#B42318', fontWeight: '600' }]} numberOfLines={2}>{error || status.text}</Text>
             </View>
           </View>
-          <Pressable style={[st.send, !canSend && st.sendOff, !isTablet && { flexBasis: '100%' }]} disabled={!canSend} onPress={() => send()}>
-            <Text style={[st.sendT, !canSend && { color: '#8A8A90' }]}>Send to kitchen{itemCount ? `  ·  ${itemCount}` : ''}</Text>
-          </Pressable>
+          {autoSend ? (
+            <Pressable style={[st.send, { backgroundColor: '#0F7A43' }, !isTablet && { flexBasis: '100%' }]} onPress={() => { setAutoSend(null); flash('Not sent — keep editing'); }} accessibilityRole="button">
+              <Text style={st.sendT}>Undo  ·  {autoSend.left}</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={[st.send, !canSend && st.sendOff, !isTablet && { flexBasis: '100%' }]} disabled={!canSend} onPress={() => send()}>
+              <Text style={[st.sendT, !canSend && { color: '#8A8A90' }]}>Send to kitchen{itemCount ? `  ·  ${itemCount}` : ''}</Text>
+            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -532,6 +683,12 @@ export default function VoiceTicketNative() {
           </View>
         </View>
       </Modal>
+      {reply && (convo || autoSend || phase === 'check') ? (
+        <View style={[st.reply, { bottom: isTablet ? 112 : 196 }]} pointerEvents="none" accessibilityLiveRegion="polite">
+          <View style={st.replyDot}><Ionicons name="mic" size={12} color="#fff" /></View>
+          <Text style={st.replyT}>{reply}</Text>
+        </View>
+      ) : null}
       {toast ? <View style={st.toast} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></View> : null}
     </SafeAreaView>
   );
@@ -598,6 +755,10 @@ const st = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 24 : 14, backgroundColor: '#EEEDEA', borderTopWidth: 1, borderColor: '#E4E3DF' },
   mic: { width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: RED, shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 6 } },
   micLive: { backgroundColor: INK },
+  micHearing: { backgroundColor: RED, shadowOpacity: 0.6, shadowRadius: 16 },
+  reply: { position: 'absolute', alignSelf: 'center', bottom: 170, maxWidth: 520, marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#E4E3DF', paddingHorizontal: 14, paddingVertical: 10, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 4 },
+  replyDot: { width: 22, height: 22, borderRadius: 7, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
+  replyT: { flexShrink: 1, fontSize: 15, color: INK },
   status: { flex: 1, minHeight: 72, borderRadius: 18, backgroundColor: '#fff', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
   levelBar: { height: 8, borderRadius: 4, backgroundColor: RED },
   stT: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },

@@ -2990,6 +2990,23 @@ class ApiClient {
     return this.request(`/api/voice-ticket/${restaurantId}/understand`, { method: 'POST', data: { transcript } });
   }
 
+  // Hands-free Voice Ticket: one spoken sentence + the current draft → ops on the draft + a short reply.
+  async voiceTicketConverse(restaurantId, { audioUri = null, mimeType = 'audio/m4a', transcript = '', draft = null } = {}) {
+    const compact = draft ? {
+      orderType: draft.orderType || null, tableNumber: draft.tableNumber || null, customerName: draft.customerName || null,
+      lines: (draft.lines || []).map((l) => ({ key: l.key, menuItemId: l.menuItemId, name: l.name, quantity: l.quantity, variant: l.variant || null, notes: l.notes || [] })),
+    } : null;
+    if (audioUri) {
+      const formData = new FormData();
+      formData.append('audio', { uri: audioUri, name: 'sentence.m4a', type: mimeType });
+      if (compact) formData.append('draft', JSON.stringify(compact));
+      return this.request(`/api/voice-ticket/${restaurantId}/converse`, {
+        method: 'POST', data: formData, headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30000,
+      });
+    }
+    return this.request(`/api/voice-ticket/${restaurantId}/converse`, { method: 'POST', data: { transcript, draft: compact }, timeout: 30000 });
+  }
+
   async parseQuickOrderImage(restaurantId, imageUri, mimeType = 'image/jpeg') {
     const formData = new FormData();
     formData.append('mode', 'parse');
