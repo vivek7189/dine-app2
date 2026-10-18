@@ -193,7 +193,7 @@ export default function MyShiftsScreen() {
       <View style={[styles.dot, { backgroundColor: s.color || RED }]} />
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle}>{nice(s.date)} · {t12(s.startTime)}–{t12(s.endTime)}</Text>
-        <Text style={styles.muted}>{[s.shiftName, cap(s.role), s.breakMinutes ? `${s.breakMinutes} min break` : null].filter(Boolean).join(' · ')}</Text>
+        <Text style={styles.muted}>{[s.shiftName, cap(s.role), s.stationName ? `${s.stationName}${s.duty ? ` – ${s.duty}` : ''}` : null, s.breakMinutes ? `${s.breakMinutes} min break` : null].filter(Boolean).join(' · ')}</Text>
         {Number(s.incentive?.amount) > 0 ? (
           <Text style={styles.incentive}>+{currency}{s.incentive.amount} extra{s.incentive.note ? ` · ${s.incentive.note}` : ''}</Text>
         ) : null}
@@ -221,7 +221,7 @@ export default function MyShiftsScreen() {
           {next ? (
             <>
               <Text style={styles.big}>{nice(next.date)}</Text>
-              <Text style={styles.bigSub}>{t12(next.startTime)} – {t12(next.endTime)}{next.shiftName ? ` · ${next.shiftName}` : ''}</Text>
+              <Text style={styles.bigSub}>{t12(next.startTime)} – {t12(next.endTime)}{next.shiftName ? ` · ${next.shiftName}` : ''}{next.stationName ? ` · ${next.stationName}${next.duty ? ` – ${next.duty}` : ''}` : ''}</Text>
             </>
           ) : <Text style={styles.muted}>No shifts in the next 4 weeks yet.</Text>}
         </View>
