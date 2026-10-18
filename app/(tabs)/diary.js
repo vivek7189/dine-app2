@@ -48,6 +48,7 @@ export default function DiaryScreen() {
   const [form, setForm] = useState(null);
   const [savedInfo, setSavedInfo] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const [changed, setChanged] = useState({}); // sections edited since load — only those are saved
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -72,7 +73,7 @@ export default function DiaryScreen() {
 
   const loadDay = useCallback(async () => {
     if (!rid) return;
-    setError('');
+    setError(''); setForm(null); setChanged({});
     try {
       const r = await apiClient.getDiaryDay(rid, date);
       setFacts(r.facts || null); setForm(toForm(r.entry)); setDirty(false); setBlocked(null);
@@ -96,19 +97,20 @@ export default function DiaryScreen() {
   }, [rid, tab, today]);
   useEffect(() => { if (tab !== 'day') loadList(); }, [tab, loadList]);
 
-  const set = (section, patch) => { setForm((f) => ({ ...f, [section]: { ...f[section], ...patch } })); setDirty(true); };
-  const setInc = (k, patch) => { setForm((f) => ({ ...f, incidents: f.incidents.map((x, j) => (j === k ? { ...x, ...patch } : x)) })); setDirty(true); };
+  const set = (section, patch) => { setForm((f) => ({ ...f, [section]: { ...f[section], ...patch } })); setDirty(true); setChanged((c) => ({ ...c, [section]: true })); };
+  const setInc = (k, patch) => { setForm((f) => ({ ...f, incidents: f.incidents.map((x, j) => (j === k ? { ...x, ...patch } : x)) })); setDirty(true); setChanged((c) => ({ ...c, incidents: true })); };
+  const touchIncidents = () => { setDirty(true); setChanged((c) => ({ ...c, incidents: true })); };
 
   const save = async () => {
     setSaving(true); setError('');
     try {
-      const body = {
-        anticipation: { ...form.anticipation, target: form.anticipation.target === '' ? null : Number(form.anticipation.target) },
-        assessment: form.assessment,
-        incidents: form.incidents.map((i) => ({ ...i, amount: i.amount === '' ? null : Number(i.amount), followUp: i.followUp || null })),
-      };
+      // Only what was edited here — saving the night part never wipes a morning part saved meanwhile
+      const body = {};
+      if (changed.anticipation) body.anticipation = { ...form.anticipation, target: form.anticipation.target === '' ? null : Number(form.anticipation.target) };
+      if (changed.assessment) body.assessment = form.assessment;
+      if (changed.incidents) body.incidents = form.incidents.map((i) => ({ ...i, amount: i.amount === '' ? null : Number(i.amount), followUp: i.followUp || null }));
       const r = await apiClient.saveDiaryDay(rid, date, body);
-      setForm(toForm(r.entry)); setDirty(false);
+      setForm(toForm(r.entry)); setDirty(false); setChanged({});
       setSavedInfo({ at: r.entry?.updatedAt, by: r.entry?.updatedBy?.name });
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch (_) { /* no haptics */ }
     } catch (e) { setError(e?.message || 'Could not save'); }
@@ -173,7 +175,11 @@ export default function DiaryScreen() {
                 <TouchableOpacity onPress={() => { tap(); setDate(addDays(date, 1)); }} style={s.dateBtn}><Ionicons name="chevron-forward" size={18} color="#374151" /></TouchableOpacity>
               </View>
 
-              {loading || !form ? <ActivityIndicator style={{ marginTop: 40 }} color="#b45309" /> : (
+              {!loading && !form && error ? (
+                <TouchableOpacity onPress={() => { setLoading(true); loadDay(); }} style={[s.card, { alignItems: 'center' }]}>
+                  <Text style={s.error}>{error}</Text><Text style={s.link}>Try again</Text>
+                </TouchableOpacity>
+              ) : loading || !form ? <ActivityIndicator style={{ marginTop: 40 }} color="#b45309" /> : (
                 <>
                   {!!error && <Text style={s.error}>{error}</Text>}
                   {/* Facts — never typed */}
@@ -294,7 +300,7 @@ export default function DiaryScreen() {
                           </TouchableOpacity>
                           <View style={{ flex: 1 }} />
                           {!!x.by?.name && <Text style={s.muted}>by {x.by.name}</Text>}
-                          <TouchableOpacity onPress={() => { setForm((f) => ({ ...f, incidents: f.incidents.filter((_, j) => j !== k) })); setDirty(true); }} style={{ padding: 6 }}>
+                          <TouchableOpacity onPress={() => { setForm((f) => ({ ...f, incidents: f.incidents.filter((_, j) => j !== k) })); touchIncidents(); }} style={{ padding: 6 }}>
                             <Ionicons name="trash-outline" size={18} color="#9ca3af" />
                           </TouchableOpacity>
                         </View>
@@ -303,7 +309,7 @@ export default function DiaryScreen() {
                         )}
                       </View>
                     ))}
-                    <TouchableOpacity onPress={() => { tap(); setForm((f) => ({ ...f, incidents: [...f.incidents, blankIncident()] })); setDirty(true); }} style={s.addBtn}>
+                    <TouchableOpacity onPress={() => { tap(); setForm((f) => ({ ...f, incidents: [...f.incidents, blankIncident()] })); touchIncidents(); }} style={s.addBtn}>
                       <Ionicons name="add" size={16} color="#374151" /><Text style={{ fontWeight: '700', color: '#374151' }}>Add incident or event</Text>
                     </TouchableOpacity>
                   </Card>

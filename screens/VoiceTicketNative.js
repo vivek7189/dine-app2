@@ -5,10 +5,10 @@
 // posSettings.voiceTicket.enabled.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, Modal, StyleSheet, Platform, KeyboardAvoidingView, useWindowDimensions,
+  View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, Modal, StyleSheet, Platform, KeyboardAvoidingView, useWindowDimensions, AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
@@ -499,7 +499,6 @@ export default function VoiceTicketNative() {
         } catch { /* plain message */ }
       }
       if (dine && tk.tableNumber && !tableNotSetUp && /not found/i.test(msg)) {
-        if (auto && liveRef.current) { await send({ tableNotSetUp: true, auto: true }); return; } // live: send with the number on the ticket
         setConflict({ missing: true, table: tk.tableNumber }); setPhase('check'); reportSend(`Table ${tk.tableNumber} is not set up — the staff must choose on screen.`); return;
       }
       setError(msg || 'Could not send — nothing was printed. Please try again.');
@@ -574,12 +573,17 @@ export default function VoiceTicketNative() {
     }),
     cancel: () => { ticketRef.current = null; setTicket(null); setSel(null); setConflict(null); setPhase('idle'); },
   };
+  // Which start is still wanted: End / leaving the screen while it is connecting clears it, so a call
+  // that finishes connecting afterwards is hung up at once (it would otherwise listen — and send — unseen).
+  const liveWantRef = useRef(0);
   const startLive = async () => {
-    if (liveRef.current) return;
+    if (liveRef.current || liveWantRef.current) return;
+    const want = Date.now();
+    liveWantRef.current = want;
     setError(''); setYouText(''); setAiText(''); setMuted(false);
     setLive(true); setAiState('connecting');
     try {
-      liveRef.current = await startLiveVoice({
+      const call = await startLiveVoice({
         restaurantId: rid,
         getDraft: () => ticketRef.current,
         onOps: (ops) => handlers.current.applyOps(ops),
@@ -590,18 +594,32 @@ export default function VoiceTicketNative() {
         onAi: (txt, fin) => { setAiText(txt); if (fin && txt) pushLog('say', txt); },
         onError: (m) => setError(m),
         onEnd: (why) => {
-          liveRef.current = null; setLive(false); setAiState('idle');
+          liveRef.current = null; if (liveWantRef.current === want) liveWantRef.current = 0; setLive(false); setAiState('idle');
           if (why === 'time') flash('Live voice ended (time limit) — tap to talk again');
           else if (why === 'dropped') flash('Connection dropped — tap to talk again');
         },
       });
+      if (liveWantRef.current !== want) { call.stop('user'); return; }
+      liveRef.current = call;
     } catch (e) {
+      if (liveWantRef.current !== want) return;
+      liveWantRef.current = 0;
       liveRef.current = null; setLive(false); setAiState('idle');
       setError(e?.code === 'NO_WEBRTC' ? 'Live voice needs the latest app update' : /permission|denied|NotAllowed/i.test(String(e?.message || e?.name)) ? 'Microphone is blocked — allow it in the phone settings' : (e?.message || 'Could not start the live voice'));
     }
   };
-  const stopLive = () => { const l = liveRef.current; liveRef.current = null; if (l) l.stop('user'); setLive(false); setAiState('idle'); };
+  const stopLive = () => { const l = liveRef.current; liveRef.current = null; liveWantRef.current = 0; if (l) l.stop('user'); setLive(false); setAiState('idle'); };
+  // A live call only runs while this screen is in front: switching tab (Voice tab mode keeps the
+  // screen mounted) or sending the app to the background hangs up.
+  const stopLiveRef = useRef(stopLive);
+  stopLiveRef.current = stopLive;
+  useFocusEffect(useCallback(() => () => { if (liveRef.current || liveWantRef.current) stopLiveRef.current(); }, []));
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => { if (st !== 'active' && (liveRef.current || liveWantRef.current)) stopLiveRef.current(); });
+    return () => sub.remove();
+  }, []);
   useEffect(() => () => {
+    liveWantRef.current = 0;
     if (liveRef.current) liveRef.current.stop('user');
     if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
   }, []);
