@@ -323,6 +323,29 @@ export default function WaiterHomeNative() {
                 {mySales.tips > 0 && <Text style={{ fontSize: 12, color: '#4c1d95' }}>Tips {formatCurrency(mySales.tips)}</Text>}
               </View>
             </View>
+            {/* Served vs taken (incentives) + the tables I served */}
+            {mySales.served && mySales.taken && (
+              <View style={{ backgroundColor: '#f5f3ff', borderColor: '#e0e7ff', borderWidth: 1, borderRadius: 14, marginTop: 8, padding: 10 }}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  {[['TABLES I SERVED', mySales.served], ['ORDERS I TOOK', mySales.taken]].map(([label, v]) => (
+                    <View key={label} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 10 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#6366f1', letterSpacing: 0.5 }}>{label}</Text>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#1e1b4b', marginTop: 2 }}>{formatCurrency(v.sales || 0)}</Text>
+                      <Text style={{ fontSize: 11, color: '#6b7280' }}>{v.orders || 0} order{v.orders === 1 ? '' : 's'}</Text>
+                    </View>
+                  ))}
+                </View>
+                {Array.isArray(mySales.tables) && mySales.tables.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                    {mySales.tables.slice(0, 12).map((t) => (
+                      <View key={t.table} style={{ backgroundColor: '#fff', borderColor: '#e0e7ff', borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+                        <Text style={{ fontSize: 12, color: '#3730a3' }}>{t.isTable ? `Table ${t.table}` : t.table} · <Text style={{ fontWeight: '800' }}>{formatCurrency(t.sales || 0)}</Text>{t.orders > 1 ? ` (${t.orders})` : ''}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         )}
 
