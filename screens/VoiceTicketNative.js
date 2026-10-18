@@ -17,6 +17,7 @@ import { getOrderItemKey } from '../utils/orderItemKey';
 import { useResponsive } from '../hooks/useResponsive';
 import { loadVoicePrintConfig, voicePrintClaims, printVoiceKOT } from '../services/voiceTicketPrint';
 import { startVoiceSegmenter } from '../services/voiceSegmenter';
+import { ensureMic, createRecording, setRecordingMode, openMicSettings } from '../services/micAccess';
 import { startLiveVoice, liveVoiceAvailable } from '../services/voiceLive';
 import VoiceOrb from '../components/VoiceOrb';
 import * as Haptics from 'expo-haptics';
@@ -78,6 +79,10 @@ export default function VoiceTicketNative() {
 
   const [phase, setPhase] = useState('idle'); // idle | listening | thinking | check | sending | sent
   const [error, setError] = useState('');
+  const [micBlocked, setMicBlocked] = useState(false); // denied in phone Settings → show an Open Settings button
+  const [micPrimer, setMicPrimer] = useState(null); // first-time mic explainer → the action to run after Allow
+  const micBlockedRef = useRef(false);
+  micBlockedRef.current = micBlocked;
   const [heard, setHeard] = useState('');
   const [ticket, setTicket] = useState(null);
   const [sel, setSel] = useState(null);
@@ -219,13 +224,13 @@ export default function VoiceTicketNative() {
   const startListening = async () => {
     setError('');
     try {
-      const perm = await Audio.requestPermissionsAsync();
-      if (!perm.granted) { setError('Microphone is blocked — allow it in the phone settings'); return; }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const mic = await ensureMic();
+      if (!mic.ok) { setMicBlocked(!!mic.blocked); setError(mic.blocked ? 'Microphone is off for DineOpen — turn it on in Settings' : 'Allow the microphone to order by voice'); return; }
+      setMicBlocked(false);
+      await setRecordingMode(true);
       const r = recRef.current;
       r.voiced = 0; r.metered = false; r.started = Date.now();
-      const { recording } = await Audio.Recording.createAsync(
-        { ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true },
+      const recording = await createRecording(
         (st) => {
           if (typeof st?.metering === 'number') {
             r.metered = true;
@@ -235,6 +240,7 @@ export default function VoiceTicketNative() {
         },
         120,
       );
+      r.started = Date.now();
       r.rec = recording;
       setSecs(0);
       r.timer = setInterval(() => {
@@ -372,6 +378,10 @@ export default function VoiceTicketNative() {
 
   const startConvo = async () => {
     setError(''); setReply(''); setAutoSend(null);
+    // mic first: the permission prompt (first time) must close before listening starts
+    const mic = await ensureMic();
+    if (!mic.ok) { setMicBlocked(!!mic.blocked); setError(mic.blocked ? 'Microphone is off for DineOpen — turn it on in Settings' : 'Allow the microphone to order by voice'); return; }
+    setMicBlocked(false);
     try {
       convoRef.current = true;
       setConvo(true); setPhase('listening');
@@ -384,7 +394,8 @@ export default function VoiceTicketNative() {
       if (!convoRef.current && segRef.current) { segRef.current.stop().catch(() => {}); segRef.current = null; }
     } catch (e) {
       convoRef.current = false; setConvo(false); setPhase(ticketRef.current ? 'check' : 'idle');
-      setError(e?.code === 'NO_MIC' ? e.message : 'Could not start the microphone');
+      if (e?.code === 'NO_MIC') setMicBlocked(!!e.blocked);
+      setError(e?.code === 'NO_MIC' ? e.message : 'Could not start the microphone — tap to try again');
     }
   };
 
@@ -581,6 +592,11 @@ export default function VoiceTicketNative() {
     const want = Date.now();
     liveWantRef.current = want;
     setError(''); setYouText(''); setAiText(''); setMuted(false);
+    // mic first (before a paid live session is opened); first time = the prompt, then straight on
+    const mic = await ensureMic();
+    if (liveWantRef.current !== want) return;
+    if (!mic.ok) { liveWantRef.current = 0; setMicBlocked(!!mic.blocked); setError(mic.blocked ? 'Microphone is off for DineOpen — turn it on in Settings' : 'Allow the microphone to talk to the assistant'); return; }
+    setMicBlocked(false);
     setLive(true); setAiState('connecting');
     try {
       const call = await startLiveVoice({
@@ -615,7 +631,13 @@ export default function VoiceTicketNative() {
   stopLiveRef.current = stopLive;
   useFocusEffect(useCallback(() => () => { if (liveRef.current || liveWantRef.current) stopLiveRef.current(); }, []));
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => { if (st !== 'active' && (liveRef.current || liveWantRef.current)) stopLiveRef.current(); });
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active' && (liveRef.current || liveWantRef.current)) stopLiveRef.current();
+      // back from Settings with the mic switched on → clear the "blocked" message
+      if (st === 'active' && micBlockedRef.current) {
+        Audio.getPermissionsAsync().then((p) => { if (p?.granted) { setMicBlocked(false); setError(''); } }).catch(() => {});
+      }
+    });
     return () => sub.remove();
   }, []);
   useEffect(() => () => {
@@ -708,7 +730,16 @@ export default function VoiceTicketNative() {
     : autoSend ? `Sending in ${autoSend.left}`
       : phase === 'sent' ? 'Sent to the kitchen'
         : ({ connecting: 'Connecting…', listening: 'Listening', hearing: 'Hearing you', thinking: 'Thinking…', speaking: 'Speaking' }[stageState]) || (needs && phase === 'check' ? (needs === 1 ? 'Check 1 item' : `Check ${needs} items`) : 'Tap to talk');
-  const mainAction = engineLive ? (live ? stopLive : startLive) : handsFree ? (convo ? stopConvo : startConvo) : (listening ? stopListening : startListening);
+  const rawAction = engineLive ? (live ? stopLive : startLive) : handsFree ? (convo ? stopConvo : startConvo) : (listening ? stopListening : startListening);
+  const isStart = rawAction === startLive || rawAction === startConvo || rawAction === startListening;
+  // First time only: a short "why" before the phone's own mic prompt (people tap Allow when they know
+  // why); after Allow the action carries straight on — no second tap.
+  const mainAction = !isStart ? rawAction : async () => {
+    let p = null;
+    try { p = await Audio.getPermissionsAsync(); } catch (_) { p = null; }
+    if (p && !p.granted && p.canAskAgain !== false && p.status === 'undetermined') { setMicPrimer(() => rawAction); return; }
+    rawAction();
+  };
   const mainDisabled = engineLive ? aiState === 'connecting' : handsFree ? (phase === 'sending' || !!autoSend) : busy;
   // what is said right now: live captions, or the last sentence / answer in the classic mode
   const lastYou = [...log].reverse().find((t) => t.kind === 'you');
@@ -727,6 +758,11 @@ export default function VoiceTicketNative() {
       <Animated.Text key={stageLabel} entering={FadeIn.duration(220)} style={[st.stateLbl, error && { color: ERR }]}>{stageLabel}</Animated.Text>
       <View style={[st.captions, hasLines && !isTablet && { minHeight: 64 }]}>
         {error ? <Text style={st.capErr}>{error}</Text> : null}
+        {error && micBlocked ? (
+          <Pressable onPress={openMicSettings} style={{ marginTop: 10, alignSelf: 'center', backgroundColor: RED, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 }}>
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Open Settings</Text>
+          </Pressable>
+        ) : null}
         {!error && capYou ? <Text style={[st.capYou, isTablet && { fontSize: 24 }]} numberOfLines={hasLines && !isTablet ? 2 : 4}>{capYou}</Text> : null}
         {!error && capAi ? <Text style={[st.capAi, isTablet && { fontSize: 21 }]} numberOfLines={hasLines && !isTablet ? 2 : 4}>{capAi}</Text> : null}
         {!error && !capYou && !capAi ? <Text style={st.capHint}>{hint}</Text> : null}
@@ -1053,6 +1089,28 @@ export default function VoiceTicketNative() {
       })}
 
       {toast ? <Animated.View entering={FadeInDown.duration(200)} style={[st.toast, { bottom: dockBottom + 86 }]} pointerEvents="none"><Text style={st.toastT}>{toast}</Text></Animated.View> : null}
+
+      {/* first time only: why the microphone, then the phone's own prompt, then it carries on */}
+      <Modal visible={!!micPrimer} transparent animationType="fade" onRequestClose={() => setMicPrimer(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,10,8,0.45)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 24, padding: 24, alignItems: 'center' }}>
+            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#FDECEA', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="mic" size={30} color={RED} />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: INK, marginTop: 14, textAlign: 'center' }}>Talk to take orders</Text>
+            <Text style={{ fontSize: 14.5, color: '#57534E', marginTop: 8, textAlign: 'center', lineHeight: 21 }}>
+              DineOpen listens only while the mic is on and only to build the order. Tap Allow on the next screen.
+            </Text>
+            <Pressable onPress={() => { const run = micPrimer; setMicPrimer(null); if (run) setTimeout(run, 350); }}
+              style={{ marginTop: 20, alignSelf: 'stretch', backgroundColor: RED, borderRadius: 999, paddingVertical: 14, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Continue</Text>
+            </Pressable>
+            <Pressable onPress={() => setMicPrimer(null)} style={{ marginTop: 10, padding: 8 }}>
+              <Text style={{ color: '#78716C', fontWeight: '600' }}>Not now</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

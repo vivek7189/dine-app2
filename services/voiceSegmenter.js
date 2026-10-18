@@ -3,6 +3,7 @@
 // uploaded), when the level rises clearly above the room's noise the window is kept until a short
 // pause ends the sentence, and that one small file is handed over. Long silence ends the session.
 import { Audio } from 'expo-av';
+import { ensureMic, createRecording, setRecordingMode } from './micAccess';
 
 const TICK = 100;
 
@@ -10,9 +11,9 @@ export async function startVoiceSegmenter({
   onSegment, onLevel, onSpeaking, onIdle,
   idleMs = 20000, endSilenceMs = 900, minSpeechMs = 350, maxSegmentMs = 15000, quietRollMs = 3000,
 } = {}) {
-  const perm = await Audio.requestPermissionsAsync();
-  if (!perm.granted) { const e = new Error('Microphone is blocked — allow it in the phone settings'); e.code = 'NO_MIC'; throw e; }
-  await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: false });
+  const mic = await ensureMic();
+  if (!mic.ok) { const e = new Error('Microphone is blocked — allow it in the phone settings'); e.code = 'NO_MIC'; e.blocked = !!mic.blocked; throw e; }
+  await setRecordingMode(true);
 
   const s = { rec: null, stopped: false, paused: false, busy: false, speaking: false, noise: -50, calib: [], voicedMs: 0, quietMs: 0, startedAt: 0, lastSpeech: Date.now() };
 
@@ -53,9 +54,8 @@ export async function startVoiceSegmenter({
 
   const begin = async () => {
     if (s.stopped || s.paused) return;
-    const { recording } = await Audio.Recording.createAsync(
-      { ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true }, onStatus, TICK,
-    );
+    const recording = await createRecording(onStatus, TICK);
+    if (s.stopped || s.paused) { await recording.stopAndUnloadAsync().catch(() => {}); return; }
     s.rec = recording; s.startedAt = Date.now();
   };
 
