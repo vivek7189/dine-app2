@@ -56,6 +56,8 @@ export default function MoreScreen() {
   const { modes: tabModes, setMode: setTabMode } = useTabModes();
   // Events calendar: shown only when the API lets this person see it (403 = owner turned staff view off)
   const [calendarAllowed, setCalendarAllowed] = useState(false);
+  // Daily Diary: the server decides (turned on + this person's role picked by the owner)
+  const [diaryAllowed, setDiaryAllowed] = useState(false);
   // Announcements from the owner / managers: only where the restaurant has them on (+ unread count)
   const [announcements, setAnnouncements] = useState({ enabled: false, unread: 0 });
 
@@ -175,6 +177,12 @@ export default function MoreScreen() {
     loadUpcoming(calendarRid).then(r => { if (alive) setCalendarAllowed(!!r.allowed); });
     return () => { alive = false; };
   }, [calendarRid]);
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    if (!calendarRid) { setDiaryAllowed(false); return undefined; }
+    apiClient.getDiaryAccess(calendarRid).then(r => { if (alive) setDiaryAllowed(!!r?.allowed); }).catch(() => { if (alive) setDiaryAllowed(false); });
+    return () => { alive = false; };
+  }, [calendarRid]));
   // Re-checked whenever More is opened, so the unread count drops after reading.
   useFocusEffect(useCallback(() => {
     let alive = true;
@@ -201,6 +209,7 @@ export default function MoreScreen() {
         // Only when the owner hid Attendance (clock-in) for this role — leave applications stay available
         { title: 'Apply Leave', icon: 'calendar-clear-outline', route: { pathname: '/(tabs)/attendance', params: { mode: 'leave' } }, roles: null, leaveOnly: true, color: '#0ea5e9', iconBg: '#f0f9ff' },
         { title: 'Events', icon: 'sparkles-outline', route: '/(tabs)/calendar', roles: null, calendar: true, color: '#d97706', iconBg: '#fffbeb' },
+        { title: 'Daily Diary', icon: 'book-outline', route: '/(tabs)/diary', roles: null, diary: true, color: '#b45309', iconBg: '#fffbeb' },
         // Billing only for roles that can bill (custom roles via pageAccess.completeBill) — was shown to everyone
         { title: 'Billing', icon: 'card-outline', route: '/(tabs)/billing-tab', roles: ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'captain'], feature: 'completeBill', perm: 'page.billing', color: '#3b82f6', iconBg: '#eff6ff' },
         // My Pay: own payslips / advances / bonuses / appraisals — only when the role has it (roles on)
@@ -303,6 +312,7 @@ export default function MoreScreen() {
 
   const shouldShowItem = (item) => {
     if (item.calendar) return calendarAllowed;
+    if (item.diary) return diaryAllowed;
     if (item.announcements) return announcements.enabled;
     // Apply Leave: whenever this person doesn't see Attendance (for any reason) — leave must always be
     // possible from the app (MFC: staff couldn't find where to apply).

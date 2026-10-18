@@ -3475,6 +3475,23 @@ class ApiClient {
   async getMySales(restaurantId, period = 'today') {
     return this.request(`/api/staff-access/${restaurantId}/my-sales?period=${encodeURIComponent(period)}`);
   }
+  // ── Daily Diary (manager's anticipation & assessment + incidents; role based on the server) ──
+  async getDiaryAccess(restaurantId) {
+    return this.request(`/api/diary/${restaurantId}/access`);
+  }
+  async getDiary(restaurantId, from, to) {
+    const q = [from ? `from=${from}` : '', to ? `to=${to}` : ''].filter(Boolean).join('&');
+    return this.request(`/api/diary/${restaurantId}${q ? `?${q}` : ''}`);
+  }
+  async getDiaryDay(restaurantId, date) {
+    return this.request(`/api/diary/${restaurantId}/day/${date}`);
+  }
+  async saveDiaryDay(restaurantId, date, body) {
+    return this.request(`/api/diary/${restaurantId}/day/${date}`, { method: 'PUT', data: body || {} });
+  }
+  async getDiaryIncidents(restaurantId, status = 'open') {
+    return this.request(`/api/diary/${restaurantId}/incidents?status=${encodeURIComponent(status)}`);
+  }
   // ── Event calendar (festivals, public holidays, own events) ──
   // A 403 means the owner turned staff viewing off (callers hide the calendar).
   async getCalendar(restaurantId, from, to, lang = 'en') {
