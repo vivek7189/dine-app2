@@ -111,6 +111,8 @@ export default function VoiceTicketNative() {
   useEffect(() => { ticketRef.current = ticket; }, [ticket]);
   const [log, setLog] = useState([]); // what was said / done / answered
   const [floor, setFloor] = useState([]); // [{ n, busy }]
+  // The ticket's table already has an order → show what is on it, and Send adds to it
+  const [onTable, setOnTable] = useState(null); // { orderId, number, items: [{name, quantity}], table }
   const logScroll = useRef(null);
   const pushLog = useCallback((kind, text) => {
     if (!text) return;
@@ -123,7 +125,7 @@ export default function VoiceTicketNative() {
       const list = [];
       (res?.floors || (Array.isArray(res) ? res : [])).forEach((f) => (f.tables || []).forEach((t) => {
         const n = t.number ?? t.tableNumber ?? t.name;
-        if (n != null && String(n).trim()) list.push({ n: String(n).trim(), busy: t.status === 'occupied' || !!t.currentOrderId });
+        if (n != null && String(n).trim()) list.push({ n: String(n).trim(), busy: t.status === 'occupied' || !!t.currentOrderId, orderId: t.currentOrderId || null });
       }));
       list.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true }));
       setFloor(list.slice(0, 60));
@@ -134,6 +136,25 @@ export default function VoiceTicketNative() {
     const t = setInterval(loadFloor, 30000);
     return () => clearInterval(t);
   }, [loadFloor]);
+  const tkTable = ticket && isDineIn(ticket.orderType) && ticket.tableNumber ? String(ticket.tableNumber) : '';
+  const tkTableBusy = !!(tkTable && floor.some((t) => t.n === tkTable && t.busy));
+  useEffect(() => {
+    if (!rid || !tkTable || !tkTableBusy) { setOnTable(null); return undefined; }
+    let alive = true;
+    // the floor knows the table's current order → load it directly (an older order is outside the
+    // open-orders lookback); else look through the open orders
+    const ft = floor.find((t) => t.n === tkTable);
+    const CLOSED = ['completed', 'cancelled', 'paid', 'settled', 'deleted', 'merged'];
+    const byId = ft && ft.orderId
+      ? apiClient.getOrderById(rid, ft.orderId).then((full) => { const o = full?.order || (Array.isArray(full?.orders) ? full.orders[0] : null) || full?.data || full; return o && o.id && !CLOSED.includes(o.status) ? o : null; }).catch(() => null)
+      : Promise.resolve(null);
+    byId.then((o) => o || apiClient.getOpenOrders(rid).then((open) => (open?.openOrders || []).find((x) => String(x.tableNumber || '') === tkTable && !CLOSED.includes(x.status)) || null)).then((hit) => {
+      if (!alive) return;
+      setOnTable(hit ? { orderId: hit.id, number: hit.dailyOrderId || hit.kotNumber || '', table: tkTable,
+        items: (hit.items || []).filter((i) => i && Number(i.quantity) > 0).map((i) => ({ name: i.name, quantity: Number(i.quantity) || 1 })) } : null);
+    }).catch(() => { if (alive) setOnTable(null); });
+    return () => { alive = false; };
+  }, [rid, tkTable, tkTableBusy]); // eslint-disable-line react-hooks/exhaustive-deps
   const toastTimer = useRef(null);
   const flash = useCallback((m) => { clearTimeout(toastTimer.current); setToast(m); toastTimer.current = setTimeout(() => setToast(''), 3200); }, []);
 
@@ -469,6 +490,11 @@ export default function VoiceTicketNative() {
     const tkReady = !!tk && tk.lines.length > 0 && tk.unclear.length === 0 && !tk.lines.some((l) => l.needsVariant);
     if (!canSend && !(tableNotSetUp && tkReady) && !(auto && tkReady)) { reportSend('Nothing ready to send.'); return; }
     if (convoRef.current) stopConvo();
+    // table already eating → straight onto its order (no failed "new order" first)
+    if (onTable && isDineIn(tk.orderType) && String(tk.tableNumber || '') === onTable.table && !tableNotSetUp) {
+      await addToOpenOrder({ orderId: onTable.orderId, number: onTable.number, items: onTable.items.length, table: onTable.table });
+      return;
+    }
     const dine = isDineIn(tk.orderType);
     setPhase('sending'); setError(''); setConflict(null);
     const cfg = printCfg || { printSettings: {}, printStationCount: 0, localKotPrintingOn: false };
@@ -770,6 +796,16 @@ export default function VoiceTicketNative() {
     </View>
   );
 
+  const Already = ticket && onTable ? (
+    <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8, borderBottomWidth: 1, borderStyle: 'dashed', borderColor: '#E7E0DB' }}>
+      <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.8, color: '#8A7F78' }}>ALREADY ON TABLE {onTable.table}{onTable.number ? ` · #${onTable.number}` : ''}</Text>
+      {(onTable.items.length ? onTable.items.slice(0, 10) : [{ name: '(no items yet)', quantity: '' }]).map((i, k) => (
+        <Text key={k} style={{ fontSize: 14, color: '#8A7F78', marginTop: 3 }}><Text style={{ fontWeight: '800' }}>{i.quantity ? `${i.quantity}  ` : ''}</Text>{i.name}</Text>
+      ))}
+      {onTable.items.length > 10 ? <Text style={{ fontSize: 13, color: '#8A7F78', marginTop: 3 }}>+ {onTable.items.length - 10} more</Text> : null}
+      <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 0.8, color: RED, marginTop: 8 }}>NEW</Text>
+    </View>
+  ) : null;
   const Lines = ticket ? ticket.lines.map((l) => (
     <Animated.View key={l.key} entering={FadeInDown.duration(260)} layout={LinearTransition.duration(200)} style={[st.sep, sel === l.key && st.rowSel]}>
       <Pressable style={({ pressed }) => [st.row, pressed && { backgroundColor: '#FAF6F4' }]} onPress={() => { setSel(sel === l.key ? null : l.key); setNoteDraft(''); }} accessibilityLabel={`Change ${l.name}`}>
@@ -852,7 +888,7 @@ export default function VoiceTicketNative() {
   ) : (
     <Pressable style={[st.wideBtn, !canSend && st.wideOff]} disabled={!canSend && !(engineLive && live && ready)} onPress={() => send({ auto: engineLive && live })} accessibilityRole="button">
       <Ionicons name="paper-plane" size={18} color={canSend || (engineLive && live && ready) ? '#fff' : '#A8A29E'} />
-      <Text style={[st.wideBtnT, !(canSend || (engineLive && live && ready)) && { color: '#A8A29E' }]}>Send to kitchen{itemCount ? ` · ${itemCount}` : ''}</Text>
+      <Text style={[st.wideBtnT, !(canSend || (engineLive && live && ready)) && { color: '#A8A29E' }]}>{onTable ? `Add to Table ${onTable.table}’s order` : 'Send to kitchen'}{itemCount ? ` · ${itemCount}` : ''}</Text>
     </Pressable>
   );
 
@@ -943,6 +979,7 @@ export default function VoiceTicketNative() {
                 {ConflictBox}
                 <View style={st.card}>
                   {TicketHead}
+                  {Already}
                   {Lines}
                   {Unclear}
                   {!hasLines && (phase === 'thinking' ? <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View> : null)}
@@ -959,6 +996,7 @@ export default function VoiceTicketNative() {
               <View style={[st.card, st.cardPhone]}>
                 {TicketHead}
                 <ScrollView style={{ flexGrow: 0 }} keyboardShouldPersistTaps="handled">
+                  {Already}
                   {Lines}
                   {Unclear}
                   {!hasLines && <View style={st.emptyRow}><ActivityIndicator color={RED} /><Text style={st.muted}>  Building the order…</Text></View>}
