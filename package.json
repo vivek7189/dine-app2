@@ -1,6 +1,6 @@
 {
   "name": "dine-app",
-  "version": "2.98.50",
+  "version": "2.98.51",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
