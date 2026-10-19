@@ -37,7 +37,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter, withSeatLabel } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
-import { splitIndiaGst, attachInclusiveSplits, billDateOf, formatDateTime } from '../utils/printTemplates/helpers';
+import { splitIndiaGst, attachInclusiveSplits, billDateOf, formatDateTime, stageFooterText } from '../utils/printTemplates/helpers';
 import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 
 const SAVED_PRINTER_KEY = 'dine_saved_printer';
@@ -1264,6 +1264,24 @@ export const generateBillText = (invoiceData) => {
     lines.push(`<CB>*** PRE-BILL ***</CB>`);
     lines.push(`<C>This is not a final bill</C>`);
     lines.push(_DLINE);
+  }
+
+  // The line for this kind of bill (pre-bill / final — web Admin → Print settings), bold
+  const _stage = stageFooterText(bl, invoiceData);
+  if (_stage.length) {
+    lines.push('');
+    _stage.forEach((t) => wrapText(t, W).forEach((l) => lines.push(`<CB>${l}</CB>`)));
+  }
+  // The restaurant's own footer lines (Paybill, bank details…) — same as bills printed from the POS
+  const _foot = typeof bl.footerText === 'string' ? bl.footerText.replace(/\r\n?/g, '\n').trim() : '';
+  if (_foot) {
+    lines.push('');
+    _foot.split('\n').slice(0, 15).forEach((raw) => {
+      const t = raw.trim().slice(0, 160);
+      if (!t) { lines.push(''); return; }
+      const bold = /\d(?:[\d\s-]{4,})\d/.test(t); // pay-to / till numbers stand out
+      wrapText(t, W).forEach((l) => lines.push(bold ? `<CB>${l}</CB>` : `<C>${l}</C>`));
+    });
   }
 
   if (bl.showFooter !== false) {

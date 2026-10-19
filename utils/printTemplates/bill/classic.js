@@ -9,6 +9,7 @@ import {
   getBillPrintCSS, getBillHeaderHTML, wrapInDocument,
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
   buildInclusiveTaxNote,
+  buildCustomFooterHtml,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -69,7 +70,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
     `</div>` +
     `<div class="divider">================================</div>` +
     (invoice.isPreBill ? `<div style="text-align:center;margin:8px 0;"><div style="font-size:16px;font-weight:900;letter-spacing:2px;">*** PRE-BILL ***</div><div style="font-size:11px;color:#666;">This is not a final bill</div></div><div class="divider">================================</div>` : '') +
-    (bl.showFooter !== false || bl.showPoweredBy !== false ? `<div class="bill-footer">${bl.showFooter !== false ? `<p>${showAr ? dualLabel(L.footer, AR.footer, showAr) : L.footer}</p>` : ''}${bl.showPoweredBy !== false ? `<p style="font-size:10px;margin-top:4px;">${showAr ? dualLabel(L.poweredBy, AR.poweredBy, showAr) : L.poweredBy}</p>` : ''}</div>` : '');
+    (bl.showFooter !== false || bl.showPoweredBy !== false || buildCustomFooterHtml(bl, invoice) ? `<div class="bill-footer">${buildCustomFooterHtml(bl, invoice)}${bl.showFooter !== false ? `<p>${showAr ? dualLabel(L.footer, AR.footer, showAr) : L.footer}</p>` : ''}${bl.showPoweredBy !== false ? `<p style="font-size:10px;margin-top:4px;">${showAr ? dualLabel(L.poweredBy, AR.poweredBy, showAr) : L.poweredBy}</p>` : ''}</div>` : '');
 
   return wrapInDocument(`${dualLabel(L.billLabel, AR.billLabel, showAr)} #${invoice.dailyOrderId || invoice.id || 'N/A'}`, css, bodyHtml);
 }

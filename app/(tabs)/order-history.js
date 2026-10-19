@@ -473,6 +473,8 @@ export default function OrderHistoryScreen() {
           splitPayments: order.splitPayments || null,
           printSettings: printSettingsRef.current || {},
         };
+        // still unpaid → the restaurant's pre-bill footer, never the final-bill one (no banner change)
+        if (!['completed', 'paid', 'settled'].includes(String(order.status || '').toLowerCase()) && String(order.paymentStatus || '').toLowerCase() !== 'paid') invoiceData.notFinal = true;
         text = printerService.generateBillText(invoiceData);
         try {
           imageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings);

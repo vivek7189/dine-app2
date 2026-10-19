@@ -118,6 +118,35 @@ export const getBillHeaderHTML = (restaurantName, identityHtml, receiptLogo, bil
 // HTML-escape a string
 export const esc = (str) => String(str ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// The footer line for THIS kind of bill (web Admin → Print settings): pre-bill → billLayout.preBillFooterText
+// (e.g. "This is not the original receipt"), final bill → billLayout.finalBillFooterText (e.g. "FINAL BILL").
+// invoice.notFinal = printed while still unpaid (pre-bill footer, no banner). Credit notes get neither.
+export function stageFooterText(billLayout, invoice) {
+  const bl = billLayout || {};
+  if (invoice && invoice.isCreditNote) return [];
+  const raw = invoice && (invoice.isPreBill || invoice.notFinal) ? bl.preBillFooterText : bl.finalBillFooterText;
+  return typeof raw === 'string' ? raw.replace(/\r\n?/g, '\n').trim().split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4).map((l) => l.slice(0, 120)) : [];
+}
+
+// The restaurant's own footer lines (billLayout.footerText — Paybill, bank details…) + the line above.
+// Same as the website's bills, so a bill printed from the app matches one printed from the POS.
+export function buildCustomFooterHtml(billLayout, invoice = null) {
+  const bl = billLayout || {};
+  const stage = stageFooterText(bl, invoice);
+  const stageHtml = stage.length ? `<div class="bill-stage-footer" style="text-align:center;font-weight:bold;font-size:1.1em;margin:0 0 6px;color:#000;">${stage.map((l) => `<div>${esc(l)}</div>`).join('')}</div>` : '';
+  const raw = typeof bl.footerText === 'string' ? bl.footerText : '';
+  const trimmed = raw.replace(/\r\n?/g, '\n').trim();
+  if (!trimmed) return stageHtml;
+  const align = bl.footerAlign === 'left' ? 'left' : bl.footerAlign === 'right' ? 'right' : 'center';
+  const rows = trimmed.split('\n').slice(0, 15).map((l) => {
+    const line = l.trim();
+    if (!line) return '<div style="height:5px;"></div>';
+    const isNumberLine = /\d(?:[\d\s-]{4,})\d/.test(line); // pay-to / till numbers stand out
+    return `<div${isNumberLine ? ' style="font-weight:bold;"' : ''}>${esc(line.slice(0, 160))}</div>`;
+  }).join('');
+  return `${stageHtml}<div class="bill-custom-footer" style="text-align:${align};margin:0 0 5px;color:#000;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;">${rows}</div>`;
+}
+
 // Bold seat tag (e.g. " [A]") appended after item names on KOTs/bills. Empty when no seat.
 export function getSeatTagHtml(item) {
   const letter = seatLetter(item?.seat);
