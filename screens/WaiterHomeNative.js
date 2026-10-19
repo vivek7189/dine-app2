@@ -17,6 +17,16 @@ import { useOffline } from '../hooks/useOffline';
 import { formatCurrency } from '../utils/formatCurrency';
 import UpcomingEventsStrip from '../components/UpcomingEventsStrip';
 
+// Order History switched OFF for this person by the owner (every role starts with it on) → the
+// "Your sales today" card (their orders + takings) is hidden too. Missing / on → shown as before.
+// Same rule as the web Home.
+function orderHistoryOff(pageAccess) {
+  const v = pageAccess ? pageAccess.history : undefined;
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'object') return !Object.values(v).some(Boolean);
+  return v === false;
+}
+
 const QUICK_ACTIONS = [
   { key: 'order', label: 'Start Order', icon: 'add-circle', color: '#ef4444', bg: '#fef2f2', tab: 'tables' },
   { key: 'tables', label: 'Tables', icon: 'restaurant', color: '#3b82f6', bg: '#eff6ff', tab: 'tables' },
@@ -310,7 +320,7 @@ export default function WaiterHomeNative() {
         </View>
 
         {/* Your sales today — this waiter's own billed orders (server checkout figures) */}
-        {mySales && (
+        {mySales && !orderHistoryOff(user?.pageAccess) && (
           <View style={{ paddingHorizontal: Spacing.md, marginTop: 12 }}>
             <View style={{ backgroundColor: '#eef2ff', borderColor: '#e0e7ff', borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View>
