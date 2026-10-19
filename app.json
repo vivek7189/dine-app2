@@ -2,7 +2,7 @@
   "expo": {
     "name": "DineOpen",
     "slug": "dine-app",
-    "version": "2.98.52",
+    "version": "2.98.53",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
