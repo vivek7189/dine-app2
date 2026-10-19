@@ -1047,6 +1047,11 @@ export default function VoiceTicketNative() {
               <>
                 {floor.length > 0 && (
                   <ScrollView style={{ maxHeight: 300 }} contentContainerStyle={st.tableGrid}>
+                    {/* no table: the order is placed without one (like a counter order on the POS) */}
+                    <Pressable style={[st.tableT, !ticket?.tableNumber && st.tableOn]} onPress={() => { setHead({ orderType: curType, tableNumber: null }); closeSheet(); }} accessibilityLabel="No table">
+                      <Text style={[st.tableN, { fontSize: 13 }, !ticket?.tableNumber && { color: '#fff' }]}>No</Text>
+                      <Text style={[st.tableS, !ticket?.tableNumber && { color: '#fff' }]}>table</Text>
+                    </Pressable>
                     {floor.map((t) => {
                       const on = String(ticket?.tableNumber || '') === t.n;
                       return (
