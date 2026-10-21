@@ -47,6 +47,8 @@ export default function BillingPanels({
   serviceChargeAmount = 0,
   // Round-off (info-only)
   roundOffAmount = 0,
+  // posSettings.paymentMethods — the store's own methods, added to the split-payment choices
+  posPaymentMethods = null,
 }) {
   const { fs } = useResponsive();
 
@@ -61,6 +63,14 @@ export default function BillingPanels({
         .map((m) => (typeof m === 'string' ? m : (m.id || m.value || m.method || m.name)).toLowerCase())
         .filter(Boolean)
     : ['cash', 'card', 'upi']);
+  // Add the store's own POS payment methods (M-Pesa…) missing from that list — the saved default
+  // Cash/Card/UPI hid them. A method listed in settlement methods (even switched off) is left as is.
+  const _listed = new Set((Array.isArray(billingSettings.settlementMethods) ? billingSettings.settlementMethods : [])
+    .map((m) => String(typeof m === 'string' ? m : (m.id || m.value || m.method || m.name || '')).toLowerCase()));
+  (Array.isArray(posPaymentMethods) ? posPaymentMethods : []).forEach((m) => {
+    const id = String(m?.id || '').toLowerCase();
+    if (id && m.enabled !== false && !_listed.has(id) && !settlementMethods.includes(id)) settlementMethods.push(id);
+  });
 
   if (activeBillingPanel === 'cash') {
     const denominations = billingSettings.denominations || [100, 200, 500, 1000, 2000];

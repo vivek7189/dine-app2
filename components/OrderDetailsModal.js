@@ -547,6 +547,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                   />
                   <BillingPanels
                     activeBillingPanel={activeBillingPanel}
+                    posPaymentMethods={posSettings?.paymentMethods}
                     billingSettings={billingSettings}
                     grandTotal={settleTotal}
                     discountedSubtotal={finalTotal}

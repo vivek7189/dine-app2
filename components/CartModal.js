@@ -2745,6 +2745,7 @@ export default function CartModal({
               <ScrollView style={styles.billingSheetScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 <BillingPanels
                   activeBillingPanel={activeBillingPanel}
+                  posPaymentMethods={posSettings?.paymentMethods}
                   billingSettings={billingSettings}
                   grandTotal={billing.grandTotal}
                   discountedSubtotal={billing.discountedSubtotal}
