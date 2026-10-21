@@ -62,7 +62,7 @@ export default function BillingPanels({
         .filter((m) => (typeof m === 'string' ? true : m.enabled !== false))
         .map((m) => (typeof m === 'string' ? m : (m.id || m.value || m.method || m.name)).toLowerCase())
         .filter(Boolean)
-    : ['cash', 'card', 'upi']);
+    : (Array.isArray(posPaymentMethods) && posPaymentMethods.some((m) => m?.id && m.enabled !== false) ? [] : ['cash', 'card', 'upi']));
   // Add the store's own POS payment methods (M-Pesa…) missing from that list — the saved default
   // Cash/Card/UPI hid them. A method listed in settlement methods (even switched off) is left as is.
   const _listed = new Set((Array.isArray(billingSettings.settlementMethods) ? billingSettings.settlementMethods : [])
@@ -71,6 +71,10 @@ export default function BillingPanels({
     const id = String(m?.id || '').toLowerCase();
     if (id && m.enabled !== false && !_listed.has(id) && !settlementMethods.includes(id)) settlementMethods.push(id);
   });
+  // Names to show: the store's own (e.g. "M-Pesa"), else the id as before.
+  const methodLabels = {};
+  [...(Array.isArray(posPaymentMethods) ? posPaymentMethods : []), ...(Array.isArray(billingSettings.settlementMethods) ? billingSettings.settlementMethods : [])]
+    .forEach((m) => { if (m && typeof m === 'object' && m.id && m.label) methodLabels[String(m.id).toLowerCase()] = m.label; });
 
   if (activeBillingPanel === 'cash') {
     const denominations = billingSettings.denominations || [100, 200, 500, 1000, 2000];
@@ -145,7 +149,7 @@ export default function BillingPanels({
                   }}
                 >
                   <Text style={[styles.splitMethodText, sp.method === m && { color: '#fff' }]}>
-                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                    {methodLabels[m] || (m.charAt(0).toUpperCase() + m.slice(1))}
                   </Text>
                 </TouchableOpacity>
               ))}
