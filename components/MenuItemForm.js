@@ -190,7 +190,8 @@ export default function MenuItemForm({
 
   const removeModifierGroup = (index) => {
     const groups = (formData.modifierGroups || []).filter((_, i) => i !== index);
-    setFormData({ ...formData, modifierGroups: groups });
+    // Removing the last group must also clear the flat copy, or it is saved back as plain add-ons.
+    setFormData({ ...formData, modifierGroups: groups, ...(groups.length === 0 ? { customizations: [] } : {}) });
   };
 
   const addItemToGroup = (groupIndex) => {
