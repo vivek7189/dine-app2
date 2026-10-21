@@ -10,6 +10,7 @@ import {
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
   buildInclusiveTaxNote,
   buildCustomFooterHtml,
+  showPaymentRow,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -55,7 +56,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       (bl.showCustomer !== false && invoice.customerName ? `<div><span>${dualLabel(L.customer, AR.customer, showAr)}:</span><span>${esc(invoice.customerName)}</span></div>` : '') +
       (bl.showCustomerPhone && invoice.customerPhone ? `<div><span>${dualLabel('Phone', 'هاتف', showAr)}:</span><span>${esc(invoice.customerPhone)}</span></div>` : '') +
       (bl.showOrderType !== false && invoice.orderType ? `<div><span>Order Type:</span><span>${esc(invoice.orderType)}</span></div>` : '') +
-      (bl.showPayment !== false ? `<div><span>${dualLabel(L.payment, AR.payment, showAr)}:</span><span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '') +
+      (showPaymentRow(bl, invoice) ? `<div><span>${dualLabel(L.payment, AR.payment, showAr)}:</span><span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '') +
     `</div>` +
     deliveryHtml +
     `<div class="divider">--------------------------------</div>` +
@@ -66,7 +67,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       chargesHtml +
       `<div class="total-row"><span>${dualLabel(L.total, AR.total, showAr)}:</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
       buildInclusiveTaxNote(invoice, printSettings) +
-      (bl.showPayment !== false ? paymentHtml : '') +
+      (showPaymentRow(bl, invoice) ? paymentHtml : '') +
     `</div>` +
     `<div class="divider">================================</div>` +
     (invoice.isPreBill ? `<div style="text-align:center;margin:8px 0;"><div style="font-size:16px;font-weight:900;letter-spacing:2px;">*** PRE-BILL ***</div><div style="font-size:11px;color:#666;">This is not a final bill</div></div><div class="divider">================================</div>` : '') +

@@ -8,6 +8,7 @@ import {
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle, dualItemName,
   buildInclusiveTaxNote,
   buildCustomFooterHtml,
+  showPaymentRow,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -90,7 +91,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
     // Meta info
     `<div class="meta">` +
       `<div class="meta-row"><span>${dualLabel(L.billLabel, AR.billLabel, showAr)}# ${invoice.dailyOrderId || invoice.id || 'N/A'}</span><span>${dateStr}</span></div>` +
-      (bl.showTable !== false && invoice.tableNumber ? `<div class="meta-row"><span>${dualLabel(L.table, AR.table, showAr)} ${invoice.tableNumber}${invoice.floorName ? ` - ${invoice.floorName}` : ''}</span>${bl.showPayment !== false ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (bl.showPayment !== false ? `<div class="meta-row"><span>${dualLabel(L.payment, AR.payment, showAr)}: ${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
+      (bl.showTable !== false && invoice.tableNumber ? `<div class="meta-row"><span>${dualLabel(L.table, AR.table, showAr)} ${invoice.tableNumber}${invoice.floorName ? ` - ${invoice.floorName}` : ''}</span>${showPaymentRow(bl, invoice) ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (showPaymentRow(bl, invoice) ? `<div class="meta-row"><span>${dualLabel(L.payment, AR.payment, showAr)}: ${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
       (bl.showCovers !== false && invoice.covers && invoice.covers > 1 ? `<div class="meta-row"><span>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}: ${invoice.covers}</span></div>` : '') +
       (bl.showWaiter !== false && invoice.waiterName ? `<div class="meta-row"><span>Waiter: ${esc(invoice.waiterName)}</span></div>` : '') +
       (bl.showCustomer !== false && invoice.customerName ? `<div class="meta-row"><span>${dualLabel(L.customer, AR.customer, showAr)}: ${esc(invoice.customerName)}</span></div>` : '') +
@@ -110,7 +111,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       chargesHtml +
       `<div class="grand-total"><span>${dualLabel(L.total, AR.total, showAr)}</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
       buildInclusiveTaxNote(invoice, printSettings) +
-      (bl.showPayment !== false ? paymentHtml : '') +
+      (showPaymentRow(bl, invoice) ? paymentHtml : '') +
     `</div>` +
     // Pre-bill banner
     (invoice.isPreBill ? `<div style="text-align:center;margin:8px 0;"><div style="font-size:16px;font-weight:900;letter-spacing:2px;">*** PRE-BILL ***</div><div style="font-size:11px;color:#666;">This is not a final bill</div></div>` : '') +

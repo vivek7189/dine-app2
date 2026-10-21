@@ -130,6 +130,13 @@ export function stageFooterText(billLayout, invoice) {
 
 // The restaurant's own footer lines (billLayout.footerText — Paybill, bank details…) + the line above.
 // Same as the website's bills, so a bill printed from the app matches one printed from the POS.
+// Payment method / payment details on a bill. Not on a pre-bill / a bill printed before it's paid:
+// no payment has been taken yet, so the till's default method would be wrong (Desi Tandoor).
+export function showPaymentRow(billLayout, invoice) {
+  if ((billLayout || {}).showPayment === false) return false;
+  return !(invoice && (invoice.isPreBill || invoice.notFinal));
+}
+
 export function buildCustomFooterHtml(billLayout, invoice = null) {
   const bl = billLayout || {};
   const stage = stageFooterText(bl, invoice);

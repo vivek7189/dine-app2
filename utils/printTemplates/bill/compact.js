@@ -9,6 +9,7 @@ import {
   BILL_LABELS_AR, getBillDualCSS, dualLabel, dualTitle,
   buildInclusiveTaxNote,
   buildCustomFooterHtml,
+  showPaymentRow,
 } from '../helpers';
 import { getCurrencySymbol } from '../../formatCurrency';
 
@@ -68,7 +69,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
     `<div class="divider">- - - - - - - - - - - - - - - -</div>` +
     `<div class="bill-info">` +
       `<div><span>#${invoice.dailyOrderId || invoice.id || 'N/A'}</span><span>${dateStr}</span></div>` +
-      (bl.showTable !== false && invoice.tableNumber ? `<div><span>${dualLabel(L.table, AR.table, showAr)}: ${invoice.tableNumber}</span>${bl.showPayment !== false ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (bl.showPayment !== false ? `<div><span>${dualLabel(L.payment, AR.payment, showAr)}:</span><span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
+      (bl.showTable !== false && invoice.tableNumber ? `<div><span>${dualLabel(L.table, AR.table, showAr)}: ${invoice.tableNumber}</span>${showPaymentRow(bl, invoice) ? `<span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span>` : ''}</div>` : (showPaymentRow(bl, invoice) ? `<div><span>${dualLabel(L.payment, AR.payment, showAr)}:</span><span>${(invoice.paymentMethod || 'CASH').toUpperCase()}</span></div>` : '')) +
       (bl.showCovers !== false && invoice.covers && invoice.covers > 1 ? `<div><span>${showAr ? dualLabel('Covers', 'أغطية', showAr) : 'Covers'}:</span><span>${invoice.covers}</span></div>` : '') +
       (bl.showWaiter !== false && invoice.waiterName ? `<div><span>Waiter:</span><span>${esc(invoice.waiterName)}</span></div>` : '') +
       (bl.showCustomer !== false && invoice.customerName ? `<div><span>${dualLabel(L.customer, AR.customer, showAr)}:</span><span>${esc(invoice.customerName)}</span></div>` : '') +
@@ -84,7 +85,7 @@ export function render(invoice, printSettings = {}, labels = {}) {
       chargesHtml +
       `<div class="total-row"><span>${dualLabel(L.total, AR.total, showAr)}:</span><span>${cs}${grandTotal.toFixed(2)}</span></div>` +
       buildInclusiveTaxNote(invoice, printSettings) +
-      (bl.showPayment !== false ? paymentHtml : '') +
+      (showPaymentRow(bl, invoice) ? paymentHtml : '') +
     `</div>` +
     `<div class="divider">================================</div>` +
     (invoice.isPreBill ? `<div style="text-align:center;margin:8px 0;"><div style="font-size:16px;font-weight:900;letter-spacing:2px;">*** PRE-BILL ***</div><div style="font-size:11px;color:#666;">This is not a final bill</div></div><div class="divider">================================</div>` : '') +

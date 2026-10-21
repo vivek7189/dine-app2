@@ -1112,8 +1112,11 @@ export const generateBillText = (invoiceData) => {
       || (Array.isArray(invoiceData.taxBreakdown) && invoiceData.taxBreakdown.some(t => Number(t?.amount) > 0)));
     lines.push(`<CM>${charged ? 'Tax Invoice' : 'Bill of Supply'}</CM>`);
   }
-  const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
-  lines.push(leftRight(payMethod + ' Sale', '', W));
+  // "Cash Sale" — not on a pre-bill / unpaid print (no payment taken yet)
+  if (!invoiceData.isPreBill && !invoiceData.notFinal) {
+    const payMethod = (invoiceData.paymentMethod || 'cash').charAt(0).toUpperCase() + (invoiceData.paymentMethod || 'cash').slice(1);
+    lines.push(leftRight(payMethod + ' Sale', '', W));
+  }
   const invoiceNum = invoiceData.orderNumber || invoiceData.dailyOrderId || '-';
   // Bill date = first bill time (billDateOf: billedBy.at → completedAt → order time), never the reprint time.
   const now = billDateOf(invoiceData) || (invoiceData.timestamp ? new Date(invoiceData.timestamp) : new Date());
@@ -1234,8 +1237,8 @@ export const generateBillText = (invoiceData) => {
   }
   lines.push(_DLINE);
 
-  // ── Payment ──
-  if (bl.showPayment !== false) {
+  // ── Payment ── (not on a pre-bill / unpaid print: no payment taken yet)
+  if (bl.showPayment !== false && !invoiceData.isPreBill && !invoiceData.notFinal) {
     // Split tender: one line per method
     if (Array.isArray(invoiceData.splitPayments) && invoiceData.splitPayments.length > 1) {
       invoiceData.splitPayments.forEach(sp => {
