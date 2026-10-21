@@ -3391,6 +3391,8 @@ class ApiClient {
     return this.offlineWrite(`/api/customers/${customerId}/settle-credit`, {
       method: 'POST',
       data: { ...data, customerId },
+      // same request id on the direct call and on an offline replay → the server pays once
+      idempotencyKey: data && data.idempotencyKey ? data.idempotencyKey : null,
       entityType: 'credit_settle',
       operation: 'create',
       priority: 50,

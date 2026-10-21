@@ -89,6 +89,9 @@ export default function CustomersScreen() {
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [settleAmount, setSettleAmount] = useState('');
   const [settleMethod, setSettleMethod] = useState('cash');
+  // the store's own payment methods (M-Pesa…), and one request id per Settle so an app retry can't pay twice
+  const [settleMethods, setSettleMethods] = useState([{ id: 'cash', label: 'Cash' }, { id: 'upi', label: 'UPI' }, { id: 'card', label: 'Card' }]);
+  const [settleKey, setSettleKey] = useState(null);
   const [settlingCredit, setSettlingCredit] = useState(false);
 
   // ── Offers state ────────────────────────────────────
@@ -1577,7 +1580,18 @@ export default function CustomersScreen() {
                     onPress={() => {
                       setSettleAmount(String(selectedCustomer.outstandingBalance));
                       setSettleMethod('cash');
+                      setSettleKey(`settle_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
                       setShowSettleModal(true);
+                      if (restaurantId) {
+                        apiClient.getRestaurant(restaurantId).then((res) => {
+                          const ps = (res?.restaurant || res || {}).posSettings || {};
+                          const list = Array.isArray(ps.paymentMethods) ? ps.paymentMethods.filter((m) => m && m.id && m.enabled) : [];
+                          if (list.length) {
+                            setSettleMethods(list.map((m) => ({ id: m.id, label: m.label || m.id })));
+                            if (!list.some((m) => m.id === 'cash')) setSettleMethod(list[0].id);
+                          }
+                        }).catch(() => {});
+                      }
                     }}
                   >
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Settle</Text>
@@ -1951,14 +1965,14 @@ export default function CustomersScreen() {
 
             <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 }}>Payment Method</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-              {['cash', 'upi', 'card'].map(m => (
+              {settleMethods.map(({ id: m, label }) => (
                 <TouchableOpacity
                   key={m}
                   style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: settleMethod === m ? '#059669' : '#f3f4f6', alignItems: 'center' }}
                   onPress={() => setSettleMethod(m)}
                 >
                   <Text style={{ fontSize: 13, fontWeight: '600', color: settleMethod === m ? '#fff' : '#374151' }}>
-                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                    {label}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -1976,11 +1990,13 @@ export default function CustomersScreen() {
                 onPress={async () => {
                   setSettlingCredit(true);
                   try {
-                    await apiClient.settleCustomerCredit(selectedCustomer.id || selectedCustomer._id, {
+                    const res = await apiClient.settleCustomerCredit(selectedCustomer.id || selectedCustomer._id, {
                       amount: parseFloat(settleAmount),
                       paymentMethod: settleMethod,
+                      idempotencyKey: settleKey,
                     });
-                    Alert.alert('Success', 'Credit settled successfully');
+                    const paidN = Array.isArray(res?.billsPaid) ? res.billsPaid.length : 0;
+                    Alert.alert('Success', paidN ? `Payment applied to ${paidN} bill${paidN === 1 ? '' : 's'}, oldest first` : 'Credit settled successfully');
                     setShowSettleModal(false);
                     // Refresh customer data
                     if (restaurantId) loadCustomers(restaurantId);
