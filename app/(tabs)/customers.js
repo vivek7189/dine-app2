@@ -1996,7 +1996,9 @@ export default function CustomersScreen() {
                       idempotencyKey: settleKey,
                     });
                     const paidN = Array.isArray(res?.billsPaid) ? res.billsPaid.length : 0;
-                    Alert.alert('Success', paidN ? `Payment applied to ${paidN} bill${paidN === 1 ? '' : 's'}, oldest first` : 'Credit settled successfully');
+                    const notUsed = Number(res?.notUsed) || 0;
+                    Alert.alert('Success', (paidN ? `Payment applied to ${paidN} bill${paidN === 1 ? '' : 's'}, oldest first` : 'Credit settled successfully')
+                      + (notUsed > 0 ? `\n${formatCurrency(notUsed)} was more than the customer owes — give it back.` : ''));
                     setShowSettleModal(false);
                     // Refresh customer data
                     if (restaurantId) loadCustomers(restaurantId);
