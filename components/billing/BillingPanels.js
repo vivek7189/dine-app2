@@ -67,7 +67,10 @@ export default function BillingPanels({
   // Cash/Card/UPI hid them. A method listed in settlement methods (even switched off) is left as is.
   const _listed = new Set((Array.isArray(billingSettings.settlementMethods) ? billingSettings.settlementMethods : [])
     .map((m) => String(typeof m === 'string' ? m : (m.id || m.value || m.method || m.name || '')).toLowerCase()));
-  (Array.isArray(posPaymentMethods) ? posPaymentMethods : []).forEach((m) => {
+  // Only while the saved list is still the untouched Cash/Card/UPI default (or empty) — a list the
+  // owner edited is used exactly as saved (same as web).
+  const _untouched = _listed.size === 0 || (_listed.size === 3 && ['cash', 'card', 'upi'].every((id) => _listed.has(id)));
+  (_untouched && Array.isArray(posPaymentMethods) ? posPaymentMethods : []).forEach((m) => {
     const id = String(m?.id || '').toLowerCase();
     if (id && m.enabled !== false && !_listed.has(id) && !settlementMethods.includes(id)) settlementMethods.push(id);
   });
