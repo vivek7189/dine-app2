@@ -38,6 +38,8 @@ const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCa
 // A category the way the server keys it: "Main Course" / "main-course" / "MAIN COURSE" → "main-course",
 // "Beverages & Desserts" → "beverages--desserts". Items may carry the name or the id.
 const catKey = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+// the other spelling some older category ids use ("Beverages & Desserts" → "beverages-desserts")
+const catKey2 = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 export default function MenuManagementScreen() {
   const router = useRouter();
@@ -68,6 +70,7 @@ export default function MenuManagementScreen() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [apiCategories, setApiCategories] = useState([]);
   const [savingItem, setSavingItem] = useState(false);
+  const catAliasRef = useRef(new Map());
   const savingItemRef = useRef(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
@@ -148,9 +151,11 @@ export default function MenuManagementScreen() {
   // (changes appeared only after closing the app).
   const ridRef = useRef(null);
   const reloadingRef = useRef(false);
+  const reloadAgainRef = useRef(false);
   const reloadFresh = useCallback(async () => {
     const rid = ridRef.current;
-    if (!rid || reloadingRef.current) return;
+    if (!rid) return;
+    if (reloadingRef.current) { reloadAgainRef.current = true; return; }
     reloadingRef.current = true;
     try {
       let cats = null;
@@ -163,6 +168,7 @@ export default function MenuManagementScreen() {
       console.warn('Menu refresh failed:', e?.message);
     } finally {
       reloadingRef.current = false;
+      if (reloadAgainRef.current) { reloadAgainRef.current = false; reloadFresh(); }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -327,9 +333,12 @@ export default function MenuManagementScreen() {
 
     // Add API categories first (they have emoji/description)
     const catsToUse = overrideCats || apiCategories;
+    const aliases = new Map(); // any spelling of a category → its one chip id
+    const addAliases = (chip, ...vals) => vals.forEach(v => [catKey(v), catKey2(v)].forEach(k => { if (k && !aliases.has(k)) aliases.set(k, chip); }));
     catsToUse.forEach(cat => {
       const id = catKey(cat.id || cat.name);
-      if (id && id !== 'all-items' && !categoryMap.has(id)) {
+      if (id && id !== 'all-items' && !categoryMap.has(id) && !aliases.has(id)) {
+        addAliases(id, cat.id, cat.name);
         categoryMap.set(id, { id, name: cat.name, emoji: cat.emoji, description: cat.description });
       }
     });
@@ -337,8 +346,9 @@ export default function MenuManagementScreen() {
     // Add item-derived categories that don't exist in API
     items.forEach(item => {
       if (item.category) {
-        const key = catKey(item.category);
+        const key = aliases.get(catKey(item.category)) || aliases.get(catKey2(item.category)) || catKey(item.category);
         if (key && !categoryMap.has(key)) {
+          addAliases(key, item.category);
           categoryMap.set(key, {
             id: key,
             name: key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' '),
@@ -347,6 +357,7 @@ export default function MenuManagementScreen() {
       }
     });
 
+    catAliasRef.current = aliases;
     setCategories(Array.from(categoryMap.values()));
   };
 
@@ -420,7 +431,8 @@ export default function MenuManagementScreen() {
     let filtered = [...menuItems].filter(i => i.status !== 'deleted');
 
     if (selectedCategory !== 'all-items') {
-      filtered = filtered.filter(item => catKey(item.category) === selectedCategory);
+      const chipOf = (c) => catAliasRef.current.get(catKey(c)) || catAliasRef.current.get(catKey2(c)) || catKey(c);
+      filtered = filtered.filter(item => chipOf(item.category) === selectedCategory);
     }
 
     if (searchTerm.trim()) {
@@ -1154,6 +1166,7 @@ export default function MenuManagementScreen() {
           animationType="slide"
           onRequestClose={() => { setShowAddModal(false); resetForm(); }}
         >
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -1185,13 +1198,14 @@ export default function MenuManagementScreen() {
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
                 {menuPerms.add && (
-                <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
-                  <Text style={styles.saveButtonText}>Add Item</Text>
+                <TouchableOpacity style={[styles.saveButton, savingItem && { opacity: 0.6 }]} onPress={handleSubmit} disabled={savingItem}>
+                  {savingItem ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>Add Item</Text>}
                 </TouchableOpacity>
                 )}
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     );
