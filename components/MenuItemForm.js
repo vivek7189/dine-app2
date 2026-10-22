@@ -278,7 +278,7 @@ export default function MenuItemForm({
   );
 
   return (
-    <ScrollView style={styles.form} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.form} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       {/* Name and Short Code Row */}
       <View style={styles.row}>
         <View style={[styles.inputGroup, { flex: 2 }]}>

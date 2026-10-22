@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,10 @@ import {
   RefreshControl,
   ScrollView,
   Share,
+  AppState,
 } from 'react-native';
 import * as ExpoClipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -33,6 +34,10 @@ import { getCurrencySymbol } from '../../utils/formatCurrency';
 import { describeSchedule, isScheduleOpen } from '../../utils/menuSchedule';
 
 const toCategoryId = (s) => (s && String(s).trim()) ? String(s).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'other' : 'other';
+
+// A category the way the server keys it: "Main Course" / "main-course" / "MAIN COURSE" → "main-course",
+// "Beverages & Desserts" → "beverages--desserts". Items may carry the name or the id.
+const catKey = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
 export default function MenuManagementScreen() {
   const router = useRouter();
@@ -62,6 +67,8 @@ export default function MenuManagementScreen() {
   // Category CRUD
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [apiCategories, setApiCategories] = useState([]);
+  const [savingItem, setSavingItem] = useState(false);
+  const savingItemRef = useRef(false);
   const [editingCategory, setEditingCategory] = useState(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '🍽️', description: '' });
   const [savingCategory, setSavingCategory] = useState(false);
@@ -136,6 +143,42 @@ export default function MenuManagementScreen() {
     checkAccessAndLoad();
   }, []);
 
+  // Fresh categories + menu from the server, quietly (no spinner). This screen stays mounted
+  // after the first visit, so without this it only ever showed what it loaded the first time
+  // (changes appeared only after closing the app).
+  const ridRef = useRef(null);
+  const reloadingRef = useRef(false);
+  const reloadFresh = useCallback(async () => {
+    const rid = ridRef.current;
+    if (!rid || reloadingRef.current) return;
+    reloadingRef.current = true;
+    try {
+      let cats = null;
+      try {
+        const catRes = await apiClient.getCategories(rid);
+        if (catRes?.categories) { cats = catRes.categories; setApiCategories(cats); }
+      } catch { /* keep the ones we have */ }
+      await loadMenu(rid, cats || undefined);
+    } catch (e) {
+      console.warn('Menu refresh failed:', e?.message);
+    } finally {
+      reloadingRef.current = false;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // every time the Menu screen is opened again
+  const firstFocusRef = useRef(true);
+  useFocusEffect(useCallback(() => {
+    if (firstFocusRef.current) { firstFocusRef.current = false; return; } // first open: initial load runs
+    reloadFresh();
+  }, [reloadFresh]));
+
+  // when the app comes back to the front
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') reloadFresh(); });
+    return () => sub?.remove?.();
+  }, [reloadFresh]);
+
   const checkAccessAndLoad = async () => {
     try {
       const userData = await apiClient.getUser();
@@ -192,6 +235,7 @@ export default function MenuManagementScreen() {
       }
 
       setRestaurantId(rid);
+      ridRef.current = rid;
       setBusinessType(userData.restaurant?.businessType || 'restaurant');
       setHasDefaultMenu(!!userData.restaurant?.hasDefaultMenu);
       setRestaurantData(userData.restaurant);
@@ -271,6 +315,8 @@ export default function MenuManagementScreen() {
   };
 
   const loadMenu = async (rid, overrideCats) => {
+    // always the server's current menu here (the app's short menu cache is for the billing screen)
+    apiClient.invalidateCache(`/api/menus/${rid}`);
     const response = await apiClient.getMenu(rid);
     const items = response.menuItems || [];
     setMenuItems(items);
@@ -282,8 +328,8 @@ export default function MenuManagementScreen() {
     // Add API categories first (they have emoji/description)
     const catsToUse = overrideCats || apiCategories;
     catsToUse.forEach(cat => {
-      const id = cat.id || cat.name?.toLowerCase().replace(/\s+/g, '-');
-      if (id && id !== 'all-items') {
+      const id = catKey(cat.id || cat.name);
+      if (id && id !== 'all-items' && !categoryMap.has(id)) {
         categoryMap.set(id, { id, name: cat.name, emoji: cat.emoji, description: cat.description });
       }
     });
@@ -291,8 +337,8 @@ export default function MenuManagementScreen() {
     // Add item-derived categories that don't exist in API
     items.forEach(item => {
       if (item.category) {
-        const key = item.category.toLowerCase();
-        if (!categoryMap.has(key)) {
+        const key = catKey(item.category);
+        if (key && !categoryMap.has(key)) {
           categoryMap.set(key, {
             id: key,
             name: key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' '),
@@ -374,9 +420,7 @@ export default function MenuManagementScreen() {
     let filtered = [...menuItems].filter(i => i.status !== 'deleted');
 
     if (selectedCategory !== 'all-items') {
-      filtered = filtered.filter(item =>
-        item.category?.toLowerCase() === selectedCategory
-      );
+      filtered = filtered.filter(item => catKey(item.category) === selectedCategory);
     }
 
     if (searchTerm.trim()) {
@@ -626,11 +670,14 @@ export default function MenuManagementScreen() {
   };
 
   const handleSubmit = async () => {
+    if (savingItemRef.current) return; // double tap
     if (!formData.name || !formData.price || !formData.category) {
       Alert.alert('Required', 'Please fill name, price, and category');
       return;
     }
 
+    savingItemRef.current = true;
+    setSavingItem(true);
     try {
       const itemData = {
         name: formData.name,
@@ -766,7 +813,8 @@ export default function MenuManagementScreen() {
         await apiClient.updateMenuItem(editingItem.id, itemData, restaurantId);
       } else {
         const response = await apiClient.createMenuItem(restaurantId, itemData);
-        // Upload local images for new item
+        // Upload local images for new item — the item is saved already; an image problem must not
+        // keep the form open (saving again would create the item twice)
         const localImages = formData.images.filter(img => img.local);
         if (localImages.length > 0 && response.menuItem?.id) {
           const uploadFormData = new FormData();
@@ -777,7 +825,11 @@ export default function MenuManagementScreen() {
               type: 'image/jpeg',
             });
           });
-          await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData, restaurantId);
+          try {
+            await apiClient.uploadMenuItemImages(response.menuItem.id, uploadFormData, restaurantId);
+          } catch (imgErr) {
+            Alert.alert('Item saved', `The item was added, but the photo could not be uploaded (${imgErr?.message || 'error'}). Open the item to add the photo again.`);
+          }
         }
       }
 
@@ -787,6 +839,9 @@ export default function MenuManagementScreen() {
       await loadMenu(restaurantId);
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to save');
+    } finally {
+      savingItemRef.current = false;
+      setSavingItem(false);
     }
   };
 
@@ -809,7 +864,7 @@ export default function MenuManagementScreen() {
       }
       setCategoryForm({ name: '', emoji: '🍽️', description: '' });
       setEditingCategory(null);
-      await loadMenu(restaurantId);
+      await reloadFresh();
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to save category');
     } finally {
@@ -830,10 +885,10 @@ export default function MenuManagementScreen() {
             try {
               await apiClient.deleteCategory(restaurantId, category.id);
               setApiCategories(prev => prev.filter(c => c.id !== category.id));
-              if (selectedCategory === category.id || selectedCategory === category.name?.toLowerCase()) {
+              if (selectedCategory === catKey(category.id) || selectedCategory === catKey(category.name)) {
                 setSelectedCategory('all-items');
               }
-              await loadMenu(restaurantId);
+              await reloadFresh();
             } catch (error) {
               Alert.alert('Error', error.message || 'Failed to delete category');
             }
@@ -1392,6 +1447,7 @@ export default function MenuManagementScreen() {
         animationType="slide"
         onRequestClose={() => { setShowAddModal(false); resetForm(); }}
       >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
@@ -1424,14 +1480,17 @@ export default function MenuManagementScreen() {
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={handleSubmit}>
+              <TouchableOpacity style={[styles.saveButton, savingItem && { opacity: 0.6 }]} onPress={handleSubmit} disabled={savingItem}>
+                {savingItem ? <ActivityIndicator color="#fff" /> : (
                 <Text style={styles.saveButtonText}>
                   {editingItem ? 'Update' : 'Add'} Item
                 </Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* AI Menu Upload (pick → extract with AI → review & edit → save) */}
