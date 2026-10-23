@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 import { Colors, Spacing } from '../constants/Theme';
+import { isOrderTypeRule } from '../utils/orderTypePrices';
 
 const STORAGE_KEY = 'dine_multi_pricing';
 
@@ -35,6 +36,7 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
   const [enabled, setEnabled] = useState(false);
   const [rules, setRules] = useState([]);
   const [floors, setFloors] = useState([]);
+  const [orderTypes, setOrderTypes] = useState(null); // GLOVO / UBER… — their rules are order-type prices, not areas
 
   useEffect(() => {
     loadSettings();
@@ -56,6 +58,7 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
       fetchSettings();
       fetchFloors();
     }
+    apiClient.getRestaurant(restaurantId).then(r => { const ot = r?.restaurant?.posSettings?.orderTypes; if (Array.isArray(ot)) setOrderTypes(ot); }).catch(() => {});
   };
 
   const fetchSettings = async () => {
@@ -111,9 +114,12 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
   };
 
   // Categorize rules
+  // rules named like one of your order types (GLOVO, UBER…) are that order type's prices — own section,
+  // name locked (renaming would unlink it); set up from Admin → Order Types → Own prices on the web
+  const orderTypeRules = rules.filter(r => isOrderTypeRule(r, { orderTypes }) && !(r.tableMappings || []).length);
   const dineInZoneRules = rules.filter(r => {
     const name = (r.name || '').toLowerCase().trim();
-    return !TAKEAWAY_NAMES.includes(name) && !DELIVERY_NAMES.includes(name) && !DINEIN_NAMES.includes(name);
+    return !TAKEAWAY_NAMES.includes(name) && !DELIVERY_NAMES.includes(name) && !DINEIN_NAMES.includes(name) && !orderTypeRules.includes(r);
   });
   const takeawayRule = rules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
   const deliveryRule = rules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
@@ -240,6 +246,28 @@ export default function MultiTierPricingSettings({ restaurantId, onSettingsChang
 
       {enabled && (
         <ScrollView style={{ maxHeight: 500 }} nestedScrollEnabled>
+          {/* Order type prices (GLOVO / BOLT / UBER…) */}
+          {orderTypeRules.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="pricetag-outline" size={16} color="#7c3aed" />
+                <Text style={styles.sectionTitle}>Order type prices</Text>
+              </View>
+              {orderTypeRules.map(rule => (
+                <View key={rule.id} style={styles.zoneRow}>
+                  <TouchableOpacity
+                    onPress={() => { const next = rules.map(r => r.id === rule.id ? { ...r, isActive: !r.isActive } : r); setRules(next); saveSettings(enabled, next); }}
+                    style={styles.checkbox}
+                  >
+                    <Ionicons name={rule.isActive ? 'checkbox' : 'square-outline'} size={20} color={rule.isActive ? '#7c3aed' : '#d1d5db'} />
+                  </TouchableOpacity>
+                  <Text style={[styles.zoneNameInput, !rule.isActive && { opacity: 0.5 }]}>{rule.name}</Text>
+                </View>
+              ))}
+              <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>Set these prices per item in Menu → Edit item → Channel Prices (empty = Dine-In price).</Text>
+            </View>
+          )}
+
           {/* Dine-In Zones Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>

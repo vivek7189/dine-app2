@@ -70,6 +70,7 @@ export default function MenuManagementScreen() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [apiCategories, setApiCategories] = useState([]);
   const [savingItem, setSavingItem] = useState(false);
+  const [orderTypes, setOrderTypes] = useState(null); // the restaurant's order types (GLOVO / UBER…) for channel price rows
   const catAliasRef = useRef(new Map());
   const savingItemRef = useRef(false);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -159,6 +160,8 @@ export default function MenuManagementScreen() {
     reloadingRef.current = true;
     try {
       let cats = null;
+      apiClient.invalidateCache(`/api/restaurants/${rid}`);
+      apiClient.getRestaurant(rid).then(r => { const ot = r?.restaurant?.posSettings?.orderTypes; if (Array.isArray(ot)) setOrderTypes(ot); }).catch(() => {});
       try {
         const catRes = await apiClient.getCategories(rid);
         if (catRes?.categories) { cats = catRes.categories; setApiCategories(cats); }
@@ -245,6 +248,8 @@ export default function MenuManagementScreen() {
       setBusinessType(userData.restaurant?.businessType || 'restaurant');
       setHasDefaultMenu(!!userData.restaurant?.hasDefaultMenu);
       setRestaurantData(userData.restaurant);
+      setOrderTypes(userData.restaurant?.posSettings?.orderTypes || null);
+      apiClient.getRestaurant(rid).then(r => { const ot = r?.restaurant?.posSettings?.orderTypes; if (Array.isArray(ot)) setOrderTypes(ot); }).catch(() => {});
 
       // Load API categories
       let loadedApiCats = [];
@@ -1192,6 +1197,7 @@ export default function MenuManagementScreen() {
                 activePricingRules={activePricingRules}
                 isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
                 showCost={['owner', 'admin', 'co-owner', 'manager'].includes(userRole)}
+                orderTypes={orderTypes}
               />
               <View style={styles.modalActions}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>
@@ -1489,6 +1495,7 @@ export default function MenuManagementScreen() {
               activePricingRules={activePricingRules}
               isOwnerOrAdmin={['owner', 'admin'].includes(userRole)}
                 showCost={['owner', 'admin', 'co-owner', 'manager'].includes(userRole)}
+                orderTypes={orderTypes}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => { setShowAddModal(false); resetForm(); }}>

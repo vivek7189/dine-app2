@@ -59,6 +59,7 @@ import { registerBlocksBilling, alertRegisterNotOpen } from '../utils/registerGa
 import { buildGuestInvoice } from '../utils/splitBill';
 import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 import { billNumberLabel } from '../utils/billNumber';
+import { floorRuleFor } from '../utils/floorRule';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -694,9 +695,7 @@ export default function MenuScreen() {
     if (!multiPricingEnabled || pricingRules.length === 0) return;
     const floorName = params.floorName || selectedTable?.floor || '';
     if (floorName) {
-      const matched = pricingRules.find(r =>
-        (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
-      );
+      const matched = floorRuleFor(pricingRules, floorName); // same as the server: exact name first, else contains
       if (matched) {
         setActivePricingRuleId(matched.id);
         setAutoSelectedRule(true);
@@ -1043,9 +1042,7 @@ export default function MenuScreen() {
     setAutoSelectedRule(false);
     const floorName = params.floorName || selectedTable?.floor || '';
     if (floorName) {
-      const matched = pricingRules.find(r =>
-        (r.tableMappings || []).some(m => floorName.toLowerCase().trim() === m.toLowerCase().trim())
-      );
+      const matched = floorRuleFor(pricingRules, floorName); // same as the server: exact name first, else contains
       if (matched) { setActivePricingRuleId(matched.id); setAutoSelectedRule(true); return; }
     }
     // No floor match. First honor a dedicated Dine-In rule; else fall back to the first dining-AREA

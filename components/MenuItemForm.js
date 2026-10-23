@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { isOrderTypeRule } from '../utils/orderTypePrices';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../constants/Theme';
 import { getCurrencySymbol } from '../utils/formatCurrency';
@@ -62,6 +63,7 @@ export default function MenuItemForm({
   activePricingRules = [],
   isOwnerOrAdmin = false,
   showCost = false, // owner / admin / co-owner / manager: "cost to make" (gross-margin reports)
+  orderTypes = null, // the restaurant's order types — GLOVO / UBER… price rows
 }) {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSpiritPicker, setShowSpiritPicker] = useState(false);
@@ -465,9 +467,12 @@ export default function MenuItemForm({
           <Text style={styles.pricingRulesHint}>Empty zones inherit Dine-In price</Text>
           {(() => {
             const dineInRule = activePricingRules.find(r => DINEIN_NAMES.includes((r.name || '').toLowerCase().trim()));
+            // your own order types (GLOVO / UBER…) are channels, not dine-in areas — own rows below
+            const otPos = { orderTypes };
+            const orderTypeRules = activePricingRules.filter(r => isOrderTypeRule(r, otPos) && !(r.tableMappings || []).length);
             const zoneRules = activePricingRules.filter(r => {
               const n = (r.name || '').toLowerCase().trim();
-              return !TAKEAWAY_NAMES.includes(n) && !DELIVERY_NAMES.includes(n) && !DINEIN_NAMES.includes(n);
+              return !TAKEAWAY_NAMES.includes(n) && !DELIVERY_NAMES.includes(n) && !DINEIN_NAMES.includes(n) && !orderTypeRules.includes(r);
             });
             const takeawayRule = activePricingRules.find(r => TAKEAWAY_NAMES.includes((r.name || '').toLowerCase().trim()));
             const deliveryRule = activePricingRules.find(r => DELIVERY_NAMES.includes((r.name || '').toLowerCase().trim()));
@@ -553,6 +558,26 @@ export default function MenuItemForm({
                     />
                   </View>
                 )}
+                {/* Your own order types (GLOVO / BOLT / UBER…) — empty = Dine-In price */}
+                {orderTypeRules.map(rule => {
+                  const val = formData.pricingRules?.[rule.id]?.toString() || '';
+                  return (
+                    <View key={rule.id} style={styles.pricingRuleRow}>
+                      <Text style={styles.pricingChannelName} numberOfLines={1}>🏷️ {rule.name}</Text>
+                      <TextInput
+                        style={[styles.pricingRuleInput, val ? styles.pricingRuleInputActive : null]}
+                        placeholder={`${inheritedPrice} (Dine-In)`}
+                        placeholderTextColor={Colors.textLight}
+                        keyboardType="numeric"
+                        value={val}
+                        onChangeText={(text) => setFormData({
+                          ...formData,
+                          pricingRules: { ...(formData.pricingRules || {}), [rule.id]: text }
+                        })}
+                      />
+                    </View>
+                  );
+                })}
               </>
             );
           })()}
