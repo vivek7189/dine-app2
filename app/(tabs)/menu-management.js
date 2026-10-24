@@ -749,7 +749,14 @@ export default function MenuManagementScreen() {
       // form has some, or when editing an item that had some (so removing the last group clears it).
       const hadGroups = Array.isArray(editingItem?.modifierGroups) && editingItem.modifierGroups.length > 0;
       if (Array.isArray(formData.modifierGroups) && (formData.modifierGroups.length > 0 || hadGroups)) {
-        itemData.modifierGroups = formData.modifierGroups;
+        // "Show for sizes": keep only sizes the item still has — a renamed / removed size must not
+        // hide the group for good (none left, or every size ticked = all sizes).
+        const sizeNames = (itemData.variants || formData.variants || []).map(v => String(v?.name || '').trim()).filter(Boolean);
+        itemData.modifierGroups = formData.modifierGroups.map(g => {
+          const { forSizes, ...rest } = g || {};
+          const keep = (Array.isArray(forSizes) ? forSizes : []).filter(sz => sizeNames.includes(sz));
+          return keep.length && keep.length < sizeNames.length ? { ...rest, forSizes: keep } : rest;
+        });
       }
       // Editing: removing the last size / add-on must actually clear it on the server (the
       // length > 0 guards above never sent an empty list, so they could not be removed).

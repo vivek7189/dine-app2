@@ -9,14 +9,16 @@ export function resolveCustomizationExtras(selectedCustomizations, menuItem) {
   const modifierGroups = menuItem?.modifierGroups || null;
   return selectedCustomizations.reduce((sum, c) => {
     if (menuCustomizations.length > 0) {
-      const mc = menuCustomizations.find(m => m.id === c.id || m.name === c.name);
+      // Id first: size-linked groups repeat names (Mushroom in Regular / Large) at different prices.
+      const mc = (c.id != null && menuCustomizations.find(m => m.id === c.id))
+        || menuCustomizations.find(m => m.id === c.id || m.name === c.name);
       if (mc && typeof mc.price === 'number') return sum + mc.price;
     }
     if (modifierGroups) {
-      for (const group of modifierGroups) {
-        const match = (group.items || []).find(gi => gi.id === c.id || gi.name === c.name);
-        if (match && typeof match.price === 'number') return sum + match.price;
-      }
+      const groupItems = modifierGroups.flatMap(group => group.items || []);
+      const match = (c.id != null && groupItems.find(gi => gi.id === c.id))
+        || groupItems.find(gi => gi.id === c.id || gi.name === c.name);
+      if (match && typeof match.price === 'number') return sum + match.price;
     }
     return sum + (c?.price || 0);
   }, 0);

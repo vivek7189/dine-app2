@@ -878,6 +878,36 @@ export default function MenuItemForm({
               </View>
             </View>
 
+            {/* Show for sizes — only when the item has 2+ sizes. None ticked = every size. */}
+            {(() => {
+              const sizeNames = [...new Set((formData.variants || []).map(v => String(v?.name || '').trim()).filter(Boolean))];
+              if (sizeNames.length < 2) return null;
+              const picked = (Array.isArray(group.forSizes) ? group.forSizes : []).filter(sz => sizeNames.includes(sz));
+              const toggle = (sz) => {
+                const next = picked.includes(sz) ? picked.filter(x => x !== sz) : [...picked, sz];
+                updateModifierGroup(gIndex, 'forSizes', next.length === sizeNames.length ? [] : next);
+              };
+              const chip = (active) => ({
+                paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1,
+                borderColor: active ? Colors.primary : '#e5e7eb',
+                backgroundColor: active ? '#fef2f2' : '#fff',
+              });
+              const chipText = (active) => ({ fontSize: 12, fontWeight: '600', color: active ? Colors.primary : Colors.textMedium });
+              return (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 12, color: Colors.textMedium }}>Show for sizes:</Text>
+                  <TouchableOpacity style={chip(picked.length === 0)} onPress={() => updateModifierGroup(gIndex, 'forSizes', [])}>
+                    <Text style={chipText(picked.length === 0)}>All sizes</Text>
+                  </TouchableOpacity>
+                  {sizeNames.map(sz => (
+                    <TouchableOpacity key={sz} style={chip(picked.includes(sz))} onPress={() => toggle(sz)}>
+                      <Text style={chipText(picked.includes(sz))}>{sz}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              );
+            })()}
+
             {/* Group items */}
             {(group.items || []).map((gItem, iIndex) => (
               <View key={gItem.id || iIndex} style={styles.variantRow}>

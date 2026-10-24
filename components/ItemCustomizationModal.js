@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrencySymbol } from '../utils/formatCurrency';
 import { resolveVariantTierPrice } from '../utils/variantPricing';
+import { visibleModifierGroups, hasSizeLinkedGroups } from '../utils/modifierSizes';
 
 const RED = '#ef4444';
 const GRAY_50 = '#f9fafb';
@@ -52,6 +53,9 @@ const ItemCustomizationModal = ({
   const hasCustomizations = item?.customizations && Array.isArray(item.customizations) && item.customizations.length > 0;
   const hasModifierGroups = item?.modifierGroups?.length > 0;
   const useGroupedUI = hasModifierGroups;
+  // Some add-on groups only belong to one size (e.g. "Extra Toppings (Large)") — only then do the
+  // size-aware rules below apply; every other item keeps the exact behaviour it had before.
+  const sizeLinked = hasModifierGroups && hasSizeLinkedGroups(item.modifierGroups, item.variants);
 
   useEffect(() => {
     if (!isOpen || !item) {
@@ -68,7 +72,27 @@ const ItemCustomizationModal = ({
       setSelectedVariant(null);
     }
     // Pre-populate modifier group selections when editing
-    if (item?.modifierGroups?.length > 0 && initialCustomizations?.length > 0) {
+    if (item?.modifierGroups?.length > 0 && initialCustomizations?.length > 0 && hasSizeLinkedGroups(item.modifierGroups, item.variants)) {
+      // Size-linked groups repeat option names (Mushroom in Regular / Large), so each picked
+      // add-on goes to ONE group: id match first, then name.
+      const map = {};
+      for (const c of initialCustomizations) {
+        const free = (g, gi) => !(map[g.id] || []).some(x => x.id === gi.id);
+        let hit = null;
+        for (const g of item.modifierGroups) {
+          const gi = (g.items || []).find(x => c.id != null && x.id === c.id);
+          if (gi && free(g, gi)) { hit = { g, gi }; break; }
+        }
+        if (!hit) {
+          for (const g of item.modifierGroups) {
+            const gi = (g.items || []).find(x => x.name === c.name);
+            if (gi && free(g, gi)) { hit = { g, gi }; break; }
+          }
+        }
+        if (hit) (map[hit.g.id] = map[hit.g.id] || []).push({ id: hit.gi.id, name: c.name, price: c.price || 0 });
+      }
+      setSelectedGroupItems(map);
+    } else if (item?.modifierGroups?.length > 0 && initialCustomizations?.length > 0) {
       const map = {};
       for (const group of item.modifierGroups) {
         const matched = initialCustomizations.filter(c =>
@@ -105,7 +129,7 @@ const ItemCustomizationModal = ({
   };
 
   const getCustomizationPrice = () => {
-    return selectedCustomizations.reduce((total, c) => total + (c.price || 0), 0);
+    return finalCustomizations.reduce((total, c) => total + (c.price || 0), 0);
   };
 
   const getTotalPrice = () => {
@@ -151,7 +175,26 @@ const ItemCustomizationModal = ({
     if (group.required) return sel.length >= (group.min || 1);
     return true;
   };
-  const allGroupsValid = !hasModifierGroups || item.modifierGroups.every(g => isGroupValid(g));
+  // Groups shown for the chosen size (all groups unless some are size-linked).
+  const shownGroups = sizeLinked ? visibleModifierGroups(item.modifierGroups, selectedVariant, item.variants) : (item.modifierGroups || []);
+  const allGroupsValid = !hasModifierGroups || shownGroups.every(g => isGroupValid(g));
+  // Size-linked: only add-ons from the chosen size's groups go on the bill.
+  const finalCustomizations = sizeLinked
+    ? shownGroups.flatMap(g => selectedGroupItems[g.id] || [])
+    : selectedCustomizations;
+
+  const handleVariantSelect = (variant) => {
+    setSelectedVariant(variant);
+    if (sizeLinked) {
+      // Changing the size drops add-ons from groups that don't belong to the new size.
+      const keep = {};
+      for (const g of visibleModifierGroups(item.modifierGroups, variant, item.variants)) {
+        if (selectedGroupItems[g.id]?.length) keep[g.id] = selectedGroupItems[g.id];
+      }
+      setSelectedGroupItems(keep);
+      setSelectedCustomizations(Object.values(keep).flat());
+    }
+  };
 
   const handleAddToCart = () => {
     if (hasVariants && !selectedVariant) return;
@@ -167,7 +210,7 @@ const ItemCustomizationModal = ({
         price: variantDisplayPrice(selectedVariant),
         ...(selectedVariant.pricingRules ? { pricingRules: selectedVariant.pricingRules } : {}),
       } : null,
-      selectedCustomizations: selectedCustomizations.map(c => ({
+      selectedCustomizations: finalCustomizations.map(c => ({
         id: c.id || null,
         name: c.name,
         price: c.price || 0,
@@ -227,7 +270,7 @@ const ItemCustomizationModal = ({
                   return (
                     <TouchableOpacity
                       key={index}
-                      onPress={() => setSelectedVariant(variant)}
+                      onPress={() => handleVariantSelect(variant)}
                       style={[
                         styles.optionBtn,
                         isSelected && styles.optionBtnSelected,
@@ -255,7 +298,12 @@ const ItemCustomizationModal = ({
             )}
 
             {/* Modifier Groups UI */}
-            {useGroupedUI && item.modifierGroups.map((group) => {
+            {useGroupedUI && sizeLinked && hasVariants && !selectedVariant && (
+              <Text style={{ fontSize: 13, color: GRAY_500, marginHorizontal: 16, marginBottom: 8 }}>
+                Choose a size to see its add-ons.
+              </Text>
+            )}
+            {useGroupedUI && shownGroups.map((group) => {
               const selItems = selectedGroupItems[group.id] || [];
               const isRadio = (group.max || 1) === 1;
               const valid = isGroupValid(group);
@@ -384,9 +432,9 @@ const ItemCustomizationModal = ({
                 <Text style={styles.priceLabel}>Base Price</Text>
                 <Text style={styles.priceValue}>{getCurrencySymbol()}{getBasePrice()}</Text>
               </View>
-              {selectedCustomizations.length > 0 && (
+              {finalCustomizations.length > 0 && (
                 <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Toppings/Extras ({selectedCustomizations.length})</Text>
+                  <Text style={styles.priceLabel}>Toppings/Extras ({finalCustomizations.length})</Text>
                   <Text style={styles.priceValue}>+{getCurrencySymbol()}{getCustomizationPrice()}</Text>
                 </View>
               )}
