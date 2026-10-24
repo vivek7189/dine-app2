@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../services/api';
 
+// Per-login key: dine_tab_modes:<userId>. (The old phone-wide 'dine_tab_modes' is no longer read.)
 const STORAGE_KEY = 'dine_tab_modes';
 
 // Default all user-toggleable tabs (Tables / Menu / Billing / Orders) to Native
@@ -17,54 +19,80 @@ const DEFAULT_MODES = {
 
 const TabModeContext = createContext({
   modes: DEFAULT_MODES,
+  forced: {},
   setMode: () => {},
   loading: true,
 });
 
+// The choice is kept PER LOGIN (owner / each staff member), not per phone — an owner switching to
+// Web View no longer carries over to staff who log in on the same phone. Server sources (read on
+// every login and when the app comes back to the front):
+//   • this person's saved choice  — /api/user/page-access → tabModes
+//   • forced for the whole restaurant from our side — → appTabModes (posSettings.appTabModes);
+//     a forced tab can't be switched in More → Display.
+const keyFor = (uid) => `${STORAGE_KEY}:${uid}`;
+const onlyModes = (m) => {
+  const out = {};
+  if (m && typeof m === 'object') {
+    for (const k of Object.keys(DEFAULT_MODES)) if (m[k] === 'native' || m[k] === 'webview') out[k] = m[k];
+  }
+  return out;
+};
+
 export function TabModeProvider({ children }) {
-  const [modes, setModes] = useState(DEFAULT_MODES);
+  const [own, setOwn] = useState(DEFAULT_MODES);   // this person's own choice
+  const [forced, setForced] = useState({});        // set for the restaurant from our side
   const [loading, setLoading] = useState(true);
+  const uidRef = React.useRef(null);
 
-  // Load saved modes on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setModes(prev => ({ ...prev, ...parsed }));
-        }
-
-        // Also try to load from user preferences on backend
-        const user = await apiClient.getUser();
-        if (user?.tabModes && typeof user.tabModes === 'object') {
-          const merged = { ...DEFAULT_MODES, ...(stored ? JSON.parse(stored) : {}), ...user.tabModes };
-          setModes(merged);
-          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-        }
-      } catch (e) {
-        console.warn('[TabModeContext] Failed to load tab modes:', e.message);
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    try {
+      const user = await apiClient.getUser();
+      const uid = user?.id || user?._id || user?.userId || null;
+      uidRef.current = uid;
+      let local = null;
+      if (uid) {
+        try { const raw = await AsyncStorage.getItem(keyFor(uid)); if (raw) local = onlyModes(JSON.parse(raw)); } catch (_) {}
       }
-    })();
+      // First paint: this person's last known choice (phone copy, else the copy from login).
+      setOwn({ ...DEFAULT_MODES, ...onlyModes(user?.tabModes), ...(local || {}) });
+      try {
+        const res = await apiClient.request('/api/user/page-access');
+        const srv = onlyModes(res?.tabModes);
+        const mine = Object.keys(srv).length ? srv : (local || onlyModes(user?.tabModes));
+        setOwn({ ...DEFAULT_MODES, ...mine });
+        setForced(onlyModes(res?.appTabModes));
+        if (uid) AsyncStorage.setItem(keyFor(uid), JSON.stringify({ ...DEFAULT_MODES, ...mine })).catch(() => {});
+      } catch (_) { /* offline: keep the phone copy for this person */ }
+    } catch (e) {
+      console.warn('[TabModeContext] Failed to load tab modes:', e.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const setMode = useCallback(async (tabName, mode) => {
-    setModes(prev => {
+  useEffect(() => {
+    load();
+    // Pick up a change made from our side when the app comes back to the front.
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') load(); });
+    return () => sub?.remove?.();
+  }, [load]);
+
+  const setMode = useCallback((tabName, mode) => {
+    if (forced[tabName]) return; // set for the restaurant — not switchable here
+    setOwn(prev => {
       const next = { ...prev, [tabName]: mode };
-      // Persist to AsyncStorage
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch(() => {});
-      // Sync to backend in background
+      if (uidRef.current) AsyncStorage.setItem(keyFor(uidRef.current), JSON.stringify(next)).catch(() => {});
       apiClient.updateUserPreferences({ tabModes: next }).catch((e) => {
         console.warn('[TabModeContext] Failed to sync to backend:', e.message);
       });
       return next;
     });
-  }, []);
+  }, [forced]);
 
+  const modes = { ...own, ...forced };
   return (
-    <TabModeContext.Provider value={{ modes, setMode, loading }}>
+    <TabModeContext.Provider value={{ modes, forced, setMode, loading }}>
       {children}
     </TabModeContext.Provider>
   );

@@ -53,7 +53,7 @@ export default function MoreScreen() {
   const [lanConfig, setLanConfig] = useState(null);
   const [displayExpanded, setDisplayExpanded] = useState(false);
   const displayChevronAnim = useRef(new Animated.Value(0)).current;
-  const { modes: tabModes, setMode: setTabMode } = useTabModes();
+  const { modes: tabModes, setMode: setTabMode, forced: forcedTabModes = {} } = useTabModes();
   // Events calendar: shown only when the API lets this person see it (403 = owner turned staff view off)
   const [calendarAllowed, setCalendarAllowed] = useState(false);
   // Daily Diary: the server decides (turned on + this person's role picked by the owner)
@@ -620,13 +620,14 @@ export default function MoreScreen() {
                 key={tab.key}
                 style={[styles.connectRow, idx === arr.length - 1 && { borderBottomWidth: 0 }]}
                 onPress={() => setTabMode(tab.key, tabModes[tab.key] === 'webview' ? 'native' : 'webview')}
+                disabled={!!forcedTabModes[tab.key]}
                 activeOpacity={0.7}
               >
                 <View style={styles.connectLeft}>
                   <Ionicons name={tab.icon} size={18} color={tabModes[tab.key] === 'webview' ? '#f59e0b' : '#9ca3af'} />
                   <View>
                     <Text style={styles.connectLabel}>{tab.label}</Text>
-                    <Text style={styles.connectHint}>{tabModes[tab.key] === 'webview' ? 'Web View' : 'Native'}</Text>
+                    <Text style={styles.connectHint}>{tabModes[tab.key] === 'webview' ? 'Web View' : 'Native'}{forcedTabModes[tab.key] ? ' · set by DineOpen' : ''}</Text>
                   </View>
                 </View>
                 <View style={[styles.toggle, tabModes[tab.key] === 'webview' && styles.toggleOn]}>
