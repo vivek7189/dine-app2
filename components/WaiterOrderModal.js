@@ -278,6 +278,13 @@ export default function WaiterOrderModal({
             }
           } catch (e) {
             console.error('Failed to load existing order:', e);
+            // Don't open an empty cart in edit mode — "Update Order" would then replace the order's
+            // items with only the new ones.
+            if (!cancelled) {
+              Alert.alert('Order not loaded', e?.message && /another staff/i.test(e.message) ? e.message : "This table's order couldn't be loaded. Please check the connection and try again.");
+              onClose && onClose();
+              return;
+            }
           }
         }
       } catch (error) {
