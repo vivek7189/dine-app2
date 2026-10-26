@@ -245,7 +245,14 @@ export default function WaiterOrderModal({
         if (existingOrderId) {
           try {
             const orderRes = await apiClient.getOrders(rid, { orderId: existingOrderId });
-            const order = orderRes?.orders?.[0] || orderRes?.order;
+            // Only ever the order that was asked for — older servers ignored orderId and sent the
+            // newest orders, so "Add Items" on one table opened another table's order + customer.
+            const order = [...(orderRes?.orders || []), orderRes?.order].find(o => o && String(o.id) === String(existingOrderId));
+            if (!order && !cancelled) {
+              Alert.alert('Order not loaded', "This table's order couldn't be loaded. Please close and try again.");
+              onClose && onClose();
+              return;
+            }
             if (order?.items && !cancelled) {
               baseItemsSigRef.current = orderItemsSignature(order.items);
               const cartItems = order.items.map((item, idx) => ({

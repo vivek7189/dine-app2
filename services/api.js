@@ -1910,10 +1910,8 @@ class ApiClient {
   // Get order by ID
   async getOrderById(restaurantId, orderId) {
     const response = await this.getOrders(restaurantId, { search: orderId, limit: 1 });
-    if (response.orders && response.orders.length > 0) {
-      return response.orders[0];
-    }
-    return null;
+    // Only the order with this id (a search can match a different order).
+    return (response?.orders || []).find(o => o && String(o.id) === String(orderId)) || null;
   }
 
   // Process voice order

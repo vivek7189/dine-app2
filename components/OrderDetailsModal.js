@@ -118,11 +118,8 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
     try {
       const response = await apiClient.getOrders(restaurantId, { search: orderId, limit: 1 });
       let freshOrder = null;
-      if (response?.orders && response.orders.length > 0) {
-        freshOrder = response.orders[0];
-      } else if (response?.order) {
-        freshOrder = response.order;
-      }
+      // The search can match other orders too — use only the one with this id.
+      freshOrder = [...(response?.orders || []), response?.order].find(o => o && String(o.id) === String(orderId)) || null;
       if (freshOrder) {
         setOrder(freshOrder);
         setCache(cacheKey, freshOrder);
