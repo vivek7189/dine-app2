@@ -9,6 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient, { WEB_BASE_URL } from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
 import { handleWebDownloadMessage } from '../../services/webDownload';
+import { roleGetsWhatsAppAlerts } from '../../services/whatsappOrderAlerts';
 
 export default function BillingWebViewScreen() {
   const { billingData, returnTo, tableId, tableNumber } = useLocalSearchParams();
@@ -80,6 +81,8 @@ export default function BillingWebViewScreen() {
       if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
+      // App shows its own WhatsApp-order banner for this login → web page skips its popup (no double alert).
+      if (roleGetsWhatsAppAlerts(userData)) parts.push(`window.__DINEOPEN_NATIVE_WA_ALERTS__ = true;`);
       parts.push(`window.__DINEOPEN_BILLING_MODE__ = true;`);
       if (useDesktopLayout) {
         parts.push(`window.__DINEOPEN_FORCE_DESKTOP__ = true;`);

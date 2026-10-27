@@ -49,8 +49,12 @@ export async function syncWaPrefs() {
 }
 
 // A tapped WhatsApp-order notification → open that order (the banner component does the navigation).
+const openedHandled = new Set(); // a tap is handled once (getInitialNotification can repeat on re-register)
 function handleOpened(msg) {
   const d = msg?.data || {};
+  const key = msg?.messageId || d.orderId;
+  if (!key || openedHandled.has(key)) return;
+  openedHandled.add(key);
   if (d.type === 'whatsapp-order' && d.orderId) {
     try { require('./whatsappOrderAlerts').requestOpen(d.orderId); } catch (_) { /* ignore */ }
   }

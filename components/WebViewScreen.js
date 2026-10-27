@@ -9,6 +9,7 @@ import apiClient, { WEB_BASE_URL } from '../services/api';
 import * as printerService from '../services/printerService';
 import { useResponsive } from '../hooks/useResponsive';
 import { handleWebDownloadMessage } from '../services/webDownload';
+import { roleGetsWhatsAppAlerts } from '../services/whatsappOrderAlerts';
 
 /**
  * Shared WebView screen for tab navigation.
@@ -105,6 +106,9 @@ export default function WebViewScreen({ route, screenName = 'Page' }) {
       if (userData) parts.push(`if (window.__DINEOPEN_TRUSTED__) localStorage.setItem('user',${JSON.stringify(JSON.stringify(userData))});`);
       if (rid) parts.push(`localStorage.setItem('selectedRestaurantId','${rid}');`);
       parts.push(`window.__DINEOPEN_MOBILE_EMBED__ = true;`);
+      // The app shows its own WhatsApp-order banner + ring for this login → the web page inside skips its
+      // WhatsApp popup/sound (no double alert). Older apps don't set it, so their web alert stays.
+      if (roleGetsWhatsAppAlerts(userData)) parts.push(`window.__DINEOPEN_NATIVE_WA_ALERTS__ = true;`);
       if (useDesktopLayout) {
         parts.push(`window.__DINEOPEN_FORCE_DESKTOP__ = true;`);
       }
