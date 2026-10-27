@@ -27,6 +27,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import { businessRange, fmtDay, fmtClock, fmtDayTime } from '../../utils/restaurantClock';
 import { roleCan, canPerform } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
+import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderAlerts';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -43,7 +44,7 @@ const STATUS_COLORS = {
   new: '#3b82f6',
 };
 
-export default function OrderHistoryScreen() {
+export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const { fs, r, isTablet } = useResponsive();
   const insets = useSafeAreaInsets();
   const [orders, setOrders] = useState([]);
@@ -57,6 +58,15 @@ export default function OrderHistoryScreen() {
   const [currentUser, setCurrentUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  // WhatsApp-order banner / notification tap → open that order's details here.
+  useEffect(() => {
+    if (!openOrderId || !restaurantId) return;
+    let cancelled = false;
+    loadOrderForOpen(restaurantId, openOrderId)
+      .then((o) => { if (!cancelled && o) setSelectedOrder(o); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [openOrderId, openTick, restaurantId]);
   const [userRole, setUserRole] = useState('');
   const [restoringOrder, setRestoringOrder] = useState(false);
   // Per-order actions (reprint / refund / cancel / settle)
@@ -599,6 +609,12 @@ export default function OrderHistoryScreen() {
                 <Text style={styles.tableBadgeText}>T{item.tableNumber}</Text>
               </View>
             )}
+            {isWhatsAppOrder(item) && (
+              <View style={styles.waBadge}>
+                <Ionicons name="logo-whatsapp" size={11} color="#15803d" />
+                <Text style={styles.waBadgeText}>WhatsApp</Text>
+              </View>
+            )}
           </View>
           <Text style={[styles.orderAmount, { color: statusColor }]}>{formatCurrency(amt)}</Text>
         </View>
@@ -850,6 +866,12 @@ export default function OrderHistoryScreen() {
                     {selectedOrder.status}
                   </Text>
                 </View>
+                {isWhatsAppOrder(selectedOrder) && (
+                  <View style={[styles.waBadge, { alignSelf: 'flex-start', marginTop: 6 }]}>
+                    <Ionicons name="logo-whatsapp" size={12} color="#15803d" />
+                    <Text style={styles.waBadgeText}>WhatsApp order</Text>
+                  </View>
+                )}
                 <Text style={styles.detailTime}>
                   {(() => { const d = toDate(selectedOrder.completedAt || selectedOrder.createdAt); return d ? fmtDayTime(d, apiClient.getClockOffset()) : '—'; })()}
                 </Text>
@@ -1210,6 +1232,8 @@ const styles = StyleSheet.create({
   payBadgePartial: { backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   payBadgePartialText: { fontSize: 9, fontWeight: '800', color: '#92400e' },
   revisedBadge: { backgroundColor: '#ede9fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  waBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#dcfce7', borderWidth: 1, borderColor: '#bbf7d0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  waBadgeText: { fontSize: 10, fontWeight: '800', color: '#15803d' },
   revisedBadgeText: { fontSize: 9, fontWeight: '800', color: '#6d28d9' },
   orderTime: { fontSize: 10, color: '#9ca3af' },
   discountRow: { flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' },

@@ -17,6 +17,7 @@ import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import { WebView } from 'react-native-webview';
 import PrinterNotificationOverlay from '../../components/PrinterNotificationOverlay';
 import OrderReadyNotificationOverlay from '../../components/OrderReadyNotificationOverlay';
+import WhatsAppOrderOverlay from '../../components/WhatsAppOrderOverlay';
 import StaffAccessGateNative from '../../components/StaffAccessGateNative';
 import restaurantEvents from '../../services/restaurantEvents';
 import { startRestaurantSettingsRefresh, refreshSettingsThenAccess } from '../../services/restaurantSettingsRefresh';
@@ -490,6 +491,7 @@ export default function TabsLayout() {
           <BillingPrewarmer />
           <PrinterNotificationOverlay />
           <OrderReadyNotificationOverlay />
+          <WhatsAppOrderOverlay />
           {/* Staff Access Rules: "Clock in to start" for staff who must clock in (off shift / on leave) */}
           <StaffAccessGateNative />
         </View>

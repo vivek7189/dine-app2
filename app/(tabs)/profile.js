@@ -22,6 +22,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import SyncDetailsSheet from '../../components/SyncDetailsSheet';
 import { hasPin, setPin, clearPin } from '../../services/pinLock';
+import { roleGetsWhatsAppAlerts, getWaAlertsOn, getWaSoundOn, setWaAlertsOn, setWaSoundOn } from '../../services/whatsappOrderAlerts';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -34,6 +35,9 @@ export default function ProfileScreen() {
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  // WhatsApp-order alerts on this phone (banner + ring + phone notification)
+  const [waAlertsOn, setWaAlertsOnState] = useState(true);
+  const [waSoundOn, setWaSoundOnState] = useState(true);
   const [user, setUser] = useState(null);
   const [restaurant, setRestaurant] = useState(null);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -53,6 +57,8 @@ export default function ProfileScreen() {
     AsyncStorage.getItem('@vibration_enabled').then(val => {
       if (val !== null) setVibrationEnabled(val === 'true');
     });
+    getWaAlertsOn().then(setWaAlertsOnState);
+    getWaSoundOn().then(setWaSoundOnState);
   }, []);
 
   const loadUserData = async () => {
@@ -746,6 +752,48 @@ export default function ProfileScreen() {
                 <View style={[styles.toggleThumb, vibrationEnabled && styles.toggleThumbActive]} />
               </View>
             </TouchableOpacity>
+            {roleGetsWhatsAppAlerts(user) && (
+              <>
+                <TouchableOpacity
+                  style={[styles.connectivityRow, { borderTopWidth: 1, borderTopColor: '#f1f5f9', borderBottomWidth: 0 }]}
+                  onPress={() => { const v = !waAlertsOn; setWaAlertsOnState(v); setWaAlertsOn(v); }}
+                  accessibilityRole="switch" accessibilityState={{ checked: waAlertsOn }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <Ionicons name="logo-whatsapp" size={20} color={waAlertsOn ? '#16a34a' : Colors.textMedium} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.connectivityLabel}>WhatsApp order alerts</Text>
+                      <Text style={styles.connectivityMeta}>
+                        {waAlertsOn ? 'Popup + phone notification for new WhatsApp orders' : 'No WhatsApp order alerts on this phone'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[styles.toggleTrack, waAlertsOn && styles.toggleTrackActive]}>
+                    <View style={[styles.toggleThumb, waAlertsOn && styles.toggleThumbActive]} />
+                  </View>
+                </TouchableOpacity>
+                {waAlertsOn && (
+                  <TouchableOpacity
+                    style={[styles.connectivityRow, { borderTopWidth: 1, borderTopColor: '#f1f5f9', borderBottomWidth: 0 }]}
+                    onPress={() => { const v = !waSoundOn; setWaSoundOnState(v); setWaSoundOn(v); }}
+                    accessibilityRole="switch" accessibilityState={{ checked: waSoundOn }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Ionicons name={waSoundOn ? 'volume-high' : 'volume-mute'} size={20} color={waSoundOn ? '#16a34a' : Colors.textMedium} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.connectivityLabel}>WhatsApp order sound</Text>
+                        <Text style={styles.connectivityMeta}>
+                          {waSoundOn ? 'Rings when a WhatsApp order comes in' : 'Popup only — no ring'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.toggleTrack, waSoundOn && styles.toggleTrackActive]}>
+                      <View style={[styles.toggleThumb, waSoundOn && styles.toggleThumbActive]} />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
           </View>
         </View>
 
