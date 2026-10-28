@@ -20,7 +20,9 @@ try { captureRef = require('react-native-view-shot').captureRef; } catch (e) { c
 // WebView reliably on Android. Any failure rejects → caller falls back to ESC/POS text.
 
 const MAX_HEIGHT = 4000;
-const CAPTURE_TIMEOUT_MS = 6000;
+// First snapshot after the app starts spins up a fresh WebView (slow on older iPads) — 6 s was too tight
+// with a receipt logo; a stuck render still falls back to the text print after this.
+const CAPTURE_TIMEOUT_MS = 10000;
 
 export default function ImagePrintHost() {
   const webRef = useRef(null);

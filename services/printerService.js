@@ -89,6 +89,8 @@ export const setSavedPrintSettings = (ps, restaurantId) => {
   _savedPrintSettings = ps;
   if (restaurantId) _savedForRid = String(restaurantId);
   setImagePrintConfig({ enabled: ps.imagePrintEnabled, printerWidth: ps.printerWidth, autoImageForCurrency: ps.autoImageForCurrency });
+  // Keep the receipt logo on the device so image prints don't download it each time.
+  try { if (ps.receiptLogo?.enabled && ps.receiptLogo?.url) require('./receiptImageCache').prefetchReceiptImage(ps.receiptLogo.url); } catch (_) { /* never block */ }
 };
 export const getSavedPrintSettings = (restaurantId) =>
   (!restaurantId || !_savedForRid || _savedForRid === String(restaurantId) ? _savedPrintSettings : null);
@@ -173,11 +175,15 @@ const enqueuePrint = (fn) => {
 const PRINT_TIMEOUT_MS = 15000; // 15 seconds — WiFi printers can be slow to ACK
 const RETRY_DELAYS = [800, 1500];
 
-const withPrintTimeout = (promise, label = 'Print') => {
+// Sending a whole receipt picture over Bluetooth is slow (a long KOT can take 20–30 s). Giving up at
+// 15 s fell back to a text copy while the picture was still printing → two copies. Image sends wait longer.
+const IMAGE_SEND_TIMEOUT_MS = 45000;
+
+const withPrintTimeout = (promise, label = 'Print', ms = PRINT_TIMEOUT_MS) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${PRINT_TIMEOUT_MS}ms`)),
-      PRINT_TIMEOUT_MS,
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
     );
     promise.then(
       (v) => { clearTimeout(timer); resolve(v); },
@@ -1799,8 +1805,10 @@ const printViaThermalImage = async (html) => {
   if (!nativeMod || (!raster && typeof nativeMod.printImageData !== 'function')) {
     throw new Error(`printImageData not available for ${connectionType}`);
   }
-  const cleanHtml = String(html || '').replace(/^<LOGO:.+?>\n?/, '');
+  let cleanHtml = String(html || '').replace(/^<LOGO:.+?>\n?/, '');
   if (!cleanHtml.trim()) throw new Error('empty html');
+  // Logo from the device's stored copy (no download inside the snapshot window). Unchanged on failure.
+  try { cleanHtml = await require('./receiptImageCache').inlineReceiptImages(cleanHtml); } catch (_) { /* keep the original HTML */ }
   const fileUri = await htmlToImageFile(cleanHtml, { width: _imagePrintWidth });
   // printImageData is fire-and-forget: its callback fires ONLY on error (same pattern as
   // printRawData/printBill in this lib). So reject if the error callback fires, else resolve
@@ -1840,7 +1848,7 @@ const printViaThermalImage = async (html) => {
       }
     } catch (e) { if (!settled) { settled = true; reject(e); } return; }
     setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1500);
-  }), 'printImageData');
+  }), 'printImageData', IMAGE_SEND_TIMEOUT_MS);
 };
 
 // Ensure the HTML declares the thermal paper size so iOS AirPrint / the print dialog lays it
