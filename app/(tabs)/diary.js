@@ -32,7 +32,11 @@ const FOCUS = ['Push promo items', 'Upsell drinks', 'Festival day', 'Big booking
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (str, n) => { const d = new Date(`${str}T12:00:00`); d.setDate(d.getDate() + n); return ymd(d); };
 const fmtDay = (str, o = { weekday: 'short', day: 'numeric', month: 'short' }) => { try { return new Date(`${str}T12:00:00`).toLocaleDateString([], o); } catch { return str; } };
-const blankIncident = () => ({ id: '', type: 'other', severity: 'medium', title: '', note: '', people: '', amount: '', followUp: '', status: 'open', resolution: '' });
+const blankIncident = () => ({ id: '', type: 'other', severity: 'medium', title: '', note: '', people: '', amount: '', followUp: '', time: '', services: [], servicesNote: '', status: 'open', resolution: '' });
+// Emergency services involved in an incident (any combination).
+const SERVICES = [['police', '🚓', 'Police'], ['ambulance', '🚑', 'Ambulance'], ['fire', '🚒', 'Fire'], ['other', '🆘', 'Other']];
+const SVC = Object.fromEntries(SERVICES.map(([k, e, l]) => [k, { e, l }]));
+const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 const tap = () => { try { Haptics.selectionAsync(); } catch (_) { /* no haptics */ } };
 
 export default function DiaryScreen() {
@@ -55,6 +59,7 @@ export default function DiaryScreen() {
   const [blocked, setBlocked] = useState(null); // 'off' | 'role'
   const [list, setList] = useState(null);
   const [picker, setPicker] = useState(null); // incident index whose follow-up date is being picked
+  const [timePicker, setTimePicker] = useState(null); // incident index whose time is being picked
 
   useEffect(() => {
     (async () => {
@@ -68,7 +73,7 @@ export default function DiaryScreen() {
   const toForm = (e = {}) => ({
     anticipation: { target: e.anticipation?.target != null ? String(e.anticipation.target) : '', focus: e.anticipation?.focus || '', staffing: e.anticipation?.staffing || '', notes: e.anticipation?.notes || '' },
     assessment: { rating: e.assessment?.rating || null, wentWell: e.assessment?.wentWell || '', wentWrong: e.assessment?.wentWrong || '', tomorrow: e.assessment?.tomorrow || '' },
-    incidents: (e.incidents || []).map((i) => ({ ...blankIncident(), ...i, amount: i.amount != null ? String(i.amount) : '', followUp: i.followUp || '' })),
+    incidents: (e.incidents || []).map((i) => ({ ...blankIncident(), ...i, amount: i.amount != null ? String(i.amount) : '', followUp: i.followUp || '', time: i.time || '', services: Array.isArray(i.services) ? i.services : [], servicesNote: i.servicesNote || '' })),
   });
 
   const loadDay = useCallback(async () => {
@@ -108,7 +113,7 @@ export default function DiaryScreen() {
       const body = {};
       if (changed.anticipation) body.anticipation = { ...form.anticipation, target: form.anticipation.target === '' ? null : Number(form.anticipation.target) };
       if (changed.assessment) body.assessment = form.assessment;
-      if (changed.incidents) body.incidents = form.incidents.map((i) => ({ ...i, amount: i.amount === '' ? null : Number(i.amount), followUp: i.followUp || null }));
+      if (changed.incidents) body.incidents = form.incidents.map((i) => ({ ...i, amount: i.amount === '' ? null : Number(i.amount), followUp: i.followUp || null, time: i.time || null }));
       const r = await apiClient.saveDiaryDay(rid, date, body);
       setForm(toForm(r.entry)); setDirty(false); setChanged({});
       setSavedInfo({ at: r.entry?.updatedAt, by: r.entry?.updatedBy?.name });
@@ -272,6 +277,38 @@ export default function DiaryScreen() {
                           ))}
                         </View>
                         <TextInput value={x.note} onChangeText={(v) => setInc(k, { note: v })} multiline placeholder="Details, action taken" style={[s.input, s.multi, { marginTop: 8 }]} placeholderTextColor="#9ca3af" />
+                        <Text style={[s.label, s.gap]}>TIME OF INCIDENT {x.time ? `· ${x.time}` : ''}</Text>
+                        <View style={s.chips}>
+                          <TouchableOpacity onPress={() => { tap(); setInc(k, { time: hhmm(new Date()) }); }} style={s.pill}><Text style={s.pillText}>Now</Text></TouchableOpacity>
+                          <TouchableOpacity onPress={() => setTimePicker(k)} style={[s.pill, !!x.time && s.pillAmber]}><Text style={[s.pillText, !!x.time && { color: '#92400e' }]}>{x.time || 'Pick…'}</Text></TouchableOpacity>
+                          {!!x.time && <TouchableOpacity onPress={() => setInc(k, { time: '' })} style={s.pill}><Text style={s.pillText}>None</Text></TouchableOpacity>}
+                        </View>
+                        {timePicker === k && (
+                          <DateTimePicker value={(() => { const d = new Date(); if (x.time) { const [h, m] = x.time.split(':').map(Number); d.setHours(h, m, 0, 0); } return d; })()} mode="time" display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            onChange={(ev, d) => {
+                              if (ev.type === 'dismissed') { setTimePicker(null); return; }
+                              if (d) setInc(k, { time: hhmm(d) });
+                              if (Platform.OS !== 'ios') setTimePicker(null);
+                            }} />
+                        )}
+                        {timePicker === k && Platform.OS === 'ios' && (
+                          <TouchableOpacity onPress={() => setTimePicker(null)} style={[s.pill, { alignSelf: 'flex-end' }]}><Text style={s.pillText}>Done</Text></TouchableOpacity>
+                        )}
+                        <Text style={[s.label, s.gap]}>SERVICES INVOLVED</Text>
+                        <View style={s.chips}>
+                          {SERVICES.map(([sv, e, l]) => {
+                            const on = (x.services || []).includes(sv);
+                            return (
+                              <TouchableOpacity key={sv} accessibilityState={{ selected: on }} onPress={() => { tap(); setInc(k, { services: on ? x.services.filter((v) => v !== sv) : [...(x.services || []), sv] }); }}
+                                style={[s.pill, on && { backgroundColor: '#eff6ff', borderColor: '#93c5fd' }]}>
+                                <Text style={[s.pillText, on && { color: '#1d4ed8', fontWeight: '700' }]}>{e} {l}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        {(x.services || []).length > 0 && (
+                          <TextInput value={x.servicesNote} onChangeText={(v) => setInc(k, { servicesNote: v })} placeholder="Report no., officer, hospital…" style={[s.input, { marginTop: 8 }]} placeholderTextColor="#9ca3af" />
+                        )}
                         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                           <TextInput value={x.people} onChangeText={(v) => setInc(k, { people: v })} placeholder="People involved" style={[s.input, { flex: 1 }]} placeholderTextColor="#9ca3af" />
                           <TextInput value={x.amount} onChangeText={(v) => setInc(k, { amount: v.replace(/[^0-9.]/g, '') })} keyboardType="decimal-pad" placeholder="Amount" style={[s.input, { width: 100 }]} placeholderTextColor="#9ca3af" />
@@ -357,7 +394,7 @@ export default function DiaryScreen() {
                         <Text style={[s.rowTitle, { flex: 1 }]} numberOfLines={1}>{i.title || INC[i.type]?.l}</Text>
                         <Text style={[s.status, i.status === 'open' ? s.statusOpen : s.statusDone]}>{i.status === 'open' ? 'Open' : 'Resolved'}</Text>
                       </View>
-                      <Text style={[s.muted, { marginTop: 3 }]}>{fmtDay(i.date)} · {i.severity}{i.followUp ? ` · follow up ${fmtDay(i.followUp)}` : ''}</Text>
+                      <Text style={[s.muted, { marginTop: 3 }]}>{fmtDay(i.date)}{i.time ? ` ${i.time}` : ''} · {i.severity}{(i.services || []).length ? ` · ${(i.services || []).map((sv) => SVC[sv] ? `${SVC[sv].e} ${SVC[sv].l}` : '').filter(Boolean).join(', ')}` : ''}{i.followUp ? ` · follow up ${fmtDay(i.followUp)}` : ''}</Text>
                       {!!(i.note || i.resolution) && <Text style={[s.muted, { marginTop: 3 }]} numberOfLines={2}>{i.note}{i.resolution ? ` — ✔ ${i.resolution}` : ''}</Text>}
                     </TouchableOpacity>
                   ))
