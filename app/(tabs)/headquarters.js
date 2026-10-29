@@ -29,11 +29,12 @@ const ROLE_FILTERS = ['All', 'Manager', 'Waiter', 'Cashier', 'Chef'];
 const STATUS_FILTERS = ['All', 'Active', 'Inactive'];
 const STOCK_FILTERS = ['All', 'Normal', 'Low', 'Out'];
 
-export function HeadquartersContent({ embedded = false, drawerToggle, initialUser = null, extraContent = null, restaurants = [], onSwitchRestaurant = null }) {
-  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} initialUser={initialUser} extraContent={extraContent} restaurants={restaurants} onSwitchRestaurant={onSwitchRestaurant} />;
+export function HeadquartersContent({ embedded = false, drawerToggle, initialUser = null, extraContent = null, topContent = null, restaurants = [], onSwitchRestaurant = null }) {
+  return <HeadquartersScreen embedded={embedded} drawerToggle={drawerToggle} initialUser={initialUser} extraContent={extraContent} topContent={topContent} restaurants={restaurants} onSwitchRestaurant={onSwitchRestaurant} />;
 }
 
-export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null, extraContent = null, restaurants = [], onSwitchRestaurant = null }) {
+// topContent: cards shown under the header on the Overview tab (the owner's native Home).
+export default function HeadquartersScreen({ embedded = false, drawerToggle, initialUser = null, extraContent = null, topContent = null, restaurants = [], onSwitchRestaurant = null }) {
   const router = useRouter();
   const { width: SCREEN_WIDTH, isTablet } = useResponsive();
   const metricCols = isTablet ? 4 : 2;
@@ -963,6 +964,7 @@ export default function HeadquartersScreen({ embedded = false, drawerToggle, ini
           showsVerticalScrollIndicator={false}
         >
           {renderHeader()}
+          {topContent && topContent()}
           {renderTabPills()}
           {renderOverviewTab()}
         </ScrollView>

@@ -611,6 +611,8 @@ export default function MoreScreen() {
               Switch tabs between Web View (modern) and Native (classic) mode
             </Text>
             {[
+              // Waiters / captains always have their own native Home
+              ...(['waiter', 'captain'].includes(role) ? [] : [{ key: 'home', label: 'Home', icon: 'home-outline' }]),
               { key: 'tables', label: 'Tables', icon: 'restaurant-outline' },
               { key: 'menu', label: 'Menu', icon: 'fast-food-outline' },
               { key: 'billing', label: 'Billing', icon: 'card-outline' },

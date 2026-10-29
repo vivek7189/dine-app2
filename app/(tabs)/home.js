@@ -2,23 +2,31 @@ import React, { useState, useEffect } from 'react';
 import WebViewScreen from '../../components/WebViewScreen';
 import WaiterHomeNative from '../../screens/WaiterHomeNative';
 import CaptainHomeNative from '../../screens/CaptainHomeNative';
+import StaffHomeNative from '../../screens/StaffHomeNative';
+import OwnerHomeNative from '../../screens/OwnerHomeNative';
+import { useTabMode } from '../../contexts/TabModeContext';
 import apiClient from '../../services/api';
 
 export default function HomeTab() {
   const [role, setRole] = useState(null);
+  const mode = useTabMode('home'); // 'native' (default) | 'webview' (More → Display)
 
   useEffect(() => {
     (async () => {
       try {
         const userData = await apiClient.getUser();
-        if (userData?.role) setRole(userData.role.toLowerCase());
-      } catch {}
+        setRole(userData?.role ? userData.role.toLowerCase() : '');
+      } catch { setRole(''); }
     })();
   }, []);
 
-  // Captain gets dedicated captain home
+  if (role === null) return null;
+  // Captain and waiter keep their own floor homes
   if (role === 'captain') return <CaptainHomeNative />;
-  // Waiter gets native home, other roles keep WebView dashboard
   if (role === 'waiter') return <WaiterHomeNative />;
-  return <WebViewScreen route="/mobile/home" screenName="Home" />;
+  // Kitchen-display logins: the web sends them straight to the KOT screen — kept as before
+  if (mode === 'webview' || role === 'kitchen_display') return <WebViewScreen route="/mobile/home" screenName="Home" />;
+  // Same Home as the web, built natively (doesn't depend on the phone's WebView)
+  if (role === 'owner' || role === 'admin') return <OwnerHomeNative />;
+  return <StaffHomeNative />;
 }

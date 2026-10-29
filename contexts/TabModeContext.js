@@ -6,11 +6,11 @@ import apiClient from '../services/api';
 // Per-login key: dine_tab_modes:<userId>. (The old phone-wide 'dine_tab_modes' is no longer read.)
 const STORAGE_KEY = 'dine_tab_modes';
 
-// Default all user-toggleable tabs (Tables / Menu / Billing / Orders) to Native
+// Default all user-toggleable tabs (Home / Tables / Menu / Billing / Orders) to Native
 // (classic) for every role. The Web View (modern) mode is opt-in — the user
-// enables it per tab from More → Display. home stays webview (no native screen).
+// enables it per tab from More → Display.
 const DEFAULT_MODES = {
-  home: 'webview',
+  home: 'native',
   tables: 'native',
   menu: 'native',
   orders: 'native',
@@ -31,6 +31,10 @@ const TabModeContext = createContext({
 //   • forced for the whole restaurant from our side — → appTabModes (posSettings.appTabModes);
 //     a forced tab can't be switched in More → Display.
 const keyFor = (uid) => `${STORAGE_KEY}:${uid}`;
+// Home had no native screen before, so every saved copy says home: 'webview' without anyone
+// choosing it. A saved Home value counts only once the person picked it in More → Display
+// (remembered per login on this phone); DineOpen's forced appTabModes always apply.
+const homeChosenKey = (uid) => `dine_home_mode_chosen:${uid}`;
 const onlyModes = (m) => {
   const out = {};
   if (m && typeof m === 'object') {
@@ -54,12 +58,17 @@ export function TabModeProvider({ children }) {
       if (uid) {
         try { const raw = await AsyncStorage.getItem(keyFor(uid)); if (raw) local = onlyModes(JSON.parse(raw)); } catch (_) {}
       }
+      let homeChosen = false;
+      if (uid) { try { homeChosen = (await AsyncStorage.getItem(homeChosenKey(uid))) === '1'; } catch (_) {} }
       // First paint: this person's last known choice (phone copy, else the copy from login).
-      setOwn({ ...DEFAULT_MODES, ...onlyModes(user?.tabModes), ...(local || {}) });
+      const first = { ...onlyModes(user?.tabModes), ...(local || {}) };
+      if (!homeChosen) delete first.home;
+      setOwn({ ...DEFAULT_MODES, ...first });
       try {
         const res = await apiClient.request('/api/user/page-access');
         const srv = onlyModes(res?.tabModes);
-        const mine = Object.keys(srv).length ? srv : (local || onlyModes(user?.tabModes));
+        const mine = { ...(Object.keys(srv).length ? srv : (local || onlyModes(user?.tabModes))) };
+        if (!homeChosen) delete mine.home;
         setOwn({ ...DEFAULT_MODES, ...mine });
         setForced(onlyModes(res?.appTabModes));
         if (uid) AsyncStorage.setItem(keyFor(uid), JSON.stringify({ ...DEFAULT_MODES, ...mine })).catch(() => {});
@@ -80,6 +89,7 @@ export function TabModeProvider({ children }) {
 
   const setMode = useCallback((tabName, mode) => {
     if (forced[tabName]) return; // set for the restaurant — not switchable here
+    if (tabName === 'home' && uidRef.current) AsyncStorage.setItem(homeChosenKey(uidRef.current), '1').catch(() => {});
     setOwn(prev => {
       const next = { ...prev, [tabName]: mode };
       if (uidRef.current) AsyncStorage.setItem(keyFor(uidRef.current), JSON.stringify(next)).catch(() => {});
