@@ -3519,6 +3519,17 @@ class ApiClient {
   async getWaiters(restaurantId) {
     return this.request(`/api/waiters/${restaurantId}`);
   }
+  // Staff perks (Admin → Billing → Staff perks): settings + staff list, and the quote for a staff order
+  async getStaffPerks(restaurantId) {
+    return this.request(`/api/staff-perks/${restaurantId}`);
+  }
+
+  async quoteStaffPerk(restaurantId, { staffId, items, orderId = null }) {
+    return this.request(`/api/staff-perks/${restaurantId}/quote`, {
+      method: 'POST',
+      data: { staffId, items, orderId },
+    });
+  }
   // Latest rules for this staff member (kept by StaffAccessGateNative; null = none)
   setStaffAccess(v) { this._staffAccess = v || null; }
   getStaffAccess() { return this._staffAccess || null; }

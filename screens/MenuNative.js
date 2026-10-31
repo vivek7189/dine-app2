@@ -1480,6 +1480,9 @@ export default function MenuScreen() {
       ...(dd.manualDiscountValue != null ? { manualDiscountValue: dd.manualDiscountValue } : {}),
       loyaltyDiscount: r2(dd.loyaltyDiscount),
       couponDiscount: r2(dd.couponDiscount),
+      // Staff perk: { staffId } applies it (server re-checks the amount), null removes one the order had.
+      ...(dd.staffPerk !== undefined ? { staffPerk: dd.staffPerk } : {}),
+      ...(dd.discountReason !== undefined ? { discountReason: dd.discountReason } : {}),
     };
   };
 
@@ -4042,6 +4045,7 @@ export default function MenuScreen() {
         setActivePricingRuleId={setActivePricingRuleId}
         autoSelectedRule={autoSelectedRule}
         isUpdateOrder={!!existingOrderId}
+        existingOrderId={existingOrderId || null}
         existingOrderOfferIds={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.ids : []}
         existingOrderDiscounts={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.discounts : null}
         existingOrderItems={existingOrderItems}

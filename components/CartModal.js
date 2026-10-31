@@ -89,6 +89,7 @@ export default function CartModal({
   setActivePricingRuleId,
   autoSelectedRule = false,
   isUpdateOrder = false,
+  existingOrderId = null, // the saved order being added to (staff-perk quote leaves it out of today's count)
   existingOrderItems = [],
   onUpdateItemNote,       // (cartKey, note) — per-line kitchen note (web OrderSummary parity)
   existingOrderOfferIds = [], // offers already on the order being added to (not a cashier change)
@@ -402,6 +403,23 @@ export default function CartModal({
   const [discountOtpApprovedKey, setDiscountOtpApprovedKey] = useState(null);
   const [discountOtpRequestKey, setDiscountOtpRequestKey] = useState(null);
   const [manualDiscountType, setManualDiscountType] = useState('flat');
+  // Staff perks (Admin → Billing → Staff perks, web parity): a staff member's own order gets their
+  // free items + % off. The server works the amount out (quote) and checks it again when the order
+  // is saved; it goes on the order as the manual discount with staffPerk { staffId }.
+  const [staffPerkCfg, setStaffPerkCfg] = useState(null); // { settings, staff } when switched on
+  const [staffPerk, setStaffPerk] = useState(null); // { staffId, staffName }
+  const [staffPerkQuote, setStaffPerkQuote] = useState(null);
+  const [staffPerkMsg, setStaffPerkMsg] = useState('');
+  const [showStaffPicker, setShowStaffPicker] = useState(false);
+  const [staffSearch, setStaffSearch] = useState('');
+  useEffect(() => {
+    if (!visible || !restaurantId || effectivelyOffline) return undefined;
+    let alive = true;
+    apiClient.getStaffPerks(restaurantId)
+      .then((r) => { if (alive) setStaffPerkCfg(r?.settings?.enabled ? { settings: r.settings, staff: Array.isArray(r.staff) ? r.staff : [] } : null); })
+      .catch(() => { if (alive) setStaffPerkCfg(null); });
+    return () => { alive = false; };
+  }, [visible, restaurantId, effectivelyOffline]);
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
   const [sliderWidth, setSliderWidth] = useState(280);
@@ -438,7 +456,10 @@ export default function CartModal({
   // (order placed / billed / cleared) so the next order needs its own code (web parity).
   const customerPromptContinuedRef = useRef(false); // "Continue without" chosen for this cart
   useEffect(() => {
-    if (!cart || cart.length === 0) { setDiscountOtpApprovedKey(null); customerPromptContinuedRef.current = false; }
+    if (!cart || cart.length === 0) {
+      setDiscountOtpApprovedKey(null); customerPromptContinuedRef.current = false;
+      setStaffPerk(null); setStaffPerkQuote(null); setStaffPerkMsg('');
+    }
   }, [cart?.length]);
 
   // Coupon state
@@ -483,6 +504,7 @@ export default function CartModal({
       setRedeemPoints(0);
       setManualDiscount('');
       setManualDiscountType('flat');
+      setStaffPerk(null); setStaffPerkQuote(null); setStaffPerkMsg(''); setShowStaffPicker(false); setStaffSearch('');
       setDeliveryAddress(''); setNoteEditKey(null);
       setShowOffersModal(false);
       resetOffers();
@@ -567,13 +589,52 @@ export default function CartModal({
   const manualDiscountRawAmount = manualDiscountApplied.amount;
   const manualDiscountPendingOtp = discountOtpRequired && manualDiscountRawAmount > 0
     && discountOtpApprovedKey !== manualDiscountKey;
-  const manualDiscountAmount = manualDiscountPendingOtp ? 0 : manualDiscountRawAmount;
+  // Staff perk quote for this cart (server prices); re-asked when the cart changes.
+  const staffPerkLines = useMemo(() => pricedCart.map((ci) => ({
+    menuItemId: ci.id, name: ci.name, quantity: ci.quantity || 1, total: ci.total,
+    selectedVariant: ci.selectedVariant?.name ? { name: ci.selectedVariant.name } : null,
+  })), [pricedCart]);
+  useEffect(() => {
+    if (!staffPerk?.staffId || !restaurantId || !staffPerkLines.length) { setStaffPerkQuote(null); return undefined; }
+    let alive = true;
+    setStaffPerkQuote(null);
+    const t = setTimeout(() => {
+      apiClient.quoteStaffPerk(restaurantId, { staffId: staffPerk.staffId, items: staffPerkLines, orderId: isUpdateOrder ? (existingOrderId || null) : null })
+        .then((r) => { if (alive) { setStaffPerkQuote(r?.quote || null); setStaffPerkMsg(''); } })
+        .catch((e) => { if (alive) { setStaffPerkQuote(null); setStaffPerkMsg(e?.response?.data?.error || e?.message || 'Could not work out the staff discount'); } });
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [staffPerk?.staffId, staffPerkLines, restaurantId, isUpdateOrder, existingOrderId]);
+  const staffPerkAmount = staffPerk && staffPerkQuote
+    ? Math.round(Math.min(Number(staffPerkQuote.total) || 0, subtotal) * 100) / 100 : 0;
+  const pickStaffPerk = (st) => {
+    setShowStaffPicker(false); setStaffSearch('');
+    if (!st) { setStaffPerk(null); setStaffPerkQuote(null); setStaffPerkMsg(''); return; }
+    setManualDiscount('');
+    setStaffPerk({ staffId: st.id, staffName: st.name });
+  };
+  const staffPerkSummary = (() => {
+    if (!staffPerk) return '';
+    if (staffPerkMsg) return staffPerkMsg;
+    const q = staffPerkQuote;
+    if (!q) return 'Working out staff discount…';
+    const freeNames = (q.lines || []).filter((l) => l.freeUnits > 0).map((l) => `${l.freeUnits > 1 ? `${l.freeUnits}× ` : ''}${l.name}${l.size ? ` (${l.size})` : ''}`);
+    const parts = [];
+    if (freeNames.length) parts.push(`Free: ${freeNames.join(', ')}`);
+    if (q.percentValue > 0) parts.push(`${q.percent}% off: -${getCurrencySymbol()}${fmtAmt(q.percentValue)}`);
+    if (!parts.length) parts.push('No staff discount on these items');
+    const tail = q.freeBlockedNoClockIn ? ' · no free item: not clocked in today'
+      : q.freePerDay > 0 ? ` · free left today: ${q.freeLeftAfter}` : '';
+    return `${parts.join(' · ')}${tail}`;
+  })();
+  const manualDiscountAmount = staffPerk ? staffPerkAmount : (manualDiscountPendingOtp ? 0 : manualDiscountRawAmount);
 
   // (Declared after manualDiscountAmount so its dependency list sees the real value.)
   // Web parity (OrderSummary needsDiscountApproval): keyed by the user's REAL role — the cart
   // mode made a manager / captain / custom role / billing waiter count as 'owner' (no approval).
   const needsDiscountApproval = useCallback(() => {
     if (discountOtpRequired) return false; // the Tax-tab WhatsApp OTP already gates the discount
+    if (staffPerk) return false; // staff perk: set by the owner, checked by the server
     if (!discountApprovalSettings?.enabled) return false;
     if (manualDiscountAmount <= 0) return false;
     if (discountApproved) return false;
@@ -583,7 +644,7 @@ export default function CartModal({
     if (!config?.requireApproval) return false;
     if (config.maxDiscountWithoutApproval > 0 && manualDiscountAmount <= config.maxDiscountWithoutApproval) return false;
     return true;
-  }, [discountApprovalSettings, manualDiscountAmount, userRole, discountApproved, discountOtpRequired]);
+  }, [discountApprovalSettings, manualDiscountAmount, userRole, discountApproved, discountOtpRequired, staffPerk]);
 
   // Comp/void amounts — reported to the backend as audit metadata (compItems/voidItems).
   // Web parity: neither reduces the payable total here (web + backend charge full price and
@@ -652,7 +713,7 @@ export default function CartModal({
   // stored value (see `keptDiscounts` below), never zero.
   // (Functions: they read values declared further down, evaluated when an order is submitted.)
   const changedParts = () => ({
-    manual: manualDiscountAmount > 0,
+    manual: manualDiscountAmount > 0 || !!staffPerk,
     coupon: !!appliedCoupon || couponDiscountAmount > 0,
     loyalty: loyaltyDiscount > 0 || (redeemPoints || 0) > 0,
     offer: offerDiscount > 0,
@@ -696,13 +757,19 @@ export default function CartModal({
     };
   };
 
+  // { staffId } applies the staff perk; null removes one the order had; left out otherwise.
+  const staffPerkField = () => (staffPerk
+    ? { staffPerk: { staffId: staffPerk.staffId } }
+    : (keptDiscounts?.manualType === 'staff_perk' && manualDiscountAmount > 0 ? { staffPerk: null, discountReason: null } : {}));
+
   const buildDiscountData = () => ({ ...buildDiscountDataRaw(), ...effectiveDiscountFields() });
   const buildDiscountDataRaw = () => ({
     discountsChanged: discountsChanged(),
     offerDiscount,
     manualDiscountAmount,
-    manualDiscountType: manualDiscountAmount > 0 ? manualDiscountApplied.type : null,
-    manualDiscountValue: manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
+    manualDiscountType: staffPerk ? 'staff_perk' : (manualDiscountAmount > 0 ? manualDiscountApplied.type : null),
+    manualDiscountValue: !staffPerk && manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
+    ...staffPerkField(),
     loyaltyDiscount,
     totalDiscount: billing.totalDiscount,
     redeemLoyaltyPoints: redeemPoints,
@@ -899,7 +966,7 @@ export default function CartModal({
       offerIds: Array.isArray(ex.offerIds) ? ex.offerIds : [],
       offerName: ex.selectedOfferName || null,
       appliedOffers: Array.isArray(ex.appliedOffers) ? ex.appliedOffers : [],
-      manual: manualDiscountAmount > 0 ? 0 : manual,
+      manual: (manualDiscountAmount > 0 || staffPerk) ? 0 : manual,
       manualType: ex.manualDiscountType || null,
       manualValue: ex.manualDiscountValue != null ? Number(ex.manualDiscountValue) : null,
       coupon: (appliedCoupon || couponDiscountAmount > 0) ? 0 : r2(ex.couponDiscount),
@@ -1179,8 +1246,9 @@ export default function CartModal({
       couponId: appliedCoupon?.id || null,
       offerDiscount,
       manualDiscountAmount,
-      manualDiscountType: manualDiscountAmount > 0 ? manualDiscountApplied.type : null,
-      manualDiscountValue: manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
+      manualDiscountType: staffPerk ? 'staff_perk' : (manualDiscountAmount > 0 ? manualDiscountApplied.type : null),
+      manualDiscountValue: !staffPerk && manualDiscountAmount > 0 ? manualDiscountApplied.value : null,
+      ...staffPerkField(),
       loyaltyDiscount,
       totalDiscount: billing.totalDiscount,
       couponDiscount: couponDiscountAmount > 0 ? couponDiscountAmount : null,
@@ -1743,6 +1811,27 @@ export default function CartModal({
                 <Ionicons name="chevron-forward" size={14} color="#a5b4fc" />
               </TouchableOpacity>
 
+              {/* Staff order (Admin → Billing → Staff perks) */}
+              {!!staffPerkCfg && cart.length > 0 && (
+                <TouchableOpacity
+                  testID="staff-perk-btn"
+                  style={[styles.offersInlineBadge, { marginTop: 0 }, staffPerk && { borderColor: '#a5b4fc', backgroundColor: '#eef2ff' }]}
+                  onPress={() => setShowStaffPicker(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="person" size={11} color="#4338ca" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#3730a3' }}>
+                      {staffPerk ? `Staff: ${staffPerk.staffName}${staffPerkAmount > 0 ? ` · -${getCurrencySymbol()}${fmtAmt(staffPerkAmount)}` : ''}` : 'Staff order'}
+                    </Text>
+                    {!!staffPerk && (
+                      <Text style={{ fontSize: 10, marginTop: 2, color: staffPerkMsg ? '#dc2626' : '#4b5563' }}>{staffPerkSummary}</Text>
+                    )}
+                  </View>
+                  <Ionicons name="chevron-forward" size={14} color="#a5b4fc" />
+                </TouchableOpacity>
+              )}
+
               {/* Customer Phone + Name — side by side */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <View style={{ flex: 2 }}>
@@ -2146,6 +2235,58 @@ export default function CartModal({
             </Animated.View>
           )}
       </View>
+      {/* Staff order picker (staff perks) */}
+      <Modal visible={showStaffPicker && !!staffPerkCfg} animationType="fade" transparent onRequestClose={() => setShowStaffPicker(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 16 }}>
+          <View testID="staff-perk-picker" style={{ backgroundColor: '#fff', borderRadius: 14, maxHeight: '80%', overflow: 'hidden' }}>
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827' }}>Staff order — who is it for?</Text>
+              {!!staffPerkCfg && (
+                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                  {[staffPerkCfg.settings.freePerDay > 0 && (staffPerkCfg.settings.freeItems || []).length ? `${staffPerkCfg.settings.freePerDay} free a day${staffPerkCfg.settings.requireClockIn ? ' (after clock-in)' : ''}` : null,
+                    staffPerkCfg.settings.discountPercent > 0 ? `${staffPerkCfg.settings.discountPercent}% off` : null].filter(Boolean).join(' · ')}
+                </Text>
+              )}
+              <TextInput
+                value={staffSearch}
+                onChangeText={setStaffSearch}
+                placeholder="Search staff…"
+                placeholderTextColor="#9ca3af"
+                style={{ marginTop: 10, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, color: '#111827' }}
+              />
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ flexGrow: 0 }}>
+              {(staffPerkCfg?.staff || [])
+                .filter((st) => !staffSearch.trim() || `${st.name} ${st.role || ''}`.toLowerCase().includes(staffSearch.trim().toLowerCase()))
+                .map((st) => (
+                  <TouchableOpacity
+                    key={st.id}
+                    testID="staff-perk-option"
+                    onPress={() => pickStaffPerk(st)}
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', backgroundColor: staffPerk?.staffId === st.id ? '#eef2ff' : '#fff' }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827' }}>{st.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#9ca3af', textTransform: 'capitalize' }}>{st.role}</Text>
+                  </TouchableOpacity>
+                ))}
+              {(staffPerkCfg?.staff || []).length === 0 && (
+                <Text style={{ padding: 16, fontSize: 13, color: '#9ca3af' }}>No staff added yet</Text>
+              )}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', gap: 8, padding: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb' }}>
+              {!!staffPerk && (
+                <TouchableOpacity testID="staff-perk-remove" onPress={() => pickStaffPerk(null)} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', alignItems: 'center' }}>
+                  <Text style={{ color: '#b91c1c', fontWeight: '600' }}>Not a staff order</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setShowStaffPicker(false)} style={{ flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', alignItems: 'center' }}>
+                <Text style={{ color: '#374151', fontWeight: '600' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Offers & Rewards Modal */}
       <Modal
         visible={showOffersModal}
@@ -2489,7 +2630,7 @@ export default function CartModal({
               )}
 
               {/* MANUAL DISCOUNT Section */}
-              {discountConfig.enabled && isRoleAllowed(discountConfig.roles) && (
+              {discountConfig.enabled && isRoleAllowed(discountConfig.roles) && !staffPerk && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
                     <Ionicons name="pricetag-outline" size={10} color="#94a3b8" />
@@ -2580,7 +2721,7 @@ export default function CartModal({
                 )}
                 {manualDiscountAmount > 0 && (
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <Text style={{ fontSize: 12, color: '#dc2626' }}>Manual Discount</Text>
+                    <Text style={{ fontSize: 12, color: '#dc2626' }}>{staffPerk ? `Staff discount (${staffPerk.staffName})` : 'Manual Discount'}</Text>
                     <Text style={{ fontSize: 12, fontWeight: '600', color: '#dc2626' }}>-{getCurrencySymbol()}{fmtAmt(manualDiscountAmount)}</Text>
                   </View>
                 )}
@@ -2674,7 +2815,7 @@ export default function CartModal({
                 )}
                 {manualDiscountAmount > 0 && (
                   <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>Manual Discount</Text>
+                    <Text style={styles.breakdownLabel}>{staffPerk ? `Staff discount (${staffPerk.staffName})` : 'Manual Discount'}</Text>
                     <Text style={[styles.breakdownAmount, styles.breakdownDiscount]}>-{getCurrencySymbol()}{manualDiscountAmount.toFixed(2)}</Text>
                   </View>
                 )}
