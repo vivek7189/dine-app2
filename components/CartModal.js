@@ -408,6 +408,8 @@ export default function CartModal({
   // is saved; it goes on the order as the manual discount with staffPerk { staffId }.
   const [staffPerkCfg, setStaffPerkCfg] = useState(null); // { settings, staff } when switched on
   const [staffPerk, setStaffPerk] = useState(null); // { staffId, staffName }
+  // Customer offers are off on a staff order unless the owner allows them (Staff perks → Customer offers).
+  const staffBlocksOffers = !!staffPerk && !!staffPerkCfg && !staffPerkCfg.settings?.allowOffers;
   const [staffPerkQuote, setStaffPerkQuote] = useState(null);
   const [staffPerkMsg, setStaffPerkMsg] = useState('');
   const [showStaffPicker, setShowStaffPicker] = useState(false);
@@ -625,7 +627,7 @@ export default function CartModal({
     if (!parts.length) parts.push('No staff discount on these items');
     const tail = q.freeBlockedNoClockIn ? ' · no free item: not clocked in today'
       : q.freePerDay > 0 ? ` · free left today: ${q.freeLeftAfter}` : '';
-    return `${parts.join(' · ')}${tail}`;
+    return `${parts.join(' · ')}${tail}${staffBlocksOffers ? " · Offers don't apply to staff orders" : ''}`;
   })();
   const manualDiscountAmount = staffPerk ? staffPerkAmount : (manualDiscountPendingOtp ? 0 : manualDiscountRawAmount);
 
@@ -910,8 +912,10 @@ export default function CartModal({
     cart: pricedCart,
     subtotal,
     customerContext,
-    options: {},
+    options: { disabled: staffBlocksOffers },
   });
+  // A staff order drops any offer already picked (comes back via auto-apply when staff is removed).
+  useEffect(() => { if (staffBlocksOffers) resetOffers(); }, [staffBlocksOffers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Merge loyaltySettings — prefer hook source (loads from API on mount), fall back to local state
   const effectiveLoyaltySettings = hookLoyaltySettings || loyaltySettings;
@@ -977,7 +981,7 @@ export default function CartModal({
     };
     return (k.offer > 0 || k.manual > 0 || k.coupon > 0 || k.loyalty > 0) ? k : null;
   })();
-  const effOffer = keptDiscounts && keptDiscounts.offer > 0 ? keptDiscounts.offer : offerDiscount;
+  const effOffer = staffBlocksOffers ? 0 : keptDiscounts && keptDiscounts.offer > 0 ? keptDiscounts.offer : offerDiscount;
   const effManual = keptDiscounts && keptDiscounts.manual > 0 ? keptDiscounts.manual : manualDiscountAmount;
   const effCoupon = keptDiscounts && keptDiscounts.coupon > 0 ? keptDiscounts.coupon : couponDiscountAmount;
   const effLoyalty = keptDiscounts && keptDiscounts.loyalty > 0 ? keptDiscounts.loyalty : loyaltyDiscount;

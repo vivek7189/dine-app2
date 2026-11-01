@@ -100,7 +100,8 @@ const useOfferEngine = ({
   customerContext = null,
   options = {},
 } = {}) => {
-  const { autoApply: autoApplyProp = false } = options;
+  // disabled = no offers on this bill (a staff order, Staff perks → Customer offers off)
+  const { autoApply: autoApplyProp = false, disabled = false } = options;
 
   const [allOffers, setAllOffers] = useState([]);
   const [isLoadingOffers, setIsLoadingOffers] = useState(false);
@@ -347,7 +348,7 @@ const useOfferEngine = ({
 
   // -------- applicable offers --------
   const applicableOffers = useMemo(() => {
-    if (!allOffers.length) return [];
+    if (disabled || !allOffers.length) return [];
     const hasContext = !!resolvedContext;
     const now = new Date();
     const ctxForFilter = resolvedContext || {};
@@ -377,7 +378,7 @@ const useOfferEngine = ({
       }
     }
     return out;
-  }, [allOffers, subtotal, cart, resolvedContext, scheduleCheckKey]);
+  }, [allOffers, subtotal, cart, resolvedContext, scheduleCheckKey, disabled]);
 
   // Split applicable offers into generic (everyone/first-order) and personalized (group/customer-targeted)
   const { genericOffers, personalizedOffers } = useMemo(() => {
