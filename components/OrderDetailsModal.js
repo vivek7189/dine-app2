@@ -209,12 +209,14 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
   const handleSettle = async () => {
     if (settling) return;
     // Full Due (nothing paid now) needs a customer on the order to hold the receivable (web parity).
+    // "Add Items" only exists when the popup was opened with it (Tables) — not from Order History
+    const canAddItems = typeof onAddItems === 'function';
     const ppNow = partialPayAmount !== '' && partialPayAmount != null ? parseFloat(partialPayAmount) : null;
     const ci = order?.customerInfo || {};
     const hasCustomer = !!(order?.customerId || ci.id || ci.customerId
       || String(ci.phone || order?.customerPhone || '').replace(/\D/g, '').length >= 6);
     if (ppNow === 0 && !hasCustomer) {
-      Alert.alert('Customer needed', 'A due (udhar) bill needs the customer. Use "Add Items" to add the customer phone, or take the payment now.');
+      Alert.alert('Customer needed', canAddItems ? 'A due (udhar) bill needs the customer. Use "Add Items" to add the customer phone, or take the payment now.' : 'A due (udhar) bill needs the customer on the order. Take the payment now, or add the customer phone from Tables.');
       return;
     }
     const spCheck = resolveSplitPayments(splitPayments, splitTarget());
@@ -240,11 +242,11 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
       }
     };
     if (cdMode === 'required' && !(hasCustomer || (posSettings?.hideMobile && nameOnOrder))) {
-      Alert.alert('Customer details needed', `Add the customer's ${posSettings?.hideMobile ? 'name' : 'phone number'} to this order (tap "Add Items") before completing the bill.`);
+      Alert.alert('Customer details needed', `Add the customer's ${posSettings?.hideMobile ? 'name' : 'phone number'} to this order${canAddItems ? ' (tap "Add Items")' : ' (from Tables)'} before completing the bill.`);
       return;
     }
     if (cdMode === 'remind' && !hasCustomer && !nameOnOrder) {
-      Alert.alert('No customer details', 'This order has no customer details. Add them with "Add Items", or continue without.', [
+      Alert.alert('No customer details', canAddItems ? 'This order has no customer details. Add them with "Add Items", or continue without.' : 'This order has no customer details. Continue without them?', [
         { text: 'Go back', style: 'cancel' },
         { text: 'Continue without', onPress: () => { settleNow(); } },
       ]);

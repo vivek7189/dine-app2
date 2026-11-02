@@ -44,6 +44,7 @@ import { useToast } from '../components/Toast';
 import { orderItemsSignature } from '../utils/orderSignature';
 import { isChairModeEnabled } from '../utils/seatOrdering';
 import { storedOrderDiscountFields } from '../utils/orderDiscountFields';
+import { completeBillUpdate } from '../utils/completeBill';
 import { savedOrderPrintItems, savedOrderPrintExtras } from '../utils/savedOrderInvoice';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
@@ -2243,62 +2244,7 @@ export default function TablesScreen() {
           }
 
           try {
-            // Build full update payload matching web's DashboardTablesPanel flow
-            // so the backend can update customer stats (totalOrders, totalSpent, loyaltyPoints)
-            const updateData = {
-              status: 'completed',
-              paymentStatus: sd.paymentStatus || (order.paymentStatus === 'partial' ? 'partial' : 'paid'),
-              paymentMethod: settleMethod,
-              completedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              // Settle-time payment details (web parity)
-              ...(sd.splitPayments ? { splitPayments: sd.splitPayments } : {}),
-              ...(sd.cashReceived != null ? { cashReceived: sd.cashReceived } : {}),
-              ...(sd.changeReturned != null ? { changeReturned: sd.changeReturned } : {}),
-              ...(sd.tipAmount != null ? { tipAmount: sd.tipAmount, ...(sd.tipPercentage != null ? { tipPercentage: sd.tipPercentage } : {}) } : {}),
-              ...(sd.partialPayAmount != null ? { partialPayAmount: sd.partialPayAmount } : {}),
-              ...(sd.paidAmount != null ? { paidAmount: sd.paidAmount } : {}),
-              ...(sd.outstandingAmount != null ? { outstandingAmount: sd.outstandingAmount } : {}),
-              // Preserve existing amounts (tip may raise finalAmount). The server reads
-              // `subtotal || totalAmount` as the PRE-discount subtotal when vetting this bill —
-              // totalAmount is post-discount, so send the order's subtotal (else its items' sum).
-              ...(() => {
-                const sub = Number(order.subtotal) > 0 ? Number(order.subtotal)
-                  : (Array.isArray(order.items) && order.items.length
-                    ? Math.round(order.items.reduce((s, i) => s + (typeof i?.total === 'number' ? i.total : (Number(i?.price) || 0) * (Number(i?.quantity) || 1)), 0) * 100) / 100
-                    : 0);
-                return sub > 0 ? { subtotal: sub } : {};
-              })(),
-              ...(order.totalAmount && { totalAmount: order.totalAmount }),
-              ...((sd.finalAmount != null || order.finalAmount) && { finalAmount: settleFinal }),
-              ...(order.taxAmount && { taxAmount: order.taxAmount }),
-              ...(order.taxBreakdown && { taxBreakdown: order.taxBreakdown }),
-              // the order's stored charges, so the server vets this tax including their tax
-              ...(order.taxBreakdown && {
-                additionalCharges: Array.isArray(order.additionalCharges) ? order.additionalCharges : [],
-                additionalChargesTotal: Number(order.additionalChargesTotal) || 0,
-              }),
-              // Customer data — critical for customer stats update
-              customerId: order.customerId || null,
-              customerInfo: {
-                name: order.customerInfo?.name || '',
-                phone: order.customerInfo?.phone || order.customerInfo?.mobile || order.customerPhone || null,
-                tableNumber: order.tableNumber || tableForOrder?.name || null,
-              },
-              ...(order.customerPhone && { customerPhone: order.customerPhone }),
-              // Loyalty + discount/offer data (offer part, manual, loyalty, coupon, total)
-              ...storedOrderDiscountFields(order),
-              // Billing fields (tip handled above from settlementData)
-              ...(order.serviceChargeAmount > 0 && { serviceChargeAmount: order.serviceChargeAmount, serviceChargeRate: order.serviceChargeRate }),
-              ...(sd.tipAmount == null && order.tipAmount > 0 && { tipAmount: order.tipAmount }),
-              ...(order.roundOffAmount && { roundOffAmount: order.roundOffAmount }),
-              // Staff tracking
-              lastUpdatedBy: {
-                name: user?.name || 'Staff',
-                id: user?.id,
-                role: user?.role || 'waiter',
-              },
-            };
+            const updateData = completeBillUpdate(order, sd, user, tableForOrder?.name);
 
             await apiClient.updateOrder(order.id, updateData);
 

@@ -28,6 +28,8 @@ import { businessRange, fmtDay, fmtClock, fmtDayTime } from '../../utils/restaur
 import { roleCan, canPerform } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
 import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderAlerts';
+import OrderDetailsModal from '../../components/OrderDetailsModal';
+import { completeBillUpdate } from '../../utils/completeBill';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -58,6 +60,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const [currentUser, setCurrentUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [completeOrderId, setCompleteOrderId] = useState(null); // running order open in the Complete Bill popup
   // WhatsApp-order banner / notification tap → open that order's details here.
   useEffect(() => {
     if (!openOrderId || !restaurantId) return;
@@ -354,6 +357,58 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const canCancel = rc('orders.cancel') !== null ? rc('orders.cancel')
     : (canManage || (canBill && canPerform(currentUser, currentUser?.pageAccess, 'orders', 'cancel')));
   const reloadAfterAction = () => { setSelectedOrder(null); loadOrders(1, false); };
+  // Complete Bill on a running order (QR / walk-in orders with no table, or a login without the
+  // Tables tab). Same popup + same bill as Tables → order → Complete Bill; the popup also checks
+  // the role / "Complete bill" permission, register and customer-details rules itself.
+  const RUNNING_STATUSES = ['pending', 'confirmed', 'preparing', 'ready', 'served'];
+  const isRunning = (o) => !!o && RUNNING_STATUSES.includes(String(o.status || '').toLowerCase())
+    && String(o.paymentStatus || '').toLowerCase() !== 'paid';
+  const canCompleteRunning = rc('orders.completeBill') !== null ? rc('orders.completeBill')
+    : (canBill || ['owner', 'admin'].includes((userRole || '').toLowerCase()));
+  const openCompleteBill = (order) => {
+    // close the detail first — a second <Modal> over an open one fails on Android
+    setSelectedOrder(null);
+    setCompleteOrderId(order.id || order._id);
+  };
+  const handleCompleteRunning = async (order, settlementData = {}) => {
+    setCompleteOrderId(null);
+    try {
+      const updateData = completeBillUpdate(order, settlementData, currentUser);
+      await apiClient.updateOrder(order.id, updateData);
+      const done = {
+        ...order, status: 'completed', completedAt: updateData.completedAt,
+        paymentStatus: updateData.paymentStatus, paymentMethod: updateData.paymentMethod,
+        ...(updateData.paidAmount != null ? { paidAmount: updateData.paidAmount } : {}),
+        ...(updateData.outstandingAmount != null ? { outstandingAmount: updateData.outstandingAmount } : {}),
+        ...(updateData.finalAmount != null ? { finalAmount: updateData.finalAmount } : {}),
+        ...(updateData.tipAmount != null ? { tipAmount: updateData.tipAmount } : {}),
+        ...(updateData.splitPayments ? { splitPayments: updateData.splitPayments } : {}),
+        ...(updateData.cashReceived != null ? { cashReceived: updateData.cashReceived } : {}),
+        ...(updateData.changeReturned != null ? { changeReturned: updateData.changeReturned } : {}),
+      };
+      // Print the bill like Tables does (unless auto-print on billing is off); never blocks billing
+      if (printSettingsRef.current?.autoPrintOnBilling !== false) {
+        (async () => {
+          try {
+            if (await printerService.getRemotePrintEnabled()) { await apiClient.triggerPrint(order.id, 'bill'); return; }
+            const { text, imageHtml } = buildBillPrint(done);
+            const r = await printerService.printWithFeedback({ text, imageHtml, silentOnly: true, label: 'Bill' });
+            if (!r.success && r.notify !== false) Alert.alert('Print failed', r.error || 'Bill could not be printed. Check printer connection.');
+          } catch (_) {}
+        })();
+      }
+      try {
+        await apiClient.verifyPayment({
+          orderId: order.id, paymentMethod: updateData.paymentMethod, amount: updateData.finalAmount ?? (order.finalAmount || order.totalAmount || 0),
+          userId: currentUser?.id, restaurantId, paymentStatus: 'completed',
+        });
+      } catch (_) {}
+      Alert.alert('Billing complete', `Order #${order.dailyOrderId || order.orderNumber || String(order.id).slice(-6)} is billed.`);
+      loadOrders(1, false);
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to complete billing.');
+    }
+  };
   // Closing the order detail closes its sheets too — else one could reappear on the next order.
   useEffect(() => {
     if (!selectedOrder) { setRefundModal(false); setSettleModal(false); setCancelBillModal(false); }
@@ -392,6 +447,71 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
     return reprintAfterBillRoles.some(r => key(r) === key(role));
   };
 
+  // Bill print data for an order (text + image) — used by Print Bill and by Complete Bill.
+  const buildBillPrint = (order) => {
+    const calculatedSubtotal = (order.items || []).reduce(
+      (sum, item) => sum + Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
+      0,
+    );
+    const subtotal = Number(order.subtotal ?? calculatedSubtotal);
+    const invoiceData = {
+      orderId: order.id || order._id,
+      orderNumber: billNumberLabel(order) || order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
+      restaurantName: restaurant?.name || '',
+      restaurantInfo: restaurant || {},
+      items: (order.items || []).map(item => ({
+        ...item,
+        name: item.name || item.itemName || 'Item',
+        quantity: item.quantity || 1,
+        price: Number(item.price || 0),
+        total: Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
+      })),
+      subtotal,
+      tax: Number(order.taxAmount || order.totalTax || 0),
+      taxRate: Number(order.taxRate || 0),
+      taxEnabled: !!(order.taxAmount > 0 || order.totalTax > 0 || order.taxBreakdown?.length),
+      taxBreakdown: order.taxBreakdown || null,
+      grandTotal: Number(order.finalAmount ?? order.totalAmount ?? subtotal),
+      customerName: order.customerInfo?.name || order.customerName || 'Walk-in Customer',
+      customerMobile: order.customerInfo?.phone || order.customerPhone || '',
+      orderType: order.orderType || 'dine-in',
+      paymentMethod: order.paymentMethod || 'cash',
+      timestamp: order.completedAt || order.createdAt || order.timestamp || new Date(),
+      staffName: order.staffInfo?.name || currentUser?.name || 'Staff',
+      tableNumber: order.tableNumber || '',
+      floorName: order.floorName || '',
+      waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || currentUser?.name || '',
+      offerDiscount: Number(order.offerDiscount ?? order.discountAmount ?? 0),
+      manualDiscount: Number(order.manualDiscount || 0),
+      loyaltyDiscount: Number(order.loyaltyDiscount || 0),
+      couponDiscount: Number(order.couponDiscount || 0),
+      couponCode: order.couponCode || null,
+      // reprint carries the saved payment details so it matches the original bill
+      walletRedeemAmount: Number(order.walletRedeemAmount || 0),
+      splitPayments: Array.isArray(order.splitPayments) ? order.splitPayments : null,
+      cashReceived: Number(order.cashReceived || 0) || null,
+      changeReturned: Number(order.changeReturned || 0) || null,
+      paidAmount: order.paidAmount ?? null,
+      outstandingAmount: order.outstandingAmount ?? null,
+      serviceChargeAmount: Number(order.serviceChargeAmount || 0),
+      serviceChargeRate: Number(order.serviceChargeRate || 0),
+      additionalCharges: Array.isArray(order.additionalCharges) ? order.additionalCharges : null,
+      additionalChargesTotal: Number(order.additionalChargesTotal || 0),
+      tipAmount: Number(order.tipAmount || 0),
+      roundOffAmount: Number(order.roundOffAmount || 0),
+      cashReceived: order.cashReceived ?? null,
+      changeReturned: order.changeReturned ?? null,
+      splitPayments: order.splitPayments || null,
+      printSettings: printSettingsRef.current || {},
+    };
+    // still unpaid → the restaurant's pre-bill footer, never the final-bill one (no banner change)
+    if (!['completed', 'paid', 'settled'].includes(String(order.status || '').toLowerCase()) && String(order.paymentStatus || '').toLowerCase() !== 'paid') invoiceData.notFinal = true;
+    const text = printerService.generateBillText(invoiceData);
+    let imageHtml;
+    try { imageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings); } catch (_) {}
+    return { text, imageHtml };
+  };
+
   const handleReprint = async (order, type) => {
     if (!canReprintBilled(order)) return;
     if (!canReprintKind(type === 'kot' ? 'kot' : 'bill')) {
@@ -428,67 +548,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
           covers: order.covers || 1,
         });
       } else {
-        const calculatedSubtotal = (order.items || []).reduce(
-          (sum, item) => sum + Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
-          0,
-        );
-        const subtotal = Number(order.subtotal ?? calculatedSubtotal);
-        const invoiceData = {
-          orderId: order.id || order._id,
-          orderNumber: billNumberLabel(order) || order.dailyOrderId || order.orderNumber || order.id?.slice(-6) || order._id?.slice(-6),
-          restaurantName: restaurant?.name || '',
-          restaurantInfo: restaurant || {},
-          items: (order.items || []).map(item => ({
-            ...item,
-            name: item.name || item.itemName || 'Item',
-            quantity: item.quantity || 1,
-            price: Number(item.price || 0),
-            total: Number(item.total ?? ((item.price || 0) * (item.quantity || 1))),
-          })),
-          subtotal,
-          tax: Number(order.taxAmount || order.totalTax || 0),
-          taxRate: Number(order.taxRate || 0),
-          taxEnabled: !!(order.taxAmount > 0 || order.totalTax > 0 || order.taxBreakdown?.length),
-          taxBreakdown: order.taxBreakdown || null,
-          grandTotal: Number(order.finalAmount ?? order.totalAmount ?? subtotal),
-          customerName: order.customerInfo?.name || order.customerName || 'Walk-in Customer',
-          customerMobile: order.customerInfo?.phone || order.customerPhone || '',
-          orderType: order.orderType || 'dine-in',
-          paymentMethod: order.paymentMethod || 'cash',
-          timestamp: order.completedAt || order.createdAt || order.timestamp || new Date(),
-          staffName: order.staffInfo?.name || currentUser?.name || 'Staff',
-          tableNumber: order.tableNumber || '',
-          floorName: order.floorName || '',
-          waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || currentUser?.name || '',
-          offerDiscount: Number(order.offerDiscount ?? order.discountAmount ?? 0),
-          manualDiscount: Number(order.manualDiscount || 0),
-          loyaltyDiscount: Number(order.loyaltyDiscount || 0),
-          couponDiscount: Number(order.couponDiscount || 0),
-          couponCode: order.couponCode || null,
-          // reprint carries the saved payment details so it matches the original bill
-          walletRedeemAmount: Number(order.walletRedeemAmount || 0),
-          splitPayments: Array.isArray(order.splitPayments) ? order.splitPayments : null,
-          cashReceived: Number(order.cashReceived || 0) || null,
-          changeReturned: Number(order.changeReturned || 0) || null,
-          paidAmount: order.paidAmount ?? null,
-          outstandingAmount: order.outstandingAmount ?? null,
-          serviceChargeAmount: Number(order.serviceChargeAmount || 0),
-          serviceChargeRate: Number(order.serviceChargeRate || 0),
-          additionalCharges: Array.isArray(order.additionalCharges) ? order.additionalCharges : null,
-          additionalChargesTotal: Number(order.additionalChargesTotal || 0),
-          tipAmount: Number(order.tipAmount || 0),
-          roundOffAmount: Number(order.roundOffAmount || 0),
-          cashReceived: order.cashReceived ?? null,
-          changeReturned: order.changeReturned ?? null,
-          splitPayments: order.splitPayments || null,
-          printSettings: printSettingsRef.current || {},
-        };
-        // still unpaid → the restaurant's pre-bill footer, never the final-bill one (no banner change)
-        if (!['completed', 'paid', 'settled'].includes(String(order.status || '').toLowerCase()) && String(order.paymentStatus || '').toLowerCase() !== 'paid') invoiceData.notFinal = true;
-        text = printerService.generateBillText(invoiceData);
-        try {
-          imageHtml = printerService.generateBillHTML(invoiceData, invoiceData.printSettings);
-        } catch (_) {}
+        ({ text, imageHtml } = buildBillPrint(order));
       }
 
       const result = await printerService.printWithFeedback({
@@ -1006,6 +1066,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
                   <Ionicons name="print-outline" size={16} color="#f59e0b" /><Text style={[styles.actBtnText, { color: '#f59e0b' }]}>Print KOT</Text>
                 </TouchableOpacity>
                 </>)}
+                {canCompleteRunning && isRunning(selectedOrder) && (
+                  <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openCompleteBill(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="checkmark-circle-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>{restaurant?.posSettings?.completeBillingLabel || 'Complete Bill'}</Text>
+                  </TouchableOpacity>
+                )}
                 {canSettle && needsSettle(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openSettle(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
@@ -1105,6 +1170,19 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
           )}
         </SafeAreaView>
       </Modal>
+
+      {/* Complete Bill on a running order — the same popup Tables uses */}
+      <OrderDetailsModal
+        visible={!!completeOrderId}
+        onClose={() => setCompleteOrderId(null)}
+        orderId={completeOrderId}
+        restaurantId={restaurantId}
+        userRole={currentUser?.role || userRole}
+        userPageAccess={currentUser?.pageAccess || null}
+        billingSettings={restaurant?.billingSettings || {}}
+        posSettings={restaurant?.posSettings || {}}
+        onCompleteBill={handleCompleteRunning}
+      />
     </SafeAreaView>
   );
 }
