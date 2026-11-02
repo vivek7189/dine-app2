@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/Theme';
 import apiClient from '../../services/api';
 import { Alert } from 'react-native';
-import { hasFeatureAccess, roleCan } from '../../utils/permissions';
+import { hasFeatureAccess, roleCan, canPerform } from '../../utils/permissions';
 
 // Hook & components
 import { useOffline } from '../../hooks/useOffline';
@@ -23,6 +23,8 @@ import ProcurementTab from '../../components/inventory/ProcurementTab';
 import InsightsTab from '../../components/inventory/InsightsTab';
 import WasteTab from '../../components/inventory/WasteTab';
 import CountTab from '../../components/inventory/CountTab';
+import SoldAsIsTab from '../../components/inventory/SoldAsIsTab';
+import ReceiveStockModal from '../../components/inventory/ReceiveStockModal';
 import {
   AddEditItemModal, AddSupplierModal, AddEditRecipeModal,
   ViewRecipeModal, QuickStockModal, AddPurchaseOrderModal, QuickOrderModal,
@@ -30,6 +32,7 @@ import {
 } from '../../components/inventory/InventoryModals';
 
 const TABS = [
+  { key: 'sold', label: 'Sold as is', icon: 'pricetags' },
   { key: 'dashboard', label: 'Dashboard', icon: 'stats-chart' },
   { key: 'stock', label: 'Stock', icon: 'cube' },
   { key: 'recipes', label: 'Recipes', icon: 'restaurant' },
@@ -45,6 +48,21 @@ export default function InventoryScreen() {
   const { effectivelyOffline } = useOffline();
   const inv = useInventoryData();
   const [showSmartImport, setShowSmartImport] = useState(false);
+  const [user, setUser] = useState(null);
+  const [receive, setReceive] = useState(null); // null = closed | { preset } — Receive stock sheet
+  const [soldRefreshKey, setSoldRefreshKey] = useState(0);
+  // Track / Receive need the inventory "update" permission — same rule as the server
+  // (roles on → the role's "Edit stock"; otherwise owner/admin or Staff → Inventory → update).
+  const canUpdateStock = (() => {
+    if (!user) return false;
+    const byRole = roleCan(user, 'inventory.edit');
+    return byRole !== null ? byRole : canPerform(user, user.pageAccess, 'inventory', 'update');
+  })();
+  const onReceiveDone = (msg) => {
+    Alert.alert('Done', msg);
+    setSoldRefreshKey(k => k + 1);
+    if (inv.restaurantId) inv.loadCoreData(inv.restaurantId);
+  };
 
   // ── Init ──────────────────────────────────────────
   useEffect(() => {
@@ -62,6 +80,7 @@ export default function InventoryScreen() {
           await inv.loadCoreData(rid);
         } else if (inv.restaurantId && !inv.loading) {
           inv.refreshData();
+          setSoldRefreshKey(k => k + 1);
         }
       };
       checkAndRefresh();
@@ -83,6 +102,7 @@ export default function InventoryScreen() {
         return;
       }
 
+      setUser(userData);
       const rid = userData.restaurantId || userData.restaurant?.id;
       inv.setRestaurantId(rid);
       if (rid) await inv.loadCoreData(rid);
@@ -104,6 +124,7 @@ export default function InventoryScreen() {
   // ── Header action for current tab ─────────────────
   const getHeaderAction = () => {
     switch (inv.activeTab) {
+      case 'sold': return canUpdateStock ? { icon: 'download-outline', onPress: () => setReceive({ preset: null }) } : null;
       case 'stock': return { icon: 'add', onPress: inv.openAddItem };
       case 'recipes': return { icon: 'add', onPress: inv.openAddRecipe };
       case 'procurement':
@@ -119,6 +140,18 @@ export default function InventoryScreen() {
   // ── Render tab content ────────────────────────────
   const renderTabContent = () => {
     switch (inv.activeTab) {
+      case 'sold':
+        return (
+          <OnlineOnly mode="badge">
+            <SoldAsIsTab
+              restaurantId={inv.restaurantId}
+              canUpdate={canUpdateStock}
+              refreshKey={soldRefreshKey}
+              onReceive={(preset) => setReceive({ preset })}
+              onChanged={() => inv.restaurantId && inv.loadCoreData(inv.restaurantId)}
+            />
+          </OnlineOnly>
+        );
       case 'dashboard':
         return (
           <DashboardTab
@@ -282,7 +315,7 @@ export default function InventoryScreen() {
 
       {/* Content with pull-to-refresh */}
       <View style={styles.content}>
-        {inv.activeTab === 'stock' || inv.activeTab === 'recipes' || inv.activeTab === 'waste' || inv.activeTab === 'count' ? (
+        {inv.activeTab === 'sold' || inv.activeTab === 'stock' || inv.activeTab === 'recipes' || inv.activeTab === 'waste' || inv.activeTab === 'count' ? (
           // FlatList tabs handle their own scroll
           renderTabContent()
         ) : (
@@ -298,6 +331,14 @@ export default function InventoryScreen() {
       </View>
 
       {/* ── Modals ─────────────────────────────────────── */}
+      <ReceiveStockModal
+        visible={!!receive}
+        onClose={() => setReceive(null)}
+        restaurantId={inv.restaurantId}
+        inventoryItems={inv.inventoryItems}
+        preset={receive?.preset || null}
+        onDone={onReceiveDone}
+      />
       <AddEditItemModal
         visible={inv.showAddItemModal}
         onClose={() => { inv.setShowAddItemModal(false); }}

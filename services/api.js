@@ -2960,6 +2960,23 @@ class ApiClient {
     return this.request(`/api/inventory/${restaurantId}/${itemId}`, { method: 'PATCH', data: updateData });
   }
 
+  // Sold as is (same calls as the web Inventory → Sold as is tab / Receive stock sheet)
+  async getSoldAsIs(restaurantId) {
+    return this.request(`/api/inventory/${restaurantId}/sold-as-is`);
+  }
+
+  // items: [{ menuItemId, track: true|false, openingStock?, lowStock? }]
+  async trackSoldAsIs(restaurantId, items) {
+    try { return await this.request(`/api/inventory/${restaurantId}/sold-as-is/track`, { method: 'POST', data: { items } }); }
+    finally { this.invalidateCache(`/api/inventory/${restaurantId}`); this.invalidateCache(`/api/menus/${restaurantId}`); }
+  }
+
+  // Adds `quantity` to the live stock (never sets a total); requestId makes a double press add once
+  async receiveStock(restaurantId, itemId, data) {
+    try { return await this.request(`/api/inventory/${restaurantId}/${itemId}/receive`, { method: 'POST', data }); }
+    finally { this.invalidateCache(`/api/inventory/${restaurantId}`); this.invalidateCache(`/api/menus/${restaurantId}`); }
+  }
+
   // Quick Order Logger
   async parseQuickOrderText(restaurantId, text) {
     return this.request(`/api/inventory/${restaurantId}/quick-order`, {

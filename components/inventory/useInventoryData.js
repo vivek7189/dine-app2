@@ -41,7 +41,7 @@ export default function useInventoryData() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('sold'); // 'Sold as is' first — same as the web
   const [procurementSubTab, setProcurementSubTab] = useState('suppliers');
   const [saving, setSaving] = useState(false);
   const hasLoadedOnce = useRef(false);
@@ -184,6 +184,9 @@ export default function useInventoryData() {
   // ── Data loaders ─────────────────────────────────
   const loadCoreData = async (rid) => {
     try {
+      // Always fresh after a save (quick stock, add/edit/delete, receive…) — the 5-min GET cache
+      // otherwise showed the old stock until a pull-to-refresh.
+      apiClient.invalidateCache(`/api/inventory/${rid}`);
       if (!hasLoadedOnce.current) setLoading(true);
       const results = await Promise.allSettled([
         apiClient.getInventoryItems(rid),
@@ -387,7 +390,7 @@ export default function useInventoryData() {
     // Invalidate in-memory cache so we get fresh data from server
     apiClient.invalidateCache(`/api/inventory/${restaurantId}`);
     switch (activeTab) {
-      case 'dashboard': case 'stock':
+      case 'sold': case 'dashboard': case 'stock':
         await loadCoreData(restaurantId);
         if (activeTab === 'stock') await loadTodayUsage(restaurantId);
         break;
