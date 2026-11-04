@@ -381,6 +381,7 @@ function TabsNavigator() {
       <Tabs.Screen name="my-shifts" options={{ href: null }} />
       <Tabs.Screen name="calendar" options={{ href: null }} />
       <Tabs.Screen name="diary" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="whatsapp-ordering" options={{ href: null, tabBarStyle: { display: 'none' } }} />
       <Tabs.Screen name="hotel" options={{ href: null }} />
       <Tabs.Screen name="menu-management" options={{ href: null }} />
       <Tabs.Screen name="offers" options={{ href: null }} />

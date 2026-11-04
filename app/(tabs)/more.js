@@ -198,6 +198,7 @@ export default function MoreScreen() {
       title: 'Management',
       items: [
         { title: 'Headquarters', icon: 'analytics-outline', route: '/(tabs)/headquarters', roles: ['owner', 'admin'], color: '#6366f1', iconBg: '#eef2ff' },
+        { title: 'WhatsApp Ordering', icon: 'logo-whatsapp', route: '/(tabs)/whatsapp-ordering', roles: ['owner', 'co-owner', 'admin'], color: '#16a34a', iconBg: '#f0fdf4' },
         { title: 'Menu Management', icon: 'restaurant-outline', route: '/(tabs)/menu-management', roles: ['owner', 'manager', 'admin', 'cashier'], feature: 'menu', perm: ['menu.add', 'menu.edit', 'menu.delete', 'menu.outOfStock'], color: '#f59e0b', iconBg: '#fef3c7' },
         { title: 'Customers', icon: 'people-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/customers`, title: 'Customers' } }, roles: ['owner', 'manager', 'admin'], feature: 'customers', perm: 'customers.view', color: '#ec4899', iconBg: '#fdf2f8' },
         { title: 'Inventory', icon: 'cube-outline', route: '/(tabs)/inventory', roles: ['owner', 'manager', 'admin'], feature: 'inventory', perm: 'inventory.view', color: '#8b5cf6', iconBg: '#f5f3ff' },

@@ -27,6 +27,7 @@ import apiClient from '../../services/api';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme';
 import MenuItemForm from '../../components/MenuItemForm';
 import BulkMenuUploadModal from '../../components/BulkMenuUploadModal';
+import TodaysPricesModal from '../../components/TodaysPricesModal';
 import { useResponsive } from '../../hooks/useResponsive';
 import { getDisplayImage } from '../../utils/placeholderImages';
 import { hasFeatureAccess, canDoMenu, roleCan } from '../../utils/permissions';
@@ -89,6 +90,7 @@ export default function MenuManagementScreen() {
   const [deletingAll, setDeletingAll] = useState(false);
   // Menu rights on this screen (buttons hidden when not allowed; the backend enforces the same rules)
   const [menuPerms, setMenuPerms] = useState({ add: false, edit: false, del: false, hide: false });
+  const [showTodaysPrices, setShowTodaysPrices] = useState(false); // many prices / sold-out in one sheet
   // QR Code
   const [showQRModal, setShowQRModal] = useState(false);
   // Restaurant data for QR
@@ -1239,6 +1241,11 @@ export default function MenuManagementScreen() {
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => setShowQRModal(true)}>
             <Ionicons name="qr-code-outline" size={20} color="#dc2626" />
           </TouchableOpacity>
+          {(menuPerms.edit || menuPerms.hide) && (
+          <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#fef2f2' }]} onPress={() => setShowTodaysPrices(true)} accessibilityLabel="Today's prices">
+            <Ionicons name="pricetags-outline" size={20} color="#b91c1c" />
+          </TouchableOpacity>
+          )}
           {menuPerms.add && (
           <TouchableOpacity style={[styles.iconButton, { backgroundColor: '#ecfdf5' }]} onPress={handleTakePhoto}>
             <Ionicons name="camera-outline" size={20} color="#10b981" />
@@ -1520,6 +1527,19 @@ export default function MenuManagementScreen() {
         </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Today's prices: many prices (each size) + sold-out in one sheet */}
+      <TodaysPricesModal
+        visible={showTodaysPrices}
+        onClose={() => setShowTodaysPrices(false)}
+        items={menuItems}
+        restaurantId={restaurantId}
+        apiClient={apiClient}
+        currencySymbol={getCurrencySymbol()}
+        canEditPrice={menuPerms.edit}
+        canMarkOutOfStock={menuPerms.hide}
+        onItemSaved={(itemId, patch) => setMenuItems(items => items.map(it => (it.id === itemId ? { ...it, ...patch } : it)))}
+      />
 
       {/* AI Menu Upload (pick → extract with AI → review & edit → save) */}
       <BulkMenuUploadModal
