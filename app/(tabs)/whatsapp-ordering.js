@@ -16,6 +16,21 @@ const ALLOWED = ['owner', 'co-owner', 'admin', 'super_admin'];
 const DEFAULT_PAUSE_MESSAGE = 'Sorry, we are not taking orders right now. Please try again later. 🙏';
 const WEEK = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
 const MAX_SLOTS = 4;
+// Bot settings (PUT /api/whatsapp-ordering/bot-settings) — same options as the web card.
+const BOT_LANGS = [['en', 'English'], ['te', 'తెలుగు']];
+const BOT_PAYS = [['cod', '💵 Cash on delivery'], ['upi', '📱 UPI on delivery'], ['online', '💳 Pay online']];
+const BOT_TYPES = [['delivery', '🛵 Delivery'], ['takeaway', '🏪 Pickup'], ['dine-in', '🍽️ Dine-in']];
+const botFromConfig = (c) => {
+  const q = (c && c.quickFlow) || {};
+  return {
+    enabled: !!q.enabled,
+    languages: Array.isArray(q.languages) && q.languages.length ? q.languages : ['en'],
+    payments: Array.isArray(q.payments) && q.payments.length ? q.payments : ['cod'],
+    paymentLink: (c && c.paymentLink) || '', upiId: (c && c.upiId) || '',
+    orderTypes: Array.isArray(c && c.orderTypes) ? c.orderTypes : [],
+    welcome: q.welcome || '', unitWord: q.unitWord || 'Pack', minOrder: String(Number(q.minOrder) || 0),
+  };
+};
 const emptyWeek = () => Object.fromEntries(WEEK.map(([k]) => [k, []]));
 const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -36,6 +51,9 @@ export default function WhatsAppOrderingScreen() {
   const [pauseError, setPauseError] = useState('');
   // timings
   const [hoursOn, setHoursOn] = useState(false);
+  const [bot, setBot] = useState(botFromConfig(null));
+  const [botSaving, setBotSaving] = useState(false);
+  const [botMsg, setBotMsg] = useState({ ok: '', err: '' });
   const [days, setDays] = useState(emptyWeek());
   const [closedMessage, setClosedMessage] = useState('');
   const [linkMode, setLinkMode] = useState('block');
@@ -63,6 +81,7 @@ export default function WhatsAppOrderingScreen() {
       setCfg(c);
       const p = (c && c.orderingPaused) || null;
       setPause(p); setPauseMsg((p && p.message) || '');
+      setBot(botFromConfig(c)); setBotMsg({ ok: '', err: '' });
       const oh = (c && c.orderingHours) || null;
       setHoursOn(!!(oh && oh.enabled));
       setDays(oh && oh.days ? { ...emptyWeek(), ...oh.days } : emptyWeek());
@@ -79,6 +98,22 @@ export default function WhatsAppOrderingScreen() {
   useEffect(() => { if (rid && role && ALLOWED.includes(role)) load(); else if (role) setLoading(false); }, [rid, role, load]);
 
   const paused = !!(pause && pause.paused);
+
+  const botToggle = (key, val) => { setBotMsg({ ok: '', err: '' }); setBot((b) => ({ ...b, [key]: b[key].includes(val) ? b[key].filter((x) => x !== val) : [...b[key], val] })); };
+  const botSet = (key, val) => { setBotMsg({ ok: '', err: '' }); setBot((b) => ({ ...b, [key]: val })); };
+  const saveBot = async () => {
+    if (!bot.languages.length) { setBotMsg({ ok: '', err: 'Choose at least one language.' }); return; }
+    if (!bot.payments.length) { setBotMsg({ ok: '', err: 'Choose at least one payment option.' }); return; }
+    if (bot.payments.includes('online') && !bot.paymentLink.trim() && !bot.upiId.trim()) { setBotMsg({ ok: '', err: 'Add a payment link or UPI ID for "Pay online".' }); return; }
+    setBotSaving(true); setBotMsg({ ok: '', err: '' });
+    try {
+      const res = await apiClient.request(`/api/whatsapp-ordering/bot-settings/${rid}`, { method: 'PUT', data: { ...bot, minOrder: Number(bot.minOrder) || 0 } });
+      if (!res || res.success === false) throw new Error((res && res.error) || 'Could not save');
+      setBotMsg({ ok: 'Saved. The bot uses these settings from the next message.', err: '' });
+    } catch (e) {
+      setBotMsg({ ok: '', err: e?.message || 'Could not save. Please try again.' });
+    } finally { setBotSaving(false); }
+  };
 
   const savePause = async (nextPaused) => {
     setPauseSaving(true); setPauseError('');
@@ -180,6 +215,50 @@ export default function WhatsAppOrderingScreen() {
                 {!!pauseError && <Text style={st.err}>{pauseError}</Text>}
               </View>
 
+              {/* Bot settings */}
+              <View style={st.card}>
+                <Text style={st.cardTitle}>🤖 Bot settings</Text>
+                <Text style={st.muted}>How customers order on WhatsApp. Applies from the next message.</Text>
+                <View style={[st.rowBetween, { marginTop: 12 }]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ fontWeight: '700', color: '#111827' }}>Button ordering</Text>
+                    <Text style={st.muted}>Customers tap buttons for everything. Off = classic chat flow.</Text>
+                  </View>
+                  <Switch value={bot.enabled} onValueChange={(v) => botSet('enabled', v)} trackColor={{ true: '#86efac' }} thumbColor={bot.enabled ? '#16a34a' : '#f4f4f5'} />
+                </View>
+                <Text style={st.label}>Languages</Text>
+                <View style={st.chips}>{BOT_LANGS.map(([k, t]) => (<TouchableOpacity key={k} onPress={() => botToggle('languages', k)} style={[st.chip, bot.languages.includes(k) && st.chipOn]}><Text style={[st.chipText, bot.languages.includes(k) && { color: '#15803d' }]}>{bot.languages.includes(k) ? '✓ ' : ''}{t}</Text></TouchableOpacity>))}</View>
+                <Text style={st.label}>Payment options</Text>
+                <View style={st.chips}>{BOT_PAYS.map(([k, t]) => (<TouchableOpacity key={k} onPress={() => botToggle('payments', k)} style={[st.chip, bot.payments.includes(k) && st.chipOn]}><Text style={[st.chipText, bot.payments.includes(k) && { color: '#15803d' }]}>{bot.payments.includes(k) ? '✓ ' : ''}{t}</Text></TouchableOpacity>))}</View>
+                {bot.payments.includes('online') && (
+                  <>
+                    <Text style={st.label}>Payment link</Text>
+                    <TextInput value={bot.paymentLink} onChangeText={(v) => botSet('paymentLink', v)} placeholder="https://rzp.io/l/…" autoCapitalize="none" keyboardType="url" style={st.input} />
+                    <Text style={st.label}>or UPI ID</Text>
+                    <TextInput value={bot.upiId} onChangeText={(v) => botSet('upiId', v)} placeholder="yourshop@okhdfcbank" autoCapitalize="none" style={st.input} />
+                  </>
+                )}
+                <Text style={st.label}>Order types</Text>
+                <View style={st.chips}>{BOT_TYPES.map(([k, t]) => (<TouchableOpacity key={k} onPress={() => botToggle('orderTypes', k)} style={[st.chip, bot.orderTypes.includes(k) && st.chipOn]}><Text style={[st.chipText, bot.orderTypes.includes(k) && { color: '#15803d' }]}>{bot.orderTypes.includes(k) ? '✓ ' : ''}{t}</Text></TouchableOpacity>))}</View>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={st.label}>Minimum order</Text>
+                    <TextInput value={bot.minOrder} onChangeText={(v) => botSet('minOrder', v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="0" style={st.input} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={st.label}>Pack word</Text>
+                    <TextInput value={bot.unitWord} onChangeText={(v) => botSet('unitWord', v)} maxLength={12} placeholder="Pack" style={st.input} />
+                  </View>
+                </View>
+                <Text style={st.label}>Welcome message (optional)</Text>
+                <TextInput value={bot.welcome} onChangeText={(v) => botSet('welcome', v)} multiline maxLength={500} placeholder="Welcome to our shop!" style={st.textArea} />
+                {!!botMsg.err && <Text style={st.err}>{botMsg.err}</Text>}
+                {!!botMsg.ok && <Text style={st.ok}>✓ {botMsg.ok}</Text>}
+                <TouchableOpacity disabled={botSaving} onPress={saveBot} style={[st.bigBtn, { backgroundColor: botSaving ? '#e5e7eb' : '#16a34a' }]}>
+                  {botSaving ? <ActivityIndicator color="#fff" /> : <Text style={st.bigBtnText}>Save bot settings</Text>}
+                </TouchableOpacity>
+              </View>
+
               {/* Order timings */}
               <View style={st.card}>
                 <View style={st.rowBetween}>
@@ -267,6 +346,7 @@ const st = StyleSheet.create({
   cardTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
   muted: { fontSize: 12.5, color: '#6b7280', marginTop: 3 },
   label: { fontSize: 12, fontWeight: '600', color: '#374151', marginTop: 12, marginBottom: 4 },
+  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, fontSize: 14, backgroundColor: 'white' },
   textArea: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, padding: 10, fontSize: 14, minHeight: 56, textAlignVertical: 'top', backgroundColor: 'white' },
   bigBtn: { marginTop: 12, paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
   bigBtnText: { color: 'white', fontWeight: '800', fontSize: 15 },
