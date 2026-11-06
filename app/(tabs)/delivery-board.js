@@ -3,7 +3,7 @@
 // owner / admin, the auto-assign settings. Same backend as the web POS Delivery panel
 // (/api/delivery/:restaurantId/{board,assign,unassign,mark-delivered,settings}).
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Switch, ActivityIndicator, RefreshControl, Alert, Linking, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Switch, ActivityIndicator, RefreshControl, Alert, Linking, AppState, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -12,6 +12,7 @@ import { getCurrencySymbol } from '../../utils/formatCurrency';
 
 const MANAGE = ['owner', 'co-owner', 'admin', 'manager', 'cashier', 'super_admin', 'sub_admin'];
 const SETTINGS = ['owner', 'co-owner', 'admin', 'super_admin'];
+const CHANNELS = [['app', 'App'], ['whatsapp', 'WhatsApp'], ['both', 'Both']];
 const LABEL = { queued: 'Waiting for a free rider', assigned: 'Waiting to accept', accepted: 'With rider', picked_up: 'On the way', on_the_way: 'On the way' };
 const COLOR = { queued: ['#fffbeb', '#b45309'], assigned: ['#fef3c7', '#92400e'], accepted: ['#eff6ff', '#1d4ed8'], picked_up: ['#f5f3ff', '#6d28d9'], on_the_way: ['#f5f3ff', '#6d28d9'] };
 
@@ -27,6 +28,7 @@ export default function DeliveryBoard() {
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [s, setS] = useState(null);
+  const [nr, setNr] = useState({ name: '', phone: '' });
 
   const load = useCallback(async (restaurantId) => {
     const id = restaurantId || rid;
@@ -133,6 +135,9 @@ export default function DeliveryBoard() {
                 <View style={st.stepper}>{[1, 2, 3, 5, 10].map(n => (<TouchableOpacity key={n} onPress={() => setS({ ...s, acceptTimeoutMin: n })} style={[st.step, s.acceptTimeoutMin === n && st.stepOn]}><Text style={[st.stepText, s.acceptTimeoutMin === n && st.stepTextOn]}>{n}</Text></TouchableOpacity>))}</View>
               </View>
             )}
+            <Text style={[st.rowText, { marginTop: 12, fontWeight: '700' }]}>Riders get orders by</Text>
+            <View style={[st.stepper, { marginTop: 6 }]}>{CHANNELS.map(([k, t]) => (<TouchableOpacity key={k} onPress={() => setS({ ...s, channel: k })} style={[st.chanBtn, (s.channel || 'app') === k && st.stepOn]}><Text style={[st.stepText, (s.channel || 'app') === k && st.stepTextOn]}>{t}</Text></TouchableOpacity>))}</View>
+            {(s.channel === 'whatsapp' || s.channel === 'both') && <Text style={st.muted}>WhatsApp: order details + map + Picked up / Delivered buttons on the rider's WhatsApp. Fine-tune it on the web (Tables → Delivery settings).</Text>}
             <View style={[st.rowBetween, { marginTop: 10 }]}>
               <Text style={st.rowText}>Orders per rider</Text>
               <View style={st.stepper}>{[1, 2, 3, 4, 5].map(n => (<TouchableOpacity key={n} onPress={() => setS({ ...s, maxPerRider: n })} style={[st.step, s.maxPerRider === n && st.stepOn]}><Text style={[st.stepText, s.maxPerRider === n && st.stepTextOn]}>{n}</Text></TouchableOpacity>))}</View>
@@ -146,12 +151,29 @@ export default function DeliveryBoard() {
         {!riders.length && <Text style={st.muted}>No riders yet — tick “Delivery partner” on staff (web Admin → Staff).</Text>}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {riders.map(r => (
-            <View key={r.id} style={[st.chip, { backgroundColor: !r.onDuty ? '#f3f4f6' : r.free ? '#ecfdf5' : '#fffbeb' }]}>
+            <TouchableOpacity key={r.id} disabled={busy} onPress={() => act(() => apiClient.updateDeliveryRider(rid, r.id, { onDuty: !r.onDuty }), `${r.name} is now ${r.onDuty ? 'off' : 'on'} duty.`)}
+              style={[st.chip, { backgroundColor: !r.onDuty ? '#f3f4f6' : r.free ? '#ecfdf5' : '#fffbeb' }]}>
               <Text style={{ fontWeight: '700', color: '#111827', fontSize: 13 }}>{r.name}</Text>
               <Text style={{ fontSize: 12, color: !r.onDuty ? '#6b7280' : r.free ? '#047857' : '#b45309' }}>{!r.onDuty ? 'Off duty' : r.free ? 'Free' : `Busy (${r.active})`}</Text>
-            </View>
+              <Text style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 2 }}>tap: {r.onDuty ? 'off' : 'on'} duty</Text>
+            </TouchableOpacity>
           ))}
         </View>
+
+        {SETTINGS.includes(role) && (
+          <View style={[st.card, { marginTop: 10 }]}>
+            <Text style={[st.rowText, { fontWeight: '700' }]}>Add a rider</Text>
+            <Text style={st.muted}>Name + WhatsApp number — no app login needed for WhatsApp riders.</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <TextInput value={nr.name} onChangeText={(v) => setNr({ ...nr, name: v })} placeholder="Name" style={[st.input, { flex: 1 }]} maxLength={80} />
+              <TextInput value={nr.phone} onChangeText={(v) => setNr({ ...nr, phone: v })} placeholder="WhatsApp number" keyboardType="phone-pad" style={[st.input, { flex: 1 }]} maxLength={20} />
+            </View>
+            <TouchableOpacity disabled={busy || !nr.name.trim() || !nr.phone.trim()} onPress={() => act(async () => { const r = await apiClient.addDeliveryRider(rid, { name: nr.name.trim(), phone: nr.phone.trim() }); setNr({ name: '', phone: '' }); return r; }, 'Rider added.')}
+              style={[st.bigBtn, { backgroundColor: busy || !nr.name.trim() || !nr.phone.trim() ? '#e5e7eb' : '#111827', marginTop: 10 }]}>
+              <Text style={st.bigBtnText}>Add rider</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <Text style={st.section}>Delivery orders ({orders.length})</Text>
         {!orders.length && <Text style={st.muted}>No delivery orders waiting or out right now.</Text>}
@@ -165,6 +187,9 @@ export default function DeliveryBoard() {
                 <Text style={{ fontWeight: '700', color: '#111827' }}>{getCurrencySymbol()}{Number(o.totalAmount || 0).toFixed(0)}</Text>
               </View>
               <View style={[st.badge, { backgroundColor: bg }]}><Text style={{ color: fg, fontWeight: '700', fontSize: 12 }}>{withRider ? `${LABEL[o.deliveryStatus] || o.deliveryStatus} · ${o.assignedStaff.name}` : (LABEL[o.deliveryStatus] || o.deliveryStatus)}</Text></View>
+              {o.deliveryNotify?.whatsapp === 'failed' && o.deliveryNotify?.riderId === o.assignedStaff?.id && (
+                <Text style={{ color: '#b91c1c', fontWeight: '700', fontSize: 12, marginTop: 6 }}>⚠ WhatsApp not sent — call {o.assignedStaff?.name || 'the rider'}</Text>
+              )}
               <Text style={st.muted}>{o.customerInfo?.name || 'Customer'}{o.customerInfo?.phone ? ` · ${o.customerInfo.phone}` : ''}</Text>
               {!!o.deliveryAddressText && <Text style={st.muted}>📍 {o.deliveryAddressText}</Text>}
               <Text style={[st.muted, { color: String(o.paymentStatus).toLowerCase() === 'paid' ? '#059669' : '#b45309' }]}>{String(o.paymentStatus).toLowerCase() === 'paid' ? 'Paid' : 'To collect'}</Text>
@@ -216,6 +241,8 @@ const st = StyleSheet.create({
   outlineBtnText: { fontWeight: '700', color: '#374151', fontSize: 13 },
   pickRow: { flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb' },
   stepper: { flexDirection: 'row', gap: 6 },
+  chanBtn: { paddingHorizontal: 12, height: 32, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
+  input: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, backgroundColor: 'white' },
   step: { width: 32, height: 32, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
   stepOn: { borderColor: '#10b981', backgroundColor: '#ecfdf5' },
   stepText: { fontWeight: '700', color: '#374151' },

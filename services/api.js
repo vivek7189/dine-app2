@@ -3693,6 +3693,13 @@ class ApiClient {
   saveDeliveryAssignSettings(restaurantId, settings) {
     return this.request(`/api/delivery/${restaurantId}/settings`, { method: 'PUT', data: settings });
   }
+  // Delivery boys: quick-add (name + WhatsApp number, no login), change channel / duty / remove.
+  addDeliveryRider(restaurantId, { name, phone, channel }) {
+    return this.request(`/api/delivery/${restaurantId}/riders`, { method: 'POST', data: { name, phone, channel } });
+  }
+  updateDeliveryRider(restaurantId, staffId, patch) {
+    return this.request(`/api/delivery/${restaurantId}/riders/${encodeURIComponent(staffId)}`, { method: 'PATCH', data: patch });
+  }
   // Delivery boy's On duty / Off duty switch (off = no new orders).
   setDeliveryDuty(restaurantId, onDuty) {
     return this.request(`/api/delivery/${restaurantId}/duty`, { method: 'POST', data: { onDuty: !!onDuty } });
