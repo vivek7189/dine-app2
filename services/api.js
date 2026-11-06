@@ -3678,6 +3678,21 @@ class ApiClient {
   getDeliverySettings(restaurantId) {
     return this.request(`/api/delivery/${restaurantId}/settings`);
   }
+  // Counter / owner delivery board: { settings, riders, orders } (owner, admin, manager, cashier).
+  getDeliveryBoard(restaurantId) {
+    return this.request(`/api/delivery/${restaurantId}/board`, { skipCache: true });
+  }
+  unassignDelivery(restaurantId, orderId) {
+    return this.request(`/api/delivery/${restaurantId}/unassign`, { method: 'POST', data: { orderId } });
+  }
+  // Counter marks the order delivered for the boy (frees him; completes the bill when paid).
+  markDeliveredByCounter(restaurantId, orderId, { paymentCollected = false, paymentMethod = 'cash' } = {}) {
+    return this.request(`/api/delivery/${restaurantId}/mark-delivered`, { method: 'POST', data: { orderId, asManager: true, paymentCollected, paymentMethod } });
+  }
+  // Auto-assign settings (owner / admin): { autoAssign, requireAccept, acceptTimeoutMin, maxPerRider }
+  saveDeliveryAssignSettings(restaurantId, settings) {
+    return this.request(`/api/delivery/${restaurantId}/settings`, { method: 'PUT', data: settings });
+  }
   // Delivery boy's On duty / Off duty switch (off = no new orders).
   setDeliveryDuty(restaurantId, onDuty) {
     return this.request(`/api/delivery/${restaurantId}/duty`, { method: 'POST', data: { onDuty: !!onDuty } });

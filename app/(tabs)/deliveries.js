@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../services/api';
-import { startDeliveryTracking, stopDeliveryTracking } from '../../services/locationTracking';
+import { startDeliveryTracking, stopDeliveryTracking, getTrackingContext } from '../../services/locationTracking';
 import DeliveryCard from '../../components/delivery/DeliveryCard';
 import DeliveryActiveView from '../../components/delivery/DeliveryActiveView';
 
@@ -116,6 +116,11 @@ export default function DeliveriesScreen() {
     try {
       const restaurantId = userData?.restaurantId || userData?.restaurant?.id;
       await apiClient.markDeliveryPickedUp(restaurantId, orderId);
+      // Live location from the moment he leaves (also when the restaurant has no accept step).
+      try {
+        const ctx = getTrackingContext();
+        if (!ctx || ctx.orderId !== orderId) await startDeliveryTracking(restaurantId, userData?.staffId || userData?.userId || userData?.id, orderId);
+      } catch (_) { /* location permission off — delivery still works */ }
       fetchDeliveries();
     } catch (err) {
       showError('Could not update', err);
@@ -129,8 +134,14 @@ export default function DeliveriesScreen() {
     try {
       const restaurantId = userData?.restaurantId || userData?.restaurant?.id;
       const res = await apiClient.markDeliveryDelivered(restaurantId, orderId, paymentInfo);
-      // Stop location tracking
+      // Stop location tracking — or move it to another order he has already picked up.
       await stopDeliveryTracking();
+      try {
+        const staffId = userData?.staffId || userData?.userId || userData?.id;
+        const left = await apiClient.getMyDeliveries(restaurantId, staffId);
+        const next = (left?.data || []).find(d => d.deliveryStatus === 'picked_up');
+        if (next) await startDeliveryTracking(restaurantId, staffId, next.id);
+      } catch (_) { /* tracking is optional */ }
       setOpenId(null);
       fetchDeliveries();
       const bill = res?.data?.bill;
