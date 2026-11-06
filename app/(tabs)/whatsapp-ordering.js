@@ -29,6 +29,7 @@ const botFromConfig = (c) => {
     paymentLink: (c && c.paymentLink) || '', upiId: (c && c.upiId) || '',
     orderTypes: Array.isArray(c && c.orderTypes) ? c.orderTypes : [],
     welcome: q.welcome || '', unitWord: q.unitWord || 'Pack', minOrder: String(Number(q.minOrder) || 0),
+    listPrices: q.listPrices !== false, // item list shows pack sizes + prices (off = names only)
   };
 };
 const emptyWeek = () => Object.fromEntries(WEEK.map(([k]) => [k, []]));
@@ -249,6 +250,10 @@ export default function WhatsAppOrderingScreen() {
                     <Text style={st.label}>Pack word</Text>
                     <TextInput value={bot.unitWord} onChangeText={(v) => botSet('unitWord', v)} maxLength={12} placeholder="Pack" style={st.input} />
                   </View>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10 }}>
+                  <Text style={{ flex: 1, fontSize: 13.5, color: '#374151' }}>Show weight & price in the item list</Text>
+                  <Switch value={bot.listPrices} onValueChange={(v) => botSet('listPrices', v)} trackColor={{ true: '#86efac' }} thumbColor={bot.listPrices ? '#16a34a' : '#f4f4f5'} />
                 </View>
                 <Text style={st.label}>Welcome message (optional)</Text>
                 <TextInput value={bot.welcome} onChangeText={(v) => botSet('welcome', v)} multiline maxLength={500} placeholder="Welcome to our shop!" style={st.textArea} />
