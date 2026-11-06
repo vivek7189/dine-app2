@@ -3678,6 +3678,10 @@ class ApiClient {
   getDeliverySettings(restaurantId) {
     return this.request(`/api/delivery/${restaurantId}/settings`);
   }
+  // Delivery boy's On duty / Off duty switch (off = no new orders).
+  setDeliveryDuty(restaurantId, onDuty) {
+    return this.request(`/api/delivery/${restaurantId}/duty`, { method: 'POST', data: { onDuty: !!onDuty } });
+  }
 
   // Print Stations
   getPrintStations(restaurantId) {

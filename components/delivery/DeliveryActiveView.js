@@ -15,19 +15,28 @@ export default function DeliveryActiveView({ delivery, onPickedUp, onDelivered, 
     orderNumber,
     deliveryStatus,
     deliveryAddress,
+    deliveryAddressText,
+    deliveryLocation,
     customerInfo,
     totalAmount,
     items,
+    paymentStatus,
+    specialInstructions,
   } = delivery;
 
-  const addressText = typeof deliveryAddress === 'string'
+  const addressText = deliveryAddressText || (typeof deliveryAddress === 'string'
     ? deliveryAddress
     : deliveryAddress?.street
       ? [deliveryAddress.street, deliveryAddress.city, deliveryAddress.zipcode].filter(Boolean).join(', ')
-      : 'Address not provided';
+      : '') || (deliveryLocation ? 'Location pin shared by the customer' : 'Address not provided');
+  const isPaid = String(paymentStatus || '').toLowerCase() === 'paid';
+  const amountText = `${getCurrencySymbol()}${Number(totalAmount || 0).toFixed(0)}`;
 
   const openInMaps = () => {
-    const query = encodeURIComponent(addressText);
+    // The customer's exact pin (WhatsApp "send location") beats a typed address.
+    const query = deliveryLocation && deliveryLocation.latitude != null
+      ? `${deliveryLocation.latitude},${deliveryLocation.longitude}`
+      : encodeURIComponent(addressText);
     const url = Platform.OS === 'ios'
       ? `maps:?q=${query}`
       : `geo:0,0?q=${query}`;
@@ -55,17 +64,19 @@ export default function DeliveryActiveView({ delivery, onPickedUp, onDelivered, 
   };
 
   const handleDelivered = () => {
-    Alert.alert(
-      'Mark as Delivered',
-      'Has the order been delivered to the customer?',
-      [
+    if (isPaid) {
+      Alert.alert('Mark as Delivered', 'Has the order been delivered to the customer? (Already paid)', [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Yes, Delivered',
-          onPress: () => onDelivered && onDelivered(id, { paymentCollected: true, paymentMethod: 'cash' }),
-        },
-      ]
-    );
+        { text: 'Yes, Delivered', onPress: () => onDelivered && onDelivered(id, { paymentCollected: false }) },
+      ]);
+      return;
+    }
+    Alert.alert('Mark as Delivered', `Collect ${amountText} from the customer. How was it paid?`, [
+      { text: 'Cash', onPress: () => onDelivered && onDelivered(id, { paymentCollected: true, paymentMethod: 'cash' }) },
+      { text: 'UPI', onPress: () => onDelivered && onDelivered(id, { paymentCollected: true, paymentMethod: 'upi' }) },
+      { text: 'Not collected', style: 'destructive', onPress: () => onDelivered && onDelivered(id, { paymentCollected: false }) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const statusSteps = [
@@ -107,11 +118,17 @@ export default function DeliveryActiveView({ delivery, onPickedUp, onDelivered, 
       <View style={styles.section}>
         <View style={styles.orderHeader}>
           <Text style={styles.orderNumber}>Order #{orderNumber}</Text>
-          <Text style={styles.amount}>{getCurrencySymbol()}{Number(totalAmount || 0).toFixed(0)}</Text>
+          <Text style={styles.amount}>{amountText}</Text>
         </View>
         <Text style={styles.itemCount}>
           {items?.length || 0} item{(items?.length || 0) !== 1 ? 's' : ''}
         </Text>
+        <Text style={[styles.itemCount, { marginTop: 4, fontWeight: '700', color: isPaid ? '#059669' : '#b45309' }]}>
+          {isPaid ? '✓ Paid — nothing to collect' : `Collect ${amountText} from the customer`}
+        </Text>
+        {!!specialInstructions && (
+          <Text style={[styles.itemCount, { marginTop: 4 }]}>📝 {specialInstructions}</Text>
+        )}
       </View>
 
       {/* Delivery Address */}

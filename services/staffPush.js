@@ -58,6 +58,10 @@ function handleOpened(msg) {
   if (d.type === 'whatsapp-order' && d.orderId) {
     try { require('./whatsappOrderAlerts').requestOpen(d.orderId); } catch (_) { /* ignore */ }
   }
+  // New / changed delivery for a delivery boy → his Deliveries tab.
+  if (d.type === 'delivery-assignment' || d.type === 'delivery-update') {
+    try { require('expo-router').router.push('/(tabs)/deliveries'); } catch (_) { /* ignore */ }
+  }
 }
 
 export async function registerStaffPush(restaurantId) {
@@ -83,6 +87,14 @@ export async function registerStaffPush(restaurantId) {
       }
       const title = msg?.notification?.title;
       const body = msg?.notification?.body;
+      // New delivery for this delivery boy → offer to open his Deliveries tab.
+      if (msg?.data?.type === 'delivery-assignment') {
+        Alert.alert(title || 'New delivery', body || '', [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Open', onPress: () => { try { require('expo-router').router.push('/(tabs)/deliveries'); } catch (_) { /* ignore */ } } },
+        ]);
+        return;
+      }
       if (title || body) Alert.alert(title || 'DineOpen', body || '');
     });
 

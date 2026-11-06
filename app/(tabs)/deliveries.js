@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, AppState } from 'react-native';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, AppState, Switch, Alert, TouchableOpacity } from 'react-native';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,9 @@ export default function DeliveriesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [userData, setUserData] = useState(null);
+  const [onDuty, setOnDuty] = useState(true);
+  const [dutySaving, setDutySaving] = useState(false);
+  const [openId, setOpenId] = useState(null); // which of his orders is open (when he carries more than one)
 
   const fetchDeliveries = useCallback(async () => {
     try {
@@ -23,10 +26,15 @@ export default function DeliveriesScreen() {
       const staffId = user?.staffId || user?.userId || user?.id;
       if (!restaurantId || !staffId) return;
 
-      const res = await apiClient.getMyDeliveries(restaurantId, staffId);
+      const [res, partners] = await Promise.all([
+        apiClient.getMyDeliveries(restaurantId, staffId),
+        apiClient.getDeliveryPartners(restaurantId).catch(() => null),
+      ]);
       if (res?.success) {
         setDeliveries(res.data || []);
       }
+      const me = partners?.data?.find?.(p => p.id === staffId);
+      if (me) setOnDuty(me.onDuty !== false);
     } catch (err) {
       console.error('Fetch deliveries error:', err.message);
     } finally {
@@ -42,13 +50,30 @@ export default function DeliveriesScreen() {
     return () => sub.remove();
   }, []);
 
+  // New orders also arrive as a phone notification; this keeps the open screen fresh.
   useEffect(() => {
     fetchDeliveries();
     const interval = setInterval(() => {
       if (appActive.current) fetchDeliveries();
-    }, 60_000);
+    }, 20_000);
     return () => clearInterval(interval);
   }, [fetchDeliveries]);
+
+  const toggleDuty = async (value) => {
+    const restaurantId = userData?.restaurantId || userData?.restaurant?.id;
+    if (!restaurantId) return;
+    setDutySaving(true);
+    try {
+      await apiClient.setDeliveryDuty(restaurantId, value);
+      setOnDuty(value);
+      fetchDeliveries();
+    } catch (err) {
+      Alert.alert('Could not change', err?.message || 'Please try again.');
+    } finally {
+      setDutySaving(false);
+    }
+  };
+  const showError = (title, err) => Alert.alert(title, err?.message || err?.error || 'Please try again.');
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -67,7 +92,7 @@ export default function DeliveriesScreen() {
         fetchDeliveries();
       }
     } catch (err) {
-      console.error('Accept delivery error:', err.message);
+      showError('Could not accept', err);
     } finally {
       setActionLoading(false);
     }
@@ -80,7 +105,7 @@ export default function DeliveriesScreen() {
       await apiClient.respondToDelivery(restaurantId, orderId, 'reject');
       fetchDeliveries();
     } catch (err) {
-      console.error('Reject delivery error:', err.message);
+      showError('Could not reject', err);
     } finally {
       setActionLoading(false);
     }
@@ -93,7 +118,7 @@ export default function DeliveriesScreen() {
       await apiClient.markDeliveryPickedUp(restaurantId, orderId);
       fetchDeliveries();
     } catch (err) {
-      console.error('Pick up error:', err.message);
+      showError('Could not update', err);
     } finally {
       setActionLoading(false);
     }
@@ -103,12 +128,19 @@ export default function DeliveriesScreen() {
     setActionLoading(true);
     try {
       const restaurantId = userData?.restaurantId || userData?.restaurant?.id;
-      await apiClient.markDeliveryDelivered(restaurantId, orderId, paymentInfo);
+      const res = await apiClient.markDeliveryDelivered(restaurantId, orderId, paymentInfo);
       // Stop location tracking
       await stopDeliveryTracking();
+      setOpenId(null);
       fetchDeliveries();
+      const bill = res?.data?.bill;
+      if (bill && !bill.completed && bill.reason === 'unpaid') {
+        Alert.alert('Delivered ✓', 'Payment not collected — the counter will settle the bill.');
+      } else if (bill && !bill.completed) {
+        Alert.alert('Delivered ✓', 'The counter will complete the bill.');
+      }
     } catch (err) {
-      console.error('Delivered error:', err.message);
+      showError('Could not mark delivered', err);
     } finally {
       setActionLoading(false);
     }
@@ -126,16 +158,35 @@ export default function DeliveriesScreen() {
     );
   }
 
+  const dutySwitch = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <Text style={{ fontSize: 12, fontWeight: '700', color: onDuty ? '#059669' : '#9ca3af' }}>{onDuty ? 'On duty' : 'Off duty'}</Text>
+      <Switch value={onDuty} disabled={dutySaving} onValueChange={toggleDuty} trackColor={{ true: '#86efac' }} thumbColor={onDuty ? '#10b981' : '#f4f4f5'} />
+    </View>
+  );
+
   // If there's an active delivery, show the active view full-screen
   if (activeDeliveries.length > 0) {
+    const current = activeDeliveries.find(d => d.id === openId) || activeDeliveries[0];
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.headerBar}>
           <Ionicons name="bicycle" size={24} color="#10b981" />
           <Text style={styles.headerTitle}>Active Delivery</Text>
+          {dutySwitch}
         </View>
+        {activeDeliveries.length > 1 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16 }}>
+            {activeDeliveries.map(d => (
+              <TouchableOpacity key={d.id} onPress={() => setOpenId(d.id)}
+                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: d.id === current.id ? '#10b981' : '#e5e7eb', backgroundColor: d.id === current.id ? '#ecfdf5' : '#fff' }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: d.id === current.id ? '#047857' : '#374151' }}>#{d.orderNumber}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         <DeliveryActiveView
-          delivery={activeDeliveries[0]}
+          delivery={current}
           onPickedUp={handlePickedUp}
           onDelivered={handleDelivered}
           loading={actionLoading}
@@ -154,6 +205,7 @@ export default function DeliveriesScreen() {
             <Text style={styles.badgeText}>{pendingDeliveries.length}</Text>
           </View>
         )}
+        {dutySwitch}
       </View>
 
       {deliveries.length === 0 ? (
@@ -161,7 +213,7 @@ export default function DeliveriesScreen() {
           <Ionicons name="bicycle-outline" size={64} color="#d1d5db" />
           <Text style={styles.emptyTitle}>No Deliveries</Text>
           <Text style={styles.emptySubtitle}>
-            New delivery assignments will appear here
+            {onDuty ? 'New delivery orders will appear here' : 'You are off duty — switch On duty to get orders'}
           </Text>
         </View>
       ) : (
