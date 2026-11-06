@@ -142,6 +142,8 @@ export default function DeliveryBoard() {
               <Text style={st.rowText}>Orders per rider</Text>
               <View style={st.stepper}>{[1, 2, 3, 4, 5].map(n => (<TouchableOpacity key={n} onPress={() => setS({ ...s, maxPerRider: n })} style={[st.step, s.maxPerRider === n && st.stepOn]}><Text style={[st.stepText, s.maxPerRider === n && st.stepTextOn]}>{n}</Text></TouchableOpacity>))}</View>
             </View>
+            <View style={[st.rowBetween, { marginTop: 10 }]}><Text style={st.rowText}>All riders busy → still assign (take turns)</Text><Switch value={s.whenAllBusy !== 'wait'} onValueChange={(v) => setS({ ...s, whenAllBusy: v ? 'assign' : 'wait' })} trackColor={{ true: '#86efac' }} /></View>
+            <Text style={st.muted}>{s.whenAllBusy === 'wait' ? 'Off: the order waits for the first free rider.' : 'On: it goes to the rider with the fewest orders.'}</Text>
             <Text style={[st.muted, { marginTop: 10 }]}>Riders = staff with “Delivery partner” ticked (web Admin → Staff). They use the Deliveries tab in this app.</Text>
             <TouchableOpacity disabled={busy} onPress={saveSettings} style={[st.bigBtn, { backgroundColor: busy ? '#e5e7eb' : '#10b981' }]}><Text style={st.bigBtnText}>Save settings</Text></TouchableOpacity>
           </View>

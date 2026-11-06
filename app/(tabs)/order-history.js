@@ -14,7 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -46,7 +46,23 @@ const STATUS_COLORS = {
   new: '#3b82f6',
 };
 
+// Delivery boy on a delivery order (services/delivery): who has it / where it is. Tap → Delivery board
+// (assign / change rider) for owner / admin / manager / cashier.
+const DLV_TEXT = { queued: 'Waiting for a rider', assigned: 'Waiting for {n} to accept', accepted: 'With {n}', picked_up: '{n} on the way', on_the_way: '{n} on the way', delivered: 'Delivered by {n}', cancelled: 'Delivery cancelled', rejected: 'Rider rejected' };
+const DLV_COLOR = { queued: '#b45309', assigned: '#92400e', accepted: '#1d4ed8', picked_up: '#6d28d9', on_the_way: '#6d28d9', delivered: '#047857', cancelled: '#6b7280', rejected: '#b91c1c' };
+const DLV_MANAGE = ['owner', 'co-owner', 'admin', 'manager', 'cashier'];
+function deliveryLine(o, role) {
+  if (String(o.orderType || '').toLowerCase() !== 'delivery' || !o.deliveryStatus) return null;
+  const t = (DLV_TEXT[o.deliveryStatus] || o.deliveryStatus).replace('{n}', o.assignedStaff?.name || 'rider');
+  const failed = o.deliveryNotify?.whatsapp === 'failed' && o.deliveryNotify?.riderId === o.assignedStaff?.id && ['assigned', 'accepted', 'picked_up'].includes(o.deliveryStatus);
+  const open = !['completed', 'cancelled', 'deleted', 'refunded'].includes(String(o.status || '').toLowerCase());
+  return { text: failed ? `${t} · ⚠ WhatsApp not sent` : t, color: failed ? '#b91c1c' : (DLV_COLOR[o.deliveryStatus] || '#374151'), manage: open && DLV_MANAGE.includes(role) };
+}
+
 export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
+  const router = useRouter();
+  const [dlvRole, setDlvRole] = useState('');
+  useEffect(() => { apiClient.getUser().then(u => setDlvRole(String(u?.role || '').toLowerCase())).catch(() => {}); }, []);
   const { fs, r, isTablet } = useResponsive();
   const insets = useSafeAreaInsets();
   const [orders, setOrders] = useState([]);
@@ -654,6 +670,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
 
   const renderOrderCard = ({ item }) => {
     const amt = item.finalAmount || item.totalAmount || 0;
+    const dlv = deliveryLine(item, dlvRole);
     const statusColor = STATUS_COLORS[item.status] || '#6b7280';
     return (
       <TouchableOpacity
@@ -684,6 +701,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
           </Text>
           {item.customerInfo?.name && (
             <Text style={styles.orderCustomer}>{item.customerInfo.name}</Text>
+          )}
+          {!!dlv && (
+            <TouchableOpacity onPress={() => router.push('/(tabs)/delivery-board')} hitSlop={{ top: 6, bottom: 6 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: dlv.color, marginTop: 3 }}>🛵 {dlv.text}{dlv.manage ? '  ·  Change rider ›' : ''}</Text>
+            </TouchableOpacity>
           )}
         </View>
         <View style={styles.orderCardBottom}>
