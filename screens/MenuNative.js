@@ -4091,6 +4091,7 @@ export default function MenuScreen() {
 
       {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
       <CashierInvoiceModal
+        autoWhatsAppBill={!!billingSettings?.whatsappBillingEnabled}
         visible={showInvoiceModal}
         onClose={() => {
           setShowInvoiceModal(false);

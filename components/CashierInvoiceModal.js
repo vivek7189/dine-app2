@@ -30,6 +30,7 @@ export default function CashierInvoiceModal({
   onNewOrder,
   restaurantId,
   whatsappConnected = false,
+  autoWhatsAppBill = false, // bill goes out on WhatsApp by itself on completion (billingSettings.whatsappBillingEnabled)
   tokenBillingEnabled = false,
   manualPrintEnabled = true,
   printSettings = {},
@@ -700,9 +701,14 @@ Thank you for your order!
                 >
                   <Ionicons name={waSent ? 'checkmark-circle' : 'logo-whatsapp'} size={20} color="#fff" />
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
-                    {waSent ? 'Bill Sent on WhatsApp!' : waSending ? 'Sending...' : 'Send Bill on WhatsApp'}
+                    {waSent ? 'Bill Sent on WhatsApp!' : waSending ? 'Sending...' : autoWhatsAppBill ? 'Send Bill Again on WhatsApp' : 'Send Bill on WhatsApp'}
                   </Text>
                 </TouchableOpacity>
+                {autoWhatsAppBill && !waSent && (
+                  <Text style={{ fontSize: 12, color: '#166534', textAlign: 'center', marginTop: 6 }}>
+                    ✓ The bill goes to the customer on WhatsApp automatically. Use this button only if they did not get it.
+                  </Text>
+                )}
               </View>
             )}
 
