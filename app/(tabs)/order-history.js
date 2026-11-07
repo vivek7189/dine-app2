@@ -29,7 +29,7 @@ import { roleCan, canPerform } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
 import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderAlerts';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
-import { completeBillUpdate } from '../../utils/completeBill';
+import { completeBillUpdate, isPaidOnline } from '../../utils/completeBill';
 import { storePendingAddItems } from '../../utils/addItemsHandoff';
 
 const STATUS_COLORS = {
@@ -381,6 +381,16 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const RUNNING_STATUSES = ['pending', 'confirmed', 'preparing', 'ready', 'served'];
   const isRunning = (o) => !!o && RUNNING_STATUSES.includes(String(o.status || '').toLowerCase())
     && String(o.paymentStatus || '').toLowerCase() !== 'paid';
+  // Running order the guest already paid online (QR Razorpay / Paytm): nothing to collect — just close
+  // it (the online payment is kept). Complete Bill above is for unpaid orders only.
+  const isPaidOnlineRunning = (o) => !!o && RUNNING_STATUSES.includes(String(o.status || '').toLowerCase()) && isPaidOnline(o);
+  const confirmCompletePaid = (o) => {
+    const how = String(o.paymentMethod || 'online').toLowerCase() === 'paytm' ? 'Paytm' : 'Razorpay';
+    Alert.alert('Complete order', `Already paid online (${how}). Mark order #${o.dailyOrderId || o.orderNumber || String(o.id).slice(-6)} as completed?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Complete', onPress: () => { setSelectedOrder(null); handleCompleteRunning(o, {}); } },
+    ], { cancelable: true });
+  };
   const canCompleteRunning = rc('orders.completeBill') !== null ? rc('orders.completeBill')
     : (canBill || ['owner', 'admin'].includes((userRole || '').toLowerCase()));
   // Add Items to a running DINE-IN order from here too (QR orders, a login without Tables) — the same
@@ -446,7 +456,8 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
           } catch (_) {}
         })();
       }
-      try {
+      // (an order already paid online keeps that payment — no second payment record)
+      if (!isPaidOnline(order)) try {
         await apiClient.verifyPayment({
           orderId: order.id, paymentMethod: updateData.paymentMethod, amount: updateData.finalAmount ?? (order.finalAmount || order.totalAmount || 0),
           userId: currentUser?.id, restaurantId, paymentStatus: 'completed',
@@ -1124,6 +1135,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
                 {canAddItemsTo(selectedOrder) && (
                   <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => openCompleteBill(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="add-circle-outline" size={16} color="#dc2626" /><Text style={[styles.actBtnText, { color: '#dc2626' }]}>Add Items</Text>
+                  </TouchableOpacity>
+                )}
+                {canCompleteRunning && isPaidOnlineRunning(selectedOrder) && (
+                  <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => confirmCompletePaid(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="checkmark-circle-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Complete (paid online)</Text>
                   </TouchableOpacity>
                 )}
                 {canCompleteRunning && isRunning(selectedOrder) && (

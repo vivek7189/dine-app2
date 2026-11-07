@@ -44,7 +44,7 @@ import { useToast } from '../components/Toast';
 import { storePendingAddItems } from '../utils/addItemsHandoff';
 import { isChairModeEnabled } from '../utils/seatOrdering';
 import { storedOrderDiscountFields } from '../utils/orderDiscountFields';
-import { completeBillUpdate } from '../utils/completeBill';
+import { completeBillUpdate, isPaidOnline } from '../utils/completeBill';
 import { savedOrderPrintItems, savedOrderPrintExtras } from '../utils/savedOrderInvoice';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
@@ -2231,8 +2231,9 @@ export default function TablesScreen() {
               ...(updateData.finalAmount != null ? { finalAmount: updateData.finalAmount } : {}),
             });
 
-            // Verify payment (same as web flow)
-            try {
+            // Verify payment (same as web flow) — not for an order already paid online (that payment
+            // is recorded; a second one would double it)
+            if (!isPaidOnline(order)) try {
               await apiClient.verifyPayment({
                 orderId: order.id,
                 paymentMethod: settleMethod,

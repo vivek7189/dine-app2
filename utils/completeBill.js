@@ -5,8 +5,20 @@ import { storedOrderDiscountFields } from './orderDiscountFields';
 // (payment method, tender, split, tip, khata); `tableName` = the table it was opened from, if any.
 // Same payload as the web's DashboardTablesPanel flow, so the server can update customer stats
 // (totalOrders, totalSpent, loyaltyPoints).
+// Already paid online by the guest (QR Razorpay / Paytm) — completing it must keep that payment,
+// never record it again as cash / split / part payment.
+export function isPaidOnline(order) {
+  if (!order || String(order.paymentStatus || '').toLowerCase() !== 'paid') return false;
+  const m = String(order.paymentMethod || '').toLowerCase();
+  return m === 'razorpay' || m === 'paytm' || !!order.razorpayPaymentId || !!order.paytm;
+}
+
 export function completeBillUpdate(order, sd = {}, user = null, tableName = null) {
   sd = sd || {};
+  if (isPaidOnline(order)) {
+    // keep the online payment; only a tip chosen now is taken from the settle screen
+    sd = sd.tipAmount != null ? { tipAmount: sd.tipAmount, ...(sd.tipPercentage != null ? { tipPercentage: sd.tipPercentage } : {}) } : {};
+  }
   const settleMethod = sd.paymentMethod || order.paymentMethod || 'cash';
   const settleFinal = (sd.finalAmount != null) ? sd.finalAmount : (order.finalAmount || order.totalAmount || 0);
   return {
