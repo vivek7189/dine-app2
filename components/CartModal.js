@@ -89,6 +89,7 @@ export default function CartModal({
   setActivePricingRuleId,
   autoSelectedRule = false,
   isUpdateOrder = false,
+  isBarTab = false,        // bar tab mode: the cashier keeps the single Complete Billing (no Update)
   existingOrderId = null, // the saved order being added to (staff-perk quote leaves it out of today's count)
   existingOrderItems = [],
   onUpdateItemNote,       // (cartKey, note) — per-line kitchen note (web OrderSummary parity)
@@ -1112,7 +1113,7 @@ export default function CartModal({
   };
   const proceedPlaceOrder = () => {
     setActiveAction('place');
-    if (paymentMethod === 'upi' && upiConfigured) {
+    if (paymentMethod === 'upi' && upiConfigured && !(isCashierMode && isUpdateOrder && !isBarTab)) {
       setShowUpiQr(true);
       return;
     }
@@ -1172,7 +1173,8 @@ export default function CartModal({
       }
       proceedPlaceOrder();
     };
-    if (mode === 'cashier') withCustomerDetails(go); else go();
+    // (a cashier's Update of a running order only sends items to the kitchen — no bill yet)
+    if (mode === 'cashier' && !(isUpdateOrder && !isBarTab)) withCustomerDetails(go); else go();
   };
 
   const handleCompleteBill = () => {
@@ -2182,6 +2184,41 @@ export default function CartModal({
                       </>
                     )}
                   </TouchableOpacity>
+                ) : isCashierMode && isUpdateOrder && !isBarTab && onCompleteBill ? (
+                  // Running order opened with "Add Items": Update (send to kitchen, bill later) or
+                  // Complete Billing of THIS order — never a second, separate bill.
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.placeOrderBtn, sending && { opacity: 0.6 }]}
+                      onPress={handlePlaceOrder}
+                      disabled={sending}
+                      activeOpacity={0.85}
+                    >
+                      {sending && activeAction === 'place' ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name="refresh" size={14} color="#fff" />
+                          <Text style={styles.actionBtnText}>Update</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.completeBillBtn, sending && { opacity: 0.6 }]}
+                      onPress={handleCompleteBill}
+                      disabled={sending}
+                      activeOpacity={0.85}
+                    >
+                      {sending && activeAction === 'complete' ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-circle" size={14} color="#fff" />
+                          <Text style={styles.actionBtnText}>{posSettings.completeBillingLabel || 'Complete Billing'}</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </>
                 ) : isCashierMode ? (
                   <TouchableOpacity
                     style={[styles.actionBtn, styles.completeBillBtn, { flex: 1 }, sending && { opacity: 0.6 }]}

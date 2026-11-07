@@ -31,6 +31,14 @@ const DATE_FILTERS = [
 ];
 
 // ─── Timer Color Helper ───
+// Guest name for a ticket: the order's customer, never the POS placeholders ("Walk-in", "Guest").
+const PLACEHOLDER_NAMES = ['walk-in', 'walk in', 'walk-in customer', 'walkin', 'guest', 'customer', 'n/a', '-'];
+const kotCustomerName = (kot) => {
+  const n = String(kot?.customerInfo?.name || kot?.customerName || '').trim();
+  return n && !PLACEHOLDER_NAMES.includes(n.toLowerCase()) ? n : '';
+};
+const kotChair = (kot) => String(kot?.chairNumber ?? kot?.customerInfo?.chairNumber ?? '').trim();
+
 const getTimerColor = (minutes) => {
   if (minutes >= 15) return { color: '#ef4444', bg: '#fef2f2' };
   if (minutes >= 8) return { color: '#f59e0b', bg: '#fffbeb' };
@@ -473,7 +481,7 @@ export default function KitchenScreen() {
         <View style={[s.cardHeader, isTablet && { paddingHorizontal: sp(14), paddingVertical: sp(12) }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
             <Text style={[s.orderId, { fontSize: fs(15) }]}>#{kot.dailyOrderId || kot.id.slice(-6).toUpperCase()}</Text>
-            {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>T{kot.tableNumber}</Text></View>}
+            {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>Table {kot.tableNumber}{kotChair(kot) ? ` · ${kotChair(kot)}` : ''}</Text></View>}
             <Text style={s.typeLabel}>{getTypeLabel(kot.orderType)}</Text>
             {kot.orderSource === 'customer_app' && <View style={s.appBadge}><Text style={s.appBadgeText}>App</Text></View>}
           </View>
@@ -492,6 +500,14 @@ export default function KitchenScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Guest name (QR / POS orders that have one) */}
+        {!!kotCustomerName(kot) && (
+          <View style={s.guestRow}>
+            <Text style={s.guestLabel}>CUSTOMER</Text>
+            <Text style={s.guestName} numberOfLines={1}>{kotCustomerName(kot)}</Text>
+          </View>
+        )}
 
         {/* Items */}
         <View style={s.itemsContainer}>
@@ -751,7 +767,7 @@ export default function KitchenScreen() {
                       { label: 'Order Time', value: formatTime(selectedKot.orderTime) },
                       { label: 'KOT Time', value: formatTime(selectedKot.kotTime) },
                       { label: 'Elapsed', value: `${getTimeElapsed(selectedKot.kotTime)}m` },
-                      { label: 'Customer', value: selectedKot.customerName || '—' },
+                      { label: 'Customer', value: kotCustomerName(selectedKot) || selectedKot.customerName || '—' },
                     ].map((info, i) => (
                       <View key={i} style={s.infoCard}>
                         <Text style={s.infoLabel}>{info.label}</Text>
@@ -838,8 +854,11 @@ const s = StyleSheet.create({
   cardOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.8)', justifyContent: 'center', alignItems: 'center', zIndex: 10, borderRadius: 16 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#fef2f2' },
   orderId: { fontSize: 15, fontWeight: '800', color: Colors.textDark, letterSpacing: -0.3 },
-  tableBadge: { backgroundColor: 'rgba(0,0,0,0.06)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  tableBadgeText: { fontSize: 11, fontWeight: '600', color: '#374151' },
+  tableBadge: { backgroundColor: '#1f2937', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 7 },
+  tableBadgeText: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  guestRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingTop: 6 },
+  guestLabel: { fontSize: 10, fontWeight: '600', color: '#9ca3af', letterSpacing: 0.5 },
+  guestName: { flex: 1, fontSize: 14, fontWeight: '700', color: '#111827' },
   typeLabel: { fontSize: 10, fontWeight: '500', color: '#9ca3af' },
   appBadge: { backgroundColor: '#fce7f3', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   appBadgeText: { fontSize: 9, fontWeight: '600', color: '#ec4899' },

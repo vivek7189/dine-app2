@@ -2368,6 +2368,9 @@ export default function MenuScreen() {
 
   // Cashier/Sales - Counter sales without table requirement
   const handleCashierPlaceOrder = async (orderType = 'counter', paymentMethod = 'cash', customerName = '', customerMobile = '', discountData = {}, tableNumberFromModal = '') => {
+    // A running order opened with "Add Items" is billed AS that order (items added + completed) —
+    // creating a new completed order here left the running one open and billed the items twice.
+    if (existingOrderId) return handleCompleteBill(orderType, paymentMethod, customerName, customerMobile, discountData);
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to cart before placing order.');
       return;
@@ -4020,7 +4023,10 @@ export default function MenuScreen() {
         onRemoveItem={removeFromCart}
         onEditItemPrice={editCartItemPrice}
         onAddCustomItem={addCustomItem}
-        onPlaceOrder={isCashier ? handleCashierPlaceOrder : handlePlaceOrder}
+        // Cashier: a new sale completes at once (counter); a running order opened with "Add Items"
+        // can be updated (send to kitchen, bill later) like the owner's Update, or completed.
+        // (a bar tab settles through handlePlaceOrder's bar-tab branch, same as the owner's)
+        onPlaceOrder={isCashier && !existingOrderId ? handleCashierPlaceOrder : handlePlaceOrder}
         onCompleteBill={handleCompleteBill}
         onKotAndBill={printSettings?.kotThenBill ? handleKotAndBill : undefined}
         onSendToKitchen={handleSendToKitchen}
@@ -4045,6 +4051,7 @@ export default function MenuScreen() {
         setActivePricingRuleId={setActivePricingRuleId}
         autoSelectedRule={autoSelectedRule}
         isUpdateOrder={!!existingOrderId}
+        isBarTab={!!isBarTabMode}
         existingOrderId={existingOrderId || null}
         existingOrderOfferIds={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.ids : []}
         existingOrderDiscounts={existingOrderId && existingOrderOffersRef.current.orderId === existingOrderId ? existingOrderOffersRef.current.discounts : null}

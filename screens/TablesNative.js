@@ -41,7 +41,7 @@ import { canPerform, followsWaiterAppConfig, roleCan } from '../utils/permission
 import { useTabBar } from '../contexts/TabBarContext';
 import * as printerService from '../services/printerService';
 import { useToast } from '../components/Toast';
-import { orderItemsSignature } from '../utils/orderSignature';
+import { storePendingAddItems } from '../utils/addItemsHandoff';
 import { isChairModeEnabled } from '../utils/seatOrdering';
 import { storedOrderDiscountFields } from '../utils/orderDiscountFields';
 import { completeBillUpdate } from '../utils/completeBill';
@@ -1095,41 +1095,14 @@ export default function TablesScreen() {
       return;
     }
 
-    // Other roles: existing AsyncStorage + tab navigation flow
+    // Other roles: existing AsyncStorage + tab navigation flow (utils/addItemsHandoff — shared with Orders)
     try {
-      await AsyncStorage.setItem('pendingAddItems', JSON.stringify({
-        tableId: selectedTableForOrder?.id,
-        tableNumber: selectedTableForOrder?.name,
+      await storePendingAddItems(order, cartItems, {
+        id: selectedTableForOrder?.id,
+        name: selectedTableForOrder?.name,
         floorName: floorNameVal,
         floorId: tableFloor?.id || '',
-        orderId: order.id,
-        dailyOrderId: order.dailyOrderId || order.orderNumber || null,
-        chairNumber: order.chairNumber || null,
-        // offers already on the order — re-selected in the cart they are not a cashier change
-        orderOfferIds: Array.isArray(order.offerIds) && order.offerIds.length ? order.offerIds
-          : (Array.isArray(order.appliedOffers) ? order.appliedOffers.map(o => o && o.id).filter(Boolean) : []),
-        // the order's stored discounts — the cart keeps each one unless the cashier changes it there
-        orderDiscounts: {
-          offerDiscount: Number(order.offerDiscount ?? order.discountAmount) || 0,
-          offerIds: Array.isArray(order.offerIds) && order.offerIds.length ? order.offerIds
-            : (Array.isArray(order.appliedOffers) ? order.appliedOffers.map(o => o && o.id).filter(Boolean) : []),
-          appliedOffers: Array.isArray(order.appliedOffers) ? order.appliedOffers : [],
-          selectedOfferName: order.selectedOfferName || null,
-          manualDiscount: Number(order.manualDiscount) || 0,
-          manualDiscountType: order.manualDiscountType || null,
-          manualDiscountValue: order.manualDiscountValue != null ? order.manualDiscountValue : null,
-          couponDiscount: Number(order.couponDiscount) || 0,
-          couponCode: order.couponCode || null,
-          couponId: order.couponId || null,
-          loyaltyDiscount: Number(order.loyaltyDiscount) || 0,
-          redeemLoyaltyPoints: Number(order.redeemLoyaltyPoints) || 0,
-        },
-        cartItems,
-        // Fingerprint of the items as loaded — sent with the update so the server can refuse (409)
-        // if another device changed this order meanwhile, instead of overwriting its items.
-        baseItemsSignature: orderItemsSignature(order.items),
-        timestamp: Date.now(),
-      }));
+      });
     } catch (e) {
       console.error('Error storing add-items data:', e);
     }

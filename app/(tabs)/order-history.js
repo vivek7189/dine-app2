@@ -30,6 +30,7 @@ import { billNumberLabel } from '../../utils/billNumber';
 import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderAlerts';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import { completeBillUpdate } from '../../utils/completeBill';
+import { storePendingAddItems } from '../../utils/addItemsHandoff';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -77,6 +78,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [completeOrderId, setCompleteOrderId] = useState(null); // running order open in the Complete Bill popup
+  const [completeCanAddItems, setCompleteCanAddItems] = useState(false); // that popup also offers Add Items
   // WhatsApp-order banner / notification tap → open that order's details here.
   useEffect(() => {
     if (!openOrderId || !restaurantId) return;
@@ -381,9 +383,39 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
     && String(o.paymentStatus || '').toLowerCase() !== 'paid';
   const canCompleteRunning = rc('orders.completeBill') !== null ? rc('orders.completeBill')
     : (canBill || ['owner', 'admin'].includes((userRole || '').toLowerCase()));
+  // Add Items to a running DINE-IN order from here too (QR orders, a login without Tables) — the same
+  // "Add Items" as Tables → order: the Menu tab opens it, then Update (kitchen) or Complete Billing.
+  // Who may: the server's rule for changing an order (Orders history, or Tables see / update; owner /
+  // admin always). Waiters add items from Tables (their own order screen). Orders without a table
+  // (takeaway) stay out — the Menu tab treats an opened order as a table order.
+  const canUpdateOrders = (() => {
+    const role = (userRole || '').toLowerCase();
+    if (['owner', 'admin', 'co-owner'].includes(role)) return true;
+    if (rc('orders.update') !== null) return rc('orders.update');
+    const pa = currentUser?.pageAccess || {};
+    const on = (v) => v === true || (v && typeof v === 'object' && (v.read === true || v.update === true));
+    return on(pa.history) || on(pa.tables) || canPerform(currentUser, pa, 'orders', 'update');
+  })();
+  const canAddItemsTo = (o) => isRunning(o) && !!String(o?.tableNumber || '').trim()
+    && (userRole || '').toLowerCase() !== 'waiter' && canUpdateOrders;
+  const handleAddItemsFromOrders = async (order, cartItems) => {
+    setCompleteOrderId(null);
+    try {
+      await storePendingAddItems(order, cartItems, {
+        id: order.tableId || undefined,
+        name: String(order.tableNumber || '').trim(),
+        floorName: order.customerInfo?.floorName || order.floorName || '',
+        floorId: order.floorId || '',
+      });
+      router.navigate({ pathname: '/(tabs)/menu' });
+    } catch (e) {
+      Alert.alert('Add items', 'Could not open this order. Please try from Tables.');
+    }
+  };
   const openCompleteBill = (order) => {
     // close the detail first — a second <Modal> over an open one fails on Android
     setSelectedOrder(null);
+    setCompleteCanAddItems(canAddItemsTo(order));
     setCompleteOrderId(order.id || order._id);
   };
   const handleCompleteRunning = async (order, settlementData = {}) => {
@@ -1088,6 +1120,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
                   <Ionicons name="print-outline" size={16} color="#f59e0b" /><Text style={[styles.actBtnText, { color: '#f59e0b' }]}>Print KOT</Text>
                 </TouchableOpacity>
                 </>)}
+                {canAddItemsTo(selectedOrder) && (
+                  <TouchableOpacity style={styles.actBtn} disabled={actionBusy} onPress={() => openCompleteBill(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="add-circle-outline" size={16} color="#dc2626" /><Text style={[styles.actBtnText, { color: '#dc2626' }]}>Add Items</Text>
+                  </TouchableOpacity>
+                )}
                 {canCompleteRunning && isRunning(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openCompleteBill(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="checkmark-circle-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>{restaurant?.posSettings?.completeBillingLabel || 'Complete Bill'}</Text>
@@ -1204,6 +1241,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
         billingSettings={restaurant?.billingSettings || {}}
         posSettings={restaurant?.posSettings || {}}
         onCompleteBill={handleCompleteRunning}
+        onAddItems={completeCanAddItems ? handleAddItemsFromOrders : undefined}
       />
     </SafeAreaView>
   );
