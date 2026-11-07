@@ -637,6 +637,7 @@ export default function MenuScreen() {
               freshParamsRef.current = true;
               setSelectedTable({ id: data.tableId, name: data.tableNumber, floor: data.floorName || '', floorId: data.floorId || '', chair: data.chairNumber ? String(data.chairNumber) : '' });
               setIsFromTablesPage(true);
+              setIsBarTabMode(false); // a table / Orders order — never a bar tab left over from an earlier bar screen
               if (data.orderId) setExistingOrderId(data.orderId);
               existingOrderOffersRef.current = {
                 orderId: data.orderId || null,
@@ -2724,10 +2725,15 @@ export default function MenuScreen() {
           waiterId: user?.id,
           waiterName: user?.name || 'Manager',
         },
-        customerInfo: {
-          name: customerName || 'Walk-in Customer',
-          phone: customerMobile || '',
-        },
+        // Billing a saved order (Add Items → Complete): keep its own customer — a QR guest's name /
+        // phone / linked customer (loyalty, khata, WhatsApp bill) — unless one was entered in the cart
+        // now. Sending "Walk-in Customer" here overwrote them.
+        ...((!existingOrderId || customerName || customerMobile) ? {
+          customerInfo: {
+            name: customerName || 'Walk-in Customer',
+            phone: customerMobile || '',
+          },
+        } : {}),
         ...(customerMobile && { customerPhone: customerMobile }),
         subtotal,
         // the server's subtotal sanity check reads totalAmount (pre-discount items total)
@@ -2743,7 +2749,7 @@ export default function MenuScreen() {
         ...(((discountData.selectedOfferIds?.length > 0) || discountData.selectedOfferId) && { offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : [discountData.selectedOfferId] }),
         selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
         ...(discountData.redeemLoyaltyPoints > 0 && { redeemLoyaltyPoints: discountData.redeemLoyaltyPoints }),
-        customerId: discountData.customerId || null,
+        ...((!existingOrderId || discountData.customerId) ? { customerId: discountData.customerId || null } : {}),
         ...buildDiscountFields(discountData),
         pricingRuleId: activePricingRuleId || null,
         ...(discountData.couponCode && { couponCode: discountData.couponCode }),
@@ -2828,8 +2834,9 @@ export default function MenuScreen() {
         taxEnabled: taxSettings.enabled,
         taxBreakdown: discountData.taxBreakdown || null,
         grandTotal,
-        customerName: customerName || 'Walk-in Customer',
-        customerMobile: customerMobile || '',
+        // a saved order keeps its own customer on the printed bill too (QR guest name / phone)
+        customerName: customerName || billOrder?.customerInfo?.name || 'Walk-in Customer',
+        customerMobile: customerMobile || billOrder?.customerInfo?.phone || '',
         orderType,
         paymentMethod: billingFields.paymentMethod || paymentMethod,
         timestamp: new Date(),

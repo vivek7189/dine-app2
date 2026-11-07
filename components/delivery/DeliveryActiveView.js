@@ -76,7 +76,7 @@ export default function DeliveryActiveView({ delivery, onPickedUp, onDelivered, 
       { text: 'UPI', onPress: () => onDelivered && onDelivered(id, { paymentCollected: true, paymentMethod: 'upi' }) },
       { text: 'Not collected', style: 'destructive', onPress: () => onDelivered && onDelivered(id, { paymentCollected: false }) },
       { text: 'Cancel', style: 'cancel' },
-    ]);
+    ], { cancelable: true }); // Android shows only 3 buttons (Cancel drops off) — tap outside / Back cancels
   };
 
   const statusSteps = [

@@ -396,7 +396,8 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
     const on = (v) => v === true || (v && typeof v === 'object' && (v.read === true || v.update === true));
     return on(pa.history) || on(pa.tables) || canPerform(currentUser, pa, 'orders', 'update');
   })();
-  const canAddItemsTo = (o) => isRunning(o) && !!String(o?.tableNumber || '').trim()
+  const isDineIn = (o) => ['dine-in', 'dine_in', 'dinein', 'table'].includes(String(o?.orderType || 'dine-in').toLowerCase());
+  const canAddItemsTo = (o) => isRunning(o) && isDineIn(o) && !!String(o?.tableNumber || '').trim()
     && (userRole || '').toLowerCase() !== 'waiter' && canUpdateOrders;
   const handleAddItemsFromOrders = async (order, cartItems) => {
     setCompleteOrderId(null);
@@ -1240,7 +1241,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
         userPageAccess={currentUser?.pageAccess || null}
         billingSettings={restaurant?.billingSettings || {}}
         posSettings={restaurant?.posSettings || {}}
-        onCompleteBill={handleCompleteRunning}
+        onCompleteBill={canCompleteRunning ? handleCompleteRunning : undefined}
         onAddItems={completeCanAddItems ? handleAddItemsFromOrders : undefined}
       />
     </SafeAreaView>

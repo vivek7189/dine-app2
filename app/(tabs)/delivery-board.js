@@ -80,7 +80,7 @@ export default function DeliveryBoard() {
       { text: 'Yes, UPI', onPress: () => act(() => apiClient.markDeliveredByCounter(rid, o.id, { paymentCollected: true, paymentMethod: 'upi' }), done) },
       { text: 'Not collected', onPress: () => act(() => apiClient.markDeliveredByCounter(rid, o.id), done) },
       { text: 'Cancel', style: 'cancel' },
-    ]);
+    ], { cancelable: true }); // Android shows only 3 buttons (Cancel drops off) — tap outside / Back cancels
   };
 
   const saveSettings = () => act(async () => {
