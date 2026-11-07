@@ -2248,7 +2248,8 @@ export default function CartModal({
                       ) : (
                         <>
                           <Ionicons name={isUpdateOrder ? "refresh" : "paper-plane"} size={14} color="#fff" />
-                          <Text style={styles.actionBtnText}>{isUpdateOrder ? 'Update' : (posSettings.placeOrderLabel || 'Place Order')}</Text>
+                          {/* an open bar tab: this button settles it (bar-tab branch), so say so */}
+                          <Text style={styles.actionBtnText}>{isUpdateOrder ? (isBarTab ? 'Settle tab' : 'Update') : (posSettings.placeOrderLabel || 'Place Order')}</Text>
                         </>
                       )}
                     </TouchableOpacity>

@@ -573,7 +573,7 @@ export default function MenuScreen() {
       setIsFromTablesPage(true);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null); // Clear stale order when switching tables
     } else if (params.tableNumber && params.barTabMode === 'true') {
-      const paramsKey = `bartab_${params.tableNumber}`;
+      const paramsKey = `bartab_${params.tableNumber}_${params.orderId || ''}_${params.navStamp || ''}`;
       if (consumedParamsKeyRef.current === paramsKey) return;
       consumedParamsKeyRef.current = paramsKey;
 
@@ -582,7 +582,18 @@ export default function MenuScreen() {
       lastAppliedStampRef.current = stamp;
       freshParamsRef.current = true;
       setSelectedTable({ id: null, name: params.tableNumber });
-      setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
+      if (params.orderId) {
+        // Add Items on an open bar tab: THAT tab with its lines in the cart, so Save Tab / Settle
+        // update it — ignoring the id made a second order (Save Tab: a second tab; Settle: a second bill).
+        let tabItems = [];
+        try { const parsed = JSON.parse(params.cartItems || '[]'); if (Array.isArray(parsed)) tabItems = parsed; } catch (_) { tabItems = []; }
+        setExistingOrderId(String(params.orderId)); setExistingDailyOrderId(null);
+        setCart(tabItems);
+        setExistingOrderItems(tabItems.length ? snapshotOrderItems(tabItems) : null);
+        baseItemsSigRef.current = null; // no stale-order fingerprint for tabs (as before)
+      } else {
+        setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
+      }
       setIsBarTabMode(true);
     }
 
@@ -2016,7 +2027,7 @@ export default function MenuScreen() {
           offerIds: discountData.selectedOfferIds?.length > 0 ? discountData.selectedOfferIds : (discountData.selectedOfferId ? [discountData.selectedOfferId] : []),
           selectedOfferName: discountData.selectedOfferNames?.length > 0 ? discountData.selectedOfferNames.join(', ') : (discountData.selectedOfferName || null),
           redeemLoyaltyPoints: discountData.redeemLoyaltyPoints || 0,
-          customerId: discountData.customerId || null,
+          ...(discountData.customerId ? { customerId: discountData.customerId } : {}), // keep the tab's customer unless one was picked
           pricingRuleId: activePricingRuleId || null,
           ...(discountData.taxBreakdown && { taxBreakdown: discountData.taxBreakdown }),
           // charges the cart billed (packaging …) — the server then vets the tax including them

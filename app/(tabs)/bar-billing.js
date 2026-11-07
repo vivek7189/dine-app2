@@ -130,6 +130,7 @@ export default function BarBillingScreen() {
       params: {
         tableNumber: `Tab ${nextTabNum}`,
         barTabMode: 'true',
+        navStamp: String(Date.now()), // each open is fresh (the same tab opened again reloads)
       },
     });
   };
@@ -172,6 +173,7 @@ export default function BarBillingScreen() {
           existingOrder: 'true',
           cartItems: JSON.stringify([]),
           barTabMode: 'true',
+          navStamp: String(Date.now()), // each open is fresh (the same tab opened again reloads)
         },
       });
     }
@@ -187,6 +189,7 @@ export default function BarBillingScreen() {
         existingOrder: 'true',
         cartItems: JSON.stringify(cartItems),
         barTabMode: 'true',
+        navStamp: String(Date.now()), // each open is fresh (the same tab opened again reloads)
       },
     });
   };
