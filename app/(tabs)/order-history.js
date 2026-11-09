@@ -29,7 +29,7 @@ import { roleCan, canPerform } from '../../utils/permissions';
 import { billNumberLabel } from '../../utils/billNumber';
 import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderAlerts';
 import OrderDetailsModal from '../../components/OrderDetailsModal';
-import { completeBillUpdate, isPaidOnline } from '../../utils/completeBill';
+import { completeBillUpdate, isPaidOnline, hasOnlineBalance, onlineBalance, onlinePaidAmount, paymentToRecord } from '../../utils/completeBill';
 import { storePendingAddItems } from '../../utils/addItemsHandoff';
 
 const STATUS_COLORS = {
@@ -391,6 +391,19 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
       { text: 'Complete', onPress: () => { setSelectedOrder(null); handleCompleteRunning(o, {}); } },
     ], { cancelable: true });
   };
+  // Paid online, then items were added at the POS: collect only the balance (cash / UPI / card); the
+  // bill closes as a split (online part + this). The normal Complete Bill would ask for the whole bill.
+  const isOnlineBalanceRunning = (o) => !!o && RUNNING_STATUSES.includes(String(o.status || '').toLowerCase()) && hasOnlineBalance(o);
+  const confirmCollectBalance = (o) => {
+    const bal = onlineBalance(o), paid = onlinePaidAmount(o);
+    const go = (m) => { setSelectedOrder(null); handleCompleteRunning(o, { paymentMethod: m }); };
+    Alert.alert('Collect balance', `Paid online ${formatCurrency(paid)}. Collect ${formatCurrency(bal)} from the customer — how was it paid?`, [
+      { text: 'Cash', onPress: () => go('cash') },
+      { text: 'UPI', onPress: () => go('upi') },
+      { text: 'Card', onPress: () => go('card') },
+      { text: 'Cancel', style: 'cancel' },
+    ], { cancelable: true }); // Android shows 3 buttons — tap outside / Back cancels
+  };
   const canCompleteRunning = rc('orders.completeBill') !== null ? rc('orders.completeBill')
     : (canBill || ['owner', 'admin'].includes((userRole || '').toLowerCase()));
   // Add Items to a running DINE-IN order from here too (QR orders, a login without Tables) — the same
@@ -456,10 +469,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
           } catch (_) {}
         })();
       }
-      // (an order already paid online keeps that payment — no second payment record)
-      if (!isPaidOnline(order)) try {
+      // only what was collected now (nothing for an order paid online, the balance for a part-online one)
+      const toRecord = paymentToRecord(order, updateData);
+      if (toRecord) try {
         await apiClient.verifyPayment({
-          orderId: order.id, paymentMethod: updateData.paymentMethod, amount: updateData.finalAmount ?? (order.finalAmount || order.totalAmount || 0),
+          orderId: order.id, paymentMethod: toRecord.method, amount: toRecord.amount,
           userId: currentUser?.id, restaurantId, paymentStatus: 'completed',
         });
       } catch (_) {}
@@ -1142,12 +1156,17 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
                     <Ionicons name="checkmark-circle-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Complete (paid online)</Text>
                   </TouchableOpacity>
                 )}
-                {canCompleteRunning && isRunning(selectedOrder) && (
+                {canCompleteRunning && isOnlineBalanceRunning(selectedOrder) && (
+                  <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => confirmCollectBalance(selectedOrder)} activeOpacity={0.8}>
+                    <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>{`Collect balance ${formatCurrency(onlineBalance(selectedOrder))}`}</Text>
+                  </TouchableOpacity>
+                )}
+                {canCompleteRunning && isRunning(selectedOrder) && !hasOnlineBalance(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openCompleteBill(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="checkmark-circle-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>{restaurant?.posSettings?.completeBillingLabel || 'Complete Bill'}</Text>
                   </TouchableOpacity>
                 )}
-                {canSettle && needsSettle(selectedOrder) && (
+                {canSettle && needsSettle(selectedOrder) && !isOnlineBalanceRunning(selectedOrder) && (
                   <TouchableOpacity style={[styles.actBtn, styles.actBtnPrimary]} disabled={actionBusy} onPress={() => openSettle(selectedOrder)} activeOpacity={0.8}>
                     <Ionicons name="cash-outline" size={16} color="#fff" /><Text style={[styles.actBtnText, { color: '#fff' }]}>Settle</Text>
                   </TouchableOpacity>

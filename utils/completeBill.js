@@ -5,19 +5,67 @@ import { storedOrderDiscountFields } from './orderDiscountFields';
 // (payment method, tender, split, tip, khata); `tableName` = the table it was opened from, if any.
 // Same payload as the web's DashboardTablesPanel flow, so the server can update customer stats
 // (totalOrders, totalSpent, loyaltyPoints).
-// Already paid online by the guest (QR Razorpay / Paytm) — completing it must keep that payment,
-// never record it again as cash / split / part payment.
-export function isPaidOnline(order) {
-  if (!order || String(order.paymentStatus || '').toLowerCase() !== 'paid') return false;
+// Paid online by the guest at the QR (Razorpay / Paytm) — the amount the gateway actually received.
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+export function onlinePaidAmount(order) {
+  if (!order) return 0;
+  const amt = r2(Number(order.razorpayAmountPaid) || Number(order.paytmAmountPaid) || 0);
+  if (amt > 0) return amt;
+  // older orders without the stored amount: a paid Razorpay / Paytm order covered its total
   const m = String(order.paymentMethod || '').toLowerCase();
-  return m === 'razorpay' || m === 'paytm' || !!order.razorpayPaymentId || !!order.paytm;
+  const paidOnline = String(order.paymentStatus || '').toLowerCase() === 'paid'
+    && (m === 'razorpay' || m === 'paytm' || !!order.razorpayPaymentId || !!order.paytm);
+  return paidOnline ? r2(order.finalAmount || order.totalAmount || 0) : 0;
+}
+const onlineMethodOf = (order) => (Number(order.paytmAmountPaid) > 0 || String(order.paymentMethod || '').toLowerCase() === 'paytm' ? 'paytm' : 'razorpay');
+const billTotalOf = (order) => r2(order.finalAmount || order.totalAmount || 0);
+
+// What is still to be collected on an order paid online (items added after the guest paid). 0 = none.
+export function onlineBalance(order) {
+  const paid = onlinePaidAmount(order);
+  if (!(paid > 0)) return 0;
+  // a balance already collected some other way (part payment) counts as paid
+  const covered = Math.max(paid, r2(order.paidAmount));
+  const bal = r2(billTotalOf(order) - covered);
+  return bal > 0.5 ? bal : 0;
+}
+
+// Fully paid online — completing it keeps that payment, never records it again as cash / split / part.
+export function isPaidOnline(order) {
+  return onlinePaidAmount(order) > 0 && onlineBalance(order) === 0;
+}
+// Paid online but items were added since: only the balance is collected (online part + this method).
+export function hasOnlineBalance(order) {
+  return onlineBalance(order) > 0;
+}
+
+// The payment to record (verifyPayment) after completing: nothing for a fully-online order, only the
+// collected balance for a part-online one, else the bill as settled.
+export function paymentToRecord(order, updateData) {
+  if (isPaidOnline(order)) return null;
+  if (hasOnlineBalance(order)) {
+    const rest = (updateData.splitPayments || []).filter(sp => sp.method !== onlineMethodOf(order));
+    return rest.length ? { method: rest[0].method, amount: r2(rest.reduce((t, sp) => t + (Number(sp.amount) || 0), 0)) } : null;
+  }
+  return { method: updateData.paymentMethod, amount: updateData.finalAmount ?? billTotalOf(order) };
 }
 
 export function completeBillUpdate(order, sd = {}, user = null, tableName = null) {
   sd = sd || {};
+  const tipOnly = sd.tipAmount != null ? { tipAmount: sd.tipAmount, ...(sd.tipPercentage != null ? { tipPercentage: sd.tipPercentage } : {}) } : {};
   if (isPaidOnline(order)) {
     // keep the online payment; only a tip chosen now is taken from the settle screen
-    sd = sd.tipAmount != null ? { tipAmount: sd.tipAmount, ...(sd.tipPercentage != null ? { tipPercentage: sd.tipPercentage } : {}) } : {};
+    sd = tipOnly;
+  } else if (hasOnlineBalance(order)) {
+    // online part + the balance by the method chosen now (split / part pay on this screen don't apply)
+    const paid = onlinePaidAmount(order), bal = onlineBalance(order);
+    const m = sd.paymentMethod && sd.paymentMethod !== 'split' ? sd.paymentMethod : 'cash';
+    sd = {
+      ...tipOnly,
+      paymentMethod: 'split',
+      splitPayments: [{ method: onlineMethodOf(order), amount: paid }, { method: m, amount: bal }],
+      paymentStatus: 'paid', paidAmount: billTotalOf(order), outstandingAmount: 0,
+    };
   }
   const settleMethod = sd.paymentMethod || order.paymentMethod || 'cash';
   const settleFinal = (sd.finalAmount != null) ? sd.finalAmount : (order.finalAmount || order.totalAmount || 0);

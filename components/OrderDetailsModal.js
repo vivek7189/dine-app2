@@ -20,6 +20,7 @@ import { seatLetter } from '../utils/seatOrdering';
 import BillingToolbar from './billing/BillingToolbar';
 import BillingPanels from './billing/BillingPanels';
 import { orderLinesToCart } from '../utils/orderLines';
+import { onlinePaidAmount, onlineBalance } from '../utils/completeBill';
 import { resolveSplitPayments } from '../utils/splitPayment';
 import { registerBlocksBilling } from '../utils/registerGate';
 
@@ -463,6 +464,19 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
                     <Text style={styles.grandTotalLabel}>Total</Text>
                     <Text style={styles.grandTotalValue}>{getCurrencySymbol()}{finalTotal.toFixed(2)}</Text>
                   </View>
+                  {/* Paid online at the QR (Razorpay / Paytm): only the rest is collected here */}
+                  {onlinePaidAmount(order) > 0 && (
+                    <>
+                      <View style={styles.totalRow}>
+                        <Text style={[styles.totalLabel, { color: '#047857' }]}>Paid online ({Number(order.paytmAmountPaid) > 0 || String(order.paymentMethod || '').toLowerCase() === 'paytm' ? 'Paytm' : 'Razorpay'})</Text>
+                        <Text style={[styles.totalValue, { color: '#047857' }]}>−{getCurrencySymbol()}{onlinePaidAmount(order).toFixed(2)}</Text>
+                      </View>
+                      <View style={styles.totalRow}>
+                        <Text style={[styles.totalLabel, { fontWeight: '700', color: '#111827' }]}>{onlineBalance(order) > 0 ? 'To collect now' : 'Nothing to collect'}</Text>
+                        <Text style={[styles.totalValue, { fontWeight: '700', color: '#111827' }]}>{getCurrencySymbol()}{onlineBalance(order).toFixed(2)}</Text>
+                      </View>
+                    </>
+                  )}
                 </View>
               </>
             ) : null}

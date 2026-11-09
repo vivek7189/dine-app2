@@ -44,7 +44,7 @@ import { useToast } from '../components/Toast';
 import { storePendingAddItems } from '../utils/addItemsHandoff';
 import { isChairModeEnabled } from '../utils/seatOrdering';
 import { storedOrderDiscountFields } from '../utils/orderDiscountFields';
-import { completeBillUpdate, isPaidOnline } from '../utils/completeBill';
+import { completeBillUpdate, paymentToRecord } from '../utils/completeBill';
 import { savedOrderPrintItems, savedOrderPrintExtras } from '../utils/savedOrderInvoice';
 
 // const PUSHER_KEY = process.env.EXPO_PUBLIC_PUSHER_KEY || '4e1f74ae05c66bbc4eec';
@@ -2206,8 +2206,6 @@ export default function TablesScreen() {
           const tableForOrder = selectedTableForOrder;
           const rid = selectedRestaurant?.id;
           const sd = settlementData || {};
-          const settleMethod = sd.paymentMethod || order.paymentMethod || 'cash';
-          const settleFinal = (sd.finalAmount != null) ? sd.finalAmount : (order.finalAmount || order.totalAmount || 0);
           // Close the modal immediately for a snappy feel
           setShowOrderModal(false);
 
@@ -2231,13 +2229,14 @@ export default function TablesScreen() {
               ...(updateData.finalAmount != null ? { finalAmount: updateData.finalAmount } : {}),
             });
 
-            // Verify payment (same as web flow) — not for an order already paid online (that payment
-            // is recorded; a second one would double it)
-            if (!isPaidOnline(order)) try {
+            // Verify payment (same as web flow) — only what was collected now: nothing for an order paid
+            // online, just the balance when items were added after the guest paid online
+            const toRecord = paymentToRecord(order, updateData);
+            if (toRecord) try {
               await apiClient.verifyPayment({
                 orderId: order.id,
-                paymentMethod: settleMethod,
-                amount: settleFinal,
+                paymentMethod: toRecord.method,
+                amount: toRecord.amount,
                 userId: user?.id,
                 restaurantId: rid,
                 paymentStatus: 'completed',
