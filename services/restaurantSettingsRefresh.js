@@ -12,20 +12,37 @@ let lastRun = 0;
 let inflight = null;
 // restaurantId → true/false: does the restaurant have roles switched on (from the fresh restaurant).
 const rolesOnByRestaurant = {};
+// Roles off (classic staff permissions): how often this person's page access is re-read.
+const LEGACY_ACCESS_GAP_MS = 5 * 60 * 1000;
+let lastLegacyAccess = 0;
 
 // Roles on (rolesV2): keep this person's role permissions and page access current without a re-login.
 // Saved on the user as rolePermissions {rid, permissions}; removed again when roles are off. Tells
 // the open screens via restaurantEvents 'access'.
-export async function refreshRoleAccess() {
+export async function refreshRoleAccess(force = false) {
   try {
     if (typeof apiClient.isEffectivelyOffline === 'function' && apiClient.isEffectivelyOffline()) return null;
     const user = await apiClient.getUser();
     const rid = user?.restaurantId || user?.restaurant?.id;
     const role = String(user?.role || '').toLowerCase();
     if (!rid || !role || ['owner', 'admin', 'co-owner', 'customer'].includes(role)) return null;
-    // Only ask when the restaurant has roles on (or saved permissions need clearing) — no extra
-    // request for restaurants without roles.
-    if (rolesOnByRestaurant[rid] !== true && !user.rolePermissions) return null;
+    // Roles off: the owner's changes to this person's permissions (Admin → Staff, e.g. "Complete bill")
+    // reach the phone without a re-login — the screens read the copy saved at login (TMC 10 Nov:
+    // Complete bill switched on, the phones still hid it). Re-read on start / foreground, at most every 5 min.
+    if (rolesOnByRestaurant[rid] !== true && !user.rolePermissions) {
+      if (!force && Date.now() - lastLegacyAccess < LEGACY_ACCESS_GAP_MS) return null;
+      lastLegacyAccess = Date.now();
+      const res = await apiClient.request(`/api/user/page-access?restaurantId=${encodeURIComponent(rid)}`);
+      const latest = await apiClient.getUser();
+      if (!latest || (latest.restaurantId || latest.restaurant?.id) !== rid) return null; // switched meanwhile
+      if (!res || res.rolesV2 === true || !res.pageAccess || typeof res.pageAccess !== 'object') return null;
+      if (String(res.role || '').toLowerCase() !== String(latest.role || '').toLowerCase()) return null; // another login / role changed → re-login handles it
+      if (JSON.stringify(res.pageAccess) === JSON.stringify(latest.pageAccess || null)) return null;
+      const next = { ...latest, pageAccess: res.pageAccess };
+      await apiClient.setUser(next);
+      restaurantEvents.emit('access', { restaurantId: rid });
+      return next;
+    }
     const res = await apiClient.request(`/api/user/page-access?restaurantId=${encodeURIComponent(rid)}`);
     const latest = await apiClient.getUser();
     if (!latest || (latest.restaurantId || latest.restaurant?.id) !== rid) return null; // switched meanwhile
@@ -88,7 +105,7 @@ let lastAccessRun = 0;
 function refreshRoleAccessThrottled(force) {
   if (!force && Date.now() - lastAccessRun < MIN_GAP_MS) return;
   lastAccessRun = Date.now();
-  refreshRoleAccess();
+  refreshRoleAccess(force);
 }
 
 // Settings first, then role access — one after the other, so the two never overwrite each other's
