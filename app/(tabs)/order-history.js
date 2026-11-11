@@ -232,7 +232,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
     try {
       // period='custom' + explicit start/end so the stats match the exact date range.
       const res = await apiClient.getAnalytics(restaurantId, 'custom', { startDate: dateRange.startDate, endDate: dateRange.endDate });
-      setAnalyticsStats(res?.analytics || res?.stats || res || null);
+      setAnalyticsStats(res?.analytics ? { ...res.analytics, scope: res.scope } : (res?.stats || res || null));
     } catch { setAnalyticsStats(null); }
   };
 
@@ -813,7 +813,9 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
       {/* Header */}
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { fontSize: fs(20) }]}>Order History</Text>
-        <View style={styles.statsRow}>
+        {/* Staff without sales access get only their own shift's billed sales from the server
+            (scope 'own') — usually 0 while the list shows every order, so don't show the chips. */}
+        {analyticsStats?.scope !== 'own' && <View style={styles.statsRow}>
           <View style={styles.statBadge}>
             <Text style={styles.statValue}>{stats.count}</Text>
             <Text style={styles.statLabel}>orders</Text>
@@ -822,7 +824,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
             <Text style={[styles.statValue, { color: '#059669' }]}>{formatCurrency(stats.revenue)}</Text>
             <Text style={styles.statLabel}>revenue</Text>
           </View>
-        </View>
+        </View>}
       </View>
 
       {/* Date Filter Pills — wrap so no chip (Custom) gets clipped on narrow phones */}
