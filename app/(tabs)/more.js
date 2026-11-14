@@ -219,6 +219,9 @@ export default function MoreScreen() {
         { title: 'My Pay', icon: 'wallet-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-pay`, title: 'My Pay' } }, roles: [], perm: 'page.myPay', feature: 'myPay', color: '#059669', iconBg: '#ecfdf5' },
         // Birthday, anniversary and important days (prayer, wedding, child birth…) so the manager plans around them
         { title: 'My dates', icon: 'gift-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-dates`, title: 'My dates' } }, roles: null, color: '#be185d', iconBg: '#fdf2f8' },
+        // Staff the owner ticked "Staff Meetings" / "Shift rota" in Staff access (owner / managers use Books / web)
+        { title: 'Staff Meetings', icon: 'people-circle-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/meetings`, title: 'Staff Meetings' } }, roles: null, tick: 'meetings', color: '#4338ca', iconBg: '#eef2ff' },
+        { title: 'Shift rota', icon: 'calendar-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/shifts`, title: 'Shift rota' } }, roles: null, tick: 'rota', color: '#0891b2', iconBg: '#ecfeff' },
         { title: 'My Meetings', icon: 'people-circle-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/my-meetings`, title: 'My Meetings' } }, roles: null, color: '#4f46e5', iconBg: '#eef2ff' },
         // Staff self-service (MFC): report a repair / send a suggestion or feedback to the owner — everyone
         { title: 'Repairs', icon: 'construct-outline', route: { pathname: '/(tabs)/webview', params: { url: `${WEB_BASE_URL}/mobile/staff-requests?kind=repair`, title: 'Repairs' } }, roles: null, color: '#b45309', iconBg: '#fffbeb' },
@@ -315,6 +318,11 @@ export default function MoreScreen() {
   const shouldShowItem = (item) => {
     if (item.calendar) return calendarAllowed;
     if (item.diary) return diaryAllowed;
+    if (item.tick) {
+      if (['owner', 'admin', 'co-owner', 'manager'].includes(role)) return false;
+      const v = user?.pageAccess?.[item.tick];
+      return typeof v === 'object' && v !== null ? Object.values(v).some(Boolean) : v === true;
+    }
     if (item.announcements) return announcements.enabled;
     // Apply Leave: whenever this person doesn't see Attendance (for any reason) — leave must always be
     // possible from the app (MFC: staff couldn't find where to apply).

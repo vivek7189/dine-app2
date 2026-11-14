@@ -257,7 +257,9 @@ export default function AttendanceScreen() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const isAdmin = user && ['owner', 'admin', 'manager'].includes(user.role?.toLowerCase());
+  // Owner / manager, or staff ticked "Attendance" in Staff access (the server checks the same tick)
+  const attendanceTick = (() => { const v = user?.pageAccess?.attendance; return typeof v === 'object' && v !== null ? Object.values(v).some(Boolean) : v === true; })();
+  const isAdmin = user && (['owner', 'admin', 'manager'].includes(user.role?.toLowerCase()) || attendanceTick);
 
   // ── Live Timer ──────────────────────────────────────────
 

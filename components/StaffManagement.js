@@ -60,6 +60,14 @@ const PAGE_ACCESS_OPTIONS = [
   { key: 'invoice', label: 'Invoices', icon: 'document-text-outline' },
   { key: 'customers', label: 'Customers', icon: 'people-outline' },
   { key: 'offers', label: 'Offers', icon: 'pricetag-outline' },
+  // Staff management for one chosen person (owner / managers have these by role; off unless ticked;
+  // the server checks the same keys — same as the web Staff editor)
+  { key: 'attendance', label: 'Attendance (all staff)', icon: 'time-outline' },
+  { key: 'diary', label: 'Daily Diary', icon: 'book-outline' },
+  { key: 'meetings', label: 'Staff Meetings', icon: 'people-circle-outline' },
+  { key: 'staffRequests', label: 'Repairs & requests', icon: 'construct-outline' },
+  { key: 'announcements', label: 'Announcements', icon: 'megaphone-outline' },
+  { key: 'rota', label: 'Shift rota', icon: 'calendar-outline' },
 ];
 
 export default function StaffManagement({ restaurantId }) {
