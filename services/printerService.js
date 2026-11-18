@@ -1775,10 +1775,40 @@ const diag = (event) => {
     const printer = connectedPrinter ? String(typeof connectedPrinter === 'object' ? (connectedPrinter.address || connectedPrinter.name || JSON.stringify(connectedPrinter)) : connectedPrinter).slice(0, 80) : null;
     require('./printDiagnostics').logPrintDiag(rid, {
       phase: 'failed', success: false, connectionType: connectionType || null, printer,
-      imagePrint: _imagePrintEnabled, paperWidthPx: _imagePrintWidth, ...event,
+      imagePrint: _imagePrintEnabled, paperWidthPx: _imagePrintWidth, nativeRaster: hasCleanRaster(), ...event,
       error: event.error ? String(event.error?.message || event.error).slice(0, 300) : undefined,
     }, false);
   } catch (_) { /* diagnostics must never affect printing */ }
+};
+
+// One informational diagnostic (not a failure) — e.g. "this device switched to the direct logo".
+const diagInfo = (event) => {
+  try {
+    const rid = _savedForRid;
+    if (!rid) return;
+    require('./printDiagnostics').logPrintDiag(rid, {
+      phase: 'info', success: true, connectionType: connectionType || null,
+      paperWidthPx: _imagePrintWidth, nativeRaster: hasCleanRaster(), ...event,
+    }, true);
+  } catch (_) { /* diagnostics must never affect printing */ }
+};
+
+// iPhone / iPad where the hidden-WebView logo snapshot times out → direct logo or skip (services/logoDirect).
+let _logoDirect = null;
+const logoDirect = () => {
+  if (!_logoDirect) _logoDirect = require('./logoDirect').createLogoDirect({ storage: AsyncStorage });
+  return _logoDirect;
+};
+
+// The stored logo image straight to the printer's raster command (white background, scaled to `widthDots`).
+const printLogoDirect = async (url, widthDots) => {
+  const nativeMod = currentNativePrinter();
+  if (!nativeMod || typeof nativeMod.printRasterImage !== 'function') throw new Error('printRasterImage not available');
+  const dataUri = await require('./receiptImageCache').getReceiptImageDataUri(url, { waitMs: 3000 });
+  if (!dataUri) throw new Error('logo image not stored on this device yet');
+  await withPrintTimeout(new Promise((resolve, reject) => {
+    nativeMod.printRasterImage(dataUri, { widthDots }, (err) => (err ? reject(new Error(String(err))) : resolve()));
+  }), 'Logo print', 15000);
 };
 
 const _logoSizeByUrl = {};
@@ -1793,7 +1823,24 @@ const printLogoRaster = async (text) => {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>`
     + `<body style="margin:0;background:#fff"><div style="text-align:center;padding:4px 0">`
     + `<img src="${safeUrl.replace(/"/g, '%22')}" style="width:${w}px;max-width:100%;height:auto" /></div></body></html>`;
-  await printViaThermalImage(html);
+  // iPhone / iPad only, and only after the snapshot has timed out on this device (else unchanged).
+  // Direct print needs the native raster command and a paper-wide logo (it prints from the left edge).
+  const isIos = Platform.OS === 'ios';
+  const canDirect = isIos && hasCleanRaster() && w >= _imagePrintWidth - 8;
+  const how = isIos ? await logoDirect().plan({ isIos, canDirect }) : 'snapshot'; // Android: untouched
+  if (how === 'direct') { await printLogoDirect(url, w); return true; }
+  if (how === 'skip') return false; // bill prints right away without the logo; snapshot retried daily
+  try {
+    await printViaThermalImage(html);
+  } catch (err) {
+    if (isIos && require('./logoDirect').isSnapshotTimeout(err)) {
+      await logoDirect().markSlow();
+      diagInfo({ kind: 'logo', path: canDirect ? 'logo-direct' : 'logo-skip', reason: 'logo-snapshot-slow' });
+      if (canDirect) { await printLogoDirect(url, w); return true; } // this bill still gets its logo
+    }
+    throw err;
+  }
+  if (isIos) logoDirect().clearSlow().catch(() => {});
   return true;
 };
 

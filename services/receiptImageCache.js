@@ -57,6 +57,14 @@ export const prefetchReceiptImage = (url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) load(url).catch(() => {});
 };
 
+// One stored image as a data: URI (for printing it directly), waiting at most `waitMs`. Null if not available.
+export const getReceiptImageDataUri = async (url, { waitMs = 3000 } = {}) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null;
+  if (_mem.has(url)) return _mem.get(url);
+  const got = await Promise.race([load(url), new Promise((r) => setTimeout(() => r(null), waitMs))]);
+  return got || _mem.get(url) || null;
+};
+
 const IMG_SRC_RE = /(<img\b[^>]*?\bsrc\s*=\s*)(["'])(https?:\/\/[^"']+)\2/gi;
 
 // Swap remote <img src> for stored copies. Waits at most `waitMs` for images not stored yet;
