@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { tableLabel } from '../utils/tableLabel';
 
 // VIEW-ONLY live floor plan for the mobile waiter/POS tables screen.
 // Mirrors the web dashboard's TableFloorPlan (posX/posY/width/height/rotation/shape),
@@ -124,7 +125,7 @@ export default function TableFloorPlanNative({
                   ]}
                 >
                   <Text style={[styles.tableName, { color: c.text }]} numberOfLines={1}>
-                    {table.name}
+                    {tableLabel(table)}
                   </Text>
                   <View style={styles.metaRow}>
                     <Ionicons name="person-outline" size={9} color={c.text} />

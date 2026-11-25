@@ -34,6 +34,7 @@ import OrderDetailsModal from '../components/OrderDetailsModal';
 import MoveOrderModal from '../components/MoveOrderModal';
 import WaiterOrderModal from '../components/WaiterOrderModal';
 import TableFloorPlanNative from '../components/TableFloorPlanNative';
+import { tableLabel } from '../utils/tableLabel';
 // SyncIndicator moved to settings page
 import { useResponsive } from '../hooks/useResponsive';
 import { useOffline } from '../hooks/useOffline';
@@ -1196,7 +1197,7 @@ export default function TablesScreen() {
                 width: r(9, 11), height: r(9, 11), borderRadius: r(5, 6),
                 backgroundColor: isAvailable ? '#16a34a' : isOccupied ? '#ea580c' : isReserved ? '#9333ea' : isCleaning ? '#3b82f6' : '#9ca3af'
               }]} />
-              <Text style={[styles.tableNumber, { fontSize: fs(17) }, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{table.name}</Text>
+              <Text style={[styles.tableNumber, { fontSize: fs(17) }, isOutOfService && styles.tableNumberDisabled]} numberOfLines={1}>{tableLabel(table)}</Text>
               {!selectedFloor && table._floorName && floors.length > 1 && (
                 <Text style={styles.floorLabel} numberOfLines={1}>{table._floorName}</Text>
               )}
