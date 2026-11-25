@@ -326,11 +326,12 @@ export default function MenuItemForm({
         <View style={[styles.inputGroup, { flex: 1 }]}>
           <Text style={styles.label}>Price (*) *</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, formData.complimentary === true && { backgroundColor: '#f3f4f6', color: Colors.textLight }]}
             placeholder="0"
             placeholderTextColor={Colors.textLight}
             keyboardType="decimal-pad"
-            value={formData.price}
+            value={formData.complimentary === true ? '0' : formData.price}
+            editable={formData.complimentary !== true}
             onChangeText={(text) => setFormData({ ...formData, price: text })}
           />
         </View>
@@ -355,6 +356,28 @@ export default function MenuItemForm({
           </View>
         )}
       </View>
+      {/* Complimentary (free) dish — owner/admin only; price becomes 0, stock still used */}
+      {(isOwnerOrAdmin || formData.complimentary === true) && (
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, marginBottom: Spacing.md, borderRadius: 8, borderWidth: 1, borderColor: formData.complimentary === true ? '#6ee7b7' : '#e5e7eb', backgroundColor: formData.complimentary === true ? '#ecfdf5' : '#fff' }}
+          onPress={() => { if (isOwnerOrAdmin) setFormData({ ...formData, complimentary: formData.complimentary !== true }); }}
+          activeOpacity={isOwnerOrAdmin ? 0.7 : 1}
+        >
+          <Ionicons
+            name={formData.complimentary === true ? 'checkbox' : 'square-outline'}
+            size={20}
+            color={formData.complimentary === true ? '#059669' : Colors.textLight}
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: formData.complimentary === true ? '#065f46' : Colors.textDark }}>
+              Complimentary (free)
+            </Text>
+            <Text style={{ fontSize: 11, color: formData.complimentary === true ? '#047857' : Colors.textLight, marginTop: 2 }}>
+              Price is 0. Shows FREE on the QR menu; stock is still used and the cost shows in the Comp report.
+            </Text>
+          </View>
+        </TouchableOpacity>
+      )}
       <View style={styles.row}>
         <View style={[styles.inputGroup, { flex: 1 }]}>
           <Text style={styles.label}>Category *</Text>

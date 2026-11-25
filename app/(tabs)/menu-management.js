@@ -139,6 +139,7 @@ export default function MenuManagementScreen() {
     soldByWeight: false,
     priceUnit: 'per_kg',
     pluCode: '',
+    complimentary: false, // free dish (price 0) — owner/admin switch
     // Hide image
     hideImage: false,
     // Sub-category
@@ -489,6 +490,7 @@ export default function MenuManagementScreen() {
       soldByWeight: false,
       priceUnit: 'per_kg',
       pluCode: '',
+      complimentary: false,
       hideImage: false,
       subCategory: '',
     });
@@ -541,6 +543,7 @@ export default function MenuManagementScreen() {
       soldByWeight: item.soldByWeight || false,
       priceUnit: item.priceUnit || 'per_kg',
       pluCode: item.pluCode || '',
+      complimentary: item.complimentary === true,
       hideImage: item.hideImage || false,
       subCategory: item.subCategory || '',
     });
@@ -690,7 +693,8 @@ export default function MenuManagementScreen() {
 
   const handleSubmit = async () => {
     if (savingItemRef.current) return; // double tap
-    if (!formData.name || !formData.price || !formData.category) {
+    const isComp = formData.complimentary === true;
+    if (!formData.name || (!formData.price && !isComp) || !formData.category) {
       Alert.alert('Required', 'Please fill name, price, and category');
       return;
     }
@@ -701,7 +705,7 @@ export default function MenuManagementScreen() {
       const itemData = {
         name: formData.name,
         description: formData.description,
-        price: parseFloat(formData.price),
+        price: isComp ? 0 : parseFloat(formData.price),
         category: formData.category,
         shortCode: formData.shortCode || undefined,
         subCategory: formData.subCategory || undefined,
@@ -710,6 +714,8 @@ export default function MenuManagementScreen() {
         status: formData.status,
         // Cost to make: sent only when the form has it (loaded or typed; '' = cleared).
         ...(formData.costPrice !== undefined ? { costPrice: formData.costPrice } : {}),
+        // Complimentary: sent only when on, or when switching an existing free dish off.
+        ...(isComp ? { complimentary: true } : (editingItem?.complimentary === true ? { complimentary: false } : {})),
       };
 
       // Variants & customizations
