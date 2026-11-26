@@ -12,6 +12,8 @@ import * as billCompact from './bill/compact';
 import * as billDetailed from './bill/detailed';
 import * as billElegant from './bill/elegant';
 import * as billMinimal from './bill/minimal';
+import { calcGrandTotal, esc } from './helpers';
+import { isComplimentaryInvoice, complimentaryReason } from '../complimentaryBill';
 
 const KOT_TEMPLATES = {
   classic: kotClassic,
@@ -49,5 +51,11 @@ export function renderKOT(kotData, printSettings = {}, labels = {}) {
 export function renderBill(invoice, printSettings = {}, labels = {}) {
   const templateId = printSettings.billTemplate || 'classic';
   const template = BILL_TEMPLATES[templateId] || BILL_TEMPLATES.classic;
+  // Complimentary bill (restaurant setting, off by default): title COMPLIMENTARY and the discount
+  // line names the reason. Labels only — the amounts and layout are unchanged.
+  if (printSettings.complimentaryTag === true && isComplimentaryInvoice(invoice) && calcGrandTotal(invoice) <= 0.005) {
+    const why = complimentaryReason(invoice);
+    labels = { ...labels, billTitle: 'COMPLIMENTARY', manualDiscount: why ? `Complimentary (${esc(why)})` : 'Complimentary' };
+  }
   return template.render(invoice, printSettings, labels);
 }

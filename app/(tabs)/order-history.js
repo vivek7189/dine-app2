@@ -31,6 +31,7 @@ import { isWhatsAppOrder, loadOrderForOpen } from '../../services/whatsappOrderA
 import OrderDetailsModal from '../../components/OrderDetailsModal';
 import { completeBillUpdate, isPaidOnline, hasOnlineBalance, onlineBalance, onlinePaidAmount, paymentToRecord } from '../../utils/completeBill';
 import { storePendingAddItems } from '../../utils/addItemsHandoff';
+import { isComplimentaryOrder, complimentaryReason } from '../../utils/complimentaryBill';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -103,6 +104,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const [settleAmount, setSettleAmount] = useState('');
   const [settleMethod, setSettleMethod] = useState('cash');
   const printSettingsRef = useRef({});
+  const [compTagOn, setCompTagOn] = useState(false); // printSettings.complimentaryTag (off by default)
 
   // Date filter
   const [dateMode, setDateMode] = useState('today');
@@ -202,10 +204,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
       if (rid) {
         try {
           const cached = await AsyncStorage.getItem(`dine_print_settings_${rid}`);
-          if (cached) printSettingsRef.current = JSON.parse(cached);
+          if (cached) { printSettingsRef.current = JSON.parse(cached); setCompTagOn(printSettingsRef.current?.complimentaryTag === true); }
         } catch (_) {}
         apiClient.getPrintSettings(rid).then(result => {
           printSettingsRef.current = result?.printSettings || result || {};
+          setCompTagOn(printSettingsRef.current?.complimentaryTag === true);
         }).catch(() => {});
         if (!userData?.restaurant) {
           apiClient.getRestaurant(rid).then(result => {
@@ -557,6 +560,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
       waiterName: order.staffInfo?.waiterName || order.staffInfo?.name || currentUser?.name || '',
       offerDiscount: Number(order.offerDiscount ?? order.discountAmount ?? 0),
       manualDiscount: Number(order.manualDiscount || 0),
+      discountReason: order.discountReason || '',
       loyaltyDiscount: Number(order.loyaltyDiscount || 0),
       couponDiscount: Number(order.couponDiscount || 0),
       couponCode: order.couponCode || null,
@@ -727,7 +731,8 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   );
 
   const renderOrderCard = ({ item }) => {
-    const amt = item.finalAmount || item.totalAmount || 0;
+    const isComp = isComplimentaryOrder(item); // fully free bill: its total is 0 on purpose
+    const amt = isComp ? 0 : (item.finalAmount || item.totalAmount || 0);
     const dlv = deliveryLine(item, dlvRole);
     const statusColor = STATUS_COLORS[item.status] || '#6b7280';
     return (
@@ -780,6 +785,11 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
             })()}
             {item.editCount > 0 && (
               <View style={styles.revisedBadge}><Text style={styles.revisedBadgeText}>Revised #{item.editCount}</Text></View>
+            )}
+            {isComp && compTagOn && (
+              <View style={{ backgroundColor: '#d1fae5', borderColor: '#6ee7b7', borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2, flexShrink: 1 }}>
+                <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '800', color: '#065f46' }}>COMPLIMENTARY{complimentaryReason(item) ? ` · ${complimentaryReason(item)}` : ''}</Text>
+              </View>
             )}
           </View>
           {(() => {

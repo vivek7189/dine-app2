@@ -37,6 +37,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getItemSubline } from '../utils/itemSubline';
 import { seatLetter, withSeatLabel } from '../utils/seatOrdering';
 import { renderKOT, renderBill } from '../utils/printTemplates/index';
+import { isComplimentaryInvoice, complimentaryReason } from '../utils/complimentaryBill';
 import { splitIndiaGst, attachInclusiveSplits, billDateOf, formatDateTime, stageFooterText } from '../utils/printTemplates/helpers';
 import { inclusiveTaxSummary } from '../utils/inclusiveTax';
 
@@ -1110,6 +1111,11 @@ export const generateBillText = (invoiceData) => {
   if (r.fssai && r.showFssaiOnInvoice) lines.push(`FSSAI: ${r.fssai}`);
   lines.push(_LINE);
 
+  // Complimentary bill (printSettings.complimentaryTag, off by default): a COMPLIMENTARY heading and
+  // the discount line names the reason. Nothing else on the bill changes.
+  const _comp = ps.complimentaryTag === true && isComplimentaryInvoice(invoiceData);
+  if (_comp) lines.push('<CM>COMPLIMENTARY</CM>');
+
   // ── Invoice info ──
   // GST-registered restaurant: a bill that charges tax is a "Tax Invoice"; "Bill of Supply" is only
   // for a bill with no tax (it was printed on every bill when showGstOnInvoice was on).
@@ -1197,7 +1203,7 @@ export const generateBillText = (invoiceData) => {
   // ── Totals ──
   if (bl.showSubtotal !== false) lines.push(leftRight('Subtotal', `${RS}${fmt(invoiceData.subtotal)}`, W));
   if (invoiceData.offerDiscount > 0) lines.push(leftRight('Offer Discount', `-${RS}${fmt(invoiceData.offerDiscount)}`, W));
-  if (invoiceData.manualDiscount > 0) lines.push(leftRight('Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`, W));
+  if (invoiceData.manualDiscount > 0) lines.push(leftRight(_comp ? (complimentaryReason(invoiceData) ? `Complimentary (${complimentaryReason(invoiceData)})` : 'Complimentary') : 'Manual Discount', `-${RS}${fmt(invoiceData.manualDiscount)}`, W));
   if (invoiceData.loyaltyDiscount > 0) lines.push(leftRight('Loyalty Discount', `-${RS}${fmt(invoiceData.loyaltyDiscount)}`, W));
   if (invoiceData.couponDiscount > 0) {
     lines.push(leftRight(invoiceData.couponCode ? `Coupon (${invoiceData.couponCode})` : 'Coupon', `-${RS}${fmt(invoiceData.couponDiscount)}`, W));
