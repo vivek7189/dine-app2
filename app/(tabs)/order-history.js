@@ -32,6 +32,7 @@ import OrderDetailsModal from '../../components/OrderDetailsModal';
 import { completeBillUpdate, isPaidOnline, hasOnlineBalance, onlineBalance, onlinePaidAmount, paymentToRecord } from '../../utils/completeBill';
 import { storePendingAddItems } from '../../utils/addItemsHandoff';
 import { isComplimentaryOrder, complimentaryReason } from '../../utils/complimentaryBill';
+import useTableLabels from '../../hooks/useTableLabels';
 
 const STATUS_COLORS = {
   completed: '#22c55e',
@@ -71,6 +72,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
+  const tableLabel = useTableLabels(restaurantId); // "BAR" → "1 · BAR" (only tables with a number)
   const [restaurant, setRestaurant] = useState(null);
   // Admin → Billing Settings → reprintAfterBillRoles, fetched on its own (the restaurant above can be
   // the login copy without billingSettings). Empty / unknown = everyone, as before.
@@ -746,7 +748,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
             <Text style={styles.orderId}>#{item.dailyOrderId || item.orderNumber || ''}</Text>
             {item.tableNumber && (
               <View style={styles.tableBadge}>
-                <Text style={styles.tableBadgeText}>T{item.tableNumber}</Text>
+                <Text style={styles.tableBadgeText}>{tableLabel(item.tableNumber) !== item.tableNumber ? tableLabel(item.tableNumber) : `T${item.tableNumber}`}</Text>
               </View>
             )}
             {isWhatsAppOrder(item) && (
@@ -1028,7 +1030,7 @@ export default function OrderHistoryScreen({ openOrderId, openTick } = {}) {
                   {(() => { const d = toDate(selectedOrder.completedAt || selectedOrder.createdAt); return d ? fmtDayTime(d, apiClient.getClockOffset()) : '—'; })()}
                 </Text>
                 {selectedOrder.tableNumber && (
-                  <Text style={styles.detailMeta}>Table: {selectedOrder.tableNumber}</Text>
+                  <Text style={styles.detailMeta}>Table: {tableLabel(selectedOrder.tableNumber)}</Text>
                 )}
                 <Text style={styles.detailMeta}>
                   Type: {selectedOrder.orderType || 'dine-in'} · Payment: {selectedOrder.paymentMethod || 'cash'}

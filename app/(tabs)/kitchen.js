@@ -15,6 +15,7 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../consta
 import { useResponsive } from '../../hooks/useResponsive';
 import { useOffline } from '../../hooks/useOffline';
 import { roleCan } from '../../utils/permissions';
+import useTableLabels from '../../hooks/useTableLabels';
 
 // ─── Tab Definitions ───
 const TABS = [
@@ -58,6 +59,7 @@ export default function KitchenScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [restaurant, setRestaurant] = useState(null);
   const [restaurantId, setRestaurantId] = useState(null);
+  const tableLabel = useTableLabels(restaurantId); // "BAR" → "1 · BAR" (only tables with a number)
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [transitioning, setTransitioning] = useState({});
@@ -481,7 +483,7 @@ export default function KitchenScreen() {
         <View style={[s.cardHeader, isTablet && { paddingHorizontal: sp(14), paddingVertical: sp(12) }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
             <Text style={[s.orderId, { fontSize: fs(15) }]}>#{kot.dailyOrderId || kot.id.slice(-6).toUpperCase()}</Text>
-            {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>Table {kot.tableNumber}{kotChair(kot) ? ` · ${kotChair(kot)}` : ''}</Text></View>}
+            {kot.tableNumber && <View style={s.tableBadge}><Text style={s.tableBadgeText}>Table {tableLabel(kot.tableNumber)}{kotChair(kot) ? ` · ${kotChair(kot)}` : ''}</Text></View>}
             <Text style={s.typeLabel}>{getTypeLabel(kot.orderType)}</Text>
             {kot.orderSource === 'customer_app' && <View style={s.appBadge}><Text style={s.appBadgeText}>App</Text></View>}
           </View>
@@ -750,7 +752,7 @@ export default function KitchenScreen() {
                       <Text style={s.modalTitle}>Order #{selectedKot.dailyOrderId || selectedKot.id.slice(-6).toUpperCase()}</Text>
                       <Text style={s.modalSub}>
                         {getTypeLabel(selectedKot.orderType)}
-                        {selectedKot.tableNumber && ` · Table ${selectedKot.tableNumber}`}
+                        {selectedKot.tableNumber && ` · Table ${tableLabel(selectedKot.tableNumber)}`}
                         {selectedKot.waiterName && ` · ${selectedKot.waiterName}`}
                       </Text>
                     </View>

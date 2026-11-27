@@ -23,8 +23,10 @@ import { orderLinesToCart } from '../utils/orderLines';
 import { onlinePaidAmount, onlineBalance } from '../utils/completeBill';
 import { resolveSplitPayments } from '../utils/splitPayment';
 import { registerBlocksBilling } from '../utils/registerGate';
+import useTableLabels from '../hooks/useTableLabels';
 
 export default function OrderDetailsModal({ visible, onClose, orderId, tableNumber, restaurantId, onAddItems, onCompleteBill, onPrintPreBill, userRole, userPageAccess = null, billingSettings = {}, posSettings = {} }) {
+  const tableLabel = useTableLabels(restaurantId); // "BAR" → "1 · BAR" (only tables with a number)
   const { modalWidth } = useResponsive();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -284,7 +286,7 @@ export default function OrderDetailsModal({ visible, onClose, orderId, tableNumb
             {(tableNumber || order?.tableNumber) ? (
               <View style={styles.headerChipWhite}>
                 <Ionicons name="restaurant" size={12} color="#fff" />
-                <Text style={styles.headerChipText}>Table {tableNumber || order.tableNumber}{(order?.chairNumber || order?.customerInfo?.chairNumber) ? ` · Seat ${order.chairNumber || order.customerInfo.chairNumber}` : ''}{order?.floorName ? ` · ${order.floorName}` : ''}</Text>
+                <Text style={styles.headerChipText}>Table {tableLabel(tableNumber || order.tableNumber)}{(order?.chairNumber || order?.customerInfo?.chairNumber) ? ` · Seat ${order.chairNumber || order.customerInfo.chairNumber}` : ''}{order?.floorName ? ` · ${order.floorName}` : ''}</Text>
               </View>
             ) : null}
           </View>
