@@ -25,6 +25,9 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Theme
 import { useResponsive } from '../../hooks/useResponsive';
 import { hasFeatureAccess, roleCan } from '../../utils/permissions';
 import { getCurrencySymbol } from '../../utils/formatCurrency';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { customersToCsv } from '../../utils/customersCsv';
 
 // ── Tabs ────────────────────────────────────────────
 const TABS = [
@@ -59,6 +62,7 @@ export default function CustomersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
   const [user, setUser] = useState(null);
+  const [downloading, setDownloading] = useState(false);
   const [activeTab, setActiveTab] = useState('customers');
 
   // ── Customer list state ─────────────────────────────
@@ -1756,6 +1760,30 @@ export default function CustomersScreen() {
     );
   }
 
+  // Download every customer of this restaurant as a CSV (opens in Excel) — owner / admin only (server checks too)
+  const canDownloadCustomers = ['owner', 'admin'].includes(String(user?.role || '').toLowerCase());
+  const downloadCustomers = async () => {
+    if (downloading || !restaurantId) return;
+    setDownloading(true);
+    try {
+      const resp = await apiClient.request(`/api/customers-export/${restaurantId}`);
+      const list = Array.isArray(resp?.customers) ? resp.customers : [];
+      if (!list.length) { Alert.alert('No customers', 'There are no customers to download yet.'); return; }
+      const day = new Date().toISOString().slice(0, 10);
+      const uri = `${FileSystem.cacheDirectory}customers_${day}.csv`;
+      await FileSystem.writeAsStringAsync(uri, customersToCsv(list), { encoding: FileSystem.EncodingType.UTF8 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'text/csv', UTI: 'public.comma-separated-values-text', dialogTitle: `Customers (${list.length})` });
+      } else {
+        Alert.alert('Saved', `${list.length} customers saved on this device.`);
+      }
+    } catch (e) {
+      Alert.alert('Download failed', e?.message || 'Could not download customers. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* ── Header ─────────────────────────────────── */}
@@ -1768,6 +1796,16 @@ export default function CustomersScreen() {
           {restaurantName ? <Text style={{ fontSize: 11, color: '#9ca3af', fontWeight: '500', marginTop: 1 }}>{restaurantName}</Text> : null}
         </View>
         <View style={styles.headerActions}>
+          {activeTab === 'customers' && canDownloadCustomers && (
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              onPress={downloadCustomers}
+              disabled={downloading}
+              accessibilityLabel="Download customers"
+            >
+              {downloading ? <ActivityIndicator size="small" color="#6b7280" /> : <Ionicons name="download-outline" size={20} color="#6b7280" />}
+            </TouchableOpacity>
+          )}
           {activeTab === 'customers' && (
             <TouchableOpacity
               style={styles.headerIconBtn}
