@@ -10,6 +10,7 @@ import apiClient, { WEB_BASE_URL } from '../../services/api';
 import { useResponsive } from '../../hooks/useResponsive';
 import { handleWebDownloadMessage } from '../../services/webDownload';
 import { roleGetsWhatsAppAlerts } from '../../services/whatsappOrderAlerts';
+import UpiAfterBillModal from '../../components/UpiAfterBillModal';
 
 export default function BillingWebViewScreen() {
   const { billingData, returnTo, tableId, tableNumber } = useLocalSearchParams();
@@ -18,6 +19,7 @@ export default function BillingWebViewScreen() {
   const useDesktopLayout = isTablet || isLandscape;
   const webViewRef = useRef(null);
   const completedRef = useRef(false);
+  const leaveRef = useRef(null); // where to go after the "Scan to pay" screen is closed
   const shellReadyRef = useRef(false);
   const pendingDataRef = useRef(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +28,7 @@ export default function BillingWebViewScreen() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [billingReady, setBillingReady] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null); // { status, message }
+  const [afterBillUpi, setAfterBillUpi] = useState(null); // "Scan to pay" UPI screen (upiView.posAfterBill) — leave on Close
 
   useEffect(() => {
     buildAuthUrl();
@@ -168,13 +171,20 @@ export default function BillingWebViewScreen() {
           : 'Success!';
         setSuccessInfo({ status: data.status, message: statusLabel });
 
-        setTimeout(() => {
+        const leave = () => {
           if (returnTo === 'tables') {
             router.replace('/(tabs)/tables');
           } else {
             router.replace('/(tabs)/orders');
           }
-        }, 1500);
+        };
+        // Restaurant's UPI QR for the guest (sent only when it is switched on): stay until staff close it.
+        if (data.status === 'completed' && data.afterBillUpi && typeof data.afterBillUpi === 'object') {
+          leaveRef.current = leave;
+          setAfterBillUpi(data.afterBillUpi);
+        } else {
+          setTimeout(leave, 1500);
+        }
       } else if (data.type === 'BILLING_CLOSE') {
         handleBack();
       }
@@ -256,6 +266,8 @@ export default function BillingWebViewScreen() {
             <Text style={styles.loadingOverlayText}>Loading billing...</Text>
           </View>
         )}
+
+        <UpiAfterBillModal upi={afterBillUpi} onClose={() => { setAfterBillUpi(null); const go = leaveRef.current; leaveRef.current = null; if (go) setTimeout(go, 300); }} />
 
         {/* Success overlay — shown after BILLING_COMPLETE from WebView */}
         {successInfo && (

@@ -60,6 +60,8 @@ import { buildGuestInvoice } from '../utils/splitBill';
 import { getPrintClaims, handBackToDesktop } from '../services/localPrintClaim';
 import { billNumberLabel } from '../utils/billNumber';
 import { floorRuleFor } from '../utils/floorRule';
+import { posUpiFor } from '../utils/posUpiAfterBill';
+import UpiAfterBillModal from '../components/UpiAfterBillModal';
 
 const TAKEAWAY_NAMES = ['takeaway', 'take away', 'take-away'];
 const DELIVERY_NAMES = ['delivery'];
@@ -168,6 +170,7 @@ export default function MenuScreen() {
   const [existingDailyOrderId, setExistingDailyOrderId] = useState(null); // daily order number for KOT updates
   const [existingOrderItems, setExistingOrderItems] = useState(null); // snapshot of items when order was loaded for editing
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [afterBillUpi, setAfterBillUpi] = useState(null); // "Scan to pay" screen before the invoice (upiView.posAfterBill)
   const [lastOrderData, setLastOrderData] = useState(null);
   const [taxSettings, setTaxSettings] = useState({ enabled: false, rate: 0, taxes: [], taxInclusivePricing: false, defaultTaxRate: 0 });
   const [billingSettings, setBillingSettings] = useState({});
@@ -449,6 +452,8 @@ export default function MenuScreen() {
         try {
           const csRes = await apiClient.getCustomerAppSettings(restaurantId);
           if (csRes?.paymentSettings) setUpiSettings(csRes.paymentSettings);
+          // + "Scan to pay" after a bill (upiView.posAfterBill, off unless set) — paymentSettings handling unchanged
+          { const uv = csRes?.settings?.upiView || csRes?.upiView; if (uv) setUpiSettings(prev => ({ ...prev, upiView: uv })); }
         } catch (e) {
           console.log('Customer app settings fetch error:', e);
         }
@@ -2622,7 +2627,9 @@ export default function MenuScreen() {
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
-      afterModalClose(() => setShowInvoiceModal(true));
+      // Restaurant's UPI QR for the guest first (off unless set); Close → the invoice as usual
+      const upiNow = billingFields.paymentMethod === 'split-bill' ? null : posUpiFor(upiSettings?.upiView, billingFields.paymentMethod || paymentMethod);
+      afterModalClose(() => (upiNow ? setAfterBillUpi({ ...upiNow, amount: grandTotal }) : setShowInvoiceModal(true)));
       setSelectedTable(null);
       setIsFromTablesPage(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
@@ -2915,7 +2922,9 @@ export default function MenuScreen() {
       setCart([]);
       decrementLocalStock(orderedItems);
       setShowCart(false);
-      afterModalClose(() => setShowInvoiceModal(true));
+      // Restaurant's UPI QR for the guest first (off unless set); Close → the invoice as usual
+      const upiNow = billingFields.paymentMethod === 'split-bill' ? null : posUpiFor(upiSettings?.upiView, billingFields.paymentMethod || paymentMethod);
+      afterModalClose(() => (upiNow ? setAfterBillUpi({ ...upiNow, amount: grandTotal }) : setShowInvoiceModal(true)));
       setSelectedTable(null);
       setIsFromTablesPage(false);
       setExistingOrderId(null); setExistingDailyOrderId(null); setExistingOrderItems(null);
@@ -4113,6 +4122,9 @@ export default function MenuScreen() {
         printSettings={printSettings || {}}
         userRole={user?.role}
       />
+
+      {/* "Scan to pay" UPI screen after a completed bill (off unless set) — then the invoice */}
+      <UpiAfterBillModal upi={afterBillUpi} onClose={() => { setAfterBillUpi(null); afterModalClose(() => setShowInvoiceModal(true)); }} />
 
       {/* Cashier Invoice Modal - Shows after counter sale order is placed */}
       <CashierInvoiceModal
